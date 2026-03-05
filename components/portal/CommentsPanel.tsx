@@ -184,7 +184,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
           </div>
         ) : topLevelComments.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-8">
-            No comments yet
+            No comments yet. Click on the file to add a pin comment.
           </p>
         ) : (
           <div className="divide-y divide-gray-100">

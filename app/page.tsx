@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import EmptyState from '@/components/ui/EmptyState';
+import Header from '@/components/ui/Header';
 
 interface Project {
   id: string;
@@ -56,12 +57,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
-      <header className="bg-gray-900 text-white">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold tracking-tight">Stiko</h1>
-        </div>
-      </header>
+      <Header breadcrumbs={[{ label: 'Dashboard' }]} />
 
       {/* Content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
@@ -88,7 +84,7 @@ export default function Dashboard() {
               <Link
                 key={project.id}
                 href={`/project/${project.id}`}
-                className="block rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-150"
+                className="block rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-200"
               >
                 <h3 className="font-medium text-gray-900 mb-1">
                   {project.name}

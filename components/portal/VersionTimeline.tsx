@@ -38,7 +38,7 @@ export default function VersionTimeline({
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {versions.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-8">
-            No versions yet
+            Submit your first version to get started
           </p>
         ) : (
           versions.map((version) => {

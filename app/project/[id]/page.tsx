@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import EmptyState from '@/components/ui/EmptyState';
+import Header from '@/components/ui/Header';
 
 interface Project {
   id: string;
@@ -121,32 +122,15 @@ export default function ProjectPage() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
-      <header className="bg-gray-900 text-white">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
-          <Link
-            href="/"
-            className="text-gray-400 hover:text-white transition-colors text-sm"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Link>
-          <h1 className="text-xl font-bold tracking-tight">Stiko</h1>
-        </div>
-      </header>
+      <Header
+        breadcrumbs={[
+          { label: 'Dashboard', href: '/' },
+          { label: project?.name ?? 'Loading...' },
+        ]}
+      />
 
       {/* Content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="mb-8">
-          <Link
-            href="/"
-            className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
-          >
-            &larr; Back to Projects
-          </Link>
-        </div>
-
         <div className="flex items-center justify-between mb-8">
           <h2 className="text-2xl font-semibold text-gray-900">
             {project?.name ?? 'Loading...'}
@@ -173,7 +157,7 @@ export default function ProjectPage() {
             {portals.map((portal) => (
               <div
                 key={portal.id}
-                className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-150"
+                className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-200"
               >
                 <Link href={`/portal/${portal.id}`} className="block mb-3">
                   <h3 className="font-medium text-gray-900 mb-1">

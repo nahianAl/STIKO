@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
+import Header from '@/components/ui/Header';
 import VersionTimeline from '@/components/portal/VersionTimeline';
 import FileList from '@/components/portal/FileList';
 import CommentsPanel from '@/components/portal/CommentsPanel';
@@ -11,6 +12,12 @@ import ViewerContainer from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
+
+interface Project {
+  id: string;
+  name: string;
+  createdAt: string;
+}
 
 interface Portal {
   id: string;
@@ -50,6 +57,7 @@ export default function PortalPage() {
   const params = useParams();
   const portalId = params.id as string;
 
+  const [project, setProject] = useState<Project | null>(null);
   const [portal, setPortal] = useState<Portal | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
@@ -81,7 +89,7 @@ export default function PortalPage() {
   const [commentPopupAuthor, setCommentPopupAuthor] = useState('Anonymous');
   const [submittingComment, setSubmittingComment] = useState(false);
 
-  // Fetch portal details
+  // Fetch portal details and parent project
   useEffect(() => {
     const fetchPortal = async () => {
       try {
@@ -89,6 +97,16 @@ export default function PortalPage() {
         if (res.ok) {
           const data = await res.json();
           setPortal(data);
+          // Fetch parent project for breadcrumbs
+          try {
+            const projRes = await fetch(`/api/projects/${data.projectId}`);
+            if (projRes.ok) {
+              const projData = await projRes.json();
+              setProject(projData);
+            }
+          } catch (projErr) {
+            console.error('Failed to fetch project:', projErr);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch portal:', err);
@@ -261,24 +279,13 @@ export default function PortalPage() {
 
   return (
     <div className="h-screen flex flex-col">
-      {/* Header */}
-      <header className="bg-gray-900 text-white flex-shrink-0">
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {portal && (
-              <Link
-                href={`/project/${portal.projectId}`}
-                className="text-gray-400 hover:text-white transition-colors"
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </Link>
-            )}
-            <h1 className="text-lg font-bold tracking-tight">
-              {portal?.name ?? 'Loading...'}
-            </h1>
-          </div>
+      <Header
+        breadcrumbs={[
+          { label: 'Dashboard', href: '/' },
+          ...(project ? [{ label: project.name, href: `/project/${project.id}` }] : []),
+          { label: portal?.name ?? 'Loading...' },
+        ]}
+        rightContent={
           <div className="flex items-center gap-3">
             <div className="relative">
               <Button
@@ -323,8 +330,8 @@ export default function PortalPage() {
               <Button size="sm">Submit New Version</Button>
             </Link>
           </div>
-        </div>
-      </header>
+        }
+      />
 
       {/* 3-Panel Layout */}
       <div className="flex-1 grid grid-cols-[280px_1fr_320px] h-[calc(100vh-64px)]">

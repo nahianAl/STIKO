@@ -1,10 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import FileDropzone from '@/components/ui/FileDropzone';
+import Header from '@/components/ui/Header';
+
+interface Project {
+  id: string;
+  name: string;
+  createdAt: string;
+}
 
 interface Portal {
   id: string;
@@ -18,6 +24,7 @@ export default function SubmitVersionPage() {
   const router = useRouter();
   const portalId = params.id as string;
 
+  const [project, setProject] = useState<Project | null>(null);
   const [portal, setPortal] = useState<Portal | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -30,6 +37,15 @@ export default function SubmitVersionPage() {
         if (res.ok) {
           const data = await res.json();
           setPortal(data);
+          try {
+            const projRes = await fetch(`/api/projects/${data.projectId}`);
+            if (projRes.ok) {
+              const projData = await projRes.json();
+              setProject(projData);
+            }
+          } catch (projErr) {
+            console.error('Failed to fetch project:', projErr);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch portal:', err);
@@ -85,34 +101,17 @@ export default function SubmitVersionPage() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
-      <header className="bg-gray-900 text-white">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
-          <Link
-            href={`/portal/${portalId}`}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Link>
-          <h1 className="text-lg font-bold tracking-tight">
-            {portal?.name ?? 'Loading...'}
-          </h1>
-        </div>
-      </header>
+      <Header
+        breadcrumbs={[
+          { label: 'Dashboard', href: '/' },
+          ...(project ? [{ label: project.name, href: `/project/${project.id}` }] : []),
+          ...(portal ? [{ label: portal.name, href: `/portal/${portalId}` }] : []),
+          { label: 'Submit Version' },
+        ]}
+      />
 
       {/* Content */}
       <main className="max-w-3xl mx-auto px-6 py-8">
-        <div className="mb-6">
-          <Link
-            href={`/portal/${portalId}`}
-            className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
-          >
-            &larr; Back to Portal
-          </Link>
-        </div>
-
         <h2 className="text-2xl font-semibold text-gray-900 mb-6">
           Submit New Version
         </h2>
