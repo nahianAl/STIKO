@@ -16,6 +16,9 @@ interface Comment {
 
 interface CommentsPanelProps {
   fileId: string | null;
+  onCommentClick?: (comment: Comment) => void;
+  activeCommentId?: string | null;
+  refreshKey?: number;
 }
 
 function timeAgo(dateStr: string): string {
@@ -37,19 +40,30 @@ function CommentItem({
   comment,
   replies,
   depth,
+  isActive,
+  onClick,
 }: {
   comment: Comment;
   replies: Comment[];
   depth: number;
+  isActive?: boolean;
+  onClick?: (comment: Comment) => void;
 }) {
+  const hasPosition = comment.xPosition !== null && comment.yPosition !== null;
   return (
-    <div className={depth > 0 ? 'ml-4 border-l-2 border-gray-100 pl-3' : ''}>
+    <div
+      id={`comment-${comment.id}`}
+      className={`${depth > 0 ? 'ml-4 border-l-2 border-gray-100 pl-3' : ''} ${
+        isActive ? 'bg-blue-50 rounded' : ''
+      } ${hasPosition && onClick ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+      onClick={hasPosition && onClick ? () => onClick(comment) : undefined}
+    >
       <div className="py-2">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-sm font-medium text-gray-900">
             {comment.author}
           </span>
-          {comment.xPosition !== null && comment.yPosition !== null && (
+          {hasPosition && (
             <svg
               className="h-3 w-3 text-blue-500"
               fill="currentColor"
@@ -71,7 +85,7 @@ function CommentItem({
   );
 }
 
-export default function CommentsPanel({ fileId }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [newComment, setNewComment] = useState('');
@@ -97,7 +111,15 @@ export default function CommentsPanel({ fileId }: CommentsPanelProps) {
 
   useEffect(() => {
     fetchComments();
-  }, [fetchComments]);
+  }, [fetchComments, refreshKey]);
+
+  // Scroll to active comment
+  useEffect(() => {
+    if (activeCommentId) {
+      const el = document.getElementById(`comment-${activeCommentId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeCommentId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,6 +194,8 @@ export default function CommentsPanel({ fileId }: CommentsPanelProps) {
                 comment={comment}
                 replies={repliesByParent[comment.id] ?? []}
                 depth={0}
+                isActive={activeCommentId === comment.id}
+                onClick={onCommentClick}
               />
             ))}
           </div>

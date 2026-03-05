@@ -7,6 +7,10 @@ import Button from '@/components/ui/Button';
 import VersionTimeline from '@/components/portal/VersionTimeline';
 import FileList from '@/components/portal/FileList';
 import CommentsPanel from '@/components/portal/CommentsPanel';
+import ViewerContainer from '@/components/viewers/ViewerContainer';
+import DrawingTools from '@/components/markup/DrawingTools';
+import MarkupOverlay from '@/components/markup/MarkupOverlay';
+import type { Comment } from '@/lib/types';
 
 interface Portal {
   id: string;
@@ -40,22 +44,7 @@ interface Participant {
   createdAt: string;
 }
 
-function getFileCategory(fileType: string, filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  if (fileType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
-    return 'image';
-  }
-  if (fileType.startsWith('video/') || ['mp4', 'mov', 'webm', 'avi'].includes(ext)) {
-    return 'video';
-  }
-  if (fileType === 'application/pdf' || ext === 'pdf') {
-    return 'pdf';
-  }
-  if (['glb', 'gltf'].includes(ext)) {
-    return '3d';
-  }
-  return 'other';
-}
+type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect';
 
 export default function PortalPage() {
   const params = useParams();
@@ -70,6 +59,27 @@ export default function PortalPage() {
   const [showParticipants, setShowParticipants] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filesLoading, setFilesLoading] = useState(false);
+
+  // Drawing tools state
+  const [activeTool, setActiveTool] = useState<ToolType>('pointer');
+  const [drawingColor, setDrawingColor] = useState('#ef4444');
+  const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(4);
+
+  // Comment linking state
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
+
+  // Comment placement popup state
+  const [commentPopup, setCommentPopup] = useState<{
+    x: number;
+    y: number;
+    percentX: number;
+    percentY: number;
+  } | null>(null);
+  const [commentPopupText, setCommentPopupText] = useState('');
+  const [commentPopupAuthor, setCommentPopupAuthor] = useState('Anonymous');
+  const [submittingComment, setSubmittingComment] = useState(false);
 
   // Fetch portal details
   useEffect(() => {
@@ -109,7 +119,7 @@ export default function PortalPage() {
         const data: Version[] = await res.json();
         setVersions(data);
         if (data.length > 0) {
-          setSelectedVersionId(data[0].id); // newest first from API
+          setSelectedVersionId(data[0].id);
         }
       } catch (err) {
         console.error('Failed to fetch versions:', err);
@@ -145,13 +155,77 @@ export default function PortalPage() {
     }
   }, [selectedVersionId, fetchFiles]);
 
+  // Fetch comments for the selected file (for pins)
+  const fetchComments = useCallback(async () => {
+    if (!selectedFileId) {
+      setComments([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/comments?fileId=${selectedFileId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setComments(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch comments for pins:', err);
+    }
+  }, [selectedFileId]);
+
+  useEffect(() => {
+    fetchComments();
+  }, [fetchComments, commentsRefreshKey]);
+
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
     setSelectedFileId(null);
     setFiles([]);
+    setActiveTool('pointer');
+    setActiveCommentId(null);
   };
 
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
+
+  // Comment placement handler
+  const handleCommentPlace = useCallback((percentX: number, percentY: number) => {
+    setCommentPopup({ x: percentX, y: percentY, percentX, percentY });
+    setCommentPopupText('');
+  }, []);
+
+  const handleCommentPopupSubmit = async () => {
+    if (!commentPopupText.trim() || !selectedFileId || !commentPopup) return;
+    setSubmittingComment(true);
+    try {
+      await fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: selectedFileId,
+          content: commentPopupText.trim(),
+          author: commentPopupAuthor.trim() || 'Anonymous',
+          xPosition: commentPopup.percentX,
+          yPosition: commentPopup.percentY,
+        }),
+      });
+      setCommentPopup(null);
+      setCommentPopupText('');
+      setCommentsRefreshKey((k) => k + 1);
+      await fetchComments();
+    } catch (err) {
+      console.error('Failed to post comment:', err);
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
+  // Comment <-> Pin linkage
+  const handleCommentPinClick = useCallback((comment: Comment) => {
+    setActiveCommentId(comment.id);
+  }, []);
+
+  const handleCommentClick = useCallback((comment: Comment) => {
+    setActiveCommentId(comment.id);
+  }, []);
 
   const renderFileViewer = () => {
     if (filesLoading) {
@@ -174,32 +248,7 @@ export default function PortalPage() {
       );
     }
 
-    const category = getFileCategory(selectedFile.fileType, selectedFile.filename);
-
-    if (category === 'image') {
-      return (
-        <div className="flex items-center justify-center h-full p-4 overflow-auto">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/${selectedFile.storageKey}`}
-            alt={selectedFile.filename}
-            className="max-w-full max-h-full object-contain rounded shadow-sm"
-          />
-        </div>
-      );
-    }
-
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-        <svg className="h-16 w-16 mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <p className="text-sm font-medium mb-1">{selectedFile.filename}</p>
-        <p className="text-xs text-gray-400">
-          {category === 'video' ? 'Video' : category === 'pdf' ? 'PDF' : category === '3d' ? '3D Model' : 'File'} viewer coming soon
-        </p>
-      </div>
-    );
+    return <ViewerContainer file={selectedFile} />;
   };
 
   if (loading) {
@@ -286,20 +335,95 @@ export default function PortalPage() {
           onSelectVersion={handleSelectVersion}
         />
 
-        {/* Center Panel: File Viewer */}
+        {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
         <div className="flex flex-col h-full overflow-hidden bg-gray-50">
           <FileList
             files={files}
             selectedFileId={selectedFileId}
             onSelectFile={setSelectedFileId}
           />
-          <div className="flex-1 overflow-hidden">
+          <DrawingTools
+            activeTool={activeTool}
+            onToolChange={setActiveTool}
+            color={drawingColor}
+            onColorChange={setDrawingColor}
+            strokeWidth={drawingStrokeWidth}
+            onStrokeWidthChange={setDrawingStrokeWidth}
+          />
+          <div className="relative flex-1 overflow-hidden">
             {renderFileViewer()}
+            {selectedFileId && (
+              <MarkupOverlay
+                fileId={selectedFileId}
+                activeTool={activeTool}
+                color={drawingColor}
+                strokeWidth={drawingStrokeWidth}
+                onCommentPlace={handleCommentPlace}
+                comments={comments}
+                activeCommentId={activeCommentId}
+                onCommentPinClick={handleCommentPinClick}
+              />
+            )}
+            {/* Comment placement popup */}
+            {commentPopup && (
+              <div
+                className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-3 w-64"
+                style={{
+                  left: `${Math.min(commentPopup.x, 70)}%`,
+                  top: `${Math.min(commentPopup.y, 70)}%`,
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="text"
+                  value={commentPopupAuthor}
+                  onChange={(e) => setCommentPopupAuthor(e.target.value)}
+                  placeholder="Your name"
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-xs mb-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+                <textarea
+                  autoFocus
+                  value={commentPopupText}
+                  onChange={(e) => setCommentPopupText(e.target.value)}
+                  placeholder="Add a comment..."
+                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm resize-none h-16 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleCommentPopupSubmit();
+                    }
+                    if (e.key === 'Escape') {
+                      setCommentPopup(null);
+                    }
+                  }}
+                />
+                <div className="flex justify-end gap-2 mt-2">
+                  <button
+                    onClick={() => setCommentPopup(null)}
+                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCommentPopupSubmit}
+                    disabled={submittingComment || !commentPopupText.trim()}
+                    className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {submittingComment ? '...' : 'Post'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Right Panel: Comments */}
-        <CommentsPanel fileId={selectedFileId} />
+        <CommentsPanel
+          fileId={selectedFileId}
+          onCommentClick={handleCommentClick}
+          activeCommentId={activeCommentId}
+          refreshKey={commentsRefreshKey}
+        />
       </div>
     </div>
   );
