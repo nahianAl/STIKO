@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteItem } from '@/lib/db';
-import { Markup } from '@/lib/types';
+import { sql } from '@/lib/db';
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const deleted = deleteItem<Markup>('markups', params.id);
-  if (!deleted) {
-    return NextResponse.json({ error: 'Markup not found' }, { status: 404 });
-  }
-  return NextResponse.json({ success: true }, { status: 200 });
+  const result = await sql`DELETE FROM markups WHERE id = ${params.id} RETURNING id`;
+  if (!result[0]) return NextResponse.json({ error: 'Markup not found' }, { status: 404 });
+  return NextResponse.json({ success: true });
 }

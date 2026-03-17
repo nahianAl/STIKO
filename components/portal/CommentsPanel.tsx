@@ -12,6 +12,7 @@ interface Comment {
   yPosition: number | null;
   author: string;
   createdAt: string;
+  snapshotUrl?: string | null;
 }
 
 interface CommentsPanelProps {
@@ -77,6 +78,19 @@ function CommentItem({
           </span>
         </div>
         <p className="text-sm text-gray-700">{comment.content}</p>
+        {comment.snapshotUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={comment.snapshotUrl}
+            alt="Annotated snapshot"
+            className="mt-2 w-full rounded border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+            style={{ maxHeight: 120 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.open(comment.snapshotUrl!, '_blank');
+            }}
+          />
+        )}
       </div>
       {replies.map((reply) => (
         <CommentItem key={reply.id} comment={reply} replies={[]} depth={depth + 1} />

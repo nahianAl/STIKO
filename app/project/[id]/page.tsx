@@ -40,6 +40,8 @@ export default function ProjectPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'viewer' | 'commenter' | 'uploader'>('viewer');
   const [inviting, setInviting] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const fetchProject = async () => {
     try {
@@ -94,7 +96,7 @@ export default function ProjectPage() {
     if (!inviteEmail.trim()) return;
     setInviting(true);
     try {
-      await fetch('/api/participants', {
+      const res = await fetch('/api/participants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -103,9 +105,15 @@ export default function ProjectPage() {
           role: inviteRole,
         }),
       });
+      const data = await res.json();
+      const base = window.location.origin;
+      // Viewers get the portal link directly; uploaders/commenters get an invite token link
+      const link = inviteRole === 'viewer'
+        ? `${base}/portal/${invitePortalId}`
+        : `${base}/invite/${data.token}`;
       setInviteEmail('');
       setInviteRole('viewer');
-      setInviteModalOpen(false);
+      setInviteLink(link);
     } catch (err) {
       console.error('Failed to invite participant:', err);
     } finally {
@@ -117,7 +125,16 @@ export default function ProjectPage() {
     setInvitePortalId(portalId);
     setInviteEmail('');
     setInviteRole('viewer');
+    setInviteLink(null);
+    setLinkCopied(false);
     setInviteModalOpen(true);
+  };
+
+  const handleCopyLink = () => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
   };
 
   return (
@@ -234,60 +251,82 @@ export default function ProjectPage() {
         onClose={() => setInviteModalOpen(false)}
         title="Invite Participant"
       >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleInvite();
-          }}
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="participant@example.com"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Role
-              </label>
-              <select
-                value={inviteRole}
-                onChange={(e) =>
-                  setInviteRole(
-                    e.target.value as 'viewer' | 'commenter' | 'uploader'
-                  )
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors bg-white"
+        {inviteLink ? (
+          <div>
+            <p className="text-sm text-gray-600 mb-3">
+              Participant added. Share this link with them:
+            </p>
+            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <span className="flex-1 text-xs text-gray-700 truncate font-mono">
+                {inviteLink}
+              </span>
+              <button
+                onClick={handleCopyLink}
+                className="flex-shrink-0 text-xs font-medium text-blue-600 hover:text-blue-700"
               >
-                <option value="viewer">Viewer</option>
-                <option value="commenter">Commenter</option>
-                <option value="uploader">Uploader</option>
-              </select>
+                {linkCopied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <div className="flex justify-end mt-4">
+              <Button onClick={() => setInviteModalOpen(false)}>Done</Button>
             </div>
           </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <Button
-              variant="secondary"
-              onClick={() => setInviteModalOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={inviting || !inviteEmail.trim()}
-            >
-              {inviting ? 'Inviting...' : 'Send Invite'}
-            </Button>
-          </div>
-        </form>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleInvite();
+            }}
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="participant@example.com"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Role
+                </label>
+                <select
+                  value={inviteRole}
+                  onChange={(e) =>
+                    setInviteRole(
+                      e.target.value as 'viewer' | 'commenter' | 'uploader'
+                    )
+                  }
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors bg-white"
+                >
+                  <option value="viewer">Viewer — can view files and comments</option>
+                  <option value="commenter">Commenter — can view and leave comments</option>
+                  <option value="uploader">Uploader — can submit new versions</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setInviteModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={inviting || !inviteEmail.trim()}
+              >
+                {inviting ? 'Adding...' : 'Add & Get Link'}
+              </Button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   );

@@ -1,25 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getById, deleteItem } from '@/lib/db';
-import { Project } from '@/lib/types';
+import { sql } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const project = getById<Project>('projects', params.id);
-  if (!project) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-  }
-  return NextResponse.json(project);
+  const rows = await sql`
+    SELECT id, owner_id AS "ownerId", name, created_at AS "createdAt"
+    FROM projects WHERE id = ${params.id}
+  `;
+  if (!rows[0]) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+  return NextResponse.json(rows[0]);
 }
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const deleted = deleteItem<Project>('projects', params.id);
-  if (!deleted) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-  }
-  return NextResponse.json({ success: true }, { status: 200 });
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const result = await sql`
+    DELETE FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+    RETURNING id
+  `;
+  if (!result[0]) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+  return NextResponse.json({ success: true });
 }

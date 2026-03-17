@@ -1,25 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getById, deleteItem } from '@/lib/db';
-import { Portal } from '@/lib/types';
+import { sql } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const portal = getById<Portal>('portals', params.id);
-  if (!portal) {
-    return NextResponse.json({ error: 'Portal not found' }, { status: 404 });
-  }
-  return NextResponse.json(portal);
+  const rows = await sql`
+    SELECT id, project_id AS "projectId", name, created_at AS "createdAt"
+    FROM portals WHERE id = ${params.id}
+  `;
+  if (!rows[0]) return NextResponse.json({ error: 'Portal not found' }, { status: 404 });
+  return NextResponse.json(rows[0]);
 }
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const deleted = deleteItem<Portal>('portals', params.id);
-  if (!deleted) {
-    return NextResponse.json({ error: 'Portal not found' }, { status: 404 });
-  }
-  return NextResponse.json({ success: true }, { status: 200 });
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const result = await sql`
+    DELETE FROM portals WHERE id = ${params.id}
+    RETURNING id
+  `;
+  if (!result[0]) return NextResponse.json({ error: 'Portal not found' }, { status: 404 });
+  return NextResponse.json({ success: true });
 }

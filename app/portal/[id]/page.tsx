@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
@@ -10,7 +10,7 @@ import FileList from '@/components/portal/FileList';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import ViewerContainer from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
-import MarkupOverlay from '@/components/markup/MarkupOverlay';
+import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
 
 interface Project {
@@ -53,6 +53,119 @@ interface Participant {
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect';
 
+// Captures the current viewer state as a JPEG data URL.
+// Tries WebGL canvas first (3D), then img, then video.
+function captureViewerSnapshot(container: HTMLElement): string | null {
+  // WebGL canvas (3D models, PDF)
+  const canvas = container.querySelector('canvas') as HTMLCanvasElement | null;
+  if (canvas) {
+    try {
+      return canvas.toDataURL('image/jpeg', 0.92);
+    } catch (e) {
+      console.error('Canvas capture failed:', e);
+    }
+  }
+
+  // Image viewer
+  const img = container.querySelector('img') as HTMLImageElement | null;
+  if (img && img.complete && img.naturalWidth > 0) {
+    const containerRect = container.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    const offscreen = document.createElement('canvas');
+    offscreen.width = containerRect.width;
+    offscreen.height = containerRect.height;
+    const ctx = offscreen.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#f9fafb';
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+      ctx.drawImage(
+        img,
+        imgRect.left - containerRect.left,
+        imgRect.top - containerRect.top,
+        imgRect.width,
+        imgRect.height
+      );
+      try {
+        return offscreen.toDataURL('image/jpeg', 0.92);
+      } catch (e) {
+        console.error('Image capture failed:', e);
+      }
+    }
+  }
+
+  // Video viewer
+  const video = container.querySelector('video') as HTMLVideoElement | null;
+  if (video && video.readyState >= 2 && video.videoWidth > 0) {
+    const containerRect = container.getBoundingClientRect();
+    const videoRect = video.getBoundingClientRect();
+    const offscreen = document.createElement('canvas');
+    offscreen.width = containerRect.width;
+    offscreen.height = containerRect.height;
+    const ctx = offscreen.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+      ctx.drawImage(
+        video,
+        videoRect.left - containerRect.left,
+        videoRect.top - containerRect.top,
+        videoRect.width,
+        videoRect.height
+      );
+      return offscreen.toDataURL('image/jpeg', 0.92);
+    }
+  }
+
+  return null;
+}
+
+// Composites a snapshot image with SVG markup into a single JPEG data URL.
+async function compositeSnapshotWithMarkup(
+  snapshotDataUrl: string,
+  svgElement: SVGSVGElement,
+  width: number,
+  height: number
+): Promise<string> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+
+  // Draw snapshot background
+  await new Promise<void>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve();
+    };
+    img.onerror = reject;
+    img.src = snapshotDataUrl;
+  });
+
+  // Draw SVG markup overlay — use base64 data URL (blob URLs can fail for SVG in some browsers)
+  const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
+  svgClone.setAttribute('width', String(width));
+  svgClone.setAttribute('height', String(height));
+  const svgData = new XMLSerializer().serializeToString(svgClone);
+  const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+
+  await new Promise<void>((resolve) => {
+    const svgImg = new Image();
+    svgImg.onload = () => {
+      ctx.drawImage(svgImg, 0, 0, width, height);
+      resolve();
+    };
+    // If SVG overlay fails, still resolve — snapshot without markup is better than nothing
+    svgImg.onerror = () => {
+      console.warn('SVG overlay failed to composite; snapshot will have no markup drawn on it');
+      resolve();
+    };
+    svgImg.src = svgDataUrl;
+  });
+
+  return canvas.toDataURL('image/jpeg', 0.88);
+}
+
 export default function PortalPage() {
   const params = useParams();
   const portalId = params.id as string;
@@ -89,6 +202,14 @@ export default function PortalPage() {
   const [commentPopupAuthor, setCommentPopupAuthor] = useState('Anonymous');
   const [submittingComment, setSubmittingComment] = useState(false);
 
+  // Snapshot state (annotation mode — frozen view for drawing)
+  const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
+  // Comment review mode — show a comment's snapshot in the viewport
+  const [viewportCommentSnapshot, setViewportCommentSnapshot] = useState<string | null>(null);
+  const viewerAreaRef = useRef<HTMLDivElement>(null);
+  const markupOverlayRef = useRef<MarkupOverlayHandle>(null);
+  const prevActiveToolRef = useRef<ToolType>('pointer');
+
   // Fetch portal details and parent project
   useEffect(() => {
     const fetchPortal = async () => {
@@ -97,7 +218,6 @@ export default function PortalPage() {
         if (res.ok) {
           const data = await res.json();
           setPortal(data);
-          // Fetch parent project for breadcrumbs
           try {
             const projRes = await fetch(`/api/projects/${data.projectId}`);
             if (projRes.ok) {
@@ -194,12 +314,40 @@ export default function PortalPage() {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
 
+  // Snapshot: capture when switching from pointer to a drawing/comment tool.
+  // Discard when returning to pointer.
+  useEffect(() => {
+    const prevTool = prevActiveToolRef.current;
+    prevActiveToolRef.current = activeTool;
+
+    if (activeTool === 'pointer') {
+      setViewerSnapshot(null);
+      return;
+    }
+
+    // Only capture on the transition from pointer → non-pointer
+    if (prevTool !== 'pointer') return;
+
+    const container = viewerAreaRef.current;
+    if (!container) return;
+
+    const snapshot = captureViewerSnapshot(container);
+    if (snapshot) setViewerSnapshot(snapshot);
+  }, [activeTool]);
+
+  // Discard snapshots when the selected file changes
+  useEffect(() => {
+    setViewerSnapshot(null);
+    setViewportCommentSnapshot(null);
+  }, [selectedFileId]);
+
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
     setSelectedFileId(null);
     setFiles([]);
     setActiveTool('pointer');
     setActiveCommentId(null);
+    setViewportCommentSnapshot(null);
   };
 
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
@@ -213,6 +361,35 @@ export default function PortalPage() {
   const handleCommentPopupSubmit = async () => {
     if (!commentPopupText.trim() || !selectedFileId || !commentPopup) return;
     setSubmittingComment(true);
+
+    // Composite snapshot + markup into a single image, then upload
+    let snapshotUrl: string | null = null;
+    if (viewerSnapshot && markupOverlayRef.current && viewerAreaRef.current) {
+      try {
+        const svgEl = markupOverlayRef.current.getSvgElement();
+        if (svgEl) {
+          const { clientWidth, clientHeight } = viewerAreaRef.current;
+          const composited = await compositeSnapshotWithMarkup(
+            viewerSnapshot,
+            svgEl,
+            clientWidth,
+            clientHeight
+          );
+          const res = await fetch('/api/snapshots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl: composited }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            snapshotUrl = data.url;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to create annotated snapshot:', e);
+      }
+    }
+
     try {
       await fetch('/api/comments', {
         method: 'POST',
@@ -223,10 +400,12 @@ export default function PortalPage() {
           author: commentPopupAuthor.trim() || 'Anonymous',
           xPosition: commentPopup.percentX,
           yPosition: commentPopup.percentY,
+          snapshotUrl,
         }),
       });
       setCommentPopup(null);
       setCommentPopupText('');
+      setActiveTool('pointer'); // return to live view, discard ephemeral drawings
       setCommentsRefreshKey((k) => k + 1);
       await fetchComments();
     } catch (err) {
@@ -236,13 +415,27 @@ export default function PortalPage() {
     }
   };
 
-  // Comment <-> Pin linkage
+  // Comment <-> Pin linkage — clicking a comment with a snapshot shows it in the viewport
   const handleCommentPinClick = useCallback((comment: Comment) => {
-    setActiveCommentId(comment.id);
+    setActiveCommentId((prev) => {
+      if (prev === comment.id) {
+        setViewportCommentSnapshot(null);
+        return null;
+      }
+      setViewportCommentSnapshot(comment.snapshotUrl ?? null);
+      return comment.id;
+    });
   }, []);
 
   const handleCommentClick = useCallback((comment: Comment) => {
-    setActiveCommentId(comment.id);
+    setActiveCommentId((prev) => {
+      if (prev === comment.id) {
+        setViewportCommentSnapshot(null);
+        return null;
+      }
+      setViewportCommentSnapshot((comment as Comment & { snapshotUrl?: string | null }).snapshotUrl ?? null);
+      return comment.id;
+    });
   }, []);
 
   const renderFileViewer = () => {
@@ -262,6 +455,46 @@ export default function PortalPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
           </svg>
           <p className="text-sm">Select a file to view</p>
+        </div>
+      );
+    }
+
+    // Annotation mode: frozen snapshot for drawing on
+    if (viewerSnapshot) {
+      return (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={viewerSnapshot}
+          alt="Viewer snapshot"
+          className="absolute inset-0 w-full h-full object-contain bg-gray-100"
+          draggable={false}
+        />
+      );
+    }
+
+    // Comment review mode: show the selected comment's annotated snapshot
+    if (viewportCommentSnapshot) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={viewportCommentSnapshot}
+            alt="Comment snapshot"
+            className="max-w-full max-h-full object-contain"
+            draggable={false}
+          />
+          <button
+            onClick={() => {
+              setViewportCommentSnapshot(null);
+              setActiveCommentId(null);
+            }}
+            className="absolute top-3 right-3 flex items-center gap-1.5 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+              <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Back to live view
+          </button>
         </div>
       );
     }
@@ -357,10 +590,20 @@ export default function PortalPage() {
             strokeWidth={drawingStrokeWidth}
             onStrokeWidthChange={setDrawingStrokeWidth}
           />
-          <div className="relative flex-1 overflow-hidden">
+
+          {/* Annotation mode indicator */}
+          {viewerSnapshot && (
+            <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-xs text-amber-700 flex-shrink-0">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+              Annotating snapshot — select pointer to return to live view
+            </div>
+          )}
+
+          <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden">
             {renderFileViewer()}
-            {selectedFileId && (
+            {selectedFileId && !viewportCommentSnapshot && (
               <MarkupOverlay
+                ref={markupOverlayRef}
                 fileId={selectedFileId}
                 activeTool={activeTool}
                 color={drawingColor}
@@ -369,6 +612,7 @@ export default function PortalPage() {
                 comments={comments}
                 activeCommentId={activeCommentId}
                 onCommentPinClick={handleCommentPinClick}
+                ephemeral={!!viewerSnapshot}
               />
             )}
             {/* Comment placement popup */}

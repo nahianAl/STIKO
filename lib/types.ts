@@ -45,6 +45,7 @@ export interface Comment {
   yPosition: number | null;
   author: string;
   createdAt: string;
+  snapshotUrl?: string | null;
 }
 
 export interface Markup {

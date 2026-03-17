@@ -3,7 +3,9 @@
 import { FileRecord } from '@/lib/types';
 import ImageViewer from './ImageViewer';
 import VideoViewer from './VideoViewer';
-import PDFViewer from './PDFViewer';
+import dynamic from 'next/dynamic';
+
+const PDFViewer = dynamic(() => import('./PDFViewer'), { ssr: false });
 import ModelViewer from './ModelViewer';
 
 interface ViewerContainerProps {

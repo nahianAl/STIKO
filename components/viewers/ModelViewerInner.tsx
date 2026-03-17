@@ -19,6 +19,7 @@ export default function ModelViewerInner({ url }: ModelViewerInnerProps) {
       <Canvas
         camera={{ position: [3, 3, 3], fov: 50 }}
         style={{ background: '#f0f0f0' }}
+        gl={{ preserveDrawingBuffer: true }}
       >
         <Suspense
           fallback={
