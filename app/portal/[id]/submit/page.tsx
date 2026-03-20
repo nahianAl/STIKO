@@ -73,20 +73,55 @@ export default function SubmitVersionPage() {
 
       const version = await versionRes.json();
 
-      // Step 2: Upload files
-      const formData = new FormData();
-      formData.append('versionId', version.id);
+      // Step 2: Upload each file via presigned URL → R2
       for (const file of files) {
-        formData.append('files', file);
-      }
+        // 2a: Get presigned URL from our API
+        const presignRes = await fetch('/api/files/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            versionId: version.id,
+            projectId: portal!.projectId,
+            portalId,
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+          }),
+        });
 
-      const uploadRes = await fetch('/api/files/upload', {
-        method: 'POST',
-        body: formData,
-      });
+        if (!presignRes.ok) {
+          throw new Error(`Failed to get upload URL for ${file.name}`);
+        }
 
-      if (!uploadRes.ok) {
-        throw new Error('Failed to upload files');
+        const { fileId, presignedUrl, storageKey } = await presignRes.json();
+
+        // 2b: Upload directly to R2
+        const uploadRes = await fetch(presignedUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Failed to upload ${file.name}`);
+        }
+
+        // 2c: Register file in database
+        const completeRes = await fetch('/api/files/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileId,
+            versionId: version.id,
+            filename: file.name,
+            storageKey,
+            fileSize: file.size,
+            fileType: file.type || 'application/octet-stream',
+          }),
+        });
+
+        if (!completeRes.ok) {
+          throw new Error(`Failed to register ${file.name}`);
+        }
       }
 
       // Step 3: Redirect back to portal
