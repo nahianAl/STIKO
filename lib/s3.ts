@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 if (!process.env.R2_ACCESS_KEY_ID) throw new Error('R2_ACCESS_KEY_ID is not set');
@@ -27,6 +27,18 @@ export async function getUploadPresignedUrl(
     Bucket: BUCKET,
     Key: storageKey,
     ContentType: contentType,
+  });
+  return getSignedUrl(s3, command, { expiresIn });
+}
+
+// Generate a presigned URL for a direct client ← R2 GET download
+export async function getDownloadPresignedUrl(
+  storageKey: string,
+  expiresIn = 3600 // 1 hour
+): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: storageKey,
   });
   return getSignedUrl(s3, command, { expiresIn });
 }

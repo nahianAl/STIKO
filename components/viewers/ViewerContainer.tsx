@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { FileRecord } from '@/lib/types';
 import ImageViewer from './ImageViewer';
 import VideoViewer from './VideoViewer';
@@ -25,7 +26,36 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({ file }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
-  const url = `/${file.storageKey}`;
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setUrl(null);
+    setError(false);
+    fetch(`/api/files/url?key=${encodeURIComponent(file.storageKey)}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to get file URL');
+        return res.json();
+      })
+      .then(data => setUrl(data.url))
+      .catch(() => setError(true));
+  }, [file.storageKey]);
+
+  if (error) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <p className="text-red-500">Failed to load file</p>
+      </div>
+    );
+  }
+
+  if (!url) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+      </div>
+    );
+  }
 
   if (IMAGE_EXTENSIONS.includes(ext)) {
     return <ImageViewer url={url} />;
