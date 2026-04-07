@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import type { ModelViewerInnerProps } from './ModelViewerInner';
 
 const ModelViewerInner = dynamic(() => import('./ModelViewerInner'), {
   ssr: false,
@@ -11,10 +12,8 @@ const ModelViewerInner = dynamic(() => import('./ModelViewerInner'), {
   ),
 });
 
-interface ModelViewerProps {
-  url: string;
-}
+export type { WorldPin, PinScreenPosition } from './ModelViewerInner';
 
-export default function ModelViewer({ url }: ModelViewerProps) {
-  return <ModelViewerInner url={url} />;
+export default function ModelViewer(props: ModelViewerInnerProps) {
+  return <ModelViewerInner {...props} />;
 }

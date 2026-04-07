@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
   const rows = await sql`
     SELECT id, file_id AS "fileId", user_id AS "userId", parent_comment_id AS "parentCommentId",
            content, x_position AS "xPosition", y_position AS "yPosition",
+           world_x AS "worldX", world_y AS "worldY", world_z AS "worldZ",
            snapshot_url AS "snapshotUrl", author, created_at AS "createdAt"
     FROM comments WHERE file_id = ${fileId}
     ORDER BY created_at ASC
@@ -20,7 +21,6 @@ export async function GET(request: NextRequest) {
   const resolved = await Promise.all(
     rows.map(async (row) => {
       if (row.snapshotUrl && !row.snapshotUrl.startsWith('http') && !row.snapshotUrl.startsWith('data:')) {
-        // It's a storage key — generate a presigned URL
         try {
           const presignedUrl = await getDownloadPresignedUrl(row.snapshotUrl);
           return { ...row, snapshotUrl: presignedUrl };
@@ -37,22 +37,24 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const session = await auth();
-  const { fileId, content, xPosition, yPosition, parentCommentId, author, snapshotUrl } =
+  const { fileId, content, xPosition, yPosition, worldX, worldY, worldZ, parentCommentId, author, snapshotUrl } =
     await request.json();
 
-  // Use session user name/email if available, fall back to provided author
   const resolvedAuthor = session?.user?.name || session?.user?.email || author || 'Anonymous';
 
   const id = uuidv4();
   const rows = await sql`
     INSERT INTO comments (id, file_id, user_id, parent_comment_id, content,
-                          x_position, y_position, snapshot_url, author)
+                          x_position, y_position, world_x, world_y, world_z,
+                          snapshot_url, author)
     VALUES (${id}, ${fileId}, ${session?.user?.id ?? null}, ${parentCommentId ?? null},
             ${content}, ${xPosition ?? null}, ${yPosition ?? null},
+            ${worldX ?? null}, ${worldY ?? null}, ${worldZ ?? null},
             ${snapshotUrl ?? null}, ${resolvedAuthor})
     RETURNING id, file_id AS "fileId", user_id AS "userId",
               parent_comment_id AS "parentCommentId", content,
               x_position AS "xPosition", y_position AS "yPosition",
+              world_x AS "worldX", world_y AS "worldY", world_z AS "worldZ",
               snapshot_url AS "snapshotUrl", author, created_at AS "createdAt"
   `;
   return NextResponse.json(rows[0], { status: 201 });

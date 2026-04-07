@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import Header from '@/components/ui/Header';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
-import ViewerContainer from '@/components/viewers/ViewerContainer';
+import ViewerContainer, { type WorldPin, type PinScreenPosition } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
@@ -55,6 +55,8 @@ interface Participant {
 }
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect';
+
+const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp'];
 
 // Captures the current viewer state as a JPEG data URL.
 // Tries WebGL canvas first (3D), then img, then video.
@@ -201,6 +203,9 @@ export default function PortalPage() {
     y: number;
     percentX: number;
     percentY: number;
+    worldX?: number;
+    worldY?: number;
+    worldZ?: number;
   } | null>(null);
   const [commentPopupText, setCommentPopupText] = useState('');
   const [commentPopupAuthor, setCommentPopupAuthor] = useState('Anonymous');
@@ -213,6 +218,44 @@ export default function PortalPage() {
   const viewerAreaRef = useRef<HTMLDivElement>(null);
   const markupOverlayRef = useRef<MarkupOverlayHandle>(null);
   const prevActiveToolRef = useRef<ToolType>('pointer');
+
+  // Selected file (needed before 3D state)
+  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
+
+  // 3D comment pin state
+  const [worldPinPositions, setWorldPinPositions] = useState<Map<string, PinScreenPosition>>(new Map());
+
+  const is3DFile = useMemo(() => {
+    if (!selectedFile) return false;
+    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
+    return MODEL_3D_EXTENSIONS.includes(`.${ext}`);
+  }, [selectedFile]);
+
+  const worldPins: WorldPin[] = useMemo(() => {
+    return comments
+      .filter((c) => c.worldX !== null && c.worldY !== null && c.worldZ !== null)
+      .map((c) => ({ id: c.id, worldX: c.worldX!, worldY: c.worldY!, worldZ: c.worldZ! }));
+  }, [comments]);
+
+  const handleSceneClick = useCallback(
+    (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => {
+      setCommentPopup({
+        x: screenPercent.x,
+        y: screenPercent.y,
+        percentX: screenPercent.x,
+        percentY: screenPercent.y,
+        worldX: worldPoint.x,
+        worldY: worldPoint.y,
+        worldZ: worldPoint.z,
+      });
+      setCommentPopupText('');
+    },
+    []
+  );
+
+  const handlePinPositionsUpdate = useCallback((positions: Map<string, PinScreenPosition>) => {
+    setWorldPinPositions(positions);
+  }, []);
 
   // Fetch portal details and parent project
   useEffect(() => {
@@ -354,8 +397,6 @@ export default function PortalPage() {
     setViewportCommentSnapshot(null);
   };
 
-  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
-
   // Comment placement handler
   const handleCommentPlace = useCallback((percentX: number, percentY: number) => {
     setCommentPopup({ x: percentX, y: percentY, percentX, percentY });
@@ -404,6 +445,9 @@ export default function PortalPage() {
           author: commentPopupAuthor.trim() || 'Anonymous',
           xPosition: commentPopup.percentX,
           yPosition: commentPopup.percentY,
+          worldX: commentPopup.worldX ?? null,
+          worldY: commentPopup.worldY ?? null,
+          worldZ: commentPopup.worldZ ?? null,
           snapshotUrl,
         }),
       });
@@ -503,7 +547,15 @@ export default function PortalPage() {
       );
     }
 
-    return <ViewerContainer file={selectedFile} />;
+    return (
+      <ViewerContainer
+        file={selectedFile}
+        commentToolActive={is3DFile && activeTool === 'comment'}
+        onSceneClick={handleSceneClick}
+        worldPins={worldPins}
+        onPinPositionsUpdate={handlePinPositionsUpdate}
+      />
+    );
   };
 
   if (loading) {
@@ -615,6 +667,8 @@ export default function PortalPage() {
                 activeCommentId={activeCommentId}
                 onCommentPinClick={handleCommentPinClick}
                 ephemeral={!!viewerSnapshot}
+                is3DFile={is3DFile}
+                worldPinPositions={worldPinPositions}
               />
             )}
             {/* Comment placement popup */}

@@ -30,6 +30,7 @@ export async function PUT(
     RETURNING id, file_id AS "fileId", user_id AS "userId",
               parent_comment_id AS "parentCommentId", content,
               x_position AS "xPosition", y_position AS "yPosition",
+              world_x AS "worldX", world_y AS "worldY", world_z AS "worldZ",
               snapshot_url AS "snapshotUrl", author, created_at AS "createdAt"
   `;
 

@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS comments (
   content TEXT NOT NULL,
   x_position FLOAT,
   y_position FLOAT,
+  world_x FLOAT,
+  world_y FLOAT,
+  world_z FLOAT,
   snapshot_url TEXT,
   author TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()

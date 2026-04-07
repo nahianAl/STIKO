@@ -8,9 +8,16 @@ import dynamic from 'next/dynamic';
 
 const PDFViewer = dynamic(() => import('./PDFViewer'), { ssr: false });
 import ModelViewer from './ModelViewer';
+import type { WorldPin, PinScreenPosition } from './ModelViewer';
+
+export type { WorldPin, PinScreenPosition };
 
 interface ViewerContainerProps {
   file: FileRecord;
+  commentToolActive?: boolean;
+  onSceneClick?: (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => void;
+  worldPins?: WorldPin[];
+  onPinPositionsUpdate?: (positions: Map<string, PinScreenPosition>) => void;
 }
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
@@ -24,7 +31,7 @@ function getExtension(filename: string): string {
   return filename.slice(idx).toLowerCase();
 }
 
-export default function ViewerContainer({ file }: ViewerContainerProps) {
+export default function ViewerContainer({ file, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -135,7 +142,7 @@ export default function ViewerContainer({ file }: ViewerContainerProps) {
     }
     // completed — render ModelViewer with converted GLB
     if (url) {
-      return <ModelViewer url={url} />;
+      return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} />;
     }
     return (
       <div className="flex h-full w-full items-center justify-center">
@@ -155,7 +162,7 @@ export default function ViewerContainer({ file }: ViewerContainerProps) {
   if (IMAGE_EXTENSIONS.includes(ext)) return <ImageViewer url={url} />;
   if (VIDEO_EXTENSIONS.includes(ext)) return <VideoViewer url={url} />;
   if (PDF_EXTENSIONS.includes(ext)) return <PDFViewer url={url} />;
-  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} />;
+  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} />;
 
   return (
     <div className="flex h-full w-full items-center justify-center">

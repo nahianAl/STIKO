@@ -6,6 +6,12 @@ import type { Markup, Comment } from '@/lib/types';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect';
 
+interface PinScreenPosition {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
 interface MarkupOverlayProps {
   fileId: string;
   activeTool: ToolType;
@@ -17,6 +23,10 @@ interface MarkupOverlayProps {
   onCommentPinClick: (comment: Comment) => void;
   // When true: drawings are session-only (not saved to DB, stored markups not shown)
   ephemeral?: boolean;
+  // 3D support: when true, comment tool clicks pass through to canvas for raycasting
+  is3DFile?: boolean;
+  // Projected screen positions for world-space pins, updated every frame
+  worldPinPositions?: Map<string, PinScreenPosition>;
 }
 
 export interface MarkupOverlayHandle {
@@ -44,6 +54,8 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
       activeCommentId,
       onCommentPinClick,
       ephemeral = false,
+      is3DFile = false,
+      worldPinPositions,
     },
     ref
   ) {
@@ -308,17 +320,19 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
 
     const previewData = getPreviewData();
     const isInteractive = activeTool !== 'pointer';
+    // For 3D files with comment tool: let clicks pass through to the canvas for raycasting
+    const passThrough3DComment = is3DFile && activeTool === 'comment';
 
-    // Positional comments for pins
+    // Positional comments for pins — either 2D (xPosition/yPosition) or 3D (worldX/Y/Z projected)
     const positionalComments = comments.filter(
-      (c) => c.xPosition !== null && c.yPosition !== null
+      (c) => (c.xPosition !== null && c.yPosition !== null) || (c.worldX !== null && c.worldY !== null && c.worldZ !== null)
     );
 
     return (
       <div
         ref={containerRef}
         className="absolute inset-0"
-        style={{ pointerEvents: isInteractive ? 'all' : 'none' }}
+        style={{ pointerEvents: passThrough3DComment ? 'none' : (isInteractive ? 'all' : 'none') }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -361,16 +375,40 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
         </svg>
 
         {/* Comment pins layer */}
-        {positionalComments.map((comment, idx) => (
-          <CommentPin
-            key={comment.id}
-            index={idx + 1}
-            x={comment.xPosition!}
-            y={comment.yPosition!}
-            isActive={activeCommentId === comment.id}
-            onClick={() => onCommentPinClick(comment)}
-          />
-        ))}
+        {positionalComments.map((comment, idx) => {
+          const isWorldPin = comment.worldX !== null && comment.worldY !== null && comment.worldZ !== null;
+          let pinX: number;
+          let pinY: number;
+          let pinVisible = true;
+
+          if (isWorldPin && worldPinPositions) {
+            const projected = worldPinPositions.get(comment.id);
+            if (!projected || !projected.visible) {
+              pinVisible = false;
+              pinX = 0;
+              pinY = 0;
+            } else {
+              pinX = projected.x;
+              pinY = projected.y;
+            }
+          } else {
+            pinX = comment.xPosition ?? 0;
+            pinY = comment.yPosition ?? 0;
+          }
+
+          if (!pinVisible) return null;
+
+          return (
+            <CommentPin
+              key={comment.id}
+              index={idx + 1}
+              x={pinX}
+              y={pinY}
+              isActive={activeCommentId === comment.id}
+              onClick={() => onCommentPinClick(comment)}
+            />
+          );
+        })}
       </div>
     );
   }

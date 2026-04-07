@@ -2,18 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Button from '@/components/ui/Button';
-
-interface Comment {
-  id: string;
-  fileId: string;
-  parentCommentId: string | null;
-  content: string;
-  xPosition: number | null;
-  yPosition: number | null;
-  author: string;
-  createdAt: string;
-  snapshotUrl?: string | null;
-}
+import type { Comment } from '@/lib/types';
 
 interface CommentsPanelProps {
   fileId: string | null;

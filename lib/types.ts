@@ -49,6 +49,9 @@ export interface Comment {
   content: string;
   xPosition: number | null;
   yPosition: number | null;
+  worldX: number | null;
+  worldY: number | null;
+  worldZ: number | null;
   author: string;
   createdAt: string;
   snapshotUrl?: string | null;
