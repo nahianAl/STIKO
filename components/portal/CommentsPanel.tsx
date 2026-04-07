@@ -20,6 +20,8 @@ interface CommentsPanelProps {
   onCommentClick?: (comment: Comment) => void;
   activeCommentId?: string | null;
   refreshKey?: number;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -99,7 +101,7 @@ function CommentItem({
   );
 }
 
-export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [newComment, setNewComment] = useState('');
@@ -176,15 +178,51 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
 
+  // Collapsed state: narrow strip with toggle + comment count
+  if (collapsed) {
+    return (
+      <div className="flex flex-col items-center h-full bg-white border-l border-gray-200 py-3 px-1">
+        <button
+          onClick={onToggleCollapse}
+          className="p-1.5 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
+          title="Expand comments"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="mt-3 flex flex-col items-center gap-1">
+          <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          {comments.length > 0 && (
+            <span className="text-xs font-medium text-gray-500">{comments.length}</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-white border-l border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200">
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-900">
           Comments{' '}
           <span className="text-gray-400 font-normal">
             ({comments.length})
           </span>
         </h3>
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+            title="Collapse comments"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-2">

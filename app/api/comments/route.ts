@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { getDownloadPresignedUrl } from '@/lib/s3';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -14,7 +15,24 @@ export async function GET(request: NextRequest) {
     FROM comments WHERE file_id = ${fileId}
     ORDER BY created_at ASC
   `;
-  return NextResponse.json(rows);
+
+  // Resolve snapshot storage keys to presigned download URLs
+  const resolved = await Promise.all(
+    rows.map(async (row) => {
+      if (row.snapshotUrl && !row.snapshotUrl.startsWith('http') && !row.snapshotUrl.startsWith('data:')) {
+        // It's a storage key — generate a presigned URL
+        try {
+          const presignedUrl = await getDownloadPresignedUrl(row.snapshotUrl);
+          return { ...row, snapshotUrl: presignedUrl };
+        } catch {
+          return row;
+        }
+      }
+      return row;
+    })
+  );
+
+  return NextResponse.json(resolved);
 }
 
 export async function POST(request: NextRequest) {
@@ -22,13 +40,16 @@ export async function POST(request: NextRequest) {
   const { fileId, content, xPosition, yPosition, parentCommentId, author, snapshotUrl } =
     await request.json();
 
+  // Use session user name/email if available, fall back to provided author
+  const resolvedAuthor = session?.user?.name || session?.user?.email || author || 'Anonymous';
+
   const id = uuidv4();
   const rows = await sql`
     INSERT INTO comments (id, file_id, user_id, parent_comment_id, content,
                           x_position, y_position, snapshot_url, author)
     VALUES (${id}, ${fileId}, ${session?.user?.id ?? null}, ${parentCommentId ?? null},
             ${content}, ${xPosition ?? null}, ${yPosition ?? null},
-            ${snapshotUrl ?? null}, ${author})
+            ${snapshotUrl ?? null}, ${resolvedAuthor})
     RETURNING id, file_id AS "fileId", user_id AS "userId",
               parent_comment_id AS "parentCommentId", content,
               x_position AS "xPosition", y_position AS "yPosition",

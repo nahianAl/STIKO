@@ -183,6 +183,7 @@ export default function PortalPage() {
   const [showParticipants, setShowParticipants] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filesLoading, setFilesLoading] = useState(false);
+  const [commentsCollapsed, setCommentsCollapsed] = useState(false);
 
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
@@ -385,7 +386,7 @@ export default function PortalPage() {
           });
           if (res.ok) {
             const data = await res.json();
-            snapshotUrl = data.url;
+            snapshotUrl = data.storageKey;
           }
         }
       } catch (e) {
@@ -570,7 +571,7 @@ export default function PortalPage() {
       />
 
       {/* 3-Panel Layout */}
-      <div className="flex-1 grid grid-cols-[280px_1fr_320px] h-[calc(100vh-64px)]">
+      <div className={`flex-1 grid h-[calc(100vh-64px)] ${commentsCollapsed ? 'grid-cols-[280px_1fr_48px]' : 'grid-cols-[280px_1fr_320px]'}`}>
         {/* Left Panel: File Tree Sidebar */}
         <FileTreeSidebar
           versions={versions}
@@ -675,6 +676,8 @@ export default function PortalPage() {
           onCommentClick={handleCommentClick}
           activeCommentId={activeCommentId}
           refreshKey={commentsRefreshKey}
+          collapsed={commentsCollapsed}
+          onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
         />
       </div>
     </div>

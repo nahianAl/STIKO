@@ -8,6 +8,8 @@ const PUBLIC_PATHS = [
   '/api/auth',
   '/api/conversions/webhook',
   '/api/files',
+  '/api/comments',
+  '/api/snapshots',
 ];
 
 // Paths that require auth
