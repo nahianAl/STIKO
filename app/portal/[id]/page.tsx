@@ -363,11 +363,18 @@ export default function PortalPage() {
 
   // Snapshot: capture when switching from pointer to a drawing/comment tool.
   // Discard when returning to pointer.
+  // For 3D files + comment tool: skip snapshot so the canvas stays live for raycasting.
   useEffect(() => {
     const prevTool = prevActiveToolRef.current;
     prevActiveToolRef.current = activeTool;
 
     if (activeTool === 'pointer') {
+      setViewerSnapshot(null);
+      return;
+    }
+
+    // 3D comment tool needs a live canvas for raycasting — don't freeze
+    if (is3DFile && activeTool === 'comment') {
       setViewerSnapshot(null);
       return;
     }
@@ -380,7 +387,7 @@ export default function PortalPage() {
 
     const snapshot = captureViewerSnapshot(container);
     if (snapshot) setViewerSnapshot(snapshot);
-  }, [activeTool]);
+  }, [activeTool, is3DFile]);
 
   // Discard snapshots when the selected file changes
   useEffect(() => {
