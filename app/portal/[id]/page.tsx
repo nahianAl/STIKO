@@ -231,12 +231,6 @@ export default function PortalPage() {
     return MODEL_3D_EXTENSIONS.includes(`.${ext}`);
   }, [selectedFile]);
 
-  const isPDFFile = useMemo(() => {
-    if (!selectedFile) return false;
-    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
-    return ext === 'pdf';
-  }, [selectedFile]);
-
   const worldPins: WorldPin[] = useMemo(() => {
     return comments
       .filter((c) => c.worldX !== null && c.worldY !== null && c.worldZ !== null)
@@ -683,16 +677,6 @@ export default function PortalPage() {
             <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-xs text-amber-700 flex-shrink-0">
               <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
               Annotating snapshot — select pointer to return to live view
-            </div>
-          )}
-
-          {/* PDF markup limitation note */}
-          {isPDFFile && activeTool !== 'pointer' && !viewerSnapshot && (
-            <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
-              <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              PDF markup is not yet supported
             </div>
           )}
 

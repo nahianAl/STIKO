@@ -466,10 +466,10 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
         {/* Text tool input popup */}
         {textPopup && (
           <div
-            className="absolute z-30"
+            className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-2"
             style={{
-              left: `${Math.min(textPopup.x, 75)}%`,
-              top: `${Math.min(textPopup.y, 85)}%`,
+              left: `${Math.min(textPopup.x, 70)}%`,
+              top: `${Math.min(textPopup.y, 80)}%`,
             }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -480,8 +480,8 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
               placeholder="Type text..."
-              className="rounded border border-gray-300 bg-white px-2 py-1 text-sm shadow-md focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-              style={{ minWidth: 120 }}
+              className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              style={{ minWidth: 150 }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -492,8 +492,22 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
                   setTextInput('');
                 }
               }}
-              onBlur={handleTextSubmit}
             />
+            <div className="flex justify-end gap-1.5 mt-1.5">
+              <button
+                onClick={() => { setTextPopup(null); setTextInput(''); }}
+                className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTextSubmit}
+                disabled={!textInput.trim()}
+                className="px-2.5 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
           </div>
         )}
       </div>

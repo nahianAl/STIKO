@@ -23,6 +23,7 @@ export default function VideoViewer({ url, frozen = false }: VideoViewerProps) {
         ref={videoRef}
         src={url}
         controls
+        crossOrigin="anonymous"
         className="max-h-full max-w-full"
         style={{ maxHeight: '80vh' }}
       >
