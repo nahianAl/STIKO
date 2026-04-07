@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   '/invite',
   '/api/auth',
   '/api/conversions/webhook',
+  '/api/files',
 ];
 
 // Paths that require auth
