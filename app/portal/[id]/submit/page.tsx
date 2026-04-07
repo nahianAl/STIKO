@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Button from '@/components/ui/Button';
-import FileDropzone from '@/components/ui/FileDropzone';
+import FileDropzone, { type FileWithPath } from '@/components/ui/FileDropzone';
 import Header from '@/components/ui/Header';
 
 interface Project {
@@ -26,7 +26,7 @@ export default function SubmitVersionPage() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [portal, setPortal] = useState<Portal | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<FileWithPath[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,7 +74,11 @@ export default function SubmitVersionPage() {
       const version = await versionRes.json();
 
       // Step 2: Upload each file via presigned URL → R2
-      for (const file of files) {
+      for (const { file, path } of files) {
+        // Extract folder path (everything before the last /)
+        const lastSlash = path.lastIndexOf('/');
+        const folderPath = lastSlash > 0 ? path.substring(0, lastSlash) : null;
+
         // 2a: Get presigned URL from our API
         const presignRes = await fetch('/api/files/upload', {
           method: 'POST',
@@ -116,6 +120,7 @@ export default function SubmitVersionPage() {
             storageKey,
             fileSize: file.size,
             fileType: file.type || 'application/octet-stream',
+            folderPath,
           }),
         });
 

@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS files (
   conversion_status TEXT DEFAULT NULL CHECK (conversion_status IN ('pending', 'processing', 'completed', 'failed')),
   converted_storage_key TEXT DEFAULT NULL,
   conversion_job_id TEXT DEFAULT NULL,
+  folder_path TEXT DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

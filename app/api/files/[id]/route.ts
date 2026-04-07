@@ -11,6 +11,7 @@ export async function GET(
            conversion_status AS "conversionStatus",
            converted_storage_key AS "convertedStorageKey",
            conversion_job_id AS "conversionJobId",
+           folder_path AS "folderPath",
            created_at AS "createdAt"
     FROM files WHERE id = ${params.id}
   `;

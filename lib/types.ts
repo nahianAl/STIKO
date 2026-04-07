@@ -37,6 +37,7 @@ export interface FileRecord {
   conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
   convertedStorageKey: string | null;
   conversionJobId: string | null;
+  folderPath: string | null;
 }
 
 export const STEP_EXTENSIONS = ['.step', '.stp'];

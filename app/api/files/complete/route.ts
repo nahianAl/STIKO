@@ -6,19 +6,20 @@ import { getDownloadPresignedUrl } from '@/lib/s3';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
-  const { fileId, versionId, filename, storageKey, fileSize, fileType } = await request.json();
+  const { fileId, versionId, filename, storageKey, fileSize, fileType, folderPath } = await request.json();
 
   const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : '';
   const needsConversion = STEP_EXTENSIONS.includes(ext);
 
   const rows = await sql`
-    INSERT INTO files (id, version_id, filename, storage_key, file_size, file_type, conversion_status)
+    INSERT INTO files (id, version_id, filename, storage_key, file_size, file_type, conversion_status, folder_path)
     VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${fileSize}, ${fileType},
-            ${needsConversion ? 'pending' : null})
+            ${needsConversion ? 'pending' : null}, ${folderPath || null})
     RETURNING id, version_id AS "versionId", filename, storage_key AS "storageKey",
               file_size AS "fileSize", file_type AS "fileType",
               conversion_status AS "conversionStatus",
               converted_storage_key AS "convertedStorageKey",
+              folder_path AS "folderPath",
               created_at AS "createdAt"
   `;
 

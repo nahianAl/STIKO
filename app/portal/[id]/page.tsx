@@ -5,8 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import Header from '@/components/ui/Header';
-import VersionTimeline from '@/components/portal/VersionTimeline';
-import FileList from '@/components/portal/FileList';
+import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import ViewerContainer from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
@@ -44,6 +43,7 @@ interface FileRecord {
   conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
   convertedStorageKey: string | null;
   conversionJobId: string | null;
+  folderPath: string | null;
 }
 
 interface Participant {
@@ -571,20 +571,18 @@ export default function PortalPage() {
 
       {/* 3-Panel Layout */}
       <div className="flex-1 grid grid-cols-[280px_1fr_320px] h-[calc(100vh-64px)]">
-        {/* Left Panel: Version Timeline */}
-        <VersionTimeline
+        {/* Left Panel: File Tree Sidebar */}
+        <FileTreeSidebar
           versions={versions}
           selectedVersionId={selectedVersionId}
           onSelectVersion={handleSelectVersion}
+          files={files}
+          selectedFileId={selectedFileId}
+          onSelectFile={setSelectedFileId}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
         <div className="flex flex-col h-full overflow-hidden bg-gray-50">
-          <FileList
-            files={files}
-            selectedFileId={selectedFileId}
-            onSelectFile={setSelectedFileId}
-          />
           <DrawingTools
             activeTool={activeTool}
             onToolChange={setActiveTool}

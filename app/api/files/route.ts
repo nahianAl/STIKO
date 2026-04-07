@@ -11,9 +11,10 @@ export async function GET(request: NextRequest) {
            conversion_status AS "conversionStatus",
            converted_storage_key AS "convertedStorageKey",
            conversion_job_id AS "conversionJobId",
+           folder_path AS "folderPath",
            created_at AS "createdAt"
     FROM files WHERE version_id = ${versionId}
-    ORDER BY created_at ASC
+    ORDER BY folder_path ASC NULLS FIRST, created_at ASC
   `;
   return NextResponse.json(rows);
 }
