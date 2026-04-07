@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { FileRecord, STEP_EXTENSIONS } from '@/lib/types';
-import ImageViewer from './ImageViewer';
+import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
 
@@ -11,13 +11,16 @@ import ModelViewer from './ModelViewer';
 import type { WorldPin, PinScreenPosition } from './ModelViewer';
 
 export type { WorldPin, PinScreenPosition };
+export type { ContentTransform };
 
 interface ViewerContainerProps {
   file: FileRecord;
+  frozen?: boolean;
   commentToolActive?: boolean;
   onSceneClick?: (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => void;
   worldPins?: WorldPin[];
   onPinPositionsUpdate?: (positions: Map<string, PinScreenPosition>) => void;
+  onTransformChange?: (transform: ContentTransform) => void;
 }
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
@@ -31,7 +34,7 @@ function getExtension(filename: string): string {
   return filename.slice(idx).toLowerCase();
 }
 
-export default function ViewerContainer({ file, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate }: ViewerContainerProps) {
+export default function ViewerContainer({ file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -159,8 +162,8 @@ export default function ViewerContainer({ file, commentToolActive, onSceneClick,
     );
   }
 
-  if (IMAGE_EXTENSIONS.includes(ext)) return <ImageViewer url={url} />;
-  if (VIDEO_EXTENSIONS.includes(ext)) return <VideoViewer url={url} />;
+  if (IMAGE_EXTENSIONS.includes(ext)) return <ImageViewer url={url} onTransformChange={onTransformChange} />;
+  if (VIDEO_EXTENSIONS.includes(ext)) return <VideoViewer url={url} frozen={frozen} />;
   if (PDF_EXTENSIONS.includes(ext)) return <PDFViewer url={url} />;
   if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} />;
 

@@ -2,16 +2,28 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-interface ImageViewerProps {
-  url: string;
+export interface ContentTransform {
+  scale: number;
+  translateX: number;
+  translateY: number;
 }
 
-export default function ImageViewer({ url }: ImageViewerProps) {
+interface ImageViewerProps {
+  url: string;
+  onTransformChange?: (transform: ContentTransform) => void;
+}
+
+export default function ImageViewer({ url, onTransformChange }: ImageViewerProps) {
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Report transform changes to parent
+  useEffect(() => {
+    onTransformChange?.({ scale, translateX: translate.x, translateY: translate.y });
+  }, [scale, translate, onTransformChange]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();

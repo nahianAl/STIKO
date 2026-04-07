@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Header from '@/components/ui/Header';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
-import ViewerContainer, { type WorldPin, type PinScreenPosition } from '@/components/viewers/ViewerContainer';
+import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
@@ -54,7 +54,7 @@ interface Participant {
   createdAt: string;
 }
 
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect';
+type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
 
 const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp'];
 
@@ -231,6 +231,12 @@ export default function PortalPage() {
     return MODEL_3D_EXTENSIONS.includes(`.${ext}`);
   }, [selectedFile]);
 
+  const isPDFFile = useMemo(() => {
+    if (!selectedFile) return false;
+    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
+    return ext === 'pdf';
+  }, [selectedFile]);
+
   const worldPins: WorldPin[] = useMemo(() => {
     return comments
       .filter((c) => c.worldX !== null && c.worldY !== null && c.worldZ !== null)
@@ -255,6 +261,12 @@ export default function PortalPage() {
 
   const handlePinPositionsUpdate = useCallback((positions: Map<string, PinScreenPosition>) => {
     setWorldPinPositions(positions);
+  }, []);
+
+  // Content transform for markups to follow image zoom/pan
+  const [contentTransform, setContentTransform] = useState<ContentTransform | null>(null);
+  const handleTransformChange = useCallback((transform: ContentTransform) => {
+    setContentTransform(transform);
   }, []);
 
   // Fetch portal details and parent project
@@ -373,9 +385,13 @@ export default function PortalPage() {
       return;
     }
 
-    // 3D comment tool needs a live canvas for raycasting — don't freeze
+    // 3D + comment tool: only clear snapshot when coming directly from pointer
+    // (no snapshot exists yet). If coming from a drawing tool, KEEP the snapshot
+    // so user can comment on their annotated freeze frame.
     if (is3DFile && activeTool === 'comment') {
-      setViewerSnapshot(null);
+      if (prevTool === 'pointer') {
+        setViewerSnapshot(null); // Live canvas for raycasting
+      }
       return;
     }
 
@@ -389,10 +405,11 @@ export default function PortalPage() {
     if (snapshot) setViewerSnapshot(snapshot);
   }, [activeTool, is3DFile]);
 
-  // Discard snapshots when the selected file changes
+  // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
     setViewerSnapshot(null);
     setViewportCommentSnapshot(null);
+    setContentTransform(null);
   }, [selectedFileId]);
 
   const handleSelectVersion = (versionId: string) => {
@@ -514,54 +531,63 @@ export default function PortalPage() {
       );
     }
 
-    // Annotation mode: frozen snapshot for drawing on
-    if (viewerSnapshot) {
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={viewerSnapshot}
-          alt="Viewer snapshot"
-          className="absolute inset-0 w-full h-full object-contain bg-gray-100"
-          draggable={false}
-        />
-      );
-    }
-
-    // Comment review mode: show the selected comment's annotated snapshot
-    if (viewportCommentSnapshot) {
-      return (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={viewportCommentSnapshot}
-            alt="Comment snapshot"
-            className="max-w-full max-h-full object-contain"
-            draggable={false}
-          />
-          <button
-            onClick={() => {
-              setViewportCommentSnapshot(null);
-              setActiveCommentId(null);
-            }}
-            className="absolute top-3 right-3 flex items-center gap-1.5 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 transition-colors"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-              <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            Back to live view
-          </button>
-        </div>
-      );
-    }
+    const isHidden = !!(viewerSnapshot || viewportCommentSnapshot);
 
     return (
-      <ViewerContainer
-        file={selectedFile}
-        commentToolActive={is3DFile && activeTool === 'comment'}
-        onSceneClick={handleSceneClick}
-        worldPins={worldPins}
-        onPinPositionsUpdate={handlePinPositionsUpdate}
-      />
+      <>
+        {/* Live viewer — always mounted, hidden when snapshot/review mode is active */}
+        <div style={{
+          visibility: isHidden ? 'hidden' : 'visible',
+          position: 'absolute',
+          inset: 0,
+        }}>
+          <ViewerContainer
+            file={selectedFile}
+            frozen={!!viewerSnapshot}
+            commentToolActive={is3DFile && activeTool === 'comment'}
+            onSceneClick={handleSceneClick}
+            worldPins={worldPins}
+            onPinPositionsUpdate={handlePinPositionsUpdate}
+            onTransformChange={handleTransformChange}
+          />
+        </div>
+
+        {/* Annotation mode: frozen snapshot for drawing on */}
+        {viewerSnapshot && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={viewerSnapshot}
+            alt="Viewer snapshot"
+            className="absolute inset-0 w-full h-full object-contain bg-gray-100"
+            draggable={false}
+          />
+        )}
+
+        {/* Comment review mode: show the selected comment's annotated snapshot */}
+        {viewportCommentSnapshot && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={viewportCommentSnapshot}
+              alt="Comment snapshot"
+              className="max-w-full max-h-full object-contain"
+              draggable={false}
+            />
+            <button
+              onClick={() => {
+                setViewportCommentSnapshot(null);
+                setActiveCommentId(null);
+              }}
+              className="absolute top-3 right-3 flex items-center gap-1.5 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 transition-colors"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Back to live view
+            </button>
+          </div>
+        )}
+      </>
     );
   };
 
@@ -660,6 +686,16 @@ export default function PortalPage() {
             </div>
           )}
 
+          {/* PDF markup limitation note */}
+          {isPDFFile && activeTool !== 'pointer' && !viewerSnapshot && (
+            <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
+              <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              PDF markup is not yet supported
+            </div>
+          )}
+
           <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden">
             {renderFileViewer()}
             {selectedFileId && !viewportCommentSnapshot && (
@@ -676,6 +712,7 @@ export default function PortalPage() {
                 ephemeral={!!viewerSnapshot}
                 is3DFile={is3DFile}
                 worldPinPositions={worldPinPositions}
+                contentTransform={viewerSnapshot ? null : contentTransform}
               />
             )}
             {/* Comment placement popup */}

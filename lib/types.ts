@@ -60,7 +60,7 @@ export interface Comment {
 export interface Markup {
   id: string;
   fileId: string;
-  type: 'freehand' | 'line' | 'arrow' | 'rect';
+  type: 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   style: { color: string; strokeWidth: number };

@@ -1,6 +1,6 @@
 'use client';
 
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect';
+type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
 
 interface DrawingToolsProps {
   activeTool: ToolType;
@@ -64,6 +64,15 @@ const TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="2" y="3" width="12" height="10" />
+      </svg>
+    ),
+  },
+  {
+    id: 'text',
+    label: 'Text',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M2 3h12v2.5h-1.5V4.5h-4V12h1.5v1.5h-5V12H6.5V4.5h-4V5.5H1V3z" />
       </svg>
     ),
   },

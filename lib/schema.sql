@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS comments (
 CREATE TABLE IF NOT EXISTS markups (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('freehand', 'line', 'arrow', 'rect')),
+  type TEXT NOT NULL CHECK (type IN ('freehand', 'line', 'arrow', 'rect', 'text')),
   data JSONB NOT NULL,
   style JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
