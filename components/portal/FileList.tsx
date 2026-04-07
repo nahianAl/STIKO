@@ -10,6 +10,9 @@ interface FileRecord {
   fileSize: number;
   fileType: string;
   createdAt: string;
+  conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
+  convertedStorageKey: string | null;
+  conversionJobId: string | null;
 }
 
 interface FileListProps {
@@ -29,7 +32,7 @@ function getFileIcon(fileType: string, filename: string): string {
   if (fileType === 'application/pdf' || ext === 'pdf') {
     return 'pdf';
   }
-  if (['glb', 'gltf'].includes(ext)) {
+  if (['glb', 'gltf', 'step', 'stp'].includes(ext)) {
     return '3d';
   }
   return 'file';

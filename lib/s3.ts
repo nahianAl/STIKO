@@ -51,3 +51,23 @@ export function getPublicUrl(storageKey: string): string {
 export async function deleteObject(storageKey: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: storageKey }));
 }
+
+// Download a file from a remote URL and upload it to R2
+export async function uploadFromUrl(
+  remoteUrl: string,
+  storageKey: string,
+  contentType: string
+): Promise<void> {
+  const response = await fetch(remoteUrl);
+  if (!response.ok) throw new Error(`Failed to fetch ${remoteUrl}`);
+  const body = await response.arrayBuffer();
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: storageKey,
+      Body: Buffer.from(body),
+      ContentType: contentType,
+    })
+  );
+}

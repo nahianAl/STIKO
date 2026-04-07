@@ -41,6 +41,9 @@ interface FileRecord {
   fileSize: number;
   fileType: string;
   createdAt: string;
+  conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
+  convertedStorageKey: string | null;
+  conversionJobId: string | null;
 }
 
 interface Participant {

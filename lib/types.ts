@@ -34,7 +34,12 @@ export interface FileRecord {
   fileSize: number;
   fileType: string;
   createdAt: string;
+  conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
+  convertedStorageKey: string | null;
+  conversionJobId: string | null;
 }
+
+export const STEP_EXTENSIONS = ['.step', '.stp'];
 
 export interface Comment {
   id: string;

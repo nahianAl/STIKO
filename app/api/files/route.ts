@@ -7,7 +7,11 @@ export async function GET(request: NextRequest) {
 
   const rows = await sql`
     SELECT id, version_id AS "versionId", filename, storage_key AS "storageKey",
-           file_size AS "fileSize", file_type AS "fileType", created_at AS "createdAt"
+           file_size AS "fileSize", file_type AS "fileType",
+           conversion_status AS "conversionStatus",
+           converted_storage_key AS "convertedStorageKey",
+           conversion_job_id AS "conversionJobId",
+           created_at AS "createdAt"
     FROM files WHERE version_id = ${versionId}
     ORDER BY created_at ASC
   `;
