@@ -22,7 +22,7 @@
     "next-auth": "^5.0.0-beta.30",
     "react": "^18",
     "react-dom": "^18",
-    "react-konva": "^19.2.3",
+    "react-konva": "^18.2.14",
     "react-pdf": "^10.4.1",
     "three": "^0.169.0",
     "uuid": "^13.0.0"
