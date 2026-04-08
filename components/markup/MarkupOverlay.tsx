@@ -129,6 +129,7 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
               type,
               data,
               style: { color, strokeWidth },
+              pageNumber: null,
               createdAt: new Date().toISOString(),
             },
           ]);

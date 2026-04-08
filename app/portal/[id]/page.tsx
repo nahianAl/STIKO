@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Header from '@/components/ui/Header';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
-import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform } from '@/components/viewers/ViewerContainer';
+import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
@@ -206,6 +206,7 @@ export default function PortalPage() {
     worldX?: number;
     worldY?: number;
     worldZ?: number;
+    pageNumber?: number;
   } | null>(null);
   const [commentPopupText, setCommentPopupText] = useState('');
   const [commentPopupAuthor, setCommentPopupAuthor] = useState('Anonymous');
@@ -230,6 +231,14 @@ export default function PortalPage() {
     const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
     return MODEL_3D_EXTENSIONS.includes(`.${ext}`);
   }, [selectedFile]);
+
+  const isPDFFile = useMemo(() => {
+    if (!selectedFile) return false;
+    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
+    return ext === 'pdf';
+  }, [selectedFile]);
+
+  const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
 
   const worldPins: WorldPin[] = useMemo(() => {
     return comments
@@ -379,6 +388,9 @@ export default function PortalPage() {
       return;
     }
 
+    // PDF files: no snapshot needed — annotate directly on Konva canvas
+    if (isPDFFile) return;
+
     // 3D + comment tool: only clear snapshot when coming directly from pointer
     // (no snapshot exists yet). If coming from a drawing tool, KEEP the snapshot
     // so user can comment on their annotated freeze frame.
@@ -397,7 +409,7 @@ export default function PortalPage() {
 
     const snapshot = captureViewerSnapshot(container);
     if (snapshot) setViewerSnapshot(snapshot);
-  }, [activeTool, is3DFile]);
+  }, [activeTool, is3DFile, isPDFFile]);
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
@@ -421,13 +433,36 @@ export default function PortalPage() {
     setCommentPopupText('');
   }, []);
 
+  // PDF comment placement handler (includes page number)
+  const handlePDFCommentPlace = useCallback((percentX: number, percentY: number, pageNumber: number) => {
+    setCommentPopup({ x: percentX, y: percentY, percentX, percentY, pageNumber });
+    setCommentPopupText('');
+  }, []);
+
   const handleCommentPopupSubmit = async () => {
     if (!commentPopupText.trim() || !selectedFileId || !commentPopup) return;
     setSubmittingComment(true);
 
-    // Composite snapshot + markup into a single image, then upload
+    // Capture snapshot — PDF uses Konva stage, others use SVG composite
     let snapshotUrl: string | null = null;
-    if (viewerSnapshot && markupOverlayRef.current && viewerAreaRef.current) {
+    if (isPDFFile && pdfKonvaRef.current) {
+      try {
+        const dataUrl = pdfKonvaRef.current.captureSnapshot();
+        if (dataUrl) {
+          const res = await fetch('/api/snapshots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            snapshotUrl = data.storageKey;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to capture PDF snapshot:', e);
+      }
+    } else if (viewerSnapshot && markupOverlayRef.current && viewerAreaRef.current) {
       try {
         const svgEl = markupOverlayRef.current.getSvgElement();
         if (svgEl) {
@@ -466,6 +501,7 @@ export default function PortalPage() {
           worldX: commentPopup.worldX ?? null,
           worldY: commentPopup.worldY ?? null,
           worldZ: commentPopup.worldZ ?? null,
+          pageNumber: commentPopup.pageNumber ?? null,
           snapshotUrl,
         }),
       });
@@ -525,7 +561,7 @@ export default function PortalPage() {
       );
     }
 
-    const isHidden = !!(viewerSnapshot || viewportCommentSnapshot);
+    const isHidden = isPDFFile ? !!viewportCommentSnapshot : !!(viewerSnapshot || viewportCommentSnapshot);
 
     return (
       <>
@@ -543,6 +579,15 @@ export default function PortalPage() {
             worldPins={worldPins}
             onPinPositionsUpdate={handlePinPositionsUpdate}
             onTransformChange={handleTransformChange}
+            activeTool={activeTool}
+            color={drawingColor}
+            strokeWidth={drawingStrokeWidth}
+            fileId={selectedFileId!}
+            onCommentPlace={handlePDFCommentPlace}
+            comments={comments}
+            activeCommentId={activeCommentId}
+            onCommentPinClick={handleCommentPinClick}
+            pdfViewerRef={pdfKonvaRef}
           />
         </div>
 
@@ -682,7 +727,7 @@ export default function PortalPage() {
 
           <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden">
             {renderFileViewer()}
-            {selectedFileId && !viewportCommentSnapshot && (
+            {selectedFileId && !viewportCommentSnapshot && !isPDFFile && (
               <MarkupOverlay
                 ref={markupOverlayRef}
                 fileId={selectedFileId}

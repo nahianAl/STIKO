@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS comments (
   world_y FLOAT,
   world_z FLOAT,
   snapshot_url TEXT,
+  page_number INT DEFAULT NULL,
   author TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -117,5 +118,6 @@ CREATE TABLE IF NOT EXISTS markups (
   type TEXT NOT NULL CHECK (type IN ('freehand', 'line', 'arrow', 'rect', 'text')),
   data JSONB NOT NULL,
   style JSONB NOT NULL,
+  page_number INT DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

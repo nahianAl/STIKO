@@ -52,6 +52,7 @@ export interface Comment {
   worldX: number | null;
   worldY: number | null;
   worldZ: number | null;
+  pageNumber: number | null;
   author: string;
   createdAt: string;
   snapshotUrl?: string | null;
@@ -64,5 +65,6 @@ export interface Markup {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   style: { color: string; strokeWidth: number };
+  pageNumber: number | null;
   createdAt: string;
 }
