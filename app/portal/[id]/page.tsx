@@ -56,7 +56,7 @@ interface Participant {
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
 
-const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp'];
+const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp', '.obj', '.stl', '.3ds', '.ply', '.dae'];
 
 // Captures the current viewer state as a JPEG data URL.
 // Tries WebGL canvas first (3D), then img, then video.

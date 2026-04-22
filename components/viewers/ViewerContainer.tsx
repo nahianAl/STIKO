@@ -41,7 +41,7 @@ interface ViewerContainerProps {
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
 const PDF_EXTENSIONS = ['.pdf'];
-const MODEL_EXTENSIONS = ['.glb', '.gltf'];
+const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.3ds', '.ply', '.dae'];
 
 function getExtension(filename: string): string {
   const idx = filename.lastIndexOf('.');

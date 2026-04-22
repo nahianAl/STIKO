@@ -54,7 +54,7 @@ function getFileIcon(fileType: string, filename: string): string {
   if (fileType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) return 'image';
   if (fileType.startsWith('video/') || ['mp4', 'mov', 'webm', 'avi'].includes(ext)) return 'video';
   if (fileType === 'application/pdf' || ext === 'pdf') return 'pdf';
-  if (['glb', 'gltf', 'step', 'stp'].includes(ext)) return '3d';
+  if (['glb', 'gltf', 'step', 'stp', 'obj', 'stl', '3ds', 'ply', 'dae'].includes(ext)) return '3d';
   return 'file';
 }
 

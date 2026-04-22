@@ -10,6 +10,8 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
 export interface WorldPin {
   id: string;
@@ -70,6 +72,7 @@ function getLoaderForExt(ext: string) {
 function Model({ url }: { url: string }) {
   const ext = getExtFromUrl(url);
   const LoaderClass = getLoaderForExt(ext);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = useLoader(LoaderClass as any, url);
 
   // For PLY, compute vertex normals once
@@ -96,11 +99,11 @@ function Model({ url }: { url: string }) {
   }
 
   if (ext === '.dae') {
-    return <primitive object={(data as any).scene} />;
+    return <primitive object={(data as Collada).scene} />;
   }
 
   // Default: GLTF/GLB
-  return <primitive object={(data as any).scene} />;
+  return <primitive object={(data as GLTF).scene} />;
 }
 
 function SceneInteraction({
