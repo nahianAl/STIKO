@@ -1,9 +1,15 @@
 'use client';
 
-import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { OrbitControls, useGLTF, Environment, Grid, Center } from '@react-three/drei';
+import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
+import { OrbitControls, Environment, Grid, Center } from '@react-three/drei';
 import { Suspense, useRef, useCallback, useEffect } from 'react';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
+import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
 export interface WorldPin {
   id: string;
@@ -26,9 +32,65 @@ export interface ModelViewerInnerProps {
   onPinPositionsUpdate?: (positions: Map<string, PinScreenPosition>) => void;
 }
 
+const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
+  color: '#8899aa',
+  roughness: 0.6,
+  metalness: 0.3,
+});
+
+function getExtFromUrl(url: string): string {
+  try {
+    const pathname = new URL(url).pathname;
+    const idx = pathname.lastIndexOf('.');
+    return idx !== -1 ? pathname.slice(idx).toLowerCase() : '';
+  } catch {
+    const idx = url.lastIndexOf('.');
+    return idx !== -1 ? url.slice(idx).split('?')[0].toLowerCase() : '';
+  }
+}
+
 function Model({ url }: { url: string }) {
-  const { scene } = useGLTF(url);
-  return <primitive object={scene} />;
+  const ext = getExtFromUrl(url);
+
+  if (ext === '.obj') {
+    const obj = useLoader(OBJLoader, url);
+    return <primitive object={obj} />;
+  }
+
+  if (ext === '.stl') {
+    const geometry = useLoader(STLLoader, url);
+    const material = geometry.hasAttribute('color')
+      ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.3 })
+      : DEFAULT_MATERIAL;
+    return (
+      <mesh geometry={geometry} material={material} />
+    );
+  }
+
+  if (ext === '.3ds') {
+    const group = useLoader(TDSLoader, url);
+    return <primitive object={group} />;
+  }
+
+  if (ext === '.ply') {
+    const geometry = useLoader(PLYLoader, url);
+    geometry.computeVertexNormals();
+    const material = geometry.hasAttribute('color')
+      ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.3 })
+      : DEFAULT_MATERIAL;
+    return (
+      <mesh geometry={geometry} material={material} />
+    );
+  }
+
+  if (ext === '.dae') {
+    const collada = useLoader(ColladaLoader, url);
+    return <primitive object={collada!.scene} />;
+  }
+
+  // Default: GLTF/GLB
+  const gltf = useLoader(GLTFLoader, url);
+  return <primitive object={gltf.scene} />;
 }
 
 function SceneInteraction({
