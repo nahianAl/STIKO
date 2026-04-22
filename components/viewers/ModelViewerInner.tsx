@@ -10,6 +10,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
+import { STEPLoader } from '@/lib/STEPLoader';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
@@ -65,6 +66,8 @@ function getLoaderForExt(ext: string) {
     case '.3ds': return TDSLoader;
     case '.ply': return PLYLoader;
     case '.dae': return ColladaLoader;
+    case '.step':
+    case '.stp': return STEPLoader;
     default: return GLTFLoader;
   }
 }
@@ -100,6 +103,10 @@ function Model({ url }: { url: string }) {
 
   if (ext === '.dae') {
     return <primitive object={(data as Collada).scene} />;
+  }
+
+  if (ext === '.step' || ext === '.stp') {
+    return <primitive object={data as THREE.Group} />;
   }
 
   // Default: GLTF/GLB
