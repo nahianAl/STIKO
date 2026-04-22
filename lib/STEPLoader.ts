@@ -25,7 +25,11 @@ interface OcctImportJs {
 
 function initOcct(): Promise<OcctImportJs> {
   if (!occtPromise) {
-    occtPromise = import('occt-import-js').then((mod) => mod.default());
+    occtPromise = import('occt-import-js').then((mod) =>
+      mod.default({
+        locateFile: () => '/occt-import-js.wasm',
+      })
+    );
   }
   return occtPromise;
 }

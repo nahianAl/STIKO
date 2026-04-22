@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+
+# WASM binaries (copied by postinstall script)
+/public/occt-import-js.wasm
 /.pnp
 .pnp.js
 .yarn/install-state.gz
