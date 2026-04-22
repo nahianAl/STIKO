@@ -2,7 +2,7 @@
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid, Center } from '@react-three/drei';
-import { Suspense, useRef, useCallback, useEffect } from 'react';
+import { Suspense, useRef, useCallback, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -38,59 +38,69 @@ const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
   metalness: 0.3,
 });
 
+const VERTEX_COLOR_MATERIAL = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.6,
+  metalness: 0.3,
+});
+
 function getExtFromUrl(url: string): string {
   try {
     const pathname = new URL(url).pathname;
     const idx = pathname.lastIndexOf('.');
     return idx !== -1 ? pathname.slice(idx).toLowerCase() : '';
   } catch {
-    const idx = url.lastIndexOf('.');
-    return idx !== -1 ? url.slice(idx).split('?')[0].toLowerCase() : '';
+    const clean = url.split('?')[0];
+    const idx = clean.lastIndexOf('.');
+    return idx !== -1 ? clean.slice(idx).toLowerCase() : '';
+  }
+}
+
+function getLoaderForExt(ext: string) {
+  switch (ext) {
+    case '.obj': return OBJLoader;
+    case '.stl': return STLLoader;
+    case '.3ds': return TDSLoader;
+    case '.ply': return PLYLoader;
+    case '.dae': return ColladaLoader;
+    default: return GLTFLoader;
   }
 }
 
 function Model({ url }: { url: string }) {
   const ext = getExtFromUrl(url);
+  const LoaderClass = getLoaderForExt(ext);
+  const data = useLoader(LoaderClass as any, url);
+
+  // For PLY, compute vertex normals once
+  useMemo(() => {
+    if (ext === '.ply' && data instanceof THREE.BufferGeometry) {
+      data.computeVertexNormals();
+    }
+  }, [ext, data]);
 
   if (ext === '.obj') {
-    const obj = useLoader(OBJLoader, url);
-    return <primitive object={obj} />;
+    return <primitive object={data} />;
   }
 
-  if (ext === '.stl') {
-    const geometry = useLoader(STLLoader, url);
+  if (ext === '.stl' || ext === '.ply') {
+    const geometry = data as THREE.BufferGeometry;
     const material = geometry.hasAttribute('color')
-      ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.3 })
+      ? VERTEX_COLOR_MATERIAL
       : DEFAULT_MATERIAL;
-    return (
-      <mesh geometry={geometry} material={material} />
-    );
+    return <mesh geometry={geometry} material={material} />;
   }
 
   if (ext === '.3ds') {
-    const group = useLoader(TDSLoader, url);
-    return <primitive object={group} />;
-  }
-
-  if (ext === '.ply') {
-    const geometry = useLoader(PLYLoader, url);
-    geometry.computeVertexNormals();
-    const material = geometry.hasAttribute('color')
-      ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.3 })
-      : DEFAULT_MATERIAL;
-    return (
-      <mesh geometry={geometry} material={material} />
-    );
+    return <primitive object={data} />;
   }
 
   if (ext === '.dae') {
-    const collada = useLoader(ColladaLoader, url);
-    return <primitive object={collada!.scene} />;
+    return <primitive object={(data as any).scene} />;
   }
 
   // Default: GLTF/GLB
-  const gltf = useLoader(GLTFLoader, url);
-  return <primitive object={gltf.scene} />;
+  return <primitive object={(data as any).scene} />;
 }
 
 function SceneInteraction({
