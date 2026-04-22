@@ -40,8 +40,6 @@ export interface FileRecord {
   folderPath: string | null;
 }
 
-export const STEP_EXTENSIONS = ['.step', '.stp'];
-
 export interface Comment {
   id: string;
   fileId: string;
