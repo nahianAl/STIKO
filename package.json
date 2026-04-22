@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "cp node_modules/occt-import-js/dist/occt-import-js.wasm public/occt-import-js.wasm"
+    "postinstall": "mkdir -p public && cp node_modules/occt-import-js/dist/occt-import-js.wasm public/occt-import-js.wasm"
   },
   "dependencies": {
     "@auth/pg-adapter": "^1.11.1",
