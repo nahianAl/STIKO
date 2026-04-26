@@ -78,6 +78,11 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
     // Text tool state
     const [textPopup, setTextPopup] = useState<{ x: number; y: number } | null>(null);
     const [textInput, setTextInput] = useState('');
+    const [textFontSize, setTextFontSize] = useState(16);
+    const [textBold, setTextBold] = useState(false);
+    const [textItalic, setTextItalic] = useState(false);
+    const [textUnderline, setTextUnderline] = useState(false);
+    const [textAlign, setTextAlign] = useState<'left' | 'center' | 'right'>('left');
 
     useImperativeHandle(ref, () => ({
       getSvgElement: () => svgRef.current,
@@ -161,10 +166,19 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
         setTextInput('');
         return;
       }
-      saveMarkup('text', { x: textPopup.x, y: textPopup.y, text: textInput.trim() });
+      saveMarkup('text', {
+        x: textPopup.x,
+        y: textPopup.y,
+        text: textInput.trim(),
+        fontSize: textFontSize,
+        bold: textBold,
+        italic: textItalic,
+        underline: textUnderline,
+        align: textAlign,
+      });
       setTextPopup(null);
       setTextInput('');
-    }, [textPopup, textInput, saveMarkup]);
+    }, [textPopup, textInput, textFontSize, textBold, textItalic, textUnderline, textAlign, saveMarkup]);
 
     const handleMouseDown = useCallback(
       (e: React.MouseEvent) => {
@@ -318,16 +332,27 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
             />
           );
         case 'text': {
-          const fontSize = style.strokeWidth * 1.2;
+          const fs = (data.fontSize as number) ?? style.strokeWidth * 1.2;
+          // Scale font size: stored as px (e.g. 16), SVG viewBox is 100-unit.
+          // Use ~0.28 factor so 16px ≈ 4.5 SVG units (readable on the 100x100 viewBox).
+          const svgFontSize = fs * 0.28;
+          const isBold = (data.bold as boolean) ?? true;
+          const isItalic = (data.italic as boolean) ?? false;
+          const isUnderline = (data.underline as boolean) ?? false;
+          const align = (data.align as string) ?? 'left';
+          const anchor = align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start';
           return (
             <text
               key={key}
               x={data.x as number}
               y={data.y as number}
               fill={style.color}
-              fontSize={fontSize}
+              fontSize={svgFontSize}
               fontFamily="sans-serif"
-              fontWeight="bold"
+              fontWeight={isBold ? 'bold' : 'normal'}
+              fontStyle={isItalic ? 'italic' : 'normal'}
+              textDecoration={isUnderline ? 'underline' : 'none'}
+              textAnchor={anchor}
               dominantBaseline="hanging"
             >
               {data.text as string}
@@ -467,46 +492,169 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
         {/* Text tool input popup */}
         {textPopup && (
           <div
-            className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-2"
+            className="absolute z-30 rounded-xl shadow-xl overflow-hidden"
             style={{
-              left: `${Math.min(textPopup.x, 70)}%`,
-              top: `${Math.min(textPopup.y, 80)}%`,
+              left: `${Math.min(textPopup.x, 60)}%`,
+              top: `${Math.min(textPopup.y, 70)}%`,
+              width: 320,
+              backgroundColor: '#2a2a2e',
             }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <input
-              type="text"
-              autoFocus
-              value={textInput}
-              onChange={(e) => setTextInput(e.target.value)}
-              placeholder="Type text..."
-              className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-              style={{ minWidth: 150 }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleTextSubmit();
-                }
-                if (e.key === 'Escape') {
-                  setTextPopup(null);
-                  setTextInput('');
-                }
-              }}
-            />
-            <div className="flex justify-end gap-1.5 mt-1.5">
-              <button
-                onClick={() => { setTextPopup(null); setTextInput(''); }}
-                className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700"
+            {/* Text input area */}
+            <div className="p-3">
+              <input
+                type="text"
+                autoFocus
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder="Type text..."
+                className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
+                style={{
+                  backgroundColor: '#3a3a3e',
+                  color: '#fff',
+                  border: '1px solid #4a4a4e',
+                  fontWeight: textBold ? 'bold' : 'normal',
+                  fontStyle: textItalic ? 'italic' : 'normal',
+                  textDecoration: textUnderline ? 'underline' : 'none',
+                  textAlign: textAlign,
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleTextSubmit();
+                  }
+                  if (e.key === 'Escape') {
+                    setTextPopup(null);
+                    setTextInput('');
+                  }
+                }}
+              />
+            </div>
+
+            {/* Formatting toolbar */}
+            <div className="flex items-center gap-1 px-3 pb-3">
+              {/* Alignment buttons */}
+              {(['left', 'center', 'right'] as const).map((a) => (
+                <button
+                  key={a}
+                  title={`Align ${a}`}
+                  onClick={() => setTextAlign(a)}
+                  className="w-8 h-8 flex items-center justify-center rounded transition-colors"
+                  style={{
+                    backgroundColor: textAlign === a ? '#4a4a4e' : 'transparent',
+                    color: textAlign === a ? '#fff' : '#999',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    {a === 'left' && (
+                      <>
+                        <line x1="1" y1="2" x2="13" y2="2" />
+                        <line x1="1" y1="5.5" x2="9" y2="5.5" />
+                        <line x1="1" y1="9" x2="11" y2="9" />
+                        <line x1="1" y1="12.5" x2="8" y2="12.5" />
+                      </>
+                    )}
+                    {a === 'center' && (
+                      <>
+                        <line x1="1" y1="2" x2="13" y2="2" />
+                        <line x1="3" y1="5.5" x2="11" y2="5.5" />
+                        <line x1="2" y1="9" x2="12" y2="9" />
+                        <line x1="4" y1="12.5" x2="10" y2="12.5" />
+                      </>
+                    )}
+                    {a === 'right' && (
+                      <>
+                        <line x1="1" y1="2" x2="13" y2="2" />
+                        <line x1="5" y1="5.5" x2="13" y2="5.5" />
+                        <line x1="3" y1="9" x2="13" y2="9" />
+                        <line x1="6" y1="12.5" x2="13" y2="12.5" />
+                      </>
+                    )}
+                  </svg>
+                </button>
+              ))}
+
+              {/* Divider */}
+              <div className="w-px h-5 mx-0.5" style={{ backgroundColor: '#4a4a4e' }} />
+
+              {/* Font size selector */}
+              <select
+                value={textFontSize}
+                onChange={(e) => setTextFontSize(Number(e.target.value))}
+                className="h-8 rounded px-1.5 text-xs outline-none cursor-pointer appearance-none text-center"
+                style={{
+                  backgroundColor: '#3a3a3e',
+                  color: '#ccc',
+                  border: '1px solid #4a4a4e',
+                  width: 48,
+                }}
+                title="Font size"
               >
-                Cancel
-              </button>
+                {[10, 12, 14, 16, 20, 24, 32, 40, 48, 64].map((s) => (
+                  <option key={s} value={s}>{s}px</option>
+                ))}
+              </select>
+
+              {/* Divider */}
+              <div className="w-px h-5 mx-0.5" style={{ backgroundColor: '#4a4a4e' }} />
+
+              {/* Bold */}
               <button
+                title="Bold"
+                onClick={() => setTextBold((b) => !b)}
+                className="w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors"
+                style={{
+                  backgroundColor: textBold ? '#4a4a4e' : 'transparent',
+                  color: textBold ? '#fff' : '#999',
+                }}
+              >
+                B
+              </button>
+
+              {/* Italic */}
+              <button
+                title="Italic"
+                onClick={() => setTextItalic((i) => !i)}
+                className="w-8 h-8 flex items-center justify-center rounded text-sm transition-colors"
+                style={{
+                  backgroundColor: textItalic ? '#4a4a4e' : 'transparent',
+                  color: textItalic ? '#fff' : '#999',
+                  fontStyle: 'italic',
+                }}
+              >
+                I
+              </button>
+
+              {/* Underline */}
+              <button
+                title="Underline"
+                onClick={() => setTextUnderline((u) => !u)}
+                className="w-8 h-8 flex items-center justify-center rounded text-sm transition-colors"
+                style={{
+                  backgroundColor: textUnderline ? '#4a4a4e' : 'transparent',
+                  color: textUnderline ? '#fff' : '#999',
+                  textDecoration: 'underline',
+                }}
+              >
+                U
+              </button>
+
+              {/* Spacer */}
+              <div className="flex-1" />
+
+              {/* Submit button */}
+              <button
+                title="Add text"
                 onClick={handleTextSubmit}
                 disabled={!textInput.trim()}
-                className="px-2.5 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-white transition-colors disabled:opacity-40"
+                style={{ backgroundColor: textInput.trim() ? '#3b82f6' : '#3a3a3e' }}
               >
-                Add
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="2 7 6 11 12 3" />
+                </svg>
               </button>
             </div>
           </div>
