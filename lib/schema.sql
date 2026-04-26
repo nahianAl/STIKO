@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS comments (
   world_y FLOAT,
   world_z FLOAT,
   snapshot_url TEXT,
+  attachments JSONB DEFAULT '[]',
   page_number INT DEFAULT NULL,
   author TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()

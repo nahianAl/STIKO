@@ -40,6 +40,14 @@ export interface FileRecord {
   folderPath: string | null;
 }
 
+export interface CommentAttachment {
+  storageKey: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  url?: string; // resolved presigned URL (populated on fetch)
+}
+
 export interface Comment {
   id: string;
   fileId: string;
@@ -54,6 +62,7 @@ export interface Comment {
   author: string;
   createdAt: string;
   snapshotUrl?: string | null;
+  attachments?: CommentAttachment[];
 }
 
 export interface Markup {
