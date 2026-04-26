@@ -30,6 +30,8 @@ interface FileTreeSidebarProps {
   files: FileRecord[];
   selectedFileId: string | null;
   onSelectFile: (fileId: string) => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 interface FolderNode {
@@ -253,13 +255,51 @@ export default function FileTreeSidebar({
   files,
   selectedFileId,
   onSelectFile,
+  collapsed,
+  onToggleCollapse,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
 
+  // Collapsed state: narrow strip with toggle + version count
+  if (collapsed) {
+    return (
+      <div className="flex flex-col items-center h-full bg-white border-r border-gray-200 py-3 px-1">
+        <button
+          onClick={onToggleCollapse}
+          className="p-1.5 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
+          title="Expand versions"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+        <div className="mt-3 flex flex-col items-center gap-1">
+          <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          {versions.length > 0 && (
+            <span className="text-xs font-medium text-gray-500">{versions.length}</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-white border-r border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200">
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-900">Versions</h3>
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+            title="Collapse versions"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto">
         {versions.length === 0 ? (

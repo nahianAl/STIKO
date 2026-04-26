@@ -186,6 +186,7 @@ export default function PortalPage() {
   const [loading, setLoading] = useState(true);
   const [filesLoading, setFilesLoading] = useState(false);
   const [commentsCollapsed, setCommentsCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
@@ -695,7 +696,12 @@ export default function PortalPage() {
       />
 
       {/* 3-Panel Layout */}
-      <div className={`flex-1 grid h-[calc(100vh-64px)] ${commentsCollapsed ? 'grid-cols-[280px_1fr_48px]' : 'grid-cols-[280px_1fr_320px]'}`}>
+      <div className={`flex-1 grid h-[calc(100vh-64px)] ${
+        sidebarCollapsed && commentsCollapsed ? 'grid-cols-[48px_1fr_48px]' :
+        sidebarCollapsed ? 'grid-cols-[48px_1fr_320px]' :
+        commentsCollapsed ? 'grid-cols-[280px_1fr_48px]' :
+        'grid-cols-[280px_1fr_320px]'
+      }`}>
         {/* Left Panel: File Tree Sidebar */}
         <FileTreeSidebar
           versions={versions}
@@ -704,6 +710,8 @@ export default function PortalPage() {
           files={files}
           selectedFileId={selectedFileId}
           onSelectFile={setSelectedFileId}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
