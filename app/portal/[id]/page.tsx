@@ -264,16 +264,14 @@ export default function PortalPage() {
 
   const handleSceneClick = useCallback(
     (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => {
-      setCommentPopup({
-        x: screenPercent.x,
-        y: screenPercent.y,
-        percentX: screenPercent.x,
-        percentY: screenPercent.y,
+      setPendingTag({
+        xPosition: screenPercent.x,
+        yPosition: screenPercent.y,
         worldX: worldPoint.x,
         worldY: worldPoint.y,
         worldZ: worldPoint.z,
       });
-      setCommentPopupText('');
+      setTagging(false);
     },
     []
   );
@@ -447,16 +445,20 @@ export default function PortalPage() {
     setViewportCommentSnapshot(null);
   };
 
-  // Comment placement handler
+  // Tag placement (image / video). Captures video timestamp when applicable.
   const handleCommentPlace = useCallback((percentX: number, percentY: number) => {
-    setCommentPopup({ x: percentX, y: percentY, percentX, percentY });
-    setCommentPopupText('');
+    const video = viewerAreaRef.current?.querySelector('video') as HTMLVideoElement | null;
+    setPendingTag({
+      xPosition: percentX,
+      yPosition: percentY,
+      timestamp: video ? video.currentTime : undefined,
+    });
+    setTagging(false);
   }, []);
 
-  // PDF comment placement handler (includes page number)
   const handlePDFCommentPlace = useCallback((percentX: number, percentY: number, pageNumber: number) => {
-    setCommentPopup({ x: percentX, y: percentY, percentX, percentY, pageNumber });
-    setCommentPopupText('');
+    setPendingTag({ xPosition: percentX, yPosition: percentY, pageNumber });
+    setTagging(false);
   }, []);
 
   const handleCommentPopupSubmit = async () => {
@@ -632,12 +634,13 @@ export default function PortalPage() {
           <ViewerContainer
             file={selectedFile}
             frozen={!!viewerSnapshot}
-            commentToolActive={is3DFile && activeTool === 'comment'}
+            commentToolActive={is3DFile && tagging}
             onSceneClick={handleSceneClick}
             worldPins={worldPins}
             onPinPositionsUpdate={handlePinPositionsUpdate}
             onTransformChange={handleTransformChange}
             activeTool={activeTool}
+            tagging={tagging}
             color={drawingColor}
             strokeWidth={drawingStrokeWidth}
             fileId={selectedFileId!}
@@ -797,6 +800,7 @@ export default function PortalPage() {
                 ref={markupOverlayRef}
                 fileId={selectedFileId}
                 activeTool={activeTool}
+                tagging={tagging}
                 color={drawingColor}
                 strokeWidth={drawingStrokeWidth}
                 onCommentPlace={handleCommentPlace}

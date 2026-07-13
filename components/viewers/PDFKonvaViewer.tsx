@@ -22,6 +22,7 @@ interface PDFKonvaViewerProps {
   color: string;
   strokeWidth: number;
   onCommentPlace: (x: number, y: number, pageNumber: number) => void;
+  tagging?: boolean;
   comments: Comment[];
   activeCommentId: string | null;
   onCommentPinClick: (comment: Comment) => void;
@@ -38,7 +39,7 @@ interface DrawingState {
 
 const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
   function PDFKonvaViewer(
-    { url, fileId, activeTool, color, strokeWidth, onCommentPlace, comments, activeCommentId, onCommentPinClick },
+    { url, fileId, activeTool, color, strokeWidth, onCommentPlace, tagging = false, comments, activeCommentId, onCommentPinClick },
     ref
   ) {
     // PDF state
@@ -234,13 +235,13 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
 
     // Mouse handlers
     const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (activeTool === 'pointer') return;
+      if (activeTool === 'pointer' && !tagging) return;
       const stage = e.target.getStage();
       if (!stage) return;
       const coords = getPageCoords(stage);
       if (!coords) return;
 
-      if (activeTool === 'comment') {
+      if (tagging) {
         const pct = toPercent(coords.x, coords.y);
         onCommentPlace(pct.x, pct.y, currentPage);
         return;
@@ -262,7 +263,7 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
         currentY: coords.y,
         points: [coords.x, coords.y],
       });
-    }, [activeTool, getPageCoords, toPercent, onCommentPlace, currentPage]);
+    }, [activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, tagging]);
 
     const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!drawing.isDrawing) return;
@@ -544,12 +545,8 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
       c.pageNumber === currentPage && c.xPosition !== null && c.yPosition !== null
     );
 
-    const isInteractive = activeTool !== 'pointer';
-    const cursorStyle = activeTool === 'pointer'
-      ? 'grab'
-      : activeTool === 'comment'
-        ? 'crosshair'
-        : 'crosshair';
+    const isInteractive = activeTool !== 'pointer' || tagging;
+    const cursorStyle = (activeTool !== 'pointer' || tagging) ? 'crosshair' : 'grab';
 
     return (
       <div className="flex h-full w-full flex-col">
@@ -627,7 +624,7 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
               scaleY={stageScale}
               x={stagePos.x}
               y={stagePos.y}
-              draggable={activeTool === 'pointer'}
+              draggable={activeTool === 'pointer' && !tagging}
               onWheel={handleWheel}
               onMouseDown={isInteractive ? handleMouseDown : undefined}
               onMouseMove={isInteractive ? handleMouseMove : undefined}

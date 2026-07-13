@@ -19,6 +19,7 @@ interface MarkupOverlayProps {
   color: string;
   strokeWidth: number;
   onCommentPlace: (x: number, y: number) => void;
+  tagging?: boolean;
   comments: Comment[];
   activeCommentId: string | null;
   onCommentPinClick: (comment: Comment) => void;
@@ -53,6 +54,7 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
       color,
       strokeWidth,
       onCommentPlace,
+      tagging = false,
       comments,
       activeCommentId,
       onCommentPinClick,
@@ -182,13 +184,12 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
 
     const handleMouseDown = useCallback(
       (e: React.MouseEvent) => {
-        if (activeTool === 'pointer') return;
         const coords = getPercentCoords(e);
-
-        if (activeTool === 'comment') {
+        if (tagging) {
           onCommentPlace(coords.x, coords.y);
           return;
         }
+        if (activeTool === 'pointer') return;
 
         if (activeTool === 'text') {
           setTextPopup({ x: coords.x, y: coords.y });
@@ -205,7 +206,7 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
           points: [{ x: coords.x, y: coords.y }],
         });
       },
-      [activeTool, getPercentCoords, onCommentPlace]
+      [activeTool, getPercentCoords, onCommentPlace, tagging]
     );
 
     const handleMouseMove = useCallback(
@@ -388,10 +389,9 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
     };
 
     const previewData = getPreviewData();
-    const isInteractive = activeTool !== 'pointer';
-    // For 3D files with comment tool on live canvas: let clicks pass through for raycasting
-    // But NOT when ephemeral (frozen snapshot) — handle clicks on the overlay instead
-    const passThrough3DComment = is3DFile && activeTool === 'comment' && !ephemeral;
+    const isInteractive = activeTool !== 'pointer' || tagging;
+    // For 3D + tagging on the live canvas: let clicks pass through for raycasting.
+    const passThrough3DTag = is3DFile && tagging && !ephemeral;
 
     // Positional comments for pins — either 2D (xPosition/yPosition) or 3D (worldX/Y/Z projected)
     const positionalComments = comments.filter(
@@ -408,7 +408,10 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
       <div
         ref={containerRef}
         className="absolute inset-0"
-        style={{ pointerEvents: passThrough3DComment ? 'none' : (isInteractive ? 'all' : 'none') }}
+        style={{
+          pointerEvents: passThrough3DTag ? 'none' : (isInteractive ? 'all' : 'none'),
+          cursor: tagging && !passThrough3DTag ? 'crosshair' : undefined,
+        }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
