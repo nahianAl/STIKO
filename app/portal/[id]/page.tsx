@@ -7,6 +7,8 @@ import Button from '@/components/ui/Button';
 import Header from '@/components/ui/Header';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
+import CommentComposer from '@/components/portal/CommentComposer';
+import { uploadFile } from '@/lib/uploadAttachment';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
@@ -197,6 +199,19 @@ export default function PortalPage() {
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
+
+  // Top-level composer draft (single source of truth)
+  const [composerText, setComposerText] = useState('');
+  const [composerFiles, setComposerFiles] = useState<File[]>([]);
+  const [composerAuthor, setComposerAuthor] = useState('Anonymous');
+  const [submittingComposer, setSubmittingComposer] = useState(false);
+  const [tagging, setTagging] = useState(false);
+  const [pendingTag, setPendingTag] = useState<{
+    xPosition?: number; yPosition?: number;
+    worldX?: number; worldY?: number; worldZ?: number;
+    pageNumber?: number; timestamp?: number;
+  } | null>(null);
+  const composerInputRef = useRef<HTMLInputElement>(null);
 
   // Comment placement popup state
   const [commentPopup, setCommentPopup] = useState<{
@@ -417,6 +432,10 @@ export default function PortalPage() {
     setViewerSnapshot(null);
     setViewportCommentSnapshot(null);
     setContentTransform(null);
+    setComposerText('');
+    setComposerFiles([]);
+    setPendingTag(null);
+    setTagging(false);
   }, [selectedFileId]);
 
   const handleSelectVersion = (versionId: string) => {
@@ -515,6 +534,44 @@ export default function PortalPage() {
       console.error('Failed to post comment:', err);
     } finally {
       setSubmittingComment(false);
+    }
+  };
+
+  const handleComposerSubmit = async () => {
+    if (!selectedFileId) return;
+    if (!composerText.trim() && composerFiles.length === 0 && !pendingTag) return;
+    setSubmittingComposer(true);
+    try {
+      const attachments = composerFiles.length > 0
+        ? await Promise.all(composerFiles.map(uploadFile))
+        : [];
+      await fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: selectedFileId,
+          content: composerText.trim() || (attachments.length > 0 ? 'Attachment' : ''),
+          author: composerAuthor.trim() || 'Anonymous',
+          xPosition: pendingTag?.xPosition ?? null,
+          yPosition: pendingTag?.yPosition ?? null,
+          worldX: pendingTag?.worldX ?? null,
+          worldY: pendingTag?.worldY ?? null,
+          worldZ: pendingTag?.worldZ ?? null,
+          pageNumber: pendingTag?.pageNumber ?? null,
+          timestamp: pendingTag?.timestamp ?? null,
+          attachments,
+        }),
+      });
+      setComposerText('');
+      setComposerFiles([]);
+      setPendingTag(null);
+      setTagging(false);
+      setCommentsRefreshKey((k) => k + 1);
+      await fetchComments();
+    } catch (err) {
+      console.error('Failed to post comment:', err);
+    } finally {
+      setSubmittingComposer(false);
     }
   };
 
@@ -813,6 +870,23 @@ export default function PortalPage() {
           refreshKey={commentsRefreshKey}
           collapsed={commentsCollapsed}
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
+          composer={
+            <CommentComposer
+              authorName={composerAuthor}
+              onAuthorChange={setComposerAuthor}
+              text={composerText}
+              onTextChange={setComposerText}
+              pendingFiles={composerFiles}
+              onFilesChange={setComposerFiles}
+              tagging={tagging}
+              onToggleTagging={() => setTagging((t) => !t)}
+              hasTag={!!pendingTag}
+              onClearTag={() => setPendingTag(null)}
+              onSubmit={handleComposerSubmit}
+              submitting={submittingComposer}
+              inputRef={composerInputRef}
+            />
+          }
         />
       </div>
     </div>

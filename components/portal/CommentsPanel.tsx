@@ -11,6 +11,7 @@ interface CommentsPanelProps {
   refreshKey?: number;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  composer?: React.ReactNode;
 }
 
 function timeAgo(dateStr: string): string {
@@ -422,7 +423,7 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
@@ -540,7 +541,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
               No comments yet
             </p>
             <p className="text-xs text-gray-300 mt-1">
-              Click on the file to add a pin, or use the form below
+              Use the box below to comment — tap the tag icon to pin it to the file
             </p>
           </div>
         ) : (
@@ -563,16 +564,10 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
         )}
       </div>
 
-      {/* Bottom comment form */}
-      {fileId && (
+      {/* Bottom composer (owned by the portal) */}
+      {fileId && composer && (
         <div className="border-t border-gray-200 p-3">
-          <CommentForm
-            fileId={fileId}
-            authorName={authorName}
-            onAuthorChange={setAuthorName}
-            onSubmitted={fetchComments}
-            placeholder="Add a comment..."
-          />
+          {composer}
         </div>
       )}
     </div>
