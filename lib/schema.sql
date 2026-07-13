@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS comments (
   snapshot_url TEXT,
   attachments JSONB DEFAULT '[]',
   page_number INT DEFAULT NULL,
+  timestamp DOUBLE PRECISION DEFAULT NULL,
   author TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

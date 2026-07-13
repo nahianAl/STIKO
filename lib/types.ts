@@ -59,6 +59,7 @@ export interface Comment {
   worldY: number | null;
   worldZ: number | null;
   pageNumber: number | null;
+  timestamp: number | null;
   author: string;
   createdAt: string;
   snapshotUrl?: string | null;
