@@ -489,6 +489,7 @@ export default function PortalPage() {
       console.error('Failed to finish annotation:', e);
     } finally {
       if (isPDFFile) pdfKonvaRef.current?.clearDrawings();
+      else markupOverlayRef.current?.clearDrawings();
       setActiveTool('pointer'); // clears the frozen snapshot via the effect above
       setTimeout(() => composerInputRef.current?.focus(), 0);
     }
@@ -496,6 +497,7 @@ export default function PortalPage() {
 
   const handleAnnotationDiscard = () => {
     if (isPDFFile) pdfKonvaRef.current?.clearDrawings();
+    else markupOverlayRef.current?.clearDrawings();
     setActiveTool('pointer');
   };
 

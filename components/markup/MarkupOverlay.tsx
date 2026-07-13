@@ -35,6 +35,7 @@ interface MarkupOverlayProps {
 
 export interface MarkupOverlayHandle {
   getSvgElement: () => SVGSVGElement | null;
+  clearDrawings: () => void;
 }
 
 interface DrawingState {
@@ -88,6 +89,7 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
 
     useImperativeHandle(ref, () => ({
       getSvgElement: () => svgRef.current,
+      clearDrawings: () => setMarkups([]),
     }));
 
     // Markups are ephemeral: created during an annotation session, flattened
