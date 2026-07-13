@@ -217,8 +217,6 @@ export default function PortalPage() {
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
-  // Comment review mode — show a comment's snapshot in the viewport
-  const [viewportCommentSnapshot, setViewportCommentSnapshot] = useState<string | null>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
   const markupOverlayRef = useRef<MarkupOverlayHandle>(null);
   const prevActiveToolRef = useRef<ToolType>('pointer');
@@ -398,7 +396,6 @@ export default function PortalPage() {
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
     setViewerSnapshot(null);
-    setViewportCommentSnapshot(null);
     setContentTransform(null);
     setComposerText('');
     setComposerFiles([]);
@@ -412,7 +409,6 @@ export default function PortalPage() {
     setFiles([]);
     setActiveTool('pointer');
     setActiveCommentId(null);
-    setViewportCommentSnapshot(null);
   };
 
   // Tag placement (image / video). Captures video timestamp when applicable.
@@ -501,27 +497,16 @@ export default function PortalPage() {
     setActiveTool('pointer');
   };
 
-  // Comment <-> Pin linkage — clicking a comment with a snapshot shows it in the viewport
   const handleCommentPinClick = useCallback((comment: Comment) => {
-    setActiveCommentId((prev) => {
-      if (prev === comment.id) {
-        setViewportCommentSnapshot(null);
-        return null;
-      }
-      setViewportCommentSnapshot(comment.snapshotUrl ?? null);
-      return comment.id;
-    });
+    setActiveCommentId((prev) => (prev === comment.id ? null : comment.id));
   }, []);
 
   const handleCommentClick = useCallback((comment: Comment) => {
-    setActiveCommentId((prev) => {
-      if (prev === comment.id) {
-        setViewportCommentSnapshot(null);
-        return null;
-      }
-      setViewportCommentSnapshot((comment as Comment & { snapshotUrl?: string | null }).snapshotUrl ?? null);
-      return comment.id;
-    });
+    setActiveCommentId((prev) => (prev === comment.id ? null : comment.id));
+    if (comment.timestamp != null) {
+      const video = viewerAreaRef.current?.querySelector('video') as HTMLVideoElement | null;
+      if (video) video.currentTime = comment.timestamp;
+    }
   }, []);
 
   const renderFileViewer = () => {
@@ -545,7 +530,7 @@ export default function PortalPage() {
       );
     }
 
-    const isHidden = isPDFFile ? !!viewportCommentSnapshot : !!(viewerSnapshot || viewportCommentSnapshot);
+    const isHidden = !isPDFFile && !!viewerSnapshot;
 
     return (
       <>
@@ -585,31 +570,6 @@ export default function PortalPage() {
             className="absolute inset-0 w-full h-full object-contain bg-gray-100"
             draggable={false}
           />
-        )}
-
-        {/* Comment review mode: show the selected comment's annotated snapshot */}
-        {viewportCommentSnapshot && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={viewportCommentSnapshot}
-              alt="Comment snapshot"
-              className="max-w-full max-h-full object-contain"
-              draggable={false}
-            />
-            <button
-              onClick={() => {
-                setViewportCommentSnapshot(null);
-                setActiveCommentId(null);
-              }}
-              className="absolute top-3 right-3 flex items-center gap-1.5 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 transition-colors"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              Back to live view
-            </button>
-          </div>
         )}
       </>
     );
@@ -735,7 +695,7 @@ export default function PortalPage() {
 
           <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden">
             {renderFileViewer()}
-            {selectedFileId && !viewportCommentSnapshot && !isPDFFile && (
+            {selectedFileId && !isPDFFile && (
               <MarkupOverlay
                 ref={markupOverlayRef}
                 fileId={selectedFileId}
