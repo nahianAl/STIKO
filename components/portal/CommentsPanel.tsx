@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Comment, CommentAttachment } from '@/lib/types';
+import { uploadFile } from '@/lib/uploadAttachment';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -124,25 +125,6 @@ function CommentForm({
   useEffect(() => {
     if (autoFocus) textInputRef.current?.focus();
   }, [autoFocus]);
-
-  const uploadFile = async (file: File): Promise<CommentAttachment> => {
-    // 1. Get presigned URL
-    const res = await fetch('/api/comments/attachments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name, contentType: file.type }),
-    });
-    const { presignedUrl, storageKey } = await res.json();
-
-    // 2. Upload to S3
-    await fetch(presignedUrl, {
-      method: 'PUT',
-      body: file,
-      headers: { 'Content-Type': file.type },
-    });
-
-    return { storageKey, filename: file.name, contentType: file.type, size: file.size };
-  };
 
   const handleSubmit = async () => {
     if (!text.trim() && pendingFiles.length === 0) return;
