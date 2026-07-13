@@ -382,6 +382,8 @@ export default function PortalPage() {
 
     if (!DRAW_TOOLS.includes(activeTool)) {
       setViewerSnapshot(null);
+      markupOverlayRef.current?.clearDrawings();
+      pdfKonvaRef.current?.clearDrawings();
       return;
     }
     if (isPDFFile) return;
@@ -392,6 +394,11 @@ export default function PortalPage() {
     const snapshot = captureViewerSnapshot(container);
     if (snapshot) setViewerSnapshot(snapshot);
   }, [activeTool, isPDFFile]);
+
+  // Tag placement and drawing are mutually exclusive — disarm tagging when a draw tool is selected.
+  useEffect(() => {
+    if (DRAW_TOOLS.includes(activeTool)) setTagging(false);
+  }, [activeTool]);
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
@@ -499,6 +506,10 @@ export default function PortalPage() {
 
   const handleCommentPinClick = useCallback((comment: Comment) => {
     setActiveCommentId((prev) => (prev === comment.id ? null : comment.id));
+    if (comment.timestamp != null) {
+      const video = viewerAreaRef.current?.querySelector('video') as HTMLVideoElement | null;
+      if (video) video.currentTime = comment.timestamp;
+    }
   }, []);
 
   const handleCommentClick = useCallback((comment: Comment) => {

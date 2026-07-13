@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 
 interface CommentComposerProps {
   authorName: string;
@@ -26,6 +26,19 @@ export default function CommentComposer({
   const canSend = !!text.trim() || pendingFiles.length > 0 || hasTag;
 
   const removeFile = (index: number) => onFilesChange(pendingFiles.filter((_, i) => i !== index));
+
+  const filePreviews = useMemo(
+    () => pendingFiles.map((file) => ({
+      file,
+      url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+    })),
+    [pendingFiles]
+  );
+  useEffect(() => {
+    return () => {
+      filePreviews.forEach((p) => { if (p.url) URL.revokeObjectURL(p.url); });
+    };
+  }, [filePreviews]);
 
   return (
     <div className="space-y-2">
@@ -58,13 +71,13 @@ export default function CommentComposer({
       )}
 
       {/* Pending file previews */}
-      {pendingFiles.length > 0 && (
+      {filePreviews.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {pendingFiles.map((file, i) => (
+          {filePreviews.map(({ file, url }, i) => (
             <div key={i} className="relative group">
-              {file.type.startsWith('image/') ? (
+              {url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={URL.createObjectURL(file)} alt={file.name} className="h-14 w-14 rounded-lg object-cover border border-gray-200" />
+                <img src={url} alt={file.name} className="h-14 w-14 rounded-lg object-cover border border-gray-200" />
               ) : (
                 <div className="h-14 w-14 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center text-[9px] text-gray-400">
                   {file.name.split('.').pop()}
