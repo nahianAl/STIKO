@@ -90,26 +90,11 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
       getSvgElement: () => svgRef.current,
     }));
 
-    const fetchMarkups = useCallback(async () => {
-      if (!fileId || ephemeral) return;
-      try {
-        const res = await fetch(`/api/markups?fileId=${fileId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setMarkups(data);
-        }
-      } catch (err) {
-        console.error('Failed to fetch markups:', err);
-      }
-    }, [fileId, ephemeral]);
-
+    // Markups are ephemeral: created during an annotation session, flattened
+    // into a snapshot on Done, never persisted or re-fetched.
     useEffect(() => {
-      if (ephemeral) {
-        setMarkups([]);
-        return;
-      }
-      fetchMarkups();
-    }, [fetchMarkups, ephemeral]);
+      setMarkups([]);
+    }, [fileId]);
 
     const getPercentCoords = useCallback(
       (e: React.MouseEvent): { x: number; y: number } => {
@@ -125,40 +110,21 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
     );
 
     const saveMarkup = useCallback(
-      async (type: Markup['type'], data: unknown) => {
-        if (ephemeral) {
-          // Store in local state only — visible during this session, not persisted to DB
-          setMarkups((prev) => [
-            ...prev,
-            {
-              id: `local-${Date.now()}-${Math.random()}`,
-              fileId,
-              type,
-              data,
-              style: { color, strokeWidth },
-              pageNumber: null,
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-        try {
-          await fetch('/api/markups', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileId,
-              type,
-              data,
-              style: { color, strokeWidth },
-            }),
-          });
-          await fetchMarkups();
-        } catch (err) {
-          console.error('Failed to save markup:', err);
-        }
+      (type: Markup['type'], data: unknown) => {
+        setMarkups((prev) => [
+          ...prev,
+          {
+            id: `local-${Date.now()}-${Math.random()}`,
+            fileId,
+            type,
+            data,
+            style: { color, strokeWidth },
+            pageNumber: null,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
       },
-      [fileId, color, strokeWidth, fetchMarkups, ephemeral]
+      [fileId, color, strokeWidth]
     );
 
     // Text tool submit handler

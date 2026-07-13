@@ -8,7 +8,7 @@ import Header from '@/components/ui/Header';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
-import { uploadFile } from '@/lib/uploadAttachment';
+import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
@@ -59,6 +59,8 @@ interface Participant {
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
 
 const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp', '.obj', '.stl', '.3ds', '.ply', '.dae'];
+
+const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'text'];
 
 // Captures the current viewer state as a JPEG data URL.
 // Tries WebGL canvas first (3D), then img, then video.
@@ -212,21 +214,6 @@ export default function PortalPage() {
     pageNumber?: number; timestamp?: number;
   } | null>(null);
   const composerInputRef = useRef<HTMLInputElement>(null);
-
-  // Comment placement popup state
-  const [commentPopup, setCommentPopup] = useState<{
-    x: number;
-    y: number;
-    percentX: number;
-    percentY: number;
-    worldX?: number;
-    worldY?: number;
-    worldZ?: number;
-    pageNumber?: number;
-  } | null>(null);
-  const [commentPopupText, setCommentPopupText] = useState('');
-  const [commentPopupAuthor, setCommentPopupAuthor] = useState('Anonymous');
-  const [submittingComment, setSubmittingComment] = useState(false);
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
@@ -390,40 +377,23 @@ export default function PortalPage() {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
 
-  // Snapshot: capture when switching from pointer to a drawing/comment tool.
-  // Discard when returning to pointer.
-  // For 3D files + comment tool: skip snapshot so the canvas stays live for raycasting.
+  // Freeze a snapshot when entering a draw tool (non-PDF). PDF draws on its live canvas.
   useEffect(() => {
     const prevTool = prevActiveToolRef.current;
     prevActiveToolRef.current = activeTool;
 
-    if (activeTool === 'pointer') {
+    if (!DRAW_TOOLS.includes(activeTool)) {
       setViewerSnapshot(null);
       return;
     }
-
-    // PDF files: no snapshot needed — annotate directly on Konva canvas
     if (isPDFFile) return;
-
-    // 3D + comment tool: only clear snapshot when coming directly from pointer
-    // (no snapshot exists yet). If coming from a drawing tool, KEEP the snapshot
-    // so user can comment on their annotated freeze frame.
-    if (is3DFile && activeTool === 'comment') {
-      if (prevTool === 'pointer') {
-        setViewerSnapshot(null); // Live canvas for raycasting
-      }
-      return;
-    }
-
-    // Only capture on the transition from pointer → non-pointer
-    if (prevTool !== 'pointer') return;
+    if (DRAW_TOOLS.includes(prevTool)) return; // snapshot already captured
 
     const container = viewerAreaRef.current;
     if (!container) return;
-
     const snapshot = captureViewerSnapshot(container);
     if (snapshot) setViewerSnapshot(snapshot);
-  }, [activeTool, is3DFile, isPDFFile]);
+  }, [activeTool, isPDFFile]);
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
@@ -461,84 +431,6 @@ export default function PortalPage() {
     setTagging(false);
   }, []);
 
-  const handleCommentPopupSubmit = async () => {
-    if (!commentPopupText.trim() || !selectedFileId || !commentPopup) return;
-    setSubmittingComment(true);
-
-    // Capture snapshot — PDF uses Konva stage, others use SVG composite
-    let snapshotUrl: string | null = null;
-    if (isPDFFile && pdfKonvaRef.current) {
-      try {
-        const dataUrl = pdfKonvaRef.current.captureSnapshot();
-        if (dataUrl) {
-          const res = await fetch('/api/snapshots', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dataUrl }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            snapshotUrl = data.storageKey;
-          }
-        }
-      } catch (e) {
-        console.error('Failed to capture PDF snapshot:', e);
-      }
-    } else if (viewerSnapshot && markupOverlayRef.current && viewerAreaRef.current) {
-      try {
-        const svgEl = markupOverlayRef.current.getSvgElement();
-        if (svgEl) {
-          const { clientWidth, clientHeight } = viewerAreaRef.current;
-          const composited = await compositeSnapshotWithMarkup(
-            viewerSnapshot,
-            svgEl,
-            clientWidth,
-            clientHeight
-          );
-          const res = await fetch('/api/snapshots', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dataUrl: composited }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            snapshotUrl = data.storageKey;
-          }
-        }
-      } catch (e) {
-        console.error('Failed to create annotated snapshot:', e);
-      }
-    }
-
-    try {
-      await fetch('/api/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileId: selectedFileId,
-          content: commentPopupText.trim(),
-          author: commentPopupAuthor.trim() || 'Anonymous',
-          xPosition: commentPopup.percentX,
-          yPosition: commentPopup.percentY,
-          worldX: commentPopup.worldX ?? null,
-          worldY: commentPopup.worldY ?? null,
-          worldZ: commentPopup.worldZ ?? null,
-          pageNumber: commentPopup.pageNumber ?? null,
-          snapshotUrl,
-        }),
-      });
-      setCommentPopup(null);
-      setCommentPopupText('');
-      setActiveTool('pointer'); // return to live view, discard ephemeral drawings
-      setCommentsRefreshKey((k) => k + 1);
-      await fetchComments();
-    } catch (err) {
-      console.error('Failed to post comment:', err);
-    } finally {
-      setSubmittingComment(false);
-    }
-  };
-
   const handleComposerSubmit = async () => {
     if (!selectedFileId) return;
     if (!composerText.trim() && composerFiles.length === 0 && !pendingTag) return;
@@ -575,6 +467,36 @@ export default function PortalPage() {
     } finally {
       setSubmittingComposer(false);
     }
+  };
+
+  const handleAnnotationDone = async () => {
+    let dataUrl: string | null = null;
+    try {
+      if (isPDFFile && pdfKonvaRef.current) {
+        dataUrl = pdfKonvaRef.current.captureSnapshot();
+      } else if (viewerSnapshot && markupOverlayRef.current && viewerAreaRef.current) {
+        const svgEl = markupOverlayRef.current.getSvgElement();
+        if (svgEl) {
+          const { clientWidth, clientHeight } = viewerAreaRef.current;
+          dataUrl = await compositeSnapshotWithMarkup(viewerSnapshot, svgEl, clientWidth, clientHeight);
+        }
+      }
+      if (dataUrl) {
+        const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
+        setComposerFiles((prev) => [...prev, file]);
+      }
+    } catch (e) {
+      console.error('Failed to finish annotation:', e);
+    } finally {
+      if (isPDFFile) pdfKonvaRef.current?.clearDrawings();
+      setActiveTool('pointer'); // clears the frozen snapshot via the effect above
+      setTimeout(() => composerInputRef.current?.focus(), 0);
+    }
+  };
+
+  const handleAnnotationDiscard = () => {
+    if (isPDFFile) pdfKonvaRef.current?.clearDrawings();
+    setActiveTool('pointer');
   };
 
   // Comment <-> Pin linkage — clicking a comment with a snapshot shows it in the viewport
@@ -785,11 +707,27 @@ export default function PortalPage() {
             onStrokeWidthChange={setDrawingStrokeWidth}
           />
 
-          {/* Annotation mode indicator */}
-          {viewerSnapshot && (
-            <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-xs text-amber-700 flex-shrink-0">
-              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-              Annotating snapshot — select pointer to return to live view
+          {/* Annotation mode banner */}
+          {DRAW_TOOLS.includes(activeTool) && (
+            <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-700 flex-shrink-0">
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+                Annotating — draw on the file, then attach it to a comment
+              </span>
+              <span className="flex items-center gap-1.5">
+                <button
+                  onClick={handleAnnotationDiscard}
+                  className="px-2 py-1 rounded text-amber-700 hover:bg-amber-100 transition-colors"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={handleAnnotationDone}
+                  className="px-3 py-1 rounded bg-amber-600 text-white hover:bg-amber-700 transition-colors font-medium"
+                >
+                  Done
+                </button>
+              </span>
             </div>
           )}
 
@@ -812,56 +750,6 @@ export default function PortalPage() {
                 worldPinPositions={worldPinPositions}
                 contentTransform={viewerSnapshot ? null : contentTransform}
               />
-            )}
-            {/* Comment placement popup */}
-            {commentPopup && (
-              <div
-                className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-3 w-64"
-                style={{
-                  left: `${Math.min(commentPopup.x, 70)}%`,
-                  top: `${Math.min(commentPopup.y, 70)}%`,
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <input
-                  type="text"
-                  value={commentPopupAuthor}
-                  onChange={(e) => setCommentPopupAuthor(e.target.value)}
-                  placeholder="Your name"
-                  className="w-full rounded border border-gray-300 px-2 py-1 text-xs mb-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                />
-                <textarea
-                  autoFocus
-                  value={commentPopupText}
-                  onChange={(e) => setCommentPopupText(e.target.value)}
-                  placeholder="Add a comment..."
-                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm resize-none h-16 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleCommentPopupSubmit();
-                    }
-                    if (e.key === 'Escape') {
-                      setCommentPopup(null);
-                    }
-                  }}
-                />
-                <div className="flex justify-end gap-2 mt-2">
-                  <button
-                    onClick={() => setCommentPopup(null)}
-                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleCommentPopupSubmit}
-                    disabled={submittingComment || !commentPopupText.trim()}
-                    className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {submittingComment ? '...' : 'Post'}
-                  </button>
-                </div>
-              </div>
             )}
           </div>
         </div>

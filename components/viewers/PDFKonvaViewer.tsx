@@ -13,6 +13,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 export interface PDFKonvaViewerHandle {
   captureSnapshot: () => string | null;
   getCurrentPage: () => number;
+  clearDrawings: () => void;
 }
 
 interface PDFKonvaViewerProps {
@@ -79,9 +80,10 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
       captureSnapshot: () => {
         const stage = stageRef.current;
         if (!stage) return null;
-        return stage.toDataURL({ pixelRatio: 1, mimeType: 'image/jpeg', quality: 0.88 });
+        return stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
       },
       getCurrentPage: () => currentPage,
+      clearDrawings: () => setMarkups([]),
     }));
 
     // Load PDF document
@@ -165,20 +167,10 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
       return () => observer.disconnect();
     }, []);
 
-    // Fetch markups for current page
-    const fetchMarkups = useCallback(async () => {
-      if (!fileId) return;
-      try {
-        const res = await fetch(`/api/markups?fileId=${fileId}&pageNumber=${currentPage}`);
-        if (res.ok) setMarkups(await res.json());
-      } catch (err) {
-        console.error('Failed to fetch markups:', err);
-      }
-    }, [fileId, currentPage]);
-
+    // Clear ephemeral drawings when the page changes.
     useEffect(() => {
-      fetchMarkups();
-    }, [fetchMarkups]);
+      setMarkups([]);
+    }, [currentPage]);
 
     // Coordinate helpers
     const getPageCoords = useCallback((stage: Konva.Stage): { x: number; y: number } | null => {
@@ -200,25 +192,21 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
       y: (yPct / 100) * pageSize.height,
     }), [pageSize]);
 
-    // Save markup
-    const saveMarkup = useCallback(async (type: Markup['type'], data: unknown) => {
-      try {
-        await fetch('/api/markups', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileId,
-            type,
-            data,
-            style: { color, strokeWidth },
-            pageNumber: currentPage,
-          }),
-        });
-        await fetchMarkups();
-      } catch (err) {
-        console.error('Failed to save markup:', err);
-      }
-    }, [fileId, color, strokeWidth, currentPage, fetchMarkups]);
+    // Ephemeral: annotations live only until captured into a snapshot attachment.
+    const saveMarkup = useCallback((type: Markup['type'], data: unknown) => {
+      setMarkups((prev) => [
+        ...prev,
+        {
+          id: `local-${Date.now()}-${Math.random()}`,
+          fileId,
+          type,
+          data,
+          style: { color, strokeWidth },
+          pageNumber: currentPage,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    }, [fileId, color, strokeWidth, currentPage]);
 
     // Text submit
     const handleTextSubmit = useCallback(() => {
