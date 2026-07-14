@@ -220,6 +220,8 @@ export default function PortalPage() {
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
+  // An attachment/snapshot opened for full viewing in the center viewport
+  const [viewportImage, setViewportImage] = useState<string | null>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
   const markupOverlayRef = useRef<MarkupOverlayHandle>(null);
   const prevActiveToolRef = useRef<ToolType>('pointer');
@@ -429,6 +431,7 @@ export default function PortalPage() {
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
     setViewerSnapshot(null);
+    setViewportImage(null);
     setContentTransform(null);
     setComposerText('');
     setComposerFiles([]);
@@ -752,6 +755,28 @@ export default function PortalPage() {
                 pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
               />
             )}
+
+            {/* Attachment/snapshot opened for full viewing in the viewport */}
+            {viewportImage && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-gray-900">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={viewportImage}
+                  alt="Attachment"
+                  className="max-w-full max-h-full object-contain"
+                  draggable={false}
+                />
+                <button
+                  onClick={() => setViewportImage(null)}
+                  className="absolute top-3 right-3 flex items-center gap-1.5 rounded-md bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  Back to live view
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -763,6 +788,7 @@ export default function PortalPage() {
           refreshKey={commentsRefreshKey}
           collapsed={commentsCollapsed}
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
+          onViewImage={setViewportImage}
           composer={
             <CommentComposer
               authorName={composerAuthor}

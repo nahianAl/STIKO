@@ -12,6 +12,7 @@ interface CommentsPanelProps {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   composer?: React.ReactNode;
+  onViewImage?: (url: string) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -62,7 +63,7 @@ function formatFileSize(bytes: number): string {
 
 // ── Attachment previews ────────────────────────────────────
 
-function AttachmentPreview({ attachment }: { attachment: CommentAttachment }) {
+function AttachmentPreview({ attachment, onView }: { attachment: CommentAttachment; onView?: (url: string) => void }) {
   const url = attachment.url ?? '';
   if (isImageType(attachment.contentType)) {
     return (
@@ -72,7 +73,12 @@ function AttachmentPreview({ attachment }: { attachment: CommentAttachment }) {
         alt={attachment.filename}
         className="mt-2 rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition-opacity object-cover"
         style={{ maxHeight: 140, maxWidth: '100%' }}
-        onClick={(e) => { e.stopPropagation(); window.open(url, '_blank'); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!url) return;
+          if (onView) onView(url);
+          else window.open(url, '_blank');
+        }}
       />
     );
   }
@@ -299,6 +305,7 @@ function CommentItem({
   authorName,
   onAuthorChange,
   onRefresh,
+  onViewImage,
 }: {
   comment: Comment;
   replies: Comment[];
@@ -309,6 +316,7 @@ function CommentItem({
   authorName: string;
   onAuthorChange: (name: string) => void;
   onRefresh: () => void;
+  onViewImage?: (url: string) => void;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const hasPosition = comment.xPosition !== null && comment.yPosition !== null;
@@ -361,14 +369,15 @@ function CommentItem({
                 style={{ maxHeight: 120, maxWidth: '100%' }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.open(comment.snapshotUrl!, '_blank');
+                  if (onViewImage) onViewImage(comment.snapshotUrl!);
+                  else window.open(comment.snapshotUrl!, '_blank');
                 }}
               />
             )}
 
             {/* Attachments */}
             {attachments.map((att, i) => (
-              <AttachmentPreview key={i} attachment={att} />
+              <AttachmentPreview key={i} attachment={att} onView={onViewImage} />
             ))}
 
             {/* Reply button */}
@@ -413,6 +422,7 @@ function CommentItem({
               authorName={authorName}
               onAuthorChange={onAuthorChange}
               onRefresh={onRefresh}
+              onViewImage={onViewImage}
             />
           ))}
         </div>
@@ -423,7 +433,7 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
@@ -558,6 +568,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
                 authorName={authorName}
                 onAuthorChange={setAuthorName}
                 onRefresh={fetchComments}
+                onViewImage={onViewImage}
               />
             ))}
           </div>
