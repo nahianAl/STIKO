@@ -12,7 +12,7 @@ import CommentComposer from '@/components/portal/CommentComposer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
-import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
+import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
@@ -185,7 +185,6 @@ export default function PortalPage() {
   const [annotating, setAnnotating] = useState(false);
   const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
-  const markupOverlayRef = useRef<MarkupOverlayHandle>(null);
 
   // Selected file (needed before 3D state)
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
@@ -680,17 +679,12 @@ export default function PortalPage() {
             {renderFileViewer()}
             {selectedFileId && !isPDFFile && !annotating && (
               <MarkupOverlay
-                ref={markupOverlayRef}
                 fileId={selectedFileId}
-                activeTool={activeTool}
                 tagging={tagging}
-                color={drawingColor}
-                strokeWidth={drawingStrokeWidth}
                 onCommentPlace={handleCommentPlace}
                 comments={pinComments}
                 activeCommentId={activeCommentId}
                 onCommentPinClick={handleCommentPinClick}
-                ephemeral={!!viewerSnapshot}
                 is3DFile={is3DFile}
                 worldPinPositions={worldPinPositions}
                 contentTransform={viewerSnapshot ? null : contentTransform}
