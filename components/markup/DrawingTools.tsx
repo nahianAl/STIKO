@@ -141,7 +141,9 @@ export default function DrawingTools({
           <button
             key={tool.id}
             title={tool.label}
-            onClick={() => onToolChange(tool.id)}
+            // Toggle: re-clicking the active tool drops back to Pointer (select/transform).
+            // Pointer maps to itself, so it stays a plain select button.
+            onClick={() => onToolChange(activeTool === tool.id ? 'pointer' : tool.id)}
             className={`
               p-1.5 rounded transition-colors
               ${activeTool === tool.id
@@ -157,7 +159,8 @@ export default function DrawingTools({
         <div ref={shapes.ref} className="relative">
           <button
             title="Shapes"
-            onClick={() => shapes.setOpen(!shapes.open)}
+            // Toggle: if a shape is active, re-clicking drops back to Pointer; otherwise open the menu.
+            onClick={() => (isShapeActive ? onToolChange('pointer') : shapes.setOpen(!shapes.open))}
             className={`
               flex items-center gap-1 p-1.5 rounded transition-colors
               ${isShapeActive
