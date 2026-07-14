@@ -5,7 +5,7 @@ import CommentPin from './CommentPin';
 import type { Markup, Comment } from '@/lib/types';
 import type { ContentTransform } from '@/components/viewers/ImageViewer';
 
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
+type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 interface PinScreenPosition {
   x: number;

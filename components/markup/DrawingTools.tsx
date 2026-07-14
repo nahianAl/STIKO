@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
+type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 interface DrawingToolsProps {
   activeTool: ToolType;
@@ -69,6 +69,16 @@ const STANDALONE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[]
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
         <path d="M2 3h12v2.5h-1.5V4.5h-4V12h1.5v1.5h-5V12H6.5V4.5h-4V5.5H1V3z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'eraser',
+    label: 'Eraser',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 20H7L3 16a2 2 0 0 1 0-3l9-9a2 2 0 0 1 3 0l5 5a2 2 0 0 1 0 3l-8 8" />
+        <line x1="8" y1="9" x2="15" y2="16" />
       </svg>
     ),
   },

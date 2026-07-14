@@ -16,7 +16,7 @@ export type { WorldPin, PinScreenPosition };
 export type { ContentTransform };
 export type { PDFKonvaViewerHandle };
 
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
+type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 interface ViewerContainerProps {
   file: FileRecord;
