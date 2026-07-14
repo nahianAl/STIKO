@@ -37,6 +37,7 @@ interface ViewerContainerProps {
   activeCommentId?: string | null;
   onCommentPinClick?: (comment: Comment) => void;
   pdfViewerRef?: React.Ref<PDFKonvaViewerHandle>;
+  pendingCommentId?: string | null;
 }
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
@@ -52,7 +53,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef,
+  activeTool, tagging, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, pendingCommentId,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -93,7 +94,7 @@ export default function ViewerContainer({
   if (PDF_EXTENSIONS.includes(ext)) {
     return (
       <PDFKonvaViewer
-        ref={pdfViewerRef}
+        handleRef={pdfViewerRef}
         url={url}
         fileId={fileId || file.id}
         activeTool={activeTool ?? 'pointer'}
@@ -104,6 +105,7 @@ export default function ViewerContainer({
         comments={comments ?? []}
         activeCommentId={activeCommentId ?? null}
         onCommentPinClick={onCommentPinClick ?? (() => {})}
+        pendingCommentId={pendingCommentId}
       />
     );
   }

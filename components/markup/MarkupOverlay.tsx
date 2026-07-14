@@ -31,6 +31,8 @@ interface MarkupOverlayProps {
   worldPinPositions?: Map<string, PinScreenPosition>;
   // Content transform from ImageViewer zoom/pan — applied in live view mode
   contentTransform?: ContentTransform | null;
+  // Id of the not-yet-posted tag being placed, rendered as a distinct preview pin
+  pendingCommentId?: string | null;
 }
 
 export interface MarkupOverlayHandle {
@@ -63,6 +65,7 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
       is3DFile = false,
       worldPinPositions,
       contentTransform,
+      pendingCommentId,
     },
     ref
   ) {
@@ -454,6 +457,7 @@ const MarkupOverlay = forwardRef<MarkupOverlayHandle, MarkupOverlayProps>(
                 x={pinX}
                 y={pinY}
                 isActive={activeCommentId === comment.id}
+                isPending={comment.id === pendingCommentId}
                 onClick={() => onCommentPinClick(comment)}
               />
             );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, useRef, useCallback, useImperativeHandle, type Ref } from 'react';
 import { Stage, Layer, Image as KonvaImage, Line, Arrow, Rect, Text, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
@@ -27,6 +27,10 @@ interface PDFKonvaViewerProps {
   comments: Comment[];
   activeCommentId: string | null;
   onCommentPinClick: (comment: Comment) => void;
+  // Imperative handle passed as a prop (next/dynamic drops `ref`, so we cannot use forwardRef here)
+  handleRef?: Ref<PDFKonvaViewerHandle>;
+  // Id of the not-yet-posted tag being placed, rendered as a distinct preview pin
+  pendingCommentId?: string | null;
 }
 
 interface DrawingState {
@@ -38,10 +42,8 @@ interface DrawingState {
   points: number[]; // flat [x1, y1, x2, y2, ...] in page-space pixels
 }
 
-const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
-  function PDFKonvaViewer(
-    { url, fileId, activeTool, color, strokeWidth, onCommentPlace, tagging = false, comments, activeCommentId, onCommentPinClick },
-    ref
+function PDFKonvaViewer(
+    { url, fileId, activeTool, color, strokeWidth, onCommentPlace, tagging = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -75,8 +77,8 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
     const [textPopup, setTextPopup] = useState<{ x: number; y: number; screenX: number; screenY: number } | null>(null);
     const [textInput, setTextInput] = useState('');
 
-    // Ref handle
-    useImperativeHandle(ref, () => ({
+    // Ref handle (attached to the `handleRef` prop, not React `ref` — see note on props)
+    useImperativeHandle(handleRef, () => ({
       captureSnapshot: () => {
         const stage = stageRef.current;
         if (!stage) return null;
@@ -641,8 +643,25 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
                 {pageComments.map((comment, idx) => {
                   const pos = fromPercent(comment.xPosition!, comment.yPosition!);
                   const isActive = activeCommentId === comment.id;
+                  const isPending = comment.id === pendingCommentId;
                   const pinRadius = 12 / stageScale;
                   const fontSize = 10 / stageScale;
+                  if (isPending) {
+                    return (
+                      <Group key={comment.id} x={pos.x} y={pos.y} listening={false}>
+                        <Circle radius={pinRadius * 1.7} fill="#3b82f6" opacity={0.25} />
+                        <Circle
+                          radius={pinRadius}
+                          fill="#2563eb"
+                          stroke="white"
+                          strokeWidth={2 / stageScale}
+                          shadowColor="black"
+                          shadowBlur={4 / stageScale}
+                          shadowOpacity={0.3}
+                        />
+                      </Group>
+                    );
+                  }
                   return (
                     <Group
                       key={comment.id}
@@ -730,7 +749,6 @@ const PDFKonvaViewer = forwardRef<PDFKonvaViewerHandle, PDFKonvaViewerProps>(
         </div>
       </div>
     );
-  }
-);
+}
 
 export default PDFKonvaViewer;

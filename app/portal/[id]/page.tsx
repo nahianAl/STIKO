@@ -62,6 +62,9 @@ const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp', '.obj', '.stl', '
 
 const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'text'];
 
+// Synthetic id for the not-yet-posted tag, so it renders as a live preview pin
+const PENDING_TAG_ID = '__pending_tag__';
+
 // Captures the current viewer state as a JPEG data URL.
 // Tries WebGL canvas first (3D), then img, then video.
 function captureViewerSnapshot(container: HTMLElement): string | null {
@@ -241,11 +244,34 @@ export default function PortalPage() {
 
   const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
 
+  // Live preview: include the not-yet-posted tag among the pins so the user sees exactly where it lands.
+  const pinComments: Comment[] = useMemo(() => {
+    if (!pendingTag || !selectedFileId) return comments;
+    const pending: Comment = {
+      id: PENDING_TAG_ID,
+      fileId: selectedFileId,
+      parentCommentId: null,
+      content: '',
+      xPosition: pendingTag.xPosition ?? null,
+      yPosition: pendingTag.yPosition ?? null,
+      worldX: pendingTag.worldX ?? null,
+      worldY: pendingTag.worldY ?? null,
+      worldZ: pendingTag.worldZ ?? null,
+      pageNumber: pendingTag.pageNumber ?? null,
+      timestamp: pendingTag.timestamp ?? null,
+      author: 'You',
+      createdAt: '',
+      snapshotUrl: null,
+      attachments: [],
+    };
+    return [...comments, pending];
+  }, [comments, pendingTag, selectedFileId]);
+
   const worldPins: WorldPin[] = useMemo(() => {
-    return comments
+    return pinComments
       .filter((c) => c.worldX !== null && c.worldY !== null && c.worldZ !== null)
       .map((c) => ({ id: c.id, worldX: c.worldX!, worldY: c.worldY!, worldZ: c.worldZ! }));
-  }, [comments]);
+  }, [pinComments]);
 
   const handleSceneClick = useCallback(
     (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => {
@@ -565,10 +591,11 @@ export default function PortalPage() {
             strokeWidth={drawingStrokeWidth}
             fileId={selectedFileId!}
             onCommentPlace={handlePDFCommentPlace}
-            comments={comments}
+            comments={pinComments}
             activeCommentId={activeCommentId}
             onCommentPinClick={handleCommentPinClick}
             pdfViewerRef={pdfKonvaRef}
+            pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
           />
         </div>
 
@@ -715,13 +742,14 @@ export default function PortalPage() {
                 color={drawingColor}
                 strokeWidth={drawingStrokeWidth}
                 onCommentPlace={handleCommentPlace}
-                comments={comments}
+                comments={pinComments}
                 activeCommentId={activeCommentId}
                 onCommentPinClick={handleCommentPinClick}
                 ephemeral={!!viewerSnapshot}
                 is3DFile={is3DFile}
                 worldPinPositions={worldPinPositions}
                 contentTransform={viewerSnapshot ? null : contentTransform}
+                pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
               />
             )}
           </div>
