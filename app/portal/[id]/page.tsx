@@ -385,6 +385,7 @@ export default function PortalPage() {
     setViewerSnapshot(null);
     setViewportImage(null);
     setAnnotating(false);
+    setActiveTool('pointer');
     setContentTransform(null);
     setComposerText('');
     setComposerFiles([]);
@@ -463,14 +464,14 @@ export default function PortalPage() {
   };
 
   const handleAnnotationDone = async () => {
-    let dataUrl: string | null = null;
     try {
-      dataUrl = isPDFFile
-        ? (pdfKonvaRef.current?.captureSnapshot() ?? null)
-        : (annotationCanvasRef.current?.captureSnapshot() ?? null);
-      if (dataUrl) {
-        const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
-        setComposerFiles((prev) => [...prev, file]);
+      const surface = isPDFFile ? pdfKonvaRef.current : annotationCanvasRef.current;
+      if (surface?.hasObjects()) {
+        const dataUrl = surface.captureSnapshot();
+        if (dataUrl) {
+          const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
+          setComposerFiles((prev) => [...prev, file]);
+        }
       }
     } catch (e) {
       console.error('Failed to finish annotation:', e);

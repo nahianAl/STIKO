@@ -16,6 +16,7 @@ export interface PDFKonvaViewerHandle {
   captureSnapshot: () => string | null;
   getCurrentPage: () => number;
   clearDrawings: () => void;
+  hasObjects: () => boolean;
 }
 
 interface PDFKonvaViewerProps {
@@ -80,6 +81,7 @@ function PDFKonvaViewer(
       },
       getCurrentPage: () => currentPage,
       clearDrawings: () => ann.clear(),
+      hasObjects: () => ann.hasObjects(),
     }));
 
     // Load PDF document
