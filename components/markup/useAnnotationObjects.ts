@@ -33,7 +33,8 @@ export function useAnnotationObjects() {
   const startDraw = useCallback((tool: AnnTool, p: { x: number; y: number }, color: string, strokeWidth: number) => {
     if (!GESTURE_TOOLS.has(tool)) return;
     const o = base(tool as AnnotationObjectType, color, strokeWidth);
-    if (tool === 'freehand' || tool === 'line' || tool === 'arrow') o.points = [p.x, p.y, p.x, p.y];
+    if (tool === 'freehand') o.points = [p.x, p.y];
+    else if (tool === 'line' || tool === 'arrow') o.points = [p.x, p.y, p.x, p.y];
     else if (tool === 'rect') { o.x = p.x; o.y = p.y; }
     draftRef.current = o;
     setDraft(o);
@@ -58,6 +59,7 @@ export function useAnnotationObjects() {
     if (!d) return;
     const valid = d.type === 'freehand' ? d.points.length > 2
       : d.type === 'rect' ? Math.abs(d.width) > 3 && Math.abs(d.height) > 3
+      : (d.type === 'line' || d.type === 'arrow') ? Math.hypot(d.points[2] - d.points[0], d.points[3] - d.points[1]) > 3
       : true;
     if (!valid) return;
     let obj = d;
