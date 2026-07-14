@@ -288,7 +288,7 @@ function PDFKonvaViewer(
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage <= 1}
+              disabled={currentPage <= 1 || annotating}
               className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -300,7 +300,7 @@ function PDFKonvaViewer(
             </span>
             <button
               onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-              disabled={currentPage >= numPages}
+              disabled={currentPage >= numPages || annotating}
               className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
