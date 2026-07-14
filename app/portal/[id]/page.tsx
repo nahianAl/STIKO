@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import Button from '@/components/ui/Button';
 import Header from '@/components/ui/Header';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
@@ -13,6 +14,12 @@ import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTra
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay, { type MarkupOverlayHandle } from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
+
+// AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
+// PDFKonvaViewer is dynamically imported in ViewerContainer).
+const AnnotationCanvas = dynamic(() => import('@/components/markup/AnnotationCanvas'), { ssr: false });
+import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
+import type { AnnTool } from '@/components/markup/useAnnotationObjects';
 
 interface Project {
   id: string;
@@ -131,53 +138,6 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
   return null;
 }
 
-// Composites a snapshot image with SVG markup into a single JPEG data URL.
-async function compositeSnapshotWithMarkup(
-  snapshotDataUrl: string,
-  svgElement: SVGSVGElement,
-  width: number,
-  height: number
-): Promise<string> {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d')!;
-
-  // Draw snapshot background
-  await new Promise<void>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve();
-    };
-    img.onerror = reject;
-    img.src = snapshotDataUrl;
-  });
-
-  // Draw SVG markup overlay — use base64 data URL (blob URLs can fail for SVG in some browsers)
-  const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
-  svgClone.setAttribute('width', String(width));
-  svgClone.setAttribute('height', String(height));
-  const svgData = new XMLSerializer().serializeToString(svgClone);
-  const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-
-  await new Promise<void>((resolve) => {
-    const svgImg = new Image();
-    svgImg.onload = () => {
-      ctx.drawImage(svgImg, 0, 0, width, height);
-      resolve();
-    };
-    // If SVG overlay fails, still resolve — snapshot without markup is better than nothing
-    svgImg.onerror = () => {
-      console.warn('SVG overlay failed to composite; snapshot will have no markup drawn on it');
-      resolve();
-    };
-    svgImg.src = svgDataUrl;
-  });
-
-  return canvas.toDataURL('image/jpeg', 0.88);
-}
-
 export default function PortalPage() {
   const params = useParams();
   const portalId = params.id as string;
@@ -222,9 +182,10 @@ export default function PortalPage() {
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
   // An attachment/snapshot opened for full viewing in the center viewport
   const [viewportImage, setViewportImage] = useState<string | null>(null);
+  const [annotating, setAnnotating] = useState(false);
+  const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
   const markupOverlayRef = useRef<MarkupOverlayHandle>(null);
-  const prevActiveToolRef = useRef<ToolType>('pointer');
 
   // Selected file (needed before 3D state)
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
@@ -403,25 +364,17 @@ export default function PortalPage() {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
 
-  // Freeze a snapshot when entering a draw tool (non-PDF). PDF draws on its live canvas.
+  // Start an annotation session when a draw tool is picked (only session-starter).
   useEffect(() => {
-    const prevTool = prevActiveToolRef.current;
-    prevActiveToolRef.current = activeTool;
-
-    if (!DRAW_TOOLS.includes(activeTool)) {
-      setViewerSnapshot(null);
-      markupOverlayRef.current?.clearDrawings();
-      pdfKonvaRef.current?.clearDrawings();
-      return;
+    if (annotating) return;
+    if (!DRAW_TOOLS.includes(activeTool)) return;
+    setAnnotating(true);
+    if (!isPDFFile) {
+      const container = viewerAreaRef.current;
+      const snapshot = container ? captureViewerSnapshot(container) : null;
+      setViewerSnapshot(snapshot);
     }
-    if (isPDFFile) return;
-    if (DRAW_TOOLS.includes(prevTool)) return; // snapshot already captured
-
-    const container = viewerAreaRef.current;
-    if (!container) return;
-    const snapshot = captureViewerSnapshot(container);
-    if (snapshot) setViewerSnapshot(snapshot);
-  }, [activeTool, isPDFFile]);
+  }, [activeTool, annotating, isPDFFile]);
 
   // Tag placement and drawing are mutually exclusive — disarm tagging when a draw tool is selected.
   useEffect(() => {
@@ -432,6 +385,7 @@ export default function PortalPage() {
   useEffect(() => {
     setViewerSnapshot(null);
     setViewportImage(null);
+    setAnnotating(false);
     setContentTransform(null);
     setComposerText('');
     setComposerFiles([]);
@@ -501,18 +455,20 @@ export default function PortalPage() {
     }
   };
 
+  const endSession = () => {
+    setAnnotating(false);
+    setViewerSnapshot(null);
+    annotationCanvasRef.current?.clear();
+    pdfKonvaRef.current?.clearDrawings();
+    setActiveTool('pointer');
+  };
+
   const handleAnnotationDone = async () => {
     let dataUrl: string | null = null;
     try {
-      if (isPDFFile && pdfKonvaRef.current) {
-        dataUrl = pdfKonvaRef.current.captureSnapshot();
-      } else if (viewerSnapshot && markupOverlayRef.current && viewerAreaRef.current) {
-        const svgEl = markupOverlayRef.current.getSvgElement();
-        if (svgEl) {
-          const { clientWidth, clientHeight } = viewerAreaRef.current;
-          dataUrl = await compositeSnapshotWithMarkup(viewerSnapshot, svgEl, clientWidth, clientHeight);
-        }
-      }
+      dataUrl = isPDFFile
+        ? (pdfKonvaRef.current?.captureSnapshot() ?? null)
+        : (annotationCanvasRef.current?.captureSnapshot() ?? null);
       if (dataUrl) {
         const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
         setComposerFiles((prev) => [...prev, file]);
@@ -520,17 +476,13 @@ export default function PortalPage() {
     } catch (e) {
       console.error('Failed to finish annotation:', e);
     } finally {
-      if (isPDFFile) pdfKonvaRef.current?.clearDrawings();
-      else markupOverlayRef.current?.clearDrawings();
-      setActiveTool('pointer'); // clears the frozen snapshot via the effect above
+      endSession();
       setTimeout(() => composerInputRef.current?.focus(), 0);
     }
   };
 
   const handleAnnotationDiscard = () => {
-    if (isPDFFile) pdfKonvaRef.current?.clearDrawings();
-    else markupOverlayRef.current?.clearDrawings();
-    setActiveTool('pointer');
+    endSession();
   };
 
   const handleCommentPinClick = useCallback((comment: Comment) => {
@@ -570,7 +522,7 @@ export default function PortalPage() {
       );
     }
 
-    const isHidden = !isPDFFile && !!viewerSnapshot;
+    const isHidden = (annotating && !isPDFFile) || !!viewportImage;
 
     return (
       <>
@@ -601,17 +553,6 @@ export default function PortalPage() {
             pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
           />
         </div>
-
-        {/* Annotation mode: frozen snapshot for drawing on */}
-        {viewerSnapshot && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={viewerSnapshot}
-            alt="Viewer snapshot"
-            className="absolute inset-0 w-full h-full object-contain bg-gray-100"
-            draggable={false}
-          />
-        )}
       </>
     );
   };
@@ -711,7 +652,7 @@ export default function PortalPage() {
           />
 
           {/* Annotation mode banner */}
-          {DRAW_TOOLS.includes(activeTool) && (
+          {annotating && (
             <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-700 flex-shrink-0">
               <span className="flex items-center gap-2">
                 <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
@@ -736,7 +677,7 @@ export default function PortalPage() {
 
           <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden">
             {renderFileViewer()}
-            {selectedFileId && !isPDFFile && (
+            {selectedFileId && !isPDFFile && !annotating && (
               <MarkupOverlay
                 ref={markupOverlayRef}
                 fileId={selectedFileId}
@@ -753,6 +694,16 @@ export default function PortalPage() {
                 worldPinPositions={worldPinPositions}
                 contentTransform={viewerSnapshot ? null : contentTransform}
                 pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
+              />
+            )}
+
+            {annotating && !isPDFFile && (
+              <AnnotationCanvas
+                backgroundDataUrl={viewerSnapshot}
+                activeTool={activeTool as AnnTool}
+                color={drawingColor}
+                strokeWidth={drawingStrokeWidth}
+                handleRef={annotationCanvasRef}
               />
             )}
 
