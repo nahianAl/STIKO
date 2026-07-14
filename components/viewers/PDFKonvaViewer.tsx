@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useImperativeHandle, type Ref } from 'react';
-import { Stage, Layer, Image as KonvaImage, Line, Arrow, Rect, Text, Circle, Group } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Text, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
-import type { Comment, Markup } from '@/lib/types';
+import type { Comment } from '@/lib/types';
+import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnotationObjects';
+import AnnotationObjects from '@/components/markup/AnnotationObjects';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -24,6 +26,7 @@ interface PDFKonvaViewerProps {
   strokeWidth: number;
   onCommentPlace: (x: number, y: number, pageNumber: number) => void;
   tagging?: boolean;
+  annotating?: boolean;
   comments: Comment[];
   activeCommentId: string | null;
   onCommentPinClick: (comment: Comment) => void;
@@ -33,17 +36,8 @@ interface PDFKonvaViewerProps {
   pendingCommentId?: string | null;
 }
 
-interface DrawingState {
-  isDrawing: boolean;
-  startX: number;
-  startY: number;
-  currentX: number;
-  currentY: number;
-  points: number[]; // flat [x1, y1, x2, y2, ...] in page-space pixels
-}
-
 function PDFKonvaViewer(
-    { url, fileId, activeTool, color, strokeWidth, onCommentPlace, tagging = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId }: PDFKonvaViewerProps
+    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -62,30 +56,30 @@ function PDFKonvaViewer(
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
-    // Drawing state
-    const [drawing, setDrawing] = useState<DrawingState>({
-      isDrawing: false,
-      startX: 0, startY: 0,
-      currentX: 0, currentY: 0,
-      points: [],
-    });
+    // Shared Konva annotation object model (select/move/scale/rotate/erase)
+    const ann = useAnnotationObjects();
 
-    // Stored markups for current page
-    const [markups, setMarkups] = useState<Markup[]>([]);
-
-    // Text tool popup
-    const [textPopup, setTextPopup] = useState<{ x: number; y: number; screenX: number; screenY: number } | null>(null);
-    const [textInput, setTextInput] = useState('');
+    // Selection-vs-tool contract: clear the selection when the active tool changes to a
+    // non-pointer tool, so Transformer handles don't linger over a previously selected object
+    // while a draw/eraser tool is active.
+    useEffect(() => {
+      if (activeTool !== 'pointer') ann.setSelectedId(null);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTool]);
 
     // Ref handle (attached to the `handleRef` prop, not React `ref` — see note on props)
     useImperativeHandle(handleRef, () => ({
       captureSnapshot: () => {
         const stage = stageRef.current;
         if (!stage) return null;
-        return stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
+        stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
+        stage.draw();
+        const url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
+        ann.setSelectedId(null);
+        return url;
       },
       getCurrentPage: () => currentPage,
-      clearDrawings: () => setMarkups([]),
+      clearDrawings: () => ann.clear(),
     }));
 
     // Load PDF document
@@ -169,11 +163,6 @@ function PDFKonvaViewer(
       return () => observer.disconnect();
     }, []);
 
-    // Clear ephemeral drawings when the page changes.
-    useEffect(() => {
-      setMarkups([]);
-    }, [currentPage]);
-
     // Coordinate helpers
     const getPageCoords = useCallback((stage: Konva.Stage): { x: number; y: number } | null => {
       const pointer = stage.getPointerPosition();
@@ -194,135 +183,43 @@ function PDFKonvaViewer(
       y: (yPct / 100) * pageSize.height,
     }), [pageSize]);
 
-    // Ephemeral: annotations live only until captured into a snapshot attachment.
-    const saveMarkup = useCallback((type: Markup['type'], data: unknown) => {
-      setMarkups((prev) => [
-        ...prev,
-        {
-          id: `local-${Date.now()}-${Math.random()}`,
-          fileId,
-          type,
-          data,
-          style: { color, strokeWidth },
-          pageNumber: currentPage,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    }, [fileId, color, strokeWidth, currentPage]);
+    // Text tool popup (page-space point for the object + raw screen point for positioning the input)
+    const [textPopup, setTextPopup] = useState<{ px: number; py: number; sx: number; sy: number } | null>(null);
+    const [textInput, setTextInput] = useState('');
 
-    // Text submit
-    const handleTextSubmit = useCallback(() => {
-      if (!textPopup || !textInput.trim()) {
-        setTextPopup(null);
-        setTextInput('');
-        return;
-      }
-      const pct = toPercent(textPopup.x, textPopup.y);
-      saveMarkup('text', { x: pct.x, y: pct.y, text: textInput.trim() });
-      setTextPopup(null);
-      setTextInput('');
-    }, [textPopup, textInput, toPercent, saveMarkup]);
-
-    // Mouse handlers
-    const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (activeTool === 'pointer' && !tagging) return;
+    const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       const stage = e.target.getStage();
       if (!stage) return;
       const coords = getPageCoords(stage);
       if (!coords) return;
 
-      if (tagging) {
-        const pct = toPercent(coords.x, coords.y);
-        onCommentPlace(pct.x, pct.y, currentPage);
-        return;
-      }
+      if (tagging) { const pct = toPercent(coords.x, coords.y); onCommentPlace(pct.x, pct.y, currentPage); return; }
+
+      if (!annotating) return; // live view: pointer pans (handled by Stage draggable)
 
       if (activeTool === 'text') {
-        const pointer = stage.getPointerPosition();
-        if (!pointer) return;
-        setTextPopup({ x: coords.x, y: coords.y, screenX: pointer.x, screenY: pointer.y });
+        const ptr = stage.getPointerPosition();
+        setTextPopup({ px: coords.x, py: coords.y, sx: ptr?.x ?? 0, sy: ptr?.y ?? 0 });
         setTextInput('');
         return;
       }
+      if (activeTool === 'pointer') { if (e.target === stage) ann.setSelectedId(null); return; }
+      if (activeTool === 'eraser') return;
+      ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann]);
 
-      setDrawing({
-        isDrawing: true,
-        startX: coords.x,
-        startY: coords.y,
-        currentX: coords.x,
-        currentY: coords.y,
-        points: [coords.x, coords.y],
-      });
-    }, [activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, tagging]);
-
-    const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (!drawing.isDrawing) return;
+    const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (!annotating) return;
       const stage = e.target.getStage();
       if (!stage) return;
       const coords = getPageCoords(stage);
-      if (!coords) return;
+      if (coords) ann.moveDraw(activeTool as AnnTool, coords);
+    }, [annotating, activeTool, getPageCoords, ann]);
 
-      setDrawing(prev => ({
-        ...prev,
-        currentX: coords.x,
-        currentY: coords.y,
-        points: activeTool === 'freehand'
-          ? [...prev.points, coords.x, coords.y]
-          : prev.points,
-      }));
-    }, [drawing.isDrawing, getPageCoords, activeTool]);
-
-    const handleMouseUp = useCallback(() => {
-      if (!drawing.isDrawing) return;
-      const { startX, startY, currentX, currentY, points } = drawing;
-
-      switch (activeTool) {
-        case 'freehand':
-          if (points.length > 2) {
-            // Convert flat points to percent array
-            const pctPoints: { x: number; y: number }[] = [];
-            for (let i = 0; i < points.length; i += 2) {
-              pctPoints.push(toPercent(points[i], points[i + 1]));
-            }
-            saveMarkup('freehand', { points: pctPoints });
-          }
-          break;
-        case 'line': {
-          const p1 = toPercent(startX, startY);
-          const p2 = toPercent(currentX, currentY);
-          saveMarkup('line', { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
-          break;
-        }
-        case 'arrow': {
-          const a1 = toPercent(startX, startY);
-          const a2 = toPercent(currentX, currentY);
-          saveMarkup('arrow', { x1: a1.x, y1: a1.y, x2: a2.x, y2: a2.y });
-          break;
-        }
-        case 'rect': {
-          const rx = Math.min(startX, currentX);
-          const ry = Math.min(startY, currentY);
-          const rw = Math.abs(currentX - startX);
-          const rh = Math.abs(currentY - startY);
-          if (rw > 2 && rh > 2) {
-            const rp1 = toPercent(rx, ry);
-            const rp2 = toPercent(rx + rw, ry + rh);
-            saveMarkup('rect', {
-              x: rp1.x, y: rp1.y,
-              width: rp2.x - rp1.x, height: rp2.y - rp1.y,
-            });
-          }
-          break;
-        }
-      }
-
-      setDrawing({
-        isDrawing: false,
-        startX: 0, startY: 0,
-        currentX: 0, currentY: 0,
-        points: [],
-      });
-    }, [drawing, activeTool, toPercent, saveMarkup]);
+    const submitText = useCallback(() => {
+      if (textPopup && textInput.trim()) ann.addText({ x: textPopup.px, y: textPopup.py }, textInput, color, strokeWidth);
+      setTextPopup(null); setTextInput('');
+    }, [textPopup, textInput, color, strokeWidth, ann]);
 
     // Wheel zoom
     const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -376,167 +273,12 @@ function PDFKonvaViewer(
       });
     }, [pageSize, containerSize]);
 
-    // Render stored markup as Konva elements
-    const renderStoredMarkup = (markup: Markup) => {
-      const { type, data, style: mStyle, id } = markup;
-      const sw = (mStyle.strokeWidth || 4) / stageScale;
-
-      switch (type) {
-        case 'freehand': {
-          const pts = data.points as { x: number; y: number }[];
-          if (!pts || pts.length < 2) return null;
-          const flatPts = pts.flatMap(p => {
-            const px = fromPercent(p.x, p.y);
-            return [px.x, px.y];
-          });
-          return (
-            <Line
-              key={id}
-              points={flatPts}
-              stroke={mStyle.color}
-              strokeWidth={sw}
-              lineCap="round"
-              lineJoin="round"
-              tension={0.5}
-              listening={false}
-            />
-          );
-        }
-        case 'line': {
-          const p1 = fromPercent(data.x1 as number, data.y1 as number);
-          const p2 = fromPercent(data.x2 as number, data.y2 as number);
-          return (
-            <Line
-              key={id}
-              points={[p1.x, p1.y, p2.x, p2.y]}
-              stroke={mStyle.color}
-              strokeWidth={sw}
-              lineCap="round"
-              listening={false}
-            />
-          );
-        }
-        case 'arrow': {
-          const a1 = fromPercent(data.x1 as number, data.y1 as number);
-          const a2 = fromPercent(data.x2 as number, data.y2 as number);
-          return (
-            <Arrow
-              key={id}
-              points={[a1.x, a1.y, a2.x, a2.y]}
-              stroke={mStyle.color}
-              fill={mStyle.color}
-              strokeWidth={sw}
-              pointerLength={10 / stageScale}
-              pointerWidth={8 / stageScale}
-              listening={false}
-            />
-          );
-        }
-        case 'rect': {
-          const rp = fromPercent(data.x as number, data.y as number);
-          const rp2 = fromPercent(
-            (data.x as number) + (data.width as number),
-            (data.y as number) + (data.height as number)
-          );
-          return (
-            <Rect
-              key={id}
-              x={rp.x}
-              y={rp.y}
-              width={rp2.x - rp.x}
-              height={rp2.y - rp.y}
-              stroke={mStyle.color}
-              strokeWidth={sw}
-              listening={false}
-            />
-          );
-        }
-        case 'text': {
-          const tp = fromPercent(data.x as number, data.y as number);
-          return (
-            <Text
-              key={id}
-              x={tp.x}
-              y={tp.y}
-              text={data.text as string}
-              fill={mStyle.color}
-              fontSize={(mStyle.strokeWidth * 4) / stageScale}
-              fontFamily="sans-serif"
-              fontStyle="bold"
-              listening={false}
-            />
-          );
-        }
-        default:
-          return null;
-      }
-    };
-
-    // Render drawing preview
-    const renderPreview = () => {
-      if (!drawing.isDrawing) return null;
-      const { startX, startY, currentX, currentY, points } = drawing;
-      const sw = strokeWidth / stageScale;
-
-      switch (activeTool) {
-        case 'freehand':
-          return (
-            <Line
-              points={points}
-              stroke={color}
-              strokeWidth={sw}
-              lineCap="round"
-              lineJoin="round"
-              tension={0.5}
-              listening={false}
-            />
-          );
-        case 'line':
-          return (
-            <Line
-              points={[startX, startY, currentX, currentY]}
-              stroke={color}
-              strokeWidth={sw}
-              lineCap="round"
-              listening={false}
-            />
-          );
-        case 'arrow':
-          return (
-            <Arrow
-              points={[startX, startY, currentX, currentY]}
-              stroke={color}
-              fill={color}
-              strokeWidth={sw}
-              pointerLength={10 / stageScale}
-              pointerWidth={8 / stageScale}
-              listening={false}
-            />
-          );
-        case 'rect':
-          return (
-            <Rect
-              x={Math.min(startX, currentX)}
-              y={Math.min(startY, currentY)}
-              width={Math.abs(currentX - startX)}
-              height={Math.abs(currentY - startY)}
-              stroke={color}
-              strokeWidth={sw}
-              listening={false}
-            />
-          );
-        default:
-          return null;
-      }
-    };
-
     // Comment pins for current page
     const pageComments = comments.filter(c =>
       c.pageNumber === currentPage && c.xPosition !== null && c.yPosition !== null
     );
 
-    const isInteractive = activeTool !== 'pointer' || tagging;
-    const cursorStyle = (activeTool !== 'pointer' || tagging) ? 'crosshair' : 'grab';
+    const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? 'not-allowed' : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
 
     return (
       <div className="flex h-full w-full flex-col">
@@ -614,12 +356,12 @@ function PDFKonvaViewer(
               scaleY={stageScale}
               x={stagePos.x}
               y={stagePos.y}
-              draggable={activeTool === 'pointer' && !tagging}
+              draggable={activeTool === 'pointer' && !annotating && !tagging}
               onWheel={handleWheel}
-              onMouseDown={isInteractive ? handleMouseDown : undefined}
-              onMouseMove={isInteractive ? handleMouseMove : undefined}
-              onMouseUp={isInteractive ? handleMouseUp : undefined}
-              onMouseLeave={isInteractive ? handleMouseUp : undefined}
+              onMouseDown={handleStageMouseDown}
+              onMouseMove={handleStageMouseMove}
+              onMouseUp={() => ann.endDraw()}
+              onMouseLeave={() => ann.endDraw()}
             >
               {/* PDF Background */}
               <Layer>
@@ -628,14 +370,17 @@ function PDFKonvaViewer(
                 )}
               </Layer>
 
-              {/* Stored Annotations */}
+              {/* Annotations (shared Konva objects) */}
               <Layer>
-                {markups.map(m => renderStoredMarkup(m))}
-              </Layer>
-
-              {/* Drawing Preview */}
-              <Layer>
-                {renderPreview()}
+                <AnnotationObjects
+                  objects={ann.objects}
+                  draft={ann.draft}
+                  selectedId={ann.selectedId}
+                  activeTool={activeTool as AnnTool}
+                  onSelect={ann.setSelectedId}
+                  onErase={ann.deleteObject}
+                  onChange={ann.updateObject}
+                />
               </Layer>
 
               {/* Comment Pins */}
@@ -703,11 +448,7 @@ function PDFKonvaViewer(
           {textPopup && (
             <div
               className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-2"
-              style={{
-                left: Math.min(textPopup.screenX, containerSize.width - 200),
-                top: Math.min(textPopup.screenY, containerSize.height - 80),
-              }}
-              onClick={(e) => e.stopPropagation()}
+              style={{ left: Math.min(textPopup.sx, containerSize.width - 200), top: Math.min(textPopup.sy, containerSize.height - 80) }}
               onMouseDown={(e) => e.stopPropagation()}
             >
               <input
@@ -716,33 +457,16 @@ function PDFKonvaViewer(
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 placeholder="Type text..."
-                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-500"
                 style={{ minWidth: 150 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleTextSubmit();
-                  }
-                  if (e.key === 'Escape') {
-                    setTextPopup(null);
-                    setTextInput('');
-                  }
+                  if (e.key === 'Enter') { e.preventDefault(); submitText(); }
+                  if (e.key === 'Escape') { setTextPopup(null); setTextInput(''); }
                 }}
               />
               <div className="flex justify-end gap-1.5 mt-1.5">
-                <button
-                  onClick={() => { setTextPopup(null); setTextInput(''); }}
-                  className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleTextSubmit}
-                  disabled={!textInput.trim()}
-                  className="px-2.5 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Add
-                </button>
+                <button onClick={() => { setTextPopup(null); setTextInput(''); }} className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                <button onClick={submitText} disabled={!textInput.trim()} className="px-2.5 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">Add</button>
               </div>
             </div>
           )}

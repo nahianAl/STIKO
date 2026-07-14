@@ -29,6 +29,7 @@ interface ViewerContainerProps {
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
+  annotating?: boolean;
   color?: string;
   strokeWidth?: number;
   fileId?: string;
@@ -53,7 +54,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, pendingCommentId,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, pendingCommentId,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -99,6 +100,7 @@ export default function ViewerContainer({
         fileId={fileId || file.id}
         activeTool={activeTool ?? 'pointer'}
         tagging={tagging}
+        annotating={annotating}
         color={color ?? '#ef4444'}
         strokeWidth={strokeWidth ?? 4}
         onCommentPlace={onCommentPlace ?? (() => {})}

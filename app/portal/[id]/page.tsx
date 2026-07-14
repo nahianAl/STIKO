@@ -542,6 +542,7 @@ export default function PortalPage() {
             onTransformChange={handleTransformChange}
             activeTool={activeTool}
             tagging={tagging}
+            annotating={annotating}
             color={drawingColor}
             strokeWidth={drawingStrokeWidth}
             fileId={selectedFileId!}
