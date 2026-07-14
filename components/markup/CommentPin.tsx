@@ -19,6 +19,7 @@ export default function CommentPin({ index, x, y, isActive, onClick, isPending =
         top: `${y}%`,
         transform: 'translate(-50%, -50%)',
         zIndex: isPending ? 30 : isActive ? 20 : 10,
+        pointerEvents: 'auto',
       }}
       onClick={(e) => {
         e.stopPropagation();
