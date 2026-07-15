@@ -166,7 +166,6 @@ export default function PortalPage() {
   // Top-level composer draft (single source of truth)
   const [composerText, setComposerText] = useState('');
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
-  const [composerAuthor, setComposerAuthor] = useState('Anonymous');
   const [submittingComposer, setSubmittingComposer] = useState(false);
   const [tagging, setTagging] = useState(false);
   const [pendingTag, setPendingTag] = useState<{
@@ -429,7 +428,8 @@ export default function PortalPage() {
         body: JSON.stringify({
           fileId: selectedFileId,
           content: composerText.trim() || (attachments.length > 0 ? 'Attachment' : ''),
-          author: composerAuthor.trim() || 'Anonymous',
+          // Author is resolved server-side from the session (name/email); this is just the fallback.
+          author: 'Anonymous',
           xPosition: pendingTag?.xPosition ?? null,
           yPosition: pendingTag?.yPosition ?? null,
           worldX: pendingTag?.worldX ?? null,
@@ -692,8 +692,6 @@ export default function PortalPage() {
           onViewImage={setViewportImage}
           composer={
             <CommentComposer
-              authorName={composerAuthor}
-              onAuthorChange={setComposerAuthor}
               text={composerText}
               onTextChange={setComposerText}
               pendingFiles={composerFiles}
