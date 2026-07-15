@@ -424,8 +424,8 @@ function PDFKonvaViewer(
                     >
                       <Circle
                         radius={pinRadius}
-                        fill={isActive ? pal.accent : pal.swatch}
-                        stroke="#fff"
+                        fill={pal.swatch}
+                        stroke={isActive ? pal.accent : '#fff'}
                         strokeWidth={2 / stageScale}
                         shadowColor="black"
                         shadowBlur={4 / stageScale}
