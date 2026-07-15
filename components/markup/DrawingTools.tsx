@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { PALETTE } from '@/lib/commentColors';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -86,15 +87,6 @@ const STANDALONE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[]
   },
 ];
 
-const COLOR_PRESETS = [
-  { value: '#ef4444', label: 'Red' },
-  { value: '#3b82f6', label: 'Blue' },
-  { value: '#22c55e', label: 'Green' },
-  { value: '#eab308', label: 'Yellow' },
-  { value: '#f97316', label: 'Orange' },
-  { value: '#000000', label: 'Black' },
-];
-
 const STROKE_PRESETS = [
   { value: 2, label: 'Thin' },
   { value: 4, label: 'Medium' },
@@ -129,182 +121,82 @@ export default function DrawingTools({
   tagging,
   onToggleTagging,
 }: DrawingToolsProps) {
-  const shapes = useDropdown();
-  const colors = useDropdown();
   const strokes = useDropdown();
 
-  const shapeToolIds = SHAPE_TOOLS.map((t) => t.id);
-  const isShapeActive = shapeToolIds.includes(activeTool);
-  const activeShapeTool = SHAPE_TOOLS.find((t) => t.id === activeTool) ?? SHAPE_TOOLS[0];
+  // A flat, single-select tool row. Pointer/Freehand/Text/Eraser + inline Line/Arrow/Rect.
+  const TOOL_ORDER: { id: ToolType; label: string; icon: React.ReactNode }[] = [
+    STANDALONE_TOOLS[0], // pointer
+    STANDALONE_TOOLS[1], // freehand
+    ...SHAPE_TOOLS,      // line, arrow, rect
+    STANDALONE_TOOLS[2], // text
+    STANDALONE_TOOLS[3], // eraser
+  ];
+
+  const slot = (active: boolean) =>
+    `w-9 h-9 rounded-[10px] flex items-center justify-center transition-colors ${
+      active ? 'bg-stiko-tint text-stiko-primary' : 'text-stiko-muted hover:bg-stiko-tint'
+    }`;
 
   return (
-    <div className="flex items-center gap-3 px-3 py-1.5 bg-white border-b border-gray-200 flex-shrink-0">
-      {/* Standalone tool buttons */}
-      <div className="flex items-center gap-1">
-        {STANDALONE_TOOLS.map((tool) => (
+    <div className="h-[52px] flex-shrink-0 bg-white rounded-panel shadow-stiko-panel flex items-center justify-center">
+      <div className="flex items-center gap-[3px]">
+        {/* Pin (comment tag) */}
+        <button title="Comment pin" onClick={onToggleTagging} className={slot(tagging)}>
+          <span className="w-[13px] h-[13px] rounded-[4px_4px_4px_0] border-2 border-current" />
+        </button>
+
+        {/* Tools */}
+        {TOOL_ORDER.map((tool) => (
           <button
             key={tool.id}
             title={tool.label}
-            // Toggle: re-clicking the active tool drops back to Pointer (select/transform).
-            // Pointer maps to itself, so it stays a plain select button.
             onClick={() => onToolChange(activeTool === tool.id ? 'pointer' : tool.id)}
-            className={`
-              p-1.5 rounded transition-colors
-              ${activeTool === tool.id
-                ? 'bg-blue-100 text-blue-700'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}
-            `}
+            className={slot(activeTool === tool.id)}
           >
             {tool.icon}
           </button>
         ))}
 
-        {/* Shapes dropdown */}
-        <div ref={shapes.ref} className="relative">
-          <button
-            title="Shapes"
-            // Toggle: if a shape is active, re-clicking drops back to Pointer; otherwise open the menu.
-            onClick={() => (isShapeActive ? onToolChange('pointer') : shapes.setOpen(!shapes.open))}
-            className={`
-              flex items-center gap-1 p-1.5 rounded transition-colors
-              ${isShapeActive
-                ? 'bg-blue-100 text-blue-700'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}
-            `}
-          >
-            {activeShapeTool.icon}
-            <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="ml-0.5 opacity-60">
-              <path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+        {/* Stroke width (compact popover) */}
+        <div ref={strokes.ref} className="relative">
+          <button title="Stroke width" onClick={() => strokes.setOpen(!strokes.open)} className={slot(false)}>
+            <svg width="16" height="16" viewBox="0 0 16 16"><line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" /></svg>
           </button>
-          {shapes.open && (
-            <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-[120px]">
-              {SHAPE_TOOLS.map((tool) => (
+          {strokes.open && (
+            <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-lg border border-stiko-border py-1.5 px-2 z-50 flex flex-col gap-1">
+              {STROKE_PRESETS.map((s) => (
                 <button
-                  key={tool.id}
-                  onClick={() => {
-                    onToolChange(tool.id);
-                    shapes.setOpen(false);
-                  }}
-                  className={`
-                    w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors
-                    ${activeTool === tool.id
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-600 hover:bg-gray-50'}
-                  `}
+                  key={s.value}
+                  title={s.label}
+                  onClick={() => { onStrokeWidthChange(s.value); strokes.setOpen(false); }}
+                  className={`flex items-center justify-center w-20 h-6 rounded-lg transition-colors ${strokeWidth === s.value ? 'bg-stiko-tint text-stiko-primary' : 'text-stiko-muted hover:bg-stiko-subtle'}`}
                 >
-                  {tool.icon}
-                  <span>{tool.label}</span>
+                  <svg width="32" height="12" viewBox="0 0 32 12"><line x1="2" y1="6" x2="30" y2="6" stroke="currentColor" strokeWidth={s.value} strokeLinecap="round" /></svg>
                 </button>
               ))}
             </div>
           )}
         </div>
-      </div>
 
-      {/* Divider */}
-      <div className="w-px h-5 bg-gray-200" />
+        {/* Divider */}
+        <div className="w-px h-[22px] bg-stiko-divider mx-[6px]" />
 
-      {/* Color picker dropdown */}
-      <div ref={colors.ref} className="relative">
-        <button
-          title="Color"
-          onClick={() => colors.setOpen(!colors.open)}
-          className="flex items-center gap-1.5 p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100"
-        >
-          <div
-            className="w-4 h-4 rounded-full border border-gray-300"
-            style={{ backgroundColor: color }}
-          />
-          <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="opacity-60">
-            <path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        {colors.open && (
-          <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50">
-            <div className="grid grid-cols-3 gap-1.5">
-              {COLOR_PRESETS.map((c) => (
-                <button
-                  key={c.value}
-                  title={c.label}
-                  onClick={() => {
-                    onColorChange(c.value);
-                    colors.setOpen(false);
-                  }}
-                  className={`
-                    w-6 h-6 rounded-full border-2 transition-transform hover:scale-110
-                    ${color === c.value ? 'border-gray-800 scale-110' : 'border-transparent'}
-                  `}
-                  style={{ backgroundColor: c.value }}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Divider */}
-      <div className="w-px h-5 bg-gray-200" />
-
-      {/* Stroke width dropdown */}
-      <div ref={strokes.ref} className="relative">
-        <button
-          title="Stroke width"
-          onClick={() => strokes.setOpen(!strokes.open)}
-          className="flex items-center gap-1.5 p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16">
-            <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />
-          </svg>
-          <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="opacity-60">
-            <path d="M1 2.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        {strokes.open && (
-          <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1.5 px-2 z-50 flex flex-col gap-1">
-            {STROKE_PRESETS.map((s) => (
+        {/* Pastel swatches — sets pin color (pastel) + markup stroke (saturated accent) */}
+        <div className="flex items-center gap-[6px]">
+          {PALETTE.map((p) => {
+            const selected = color === p.accent;
+            return (
               <button
-                key={s.value}
-                title={s.label}
-                onClick={() => {
-                  onStrokeWidthChange(s.value);
-                  strokes.setOpen(false);
-                }}
-                className={`
-                  flex items-center justify-center w-20 h-6 rounded transition-colors
-                  ${strokeWidth === s.value
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-500 hover:bg-gray-50'}
-                `}
-              >
-                <svg width="32" height="12" viewBox="0 0 32 12">
-                  <line x1="2" y1="6" x2="30" y2="6" stroke="currentColor" strokeWidth={s.value} strokeLinecap="round" />
-                </svg>
-              </button>
-            ))}
-          </div>
-        )}
+                key={p.name}
+                title={p.name}
+                onClick={() => onColorChange(p.accent)}
+                className="w-[18px] h-[18px] rounded-md transition-transform hover:scale-105"
+                style={{ background: p.swatch, boxShadow: selected ? '0 0 0 2px #fff, 0 0 0 3.5px #5B60FF' : undefined }}
+              />
+            );
+          })}
+        </div>
       </div>
-
-      {/* Divider */}
-      <div className="w-px h-5 bg-gray-200" />
-
-      {/* Tag: pin a comment to a spot on the file (arms tagging mode) */}
-      <button
-        title="Tag — pin a comment to a spot on the file"
-        onClick={onToggleTagging}
-        className={`
-          flex items-center gap-1.5 p-1.5 rounded transition-colors
-          ${tagging
-            ? 'bg-blue-100 text-blue-700'
-            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}
-        `}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
-        </svg>
-        <span className="text-xs font-medium">Tag</span>
-      </button>
     </div>
   );
 }

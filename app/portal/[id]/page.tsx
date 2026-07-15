@@ -155,7 +155,7 @@ export default function PortalPage() {
 
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
-  const [drawingColor, setDrawingColor] = useState('#ef4444');
+  const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(4);
 
   // Comment linking state
