@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
 import { buildTagNumbers } from '@/lib/tagNumbers';
+import { paletteForComment } from '@/lib/commentColors';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -39,17 +40,6 @@ function getInitials(name: string): string {
     .slice(0, 2)
     .join('')
     .toUpperCase();
-}
-
-const AVATAR_COLORS = [
-  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
-  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4',
-];
-
-function hashColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
 function isImageType(contentType: string): boolean {
@@ -322,80 +312,63 @@ function CommentItem({
   tagNumber?: number;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
-  const hasPosition = comment.xPosition !== null && comment.yPosition !== null;
-  const avatarColor = hashColor(comment.author);
+  const pal = paletteForComment(comment);
   const attachments = comment.attachments ?? [];
+  const hasPosition = comment.xPosition !== null && comment.yPosition !== null;
 
   return (
-    <div
-      id={`comment-${comment.id}`}
-      className={`${isActive ? 'bg-blue-50' : ''} ${hasPosition && onClick ? 'cursor-pointer' : ''}`}
-    >
+    <div id={`comment-${comment.id}`} className={hasPosition && onClick ? 'cursor-pointer' : ''}>
       <div
-        className={`py-3 ${hasPosition && onClick ? 'hover:bg-gray-50' : ''} transition-colors`}
         onClick={hasPosition && onClick ? () => onClick(comment) : undefined}
+        className="rounded-xl p-[13px] transition-colors"
+        style={{ background: '#F6F8FE', borderLeft: `3px solid ${pal.accent}`, outline: isActive ? '2px solid #5B60FF' : 'none' }}
       >
-        {/* Header: avatar + name + time */}
-        <div className="flex items-start gap-2.5">
-          <div
-            className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0 mt-0.5"
-            style={{ backgroundColor: avatarColor }}
-          >
+        {/* Header: avatar + name + tag# + time */}
+        <div className="flex items-center gap-2 mb-[7px]">
+          <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center text-[9px] font-extrabold flex-shrink-0" style={{ background: pal.swatch, color: pal.dark }}>
             {getInitials(comment.author)}
           </div>
+          <span className="font-bold text-[12.5px] text-stiko-ink truncate">{comment.author}</span>
+          {tagNumber != null && (
+            <span title={`Tag ${tagNumber}`} className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex-shrink-0" style={{ background: pal.swatch, color: pal.dark }}>
+              {tagNumber}
+            </span>
+          )}
+          <span className="text-[10px] text-stiko-faint ml-auto flex-shrink-0">{timeAgo(comment.createdAt)}</span>
+        </div>
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-900 truncate">
-                {comment.author}
-              </span>
-              {tagNumber != null && (
-                <span
-                  title={`Tag ${tagNumber}`}
-                  className={`inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-white text-[9px] font-bold flex-shrink-0 ${isActive ? 'bg-blue-600' : 'bg-gray-500'}`}
-                >
-                  {tagNumber}
-                </span>
-              )}
-              <span className="text-xs text-gray-400 flex-shrink-0">
-                {timeAgo(comment.createdAt)}
-              </span>
-            </div>
+        {/* Body */}
+        <p className="text-[12.5px] leading-[1.5] text-[#4A4F63]">{comment.content}</p>
 
-            {/* Comment body */}
-            <p className="text-sm text-gray-700 mt-0.5 leading-relaxed">{comment.content}</p>
+        {/* Snapshot thumbnail */}
+        {comment.snapshotUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={comment.snapshotUrl}
+            alt="Annotated snapshot"
+            className="mt-2 rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+            style={{ maxHeight: 120, maxWidth: '100%' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onViewImage) onViewImage(comment.snapshotUrl!);
+              else window.open(comment.snapshotUrl!, '_blank');
+            }}
+          />
+        )}
 
-            {/* Snapshot thumbnail */}
-            {comment.snapshotUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={comment.snapshotUrl}
-                alt="Annotated snapshot"
-                className="mt-2 rounded-lg border border-gray-200 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                style={{ maxHeight: 120, maxWidth: '100%' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onViewImage) onViewImage(comment.snapshotUrl!);
-                  else window.open(comment.snapshotUrl!, '_blank');
-                }}
-              />
-            )}
+        {/* Attachments */}
+        {attachments.map((att, i) => (
+          <AttachmentPreview key={i} attachment={att} onView={onViewImage} />
+        ))}
 
-            {/* Attachments */}
-            {attachments.map((att, i) => (
-              <AttachmentPreview key={i} attachment={att} onView={onViewImage} />
-            ))}
-
-            {/* Reply button */}
-            <div className="mt-1.5">
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowReplyForm((v) => !v); }}
-                className="text-xs text-gray-400 hover:text-blue-600 transition-colors font-medium"
-              >
-                {showReplyForm ? 'Cancel' : 'Reply'}
-              </button>
-            </div>
-          </div>
+        {/* Reply button */}
+        <div className="mt-1.5">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowReplyForm((v) => !v); }}
+            className="text-[11px] font-bold text-stiko-primary hover:opacity-80 transition-opacity"
+          >
+            {showReplyForm ? 'Cancel' : 'Reply'}
+          </button>
         </div>
       </div>
 
@@ -417,7 +390,7 @@ function CommentItem({
 
       {/* Replies */}
       {replies.length > 0 && (
-        <div className="ml-9 border-l-2 border-gray-100 pl-3">
+        <div className="ml-9 border-l-2 border-stiko-border pl-3">
           {replies.map((reply) => (
             <CommentItem
               key={reply.id}
@@ -497,10 +470,10 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
   // Collapsed state
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center h-full bg-white border-l border-gray-200 py-3 px-1">
+      <div className="flex flex-col items-center h-full bg-white rounded-panel shadow-stiko-panel py-3 px-1">
         <button
           onClick={onToggleCollapse}
-          className="p-1.5 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
+          className="p-1.5 rounded-lg hover:bg-stiko-subtle transition-colors text-stiko-muted"
           title="Expand comments"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -520,77 +493,67 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
   }
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-gray-200">
+    <div className="flex flex-col h-full bg-white rounded-panel shadow-stiko-panel overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">
-          Comments{' '}
-          <span className="text-gray-400 font-normal">
-            ({comments.length})
+      <div className="px-[18px] py-4 border-b border-stiko-border flex items-center justify-between">
+        <span className="text-[15px] font-extrabold text-stiko-ink">Comments</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-bold text-stiko-primary bg-stiko-tint px-[9px] py-[3px] rounded-[20px]">
+            {topLevelComments.length} open
           </span>
-        </h3>
-        {onToggleCollapse && (
-          <button
-            onClick={onToggleCollapse}
-            className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
-            title="Collapse comments"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        )}
+          {onToggleCollapse && (
+            <button onClick={onToggleCollapse} title="Collapse comments" className="p-1 rounded-lg text-stiko-faint hover:bg-stiko-subtle transition-colors">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Comment list */}
-      <div className="flex-1 overflow-y-auto px-4 py-2">
+      <div className="flex-1 overflow-y-auto p-[14px] flex flex-col gap-[10px]">
         {!fileId ? (
-          <p className="text-sm text-gray-400 text-center py-8">
+          <p className="text-sm text-stiko-faint text-center py-8">
             Select a file to view comments
           </p>
         ) : loading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-stiko-primary border-t-transparent" />
           </div>
         ) : topLevelComments.length === 0 ? (
           <div className="text-center py-10">
-            <svg className="h-10 w-10 text-gray-200 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="h-10 w-10 text-stiko-border mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-stiko-faint">
               No comments yet
             </p>
-            <p className="text-xs text-gray-300 mt-1">
+            <p className="text-xs text-stiko-faint mt-1">
               Use the box below to comment — tap the tag icon to pin it to the file
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {topLevelComments.map((comment) => (
-              <CommentItem
-                key={comment.id}
-                comment={comment}
-                replies={repliesByParent[comment.id] ?? []}
-                depth={0}
-                isActive={activeCommentId === comment.id}
-                onClick={onCommentClick}
-                fileId={fileId}
-                authorName={authorName}
-                onAuthorChange={setAuthorName}
-                onRefresh={fetchComments}
-                onViewImage={onViewImage}
-                tagNumber={tagNumbers.get(comment.id)}
-              />
-            ))}
-          </div>
+          topLevelComments.map((comment) => (
+            <CommentItem
+              key={comment.id}
+              comment={comment}
+              replies={repliesByParent[comment.id] ?? []}
+              depth={0}
+              isActive={activeCommentId === comment.id}
+              onClick={onCommentClick}
+              fileId={fileId}
+              authorName={authorName}
+              onAuthorChange={setAuthorName}
+              onRefresh={fetchComments}
+              onViewImage={onViewImage}
+              tagNumber={tagNumbers.get(comment.id)}
+            />
+          ))
         )}
       </div>
 
       {/* Bottom composer (owned by the portal) */}
       {fileId && composer && (
-        <div className="border-t border-gray-200 p-3">
-          {composer}
-        </div>
+        <div className="border-t border-stiko-border p-[14px]">{composer}</div>
       )}
     </div>
   );
