@@ -8,6 +8,7 @@ import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
+import { paletteForComment } from '@/lib/commentColors';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -396,14 +397,15 @@ function PDFKonvaViewer(
                   const isPending = comment.id === pendingCommentId;
                   const pinRadius = 12 / stageScale;
                   const fontSize = 10 / stageScale;
+                  const pal = paletteForComment(comment);
                   if (isPending) {
                     return (
                       <Group key={comment.id} x={pos.x} y={pos.y} listening={false}>
-                        <Circle radius={pinRadius * 1.7} fill="#3b82f6" opacity={0.25} />
+                        <Circle radius={pinRadius * 1.7} fill={pal.accent} opacity={0.25} />
                         <Circle
                           radius={pinRadius}
-                          fill="#2563eb"
-                          stroke="white"
+                          fill={pal.swatch}
+                          stroke="#fff"
                           strokeWidth={2 / stageScale}
                           shadowColor="black"
                           shadowBlur={4 / stageScale}
@@ -422,8 +424,8 @@ function PDFKonvaViewer(
                     >
                       <Circle
                         radius={pinRadius}
-                        fill={isActive ? '#2563eb' : '#6b7280'}
-                        stroke="white"
+                        fill={isActive ? pal.accent : pal.swatch}
+                        stroke="#fff"
                         strokeWidth={2 / stageScale}
                         shadowColor="black"
                         shadowBlur={4 / stageScale}
@@ -432,7 +434,7 @@ function PDFKonvaViewer(
                       <Text
                         text={String(tagNumbers.get(comment.id) ?? idx + 1)}
                         fontSize={fontSize}
-                        fill="white"
+                        fill={pal.dark}
                         fontStyle="bold"
                         width={pinRadius * 2}
                         height={pinRadius * 2}

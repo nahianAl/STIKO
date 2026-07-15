@@ -4,6 +4,7 @@ import { useRef, useCallback } from 'react';
 import CommentPin from './CommentPin';
 import type { Comment } from '@/lib/types';
 import type { ContentTransform } from '@/components/viewers/ImageViewer';
+import { paletteForComment } from '@/lib/commentColors';
 
 interface PinScreenPosition {
   x: number;
@@ -113,6 +114,8 @@ export default function MarkupOverlay({
 
           if (!pinVisible) return null;
 
+          const c = paletteForComment(comment);
+
           return (
             <CommentPin
               key={comment.id}
@@ -121,6 +124,8 @@ export default function MarkupOverlay({
               y={pinY}
               isActive={activeCommentId === comment.id}
               isPending={comment.id === pendingCommentId}
+              fill={c.swatch}
+              textColor={c.dark}
               onClick={() => onCommentPinClick(comment)}
             />
           );
