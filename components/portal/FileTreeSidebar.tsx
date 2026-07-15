@@ -244,8 +244,8 @@ export default function FileTreeSidebar({
         )}
       </div>
 
-      {/* Versions list */}
-      <div className="flex flex-col gap-[5px]">
+      {/* Versions — each card expands to its own folders/files when selected */}
+      <div className="flex flex-col gap-[5px] flex-1 min-h-0 overflow-y-auto">
         {versions.length === 0 ? (
           <p className="text-[13px] text-stiko-faint py-2">Submit your first version to get started</p>
         ) : (
@@ -253,51 +253,55 @@ export default function FileTreeSidebar({
             const isSelected = version.id === selectedVersionId;
             const isCurrent = version.versionNumber === maxVersion;
             return (
-              <button
-                key={version.id}
-                onClick={() => onSelectVersion(version.id)}
-                className={`w-full flex items-center gap-[10px] px-3 py-[10px] rounded-[11px] text-left transition-colors ${isSelected ? 'bg-stiko-tint' : 'hover:bg-stiko-subtle'}`}
-              >
-                <span
-                  className="w-[30px] h-[30px] rounded-[9px] flex items-center justify-center flex-shrink-0 text-[12px] font-extrabold"
-                  style={isCurrent
-                    ? { background: 'linear-gradient(135deg, #8094F5, #5B60FF)', color: '#fff' }
-                    : { background: '#EFEFF4', color: '#5A6076' }}
+              <div key={version.id}>
+                <button
+                  onClick={() => onSelectVersion(version.id)}
+                  className={`w-full flex items-center gap-[10px] px-3 py-[10px] rounded-[11px] text-left transition-colors ${isSelected ? 'bg-stiko-tint' : 'hover:bg-stiko-subtle'}`}
                 >
-                  V{version.versionNumber}
-                </span>
-                <span className="min-w-0">
-                  <span className={`block text-[13px] ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-secondary'}`}>
-                    {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
+                  <span
+                    className="w-[30px] h-[30px] rounded-[9px] flex items-center justify-center flex-shrink-0 text-[12px] font-extrabold"
+                    style={isCurrent
+                      ? { background: 'linear-gradient(135deg, #8094F5, #5B60FF)', color: '#fff' }
+                      : { background: '#EFEFF4', color: '#5A6076' }}
+                  >
+                    V{version.versionNumber}
                   </span>
-                  <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
-                </span>
-              </button>
+                  <span className="flex-1 min-w-0">
+                    <span className={`block text-[13px] truncate ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-secondary'}`}>
+                      {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
+                    </span>
+                    <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
+                  </span>
+                  <svg
+                    className={`h-3.5 w-3.5 flex-shrink-0 transition-transform ${isSelected ? 'rotate-90 text-stiko-primary' : 'text-stiko-muted'}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+
+                {/* Nested folders/files for the selected version */}
+                {isSelected && (
+                  <div className="mt-1 mb-1 pl-1 flex flex-col gap-1">
+                    {files.length === 0 ? (
+                      <p className="text-[12px] text-stiko-faint px-3 py-1">No files in this version</p>
+                    ) : (
+                      <>
+                        {tree.folders.map((folder) => (
+                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} depth={0} />
+                        ))}
+                        {tree.rootFiles.map((file) => (
+                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} depth={0} />
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })
         )}
       </div>
-
-      {/* Files section */}
-      {selectedVersionId && (
-        <div className="flex flex-col gap-[10px] min-h-0">
-          <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-stiko-faint">Files</span>
-          <div className="flex flex-col gap-1 overflow-y-auto">
-            {files.length === 0 ? (
-              <p className="text-[12px] text-stiko-faint">No files in this version</p>
-            ) : (
-              <>
-                {tree.folders.map((folder) => (
-                  <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} depth={0} />
-                ))}
-                {tree.rootFiles.map((file) => (
-                  <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} depth={0} />
-                ))}
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
