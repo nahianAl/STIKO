@@ -49,7 +49,7 @@ export default function PortalTopBar({ project, portal, participants, submitHref
         </Link>
         <div className="flex items-center gap-2 text-[13px] text-stiko-muted">
           <span>{project?.name ?? '…'}</span>
-          <span className="text-stiko-[#C9CBD6]" style={{ color: '#C9CBD6' }}>›</span>
+          <span style={{ color: '#C9CBD6' }}>›</span>
           <span className="text-stiko-ink font-semibold">{portal?.name ?? 'Loading…'}</span>
         </div>
       </div>
