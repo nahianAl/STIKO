@@ -10,7 +10,6 @@ interface CommentComposerProps {
   pendingFiles: File[];
   onFilesChange: (files: File[]) => void;
   tagging: boolean;
-  onToggleTagging: () => void;
   hasTag: boolean;
   onClearTag: () => void;
   onSubmit: () => void;
@@ -20,7 +19,7 @@ interface CommentComposerProps {
 
 export default function CommentComposer({
   authorName, onAuthorChange, text, onTextChange, pendingFiles, onFilesChange,
-  tagging, onToggleTagging, hasTag, onClearTag, onSubmit, submitting, inputRef,
+  tagging, hasTag, onClearTag, onSubmit, submitting, inputRef,
 }: CommentComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canSend = !!text.trim() || pendingFiles.length > 0 || hasTag;
@@ -107,17 +106,6 @@ export default function CommentComposer({
           className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400 focus:bg-white outline-none transition-colors"
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSend) onSubmit(); } }}
         />
-
-        {/* Tag toggle */}
-        <button
-          onClick={onToggleTagging}
-          title="Place a tag on the file"
-          className={`p-2 rounded-lg transition-colors ${tagging ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
-        >
-          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
-          </svg>
-        </button>
 
         {/* Attach */}
         <button

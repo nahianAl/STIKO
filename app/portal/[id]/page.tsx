@@ -650,6 +650,8 @@ export default function PortalPage() {
             onColorChange={setDrawingColor}
             strokeWidth={drawingStrokeWidth}
             onStrokeWidthChange={setDrawingStrokeWidth}
+            tagging={tagging}
+            onToggleTagging={() => setTagging((t) => !t)}
           />
 
           {/* Annotation mode banner */}
@@ -745,7 +747,6 @@ export default function PortalPage() {
               pendingFiles={composerFiles}
               onFilesChange={setComposerFiles}
               tagging={tagging}
-              onToggleTagging={() => setTagging((t) => !t)}
               hasTag={!!pendingTag}
               onClearTag={() => setPendingTag(null)}
               onSubmit={handleComposerSubmit}

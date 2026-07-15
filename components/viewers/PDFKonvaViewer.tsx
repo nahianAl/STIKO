@@ -5,6 +5,7 @@ import { Stage, Layer, Image as KonvaImage, Text, Circle, Group } from 'react-ko
 import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
 import type { Comment } from '@/lib/types';
+import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 
@@ -279,6 +280,8 @@ function PDFKonvaViewer(
     const pageComments = comments.filter(c =>
       c.pageNumber === currentPage && c.xPosition !== null && c.yPosition !== null
     );
+    // File-wide tag numbers so a pin's number matches the comment list across all pages.
+    const tagNumbers = buildTagNumbers(comments);
 
     const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? 'not-allowed' : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
 
@@ -427,7 +430,7 @@ function PDFKonvaViewer(
                         shadowOpacity={0.3}
                       />
                       <Text
-                        text={String(idx + 1)}
+                        text={String(tagNumbers.get(comment.id) ?? idx + 1)}
                         fontSize={fontSize}
                         fill="white"
                         fontStyle="bold"

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
+import { buildTagNumbers } from '@/lib/tagNumbers';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -306,6 +307,7 @@ function CommentItem({
   onAuthorChange,
   onRefresh,
   onViewImage,
+  tagNumber,
 }: {
   comment: Comment;
   replies: Comment[];
@@ -317,6 +319,7 @@ function CommentItem({
   onAuthorChange: (name: string) => void;
   onRefresh: () => void;
   onViewImage?: (url: string) => void;
+  tagNumber?: number;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const hasPosition = comment.xPosition !== null && comment.yPosition !== null;
@@ -346,10 +349,13 @@ function CommentItem({
               <span className="text-sm font-semibold text-gray-900 truncate">
                 {comment.author}
               </span>
-              {hasPosition && (
-                <svg className="h-3 w-3 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                </svg>
+              {tagNumber != null && (
+                <span
+                  title={`Tag ${tagNumber}`}
+                  className={`inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-white text-[9px] font-bold flex-shrink-0 ${isActive ? 'bg-blue-600' : 'bg-gray-500'}`}
+                >
+                  {tagNumber}
+                </span>
               )}
               <span className="text-xs text-gray-400 flex-shrink-0">
                 {timeAgo(comment.createdAt)}
@@ -468,6 +474,10 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
   }, [activeCommentId]);
 
   // Build threaded structure
+  // File-wide tag numbers (1,2,3…) over positioned comments in fetch order (created_at ASC),
+  // matching the numbered pins in the viewport.
+  const tagNumbers = buildTagNumbers(comments);
+
   const topLevelComments = comments.filter((c) => !c.parentCommentId);
   const repliesByParent = comments.reduce<Record<string, Comment[]>>(
     (acc, c) => {
@@ -569,6 +579,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
                 onAuthorChange={setAuthorName}
                 onRefresh={fetchComments}
                 onViewImage={onViewImage}
+                tagNumber={tagNumbers.get(comment.id)}
               />
             ))}
           </div>

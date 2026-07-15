@@ -11,6 +11,8 @@ interface DrawingToolsProps {
   onColorChange: (color: string) => void;
   strokeWidth: number;
   onStrokeWidthChange: (w: number) => void;
+  tagging: boolean;
+  onToggleTagging: () => void;
 }
 
 const SHAPE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
@@ -124,6 +126,8 @@ export default function DrawingTools({
   onColorChange,
   strokeWidth,
   onStrokeWidthChange,
+  tagging,
+  onToggleTagging,
 }: DrawingToolsProps) {
   const shapes = useDropdown();
   const colors = useDropdown();
@@ -281,6 +285,26 @@ export default function DrawingTools({
           </div>
         )}
       </div>
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-gray-200" />
+
+      {/* Tag: pin a comment to a spot on the file (arms tagging mode) */}
+      <button
+        title="Tag — pin a comment to a spot on the file"
+        onClick={onToggleTagging}
+        className={`
+          flex items-center gap-1.5 p-1.5 rounded transition-colors
+          ${tagging
+            ? 'bg-blue-100 text-blue-700'
+            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}
+        `}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
+        </svg>
+        <span className="text-xs font-medium">Tag</span>
+      </button>
     </div>
   );
 }
