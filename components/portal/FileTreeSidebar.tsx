@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
+import { getFileChip } from '@/lib/fileChips';
 
 interface Version {
   id: string;
@@ -49,51 +50,6 @@ function formatDate(dateStr: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
-}
-
-function getFileIcon(fileType: string, filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  if (fileType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) return 'image';
-  if (fileType.startsWith('video/') || ['mp4', 'mov', 'webm', 'avi'].includes(ext)) return 'video';
-  if (fileType === 'application/pdf' || ext === 'pdf') return 'pdf';
-  if (['glb', 'gltf', 'step', 'stp', 'obj', 'stl', '3ds', 'ply', 'dae'].includes(ext)) return '3d';
-  return 'file';
-}
-
-function FileIcon({ type, className }: { type: string; className?: string }) {
-  const cls = className || 'h-4 w-4';
-  switch (type) {
-    case 'image':
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      );
-    case 'video':
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-        </svg>
-      );
-    case 'pdf':
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-        </svg>
-      );
-    case '3d':
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-        </svg>
-      );
-    default:
-      return (
-        <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      );
-  }
 }
 
 function buildFolderTree(files: FileRecord[]): { rootFiles: FileRecord[]; folders: FolderNode[] } {
@@ -176,21 +132,14 @@ function FolderItem({
     <div>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors"
-        style={{ paddingLeft: `${8 + depth * 16}px` }}
+        className="w-full flex items-center gap-1.5 px-[11px] py-[9px] rounded-[10px] text-[13px] font-medium text-stiko-secondary hover:bg-stiko-subtle transition-colors"
+        style={{ paddingLeft: `${11 + depth * 14}px` }}
       >
-        <svg
-          className={`h-3 w-3 text-gray-400 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
+        <svg className={`h-3 w-3 text-stiko-muted transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <svg className="h-4 w-4 text-yellow-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-        <span className="truncate font-medium">{folder.name}</span>
+        <span className="text-[9px] font-extrabold px-[6px] py-[4px] rounded-md flex-shrink-0" style={{ background: '#EFEFF4', color: '#5A6076' }}>DIR</span>
+        <span className="truncate">{folder.name}</span>
       </button>
       {expanded && (
         <div>
@@ -229,21 +178,19 @@ function FileItem({
   onSelect: () => void;
   depth: number;
 }) {
-  const iconType = getFileIcon(file.fileType, file.filename);
+  const chip = getFileChip(file.filename, file.fileType);
   return (
     <button
       onClick={onSelect}
-      className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors ${
-        isSelected
-          ? 'bg-blue-50 text-blue-700'
-          : 'text-gray-700 hover:bg-gray-100'
-      }`}
-      style={{ paddingLeft: `${8 + depth * 16 + 16}px` }}
+      className={`w-full flex items-center gap-[10px] px-[11px] py-[9px] rounded-[10px] text-left transition-colors ${isSelected ? 'bg-stiko-subtle' : 'hover:bg-stiko-subtle'}`}
+      style={{ paddingLeft: `${11 + depth * 14}px` }}
     >
-      <span className={`flex-shrink-0 ${isSelected ? 'text-blue-500' : 'text-gray-400'}`}>
-        <FileIcon type={iconType} className="h-3.5 w-3.5" />
+      <span className="text-[9px] font-extrabold px-[6px] py-[4px] rounded-md flex-shrink-0" style={{ background: chip.bg, color: chip.text }}>
+        {chip.label}
       </span>
-      <span className="truncate">{file.filename}</span>
+      <span className={`truncate text-[13px] ${isSelected ? 'font-bold text-stiko-ink' : 'font-medium text-stiko-secondary'}`}>
+        {file.filename}
+      </span>
     </button>
   );
 }
@@ -259,14 +206,15 @@ export default function FileTreeSidebar({
   onToggleCollapse,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
+  const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
 
   // Collapsed state: narrow strip with toggle + version count
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center h-full bg-white border-r border-gray-200 py-3 px-1">
+      <div className="flex flex-col items-center h-full bg-white rounded-panel shadow-stiko-panel py-3 px-1">
         <button
           onClick={onToggleCollapse}
-          className="p-1.5 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
+          className="p-1.5 rounded-lg hover:bg-stiko-subtle transition-colors text-stiko-muted"
           title="Expand versions"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -286,88 +234,70 @@ export default function FileTreeSidebar({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white border-r border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">Versions</h3>
+    <div className="flex flex-col h-full bg-white rounded-panel shadow-stiko-panel p-[18px_14px] gap-5 overflow-hidden">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-stiko-faint">Versions</span>
         {onToggleCollapse && (
-          <button
-            onClick={onToggleCollapse}
-            className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
-            title="Collapse versions"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+          <button onClick={onToggleCollapse} title="Collapse" className="p-1 rounded-lg text-stiko-faint hover:bg-stiko-subtle transition-colors">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto">
+
+      {/* Versions list */}
+      <div className="flex flex-col gap-[5px]">
         {versions.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-8 px-4">
-            Submit your first version to get started
-          </p>
+          <p className="text-[13px] text-stiko-faint py-2">Submit your first version to get started</p>
         ) : (
           versions.map((version) => {
             const isSelected = version.id === selectedVersionId;
+            const isCurrent = version.versionNumber === maxVersion;
             return (
-              <div key={version.id}>
-                {/* Version header */}
-                <button
-                  onClick={() => onSelectVersion(version.id)}
-                  className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
-                    isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
-                  }`}
+              <button
+                key={version.id}
+                onClick={() => onSelectVersion(version.id)}
+                className={`w-full flex items-center gap-[10px] px-3 py-[10px] rounded-[11px] text-left transition-colors ${isSelected ? 'bg-stiko-tint' : 'hover:bg-stiko-subtle'}`}
+              >
+                <span
+                  className="w-[30px] h-[30px] rounded-[9px] flex items-center justify-center flex-shrink-0 text-[12px] font-extrabold"
+                  style={isCurrent
+                    ? { background: 'linear-gradient(135deg, #8094F5, #5B60FF)', color: '#fff' }
+                    : { background: '#EFEFF4', color: '#5A6076' }}
                 >
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className={`h-3 w-3 transition-transform flex-shrink-0 ${isSelected ? 'rotate-90 text-blue-500' : 'text-gray-400'}`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                    <span className={`text-sm font-semibold ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
-                      V{version.versionNumber}
-                    </span>
-                    <span className="text-xs text-gray-400 ml-auto">
-                      {formatDate(version.createdAt)}
-                    </span>
-                  </div>
-                </button>
-
-                {/* Expanded file tree for selected version */}
-                {isSelected && files.length > 0 && (
-                  <div className="py-1">
-                    {tree.folders.map((folder) => (
-                      <FolderItem
-                        key={folder.path}
-                        folder={folder}
-                        selectedFileId={selectedFileId}
-                        onSelectFile={onSelectFile}
-                        depth={0}
-                      />
-                    ))}
-                    {tree.rootFiles.map((file) => (
-                      <FileItem
-                        key={file.id}
-                        file={file}
-                        isSelected={file.id === selectedFileId}
-                        onSelect={() => onSelectFile(file.id)}
-                        depth={0}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {isSelected && files.length === 0 && (
-                  <p className="text-xs text-gray-400 px-4 py-3">No files in this version</p>
-                )}
-              </div>
+                  V{version.versionNumber}
+                </span>
+                <span className="min-w-0">
+                  <span className={`block text-[13px] ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-secondary'}`}>
+                    {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
+                  </span>
+                  <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
+                </span>
+              </button>
             );
           })
         )}
       </div>
+
+      {/* Files section */}
+      {selectedVersionId && (
+        <div className="flex flex-col gap-[10px] min-h-0">
+          <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-stiko-faint">Files</span>
+          <div className="flex flex-col gap-1 overflow-y-auto">
+            {files.length === 0 ? (
+              <p className="text-[12px] text-stiko-faint">No files in this version</p>
+            ) : (
+              <>
+                {tree.folders.map((folder) => (
+                  <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} depth={0} />
+                ))}
+                {tree.rootFiles.map((file) => (
+                  <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} depth={0} />
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
