@@ -1,15 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import Button from '@/components/ui/Button';
-import Header from '@/components/ui/Header';
+import PortalTopBar from '@/components/portal/PortalTopBar';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
+import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
@@ -149,7 +148,6 @@ export default function PortalPage() {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [showParticipants, setShowParticipants] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filesLoading, setFilesLoading] = useState(false);
   const [commentsCollapsed, setCommentsCollapsed] = useState(false);
@@ -567,67 +565,20 @@ export default function PortalPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      <Header
-        breadcrumbs={[
-          { label: 'Dashboard', href: '/' },
-          ...(project ? [{ label: project.name, href: `/project/${project.id}` }] : []),
-          { label: portal?.name ?? 'Loading...' },
-        ]}
-        rightContent={
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShowParticipants(!showParticipants)}
-              >
-                Participants ({participants.length})
-              </Button>
-              {showParticipants && (
-                <div className="absolute right-0 top-full mt-2 w-64 rounded-lg border border-gray-200 bg-white shadow-lg z-20">
-                  <div className="p-3 border-b border-gray-100">
-                    <p className="text-xs font-semibold text-gray-900">
-                      Participants
-                    </p>
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    {participants.length === 0 ? (
-                      <p className="p-3 text-xs text-gray-400">
-                        No participants yet
-                      </p>
-                    ) : (
-                      participants.map((p) => (
-                        <div
-                          key={p.id}
-                          className="flex items-center justify-between px-3 py-2 text-xs border-b border-gray-50 last:border-0"
-                        >
-                          <span className="text-gray-700 truncate">
-                            {p.email}
-                          </span>
-                          <span className="text-gray-400 capitalize ml-2">
-                            {p.role}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            <Link href={`/portal/${portalId}/submit`}>
-              <Button size="sm">Submit New Version</Button>
-            </Link>
-          </div>
-        }
+    <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
+      <PortalTopBar
+        project={project}
+        portal={portal}
+        participants={participants}
+        submitHref={`/portal/${portalId}/submit`}
       />
 
       {/* 3-Panel Layout */}
-      <div className={`flex-1 grid h-[calc(100vh-64px)] ${
+      <div className={`flex-1 grid gap-3 overflow-hidden min-h-0 ${
         sidebarCollapsed && commentsCollapsed ? 'grid-cols-[48px_1fr_48px]' :
-        sidebarCollapsed ? 'grid-cols-[48px_1fr_320px]' :
-        commentsCollapsed ? 'grid-cols-[280px_1fr_48px]' :
-        'grid-cols-[280px_1fr_320px]'
+        sidebarCollapsed ? 'grid-cols-[48px_1fr_340px]' :
+        commentsCollapsed ? 'grid-cols-[272px_1fr_48px]' :
+        'grid-cols-[272px_1fr_340px]'
       }`}>
         {/* Left Panel: File Tree Sidebar */}
         <FileTreeSidebar
@@ -642,7 +593,7 @@ export default function PortalPage() {
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
-        <div className="flex flex-col h-full overflow-hidden bg-gray-50">
+        <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
           <DrawingTools
             activeTool={activeTool}
             onToolChange={setActiveTool}
@@ -678,7 +629,8 @@ export default function PortalPage() {
             </div>
           )}
 
-          <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden">
+          <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden bg-white rounded-panel shadow-stiko-panel">
+            <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, #F6F8FE 0 16px, #FBFCFF 16px 32px)' }} />
             {renderFileViewer()}
             {selectedFileId && !isPDFFile && !annotating && (
               <MarkupOverlay
