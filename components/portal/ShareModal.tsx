@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Modal from '@/components/ui/Modal';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
@@ -15,28 +15,47 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset the form each time the modal closes so a stale link/email doesn't reappear on reopen.
+  useEffect(() => {
+    if (!isOpen) {
+      setEmail(''); setInviteLink(null); setShareLink(null);
+      setError(null); setBusy(null); setCopied(null);
+    }
+  }, [isOpen]);
 
   const createInvite = async (emailValue: string, role: Role): Promise<string | null> => {
-    const res = await fetch('/api/participants', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ portalId, email: emailValue, role }),
-    });
-    if (!res.ok) return null;
-    const { token } = await res.json();
-    return `${window.location.origin}/invite/${token}`;
+    try {
+      const res = await fetch('/api/participants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portalId, email: emailValue, role }),
+      });
+      if (!res.ok) return null;
+      const { token } = await res.json();
+      return `${window.location.origin}/invite/${token}`;
+    } catch {
+      return null;
+    }
   };
 
   const handleInvite = async () => {
     if (!email.trim() || busy) return;
-    setBusy('invite');
-    try { setInviteLink(await createInvite(email.trim(), inviteRole)); } finally { setBusy(null); }
+    setBusy('invite'); setError(null);
+    try {
+      const link = await createInvite(email.trim(), inviteRole);
+      if (link) setInviteLink(link); else setError('Could not create the invite. Please try again.');
+    } finally { setBusy(null); }
   };
 
   const handleShareLink = async () => {
     if (busy) return;
-    setBusy('link');
-    try { setShareLink(await createInvite('', linkRole)); } finally { setBusy(null); }
+    setBusy('link'); setError(null);
+    try {
+      const link = await createInvite('', linkRole);
+      if (link) setShareLink(link); else setError('Could not create the link. Please try again.');
+    } finally { setBusy(null); }
   };
 
   const copy = (value: string, which: string) => {
@@ -94,6 +113,8 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
           {shareLink && linkRow(shareLink, 'link')}
           <p className="mt-1.5 text-[11px] text-stiko-faint">Anyone with the link can sign in and join as {linkRole}.</p>
         </div>
+
+        {error && <p className="text-[12px] font-semibold text-[#B23A52]">{error}</p>}
       </div>
     </Modal>
   );
