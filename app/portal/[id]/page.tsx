@@ -702,6 +702,7 @@ export default function PortalPage() {
           collapsed={commentsCollapsed}
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
           onViewImage={setViewportImage}
+          onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
           composer={
             <CommentComposer
               text={composerText}

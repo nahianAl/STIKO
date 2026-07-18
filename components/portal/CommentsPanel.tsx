@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSession } from 'next-auth/react';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
 import { buildTagNumbers } from '@/lib/tagNumbers';
@@ -15,6 +16,7 @@ interface CommentsPanelProps {
   onToggleCollapse?: () => void;
   composer?: React.ReactNode;
   onViewImage?: (url: string) => void;
+  onCommentsChanged?: () => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -298,6 +300,8 @@ function CommentItem({
   onRefresh,
   onViewImage,
   tagNumber,
+  currentUserId,
+  onChanged,
 }: {
   comment: Comment;
   replies: Comment[];
@@ -310,11 +314,39 @@ function CommentItem({
   onRefresh: () => void;
   onViewImage?: (url: string) => void;
   tagNumber?: number;
+  currentUserId: string | null;
+  onChanged?: () => void;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(comment.content);
+  const [busy, setBusy] = useState(false);
+  const canModify = !!comment.userId && comment.userId === currentUserId;
   const pal = paletteForComment(comment);
   const attachments = comment.attachments ?? [];
   const hasPosition = comment.xPosition !== null && comment.yPosition !== null;
+
+  const saveEdit = async () => {
+    if (!editText.trim() || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/comments/${comment.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editText.trim() }),
+      });
+      if (res.ok) { setIsEditing(false); onRefresh(); onChanged?.(); }
+    } finally { setBusy(false); }
+  };
+
+  const deleteComment = async () => {
+    if (busy || !window.confirm('Delete this comment?')) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/comments/${comment.id}`, { method: 'DELETE' });
+      if (res.ok) { onRefresh(); onChanged?.(); }
+    } finally { setBusy(false); }
+  };
 
   return (
     <div id={`comment-${comment.id}`} className={hasPosition && onClick ? 'cursor-pointer' : ''}>
@@ -338,7 +370,24 @@ function CommentItem({
         </div>
 
         {/* Body */}
-        <p className="text-[12.5px] leading-[1.5] text-[#4A4F63]">{comment.content}</p>
+        {isEditing ? (
+          <div className="flex flex-col gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="text"
+              value={editText}
+              autoFocus
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') setIsEditing(false); }}
+              className="w-full rounded-lg border border-stiko-border bg-white px-2.5 py-1.5 text-[12.5px] text-stiko-ink focus:border-stiko-primary focus:ring-1 focus:ring-stiko-primary outline-none"
+            />
+            <div className="flex items-center gap-2">
+              <button onClick={saveEdit} disabled={busy || !editText.trim()} className="text-[11px] font-bold text-white px-3 py-1 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: 'linear-gradient(135deg, #8094F5, #5B60FF)' }}>Save</button>
+              <button onClick={() => { setIsEditing(false); setEditText(comment.content); }} className="text-[11px] font-semibold text-stiko-muted hover:text-stiko-secondary">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[12.5px] leading-[1.5] text-[#4A4F63]">{comment.content}</p>
+        )}
 
         {/* Snapshot thumbnail */}
         {comment.snapshotUrl && (
@@ -362,13 +411,19 @@ function CommentItem({
         ))}
 
         {/* Reply button */}
-        <div className="mt-1.5">
+        <div className="mt-1.5 flex items-center gap-3">
           <button
             onClick={(e) => { e.stopPropagation(); setShowReplyForm((v) => !v); }}
             className="text-[11px] font-bold text-stiko-primary hover:opacity-80 transition-opacity"
           >
             {showReplyForm ? 'Cancel' : 'Reply'}
           </button>
+          {canModify && !isEditing && (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); setEditText(comment.content); }} className="text-[11px] font-semibold text-stiko-muted hover:text-stiko-secondary transition-colors">Edit</button>
+              <button onClick={(e) => { e.stopPropagation(); deleteComment(); }} className="text-[11px] font-semibold text-stiko-muted hover:text-[#B23A52] transition-colors">Delete</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -402,6 +457,8 @@ function CommentItem({
               onAuthorChange={onAuthorChange}
               onRefresh={onRefresh}
               onViewImage={onViewImage}
+              currentUserId={currentUserId}
+              onChanged={onChanged}
             />
           ))}
         </div>
@@ -412,10 +469,12 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
+  const { data: session } = useSession();
+  const currentUserId = (session?.user as { id?: string } | undefined)?.id ?? null;
 
   const fetchComments = useCallback(async () => {
     if (!fileId) {
@@ -546,6 +605,8 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
               onRefresh={fetchComments}
               onViewImage={onViewImage}
               tagNumber={tagNumbers.get(comment.id)}
+              currentUserId={currentUserId}
+              onChanged={onCommentsChanged}
             />
           ))
         )}
