@@ -582,6 +582,7 @@ export default function PortalPage() {
         project={project}
         portal={portal}
         participants={participants}
+        portalId={portalId}
       />
 
       {/* 3-Panel Layout */}

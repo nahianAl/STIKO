@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState, useRef, useEffect } from 'react';
 import { paletteForKey } from '@/lib/commentColors';
 import { initialsFromEmail } from '@/lib/portalFormat';
+import ShareModal from './ShareModal';
 
 interface Project { id: string; name: string; createdAt: string }
 interface Portal { id: string; projectId: string; name: string; createdAt: string }
@@ -13,12 +14,14 @@ interface PortalTopBarProps {
   project: Project | null;
   portal: Portal | null;
   participants: Participant[];
+  portalId: string;
 }
 
 const GRADIENT = 'linear-gradient(135deg, #8094F5, #5B60FF)';
 
-export default function PortalTopBar({ project, portal, participants }: PortalTopBarProps) {
+export default function PortalTopBar({ project, portal, participants, portalId }: PortalTopBarProps) {
   const [showParticipants, setShowParticipants] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -103,7 +106,18 @@ export default function PortalTopBar({ project, portal, participants }: PortalTo
             </div>
           )}
         </div>
+        <button
+          onClick={() => setShowShare(true)}
+          className="flex items-center gap-2 text-white font-bold text-[13px] px-[18px] py-[10px] rounded-[11px] shadow-stiko-primary transition-[filter] hover:brightness-[0.97]"
+          style={{ background: 'linear-gradient(135deg, #8094F5, #5B60FF)' }}
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+          </svg>
+          Share
+        </button>
       </div>
+      <ShareModal isOpen={showShare} onClose={() => setShowShare(false)} portalId={portalId} />
     </div>
   );
 }
