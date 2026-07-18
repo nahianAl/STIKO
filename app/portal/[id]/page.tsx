@@ -74,10 +74,22 @@ const PENDING_TAG_ID = '__pending_tag__';
 // Captures the current viewer state as a JPEG data URL.
 // Tries WebGL canvas first (3D), then img, then video.
 function captureViewerSnapshot(container: HTMLElement): string | null {
-  // WebGL canvas (3D models, PDF)
+  // WebGL canvas (3D models). The R3F canvas renders to a transparent buffer, so encoding it
+  // straight to JPEG flattens the transparent areas to black. Composite onto the viewer's real
+  // background (#f0f0f0, set in ModelViewerInner) first so the snapshot keeps the gray the user sees.
   const canvas = container.querySelector('canvas') as HTMLCanvasElement | null;
   if (canvas) {
     try {
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const ctx = offscreen.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#f0f0f0';
+        ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+        ctx.drawImage(canvas, 0, 0);
+        return offscreen.toDataURL('image/jpeg', 0.92);
+      }
       return canvas.toDataURL('image/jpeg', 0.92);
     } catch (e) {
       console.error('Canvas capture failed:', e);
