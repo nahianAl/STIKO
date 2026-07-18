@@ -51,6 +51,7 @@ export interface CommentAttachment {
 export interface Comment {
   id: string;
   fileId: string;
+  userId?: string | null;
   parentCommentId: string | null;
   content: string;
   xPosition: number | null;

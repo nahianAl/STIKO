@@ -7,21 +7,22 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   const session = await auth();
-  const { content } = await request.json();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
+  const { content } = await request.json();
   if (!content || !content.trim()) {
     return NextResponse.json({ error: 'Content is required' }, { status: 400 });
   }
 
-  // Only the comment author (by user_id) can edit
-  if (session?.user?.id) {
-    const existing = await sql`SELECT user_id FROM comments WHERE id = ${params.id}`;
-    if (!existing[0]) {
-      return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
-    }
-    if (existing[0].user_id && existing[0].user_id !== session.user.id) {
-      return NextResponse.json({ error: 'Not authorized to edit this comment' }, { status: 403 });
-    }
+  const existing = await sql`SELECT user_id FROM comments WHERE id = ${params.id}`;
+  if (!existing[0]) {
+    return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
+  }
+  // Only the comment's owner may edit (anonymous comments have no owner and are not editable).
+  if (existing[0].user_id !== session.user.id) {
+    return NextResponse.json({ error: 'Not authorized to edit this comment' }, { status: 403 });
   }
 
   const rows = await sql`
@@ -33,30 +34,30 @@ export async function PUT(
               world_x AS "worldX", world_y AS "worldY", world_z AS "worldZ",
               snapshot_url AS "snapshotUrl", author, created_at AS "createdAt"
   `;
-
   if (!rows[0]) {
     return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
   }
-
   return NextResponse.json(rows[0]);
 }
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
-  // Check ownership: if the comment has a user_id, only that user can delete it
   const existing = await sql`SELECT user_id FROM comments WHERE id = ${params.id}`;
   if (!existing[0]) {
     return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
   }
-
-  if (existing[0].user_id && session?.user?.id && existing[0].user_id !== session.user.id) {
+  if (existing[0].user_id !== session.user.id) {
     return NextResponse.json({ error: 'Not authorized to delete this comment' }, { status: 403 });
   }
 
-  await sql`DELETE FROM comments WHERE id = ${params.id}`;
+  // Cascade: delete the comment and its direct replies.
+  await sql`DELETE FROM comments WHERE id = ${params.id} OR parent_comment_id = ${params.id}`;
   return NextResponse.json({ success: true });
 }
