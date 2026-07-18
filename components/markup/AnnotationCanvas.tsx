@@ -5,6 +5,7 @@ import { Stage, Layer, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
 import { useAnnotationObjects, type AnnTool } from './useAnnotationObjects';
 import AnnotationObjects from './AnnotationObjects';
+import { ERASER_CURSOR } from '@/lib/cursors';
 
 export interface AnnotationCanvasHandle {
   captureSnapshot: () => string | null;
@@ -97,7 +98,7 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     setTextPopup(null); setTextInput('');
   };
 
-  const cursor = activeTool === 'pointer' ? 'default' : activeTool === 'eraser' ? 'not-allowed' : 'crosshair';
+  const cursor = activeTool === 'pointer' ? 'default' : activeTool === 'eraser' ? ERASER_CURSOR : 'crosshair';
 
   return (
     <div ref={containerRef} className="absolute inset-0 bg-gray-900" style={{ cursor }}>

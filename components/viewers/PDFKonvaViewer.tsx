@@ -9,6 +9,7 @@ import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 import { paletteForComment } from '@/lib/commentColors';
+import { ERASER_CURSOR } from '@/lib/cursors';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -284,7 +285,7 @@ function PDFKonvaViewer(
     // File-wide tag numbers so a pin's number matches the comment list across all pages.
     const tagNumbers = buildTagNumbers(comments);
 
-    const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? 'not-allowed' : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
+    const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? ERASER_CURSOR : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
 
     return (
       <div className="flex h-full w-full flex-col">
