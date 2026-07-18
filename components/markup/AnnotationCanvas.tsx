@@ -54,6 +54,19 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool, ann.setSelectedId]);
 
+  // Delete/Backspace removes the selected object (unless typing in the text popup).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (ann.selectedId) { e.preventDefault(); ann.deleteObject(ann.selectedId); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ann.selectedId, ann.deleteObject]);
+
   useImperativeHandle(handleRef, () => ({
     captureSnapshot: () => {
       const stage = stageRef.current;

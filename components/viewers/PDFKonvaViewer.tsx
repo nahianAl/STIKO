@@ -71,6 +71,20 @@ function PDFKonvaViewer(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTool]);
 
+    // Delete/Backspace removes the selected annotation object during a session (not while typing).
+    useEffect(() => {
+      if (!annotating) return;
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+        const el = document.activeElement as HTMLElement | null;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+        if (ann.selectedId) { e.preventDefault(); ann.deleteObject(ann.selectedId); }
+      };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [annotating, ann.selectedId, ann.deleteObject]);
+
     // Ref handle (attached to the `handleRef` prop, not React `ref` — see note on props)
     useImperativeHandle(handleRef, () => ({
       captureSnapshot: () => {
