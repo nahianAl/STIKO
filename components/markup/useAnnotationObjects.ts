@@ -52,28 +52,32 @@ export function useAnnotationObjects() {
     setDraft(next);
   }, []);
 
-  const endDraw = useCallback(() => {
+  const endDraw = useCallback((): string | null => {
     const d = draftRef.current;
     draftRef.current = null;
     setDraft(null);
-    if (!d) return;
+    if (!d) return null;
     const valid = d.type === 'freehand' ? d.points.length > 2
       : d.type === 'rect' ? Math.abs(d.width) > 3 && Math.abs(d.height) > 3
       : (d.type === 'line' || d.type === 'arrow') ? Math.hypot(d.points[2] - d.points[0], d.points[3] - d.points[1]) > 3
       : true;
-    if (!valid) return;
+    if (!valid) return null;
     let obj = d;
     if (d.type === 'rect') {
       obj = { ...d, x: Math.min(d.x, d.x + d.width), y: Math.min(d.y, d.y + d.height), width: Math.abs(d.width), height: Math.abs(d.height) };
     }
     setObjects((prev) => [...prev, obj]);
+    setSelectedId(obj.id);
+    return obj.id;
   }, []);
 
-  const addText = useCallback((p: { x: number; y: number }, text: string, color: string, strokeWidth: number, fontSize = 16) => {
-    if (!text.trim()) return;
+  const addText = useCallback((p: { x: number; y: number }, text: string, color: string, strokeWidth: number, fontSize = 16): string | null => {
+    if (!text.trim()) return null;
     const o = base('text', color, strokeWidth);
     o.x = p.x; o.y = p.y; o.text = text.trim(); o.fontSize = fontSize;
     setObjects((prev) => [...prev, o]);
+    setSelectedId(o.id);
+    return o.id;
   }, []);
 
   const updateObject = useCallback((id: string, patch: Partial<AnnotationObject>) => {

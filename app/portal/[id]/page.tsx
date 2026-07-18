@@ -562,6 +562,7 @@ export default function PortalPage() {
             onCommentPinClick={handleCommentPinClick}
             pdfViewerRef={pdfKonvaRef}
             pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
+            onObjectCreated={() => setActiveTool('pointer')}
           />
         </div>
       </>
@@ -667,6 +668,7 @@ export default function PortalPage() {
                 color={drawingColor}
                 strokeWidth={drawingStrokeWidth}
                 handleRef={annotationCanvasRef}
+                onObjectCreated={() => setActiveTool('pointer')}
               />
             )}
 

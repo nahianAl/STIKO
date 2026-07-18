@@ -19,9 +19,10 @@ interface AnnotationCanvasProps {
   color: string;
   strokeWidth: number;
   handleRef?: Ref<AnnotationCanvasHandle>;
+  onObjectCreated?: () => void;
 }
 
-export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color, strokeWidth, handleRef }: AnnotationCanvasProps) {
+export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color, strokeWidth, handleRef, onObjectCreated }: AnnotationCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -107,7 +108,10 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
   };
 
   const submitText = () => {
-    if (textPopup && textInput.trim()) ann.addText(textPopup, textInput, color, strokeWidth);
+    if (textPopup && textInput.trim()) {
+      const id = ann.addText(textPopup, textInput, color, strokeWidth);
+      if (id) onObjectCreated?.();
+    }
     setTextPopup(null); setTextInput('');
   };
 
@@ -122,8 +126,8 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
           height={size.height}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          onMouseUp={() => ann.endDraw()}
-          onMouseLeave={() => ann.endDraw()}
+          onMouseUp={() => { if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseLeave={() => { if (ann.endDraw()) onObjectCreated?.(); }}
         >
           <Layer listening={false}>
             {bgImage && bgFit && <KonvaImage image={bgImage} x={bgFit.x} y={bgFit.y} width={bgFit.width} height={bgFit.height} />}

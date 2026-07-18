@@ -38,10 +38,11 @@ interface PDFKonvaViewerProps {
   handleRef?: Ref<PDFKonvaViewerHandle>;
   // Id of the not-yet-posted tag being placed, rendered as a distinct preview pin
   pendingCommentId?: string | null;
+  onObjectCreated?: () => void;
 }
 
 function PDFKonvaViewer(
-    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId }: PDFKonvaViewerProps
+    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -236,9 +237,12 @@ function PDFKonvaViewer(
     }, [annotating, activeTool, getPageCoords, ann]);
 
     const submitText = useCallback(() => {
-      if (textPopup && textInput.trim()) ann.addText({ x: textPopup.px, y: textPopup.py }, textInput, color, strokeWidth);
+      if (textPopup && textInput.trim()) {
+        const id = ann.addText({ x: textPopup.px, y: textPopup.py }, textInput, color, strokeWidth);
+        if (id) onObjectCreated?.();
+      }
       setTextPopup(null); setTextInput('');
-    }, [textPopup, textInput, color, strokeWidth, ann]);
+    }, [textPopup, textInput, color, strokeWidth, ann, onObjectCreated]);
 
     // Wheel zoom
     const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -381,8 +385,8 @@ function PDFKonvaViewer(
               onWheel={handleWheel}
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
-              onMouseUp={() => ann.endDraw()}
-              onMouseLeave={() => ann.endDraw()}
+              onMouseUp={() => { if (ann.endDraw()) onObjectCreated?.(); }}
+              onMouseLeave={() => { if (ann.endDraw()) onObjectCreated?.(); }}
             >
               {/* PDF Background */}
               <Layer>
