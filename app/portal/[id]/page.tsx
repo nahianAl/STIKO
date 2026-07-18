@@ -582,7 +582,6 @@ export default function PortalPage() {
         project={project}
         portal={portal}
         participants={participants}
-        submitHref={`/portal/${portalId}/submit`}
       />
 
       {/* 3-Panel Layout */}
@@ -602,6 +601,7 @@ export default function PortalPage() {
           onSelectFile={setSelectedFileId}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+          submitHref={`/portal/${portalId}/submit`}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}

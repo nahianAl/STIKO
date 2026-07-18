@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
 
@@ -33,6 +34,7 @@ interface FileTreeSidebarProps {
   onSelectFile: (fileId: string) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  submitHref?: string;
 }
 
 interface FolderNode {
@@ -200,6 +202,7 @@ export default function FileTreeSidebar({
   onSelectFile,
   collapsed,
   onToggleCollapse,
+  submitHref,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
   const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
@@ -298,6 +301,19 @@ export default function FileTreeSidebar({
           })
         )}
       </div>
+
+      {submitHref && (
+        <Link
+          href={submitHref}
+          className="flex-shrink-0 flex items-center justify-center gap-2 text-white font-bold text-[13px] py-2.5 rounded-[11px] shadow-stiko-primary transition-[filter] hover:brightness-[0.97]"
+          style={{ background: 'linear-gradient(135deg, #8094F5, #5B60FF)' }}
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Submit new version
+        </Link>
+      )}
     </div>
   );
 }

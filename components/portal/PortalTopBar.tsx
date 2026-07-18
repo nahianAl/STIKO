@@ -13,12 +13,11 @@ interface PortalTopBarProps {
   project: Project | null;
   portal: Portal | null;
   participants: Participant[];
-  submitHref: string;
 }
 
 const GRADIENT = 'linear-gradient(135deg, #8094F5, #5B60FF)';
 
-export default function PortalTopBar({ project, portal, participants, submitHref }: PortalTopBarProps) {
+export default function PortalTopBar({ project, portal, participants }: PortalTopBarProps) {
   const [showParticipants, setShowParticipants] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
 
@@ -104,14 +103,6 @@ export default function PortalTopBar({ project, portal, participants, submitHref
             </div>
           )}
         </div>
-
-        <Link
-          href={submitHref}
-          className="text-white font-bold text-[13px] px-[18px] py-[10px] rounded-[11px] shadow-stiko-primary transition-[filter] hover:brightness-[0.97]"
-          style={{ background: GRADIENT }}
-        >
-          Submit new version
-        </Link>
       </div>
     </div>
   );
