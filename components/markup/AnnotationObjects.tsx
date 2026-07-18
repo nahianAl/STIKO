@@ -5,13 +5,16 @@ import { Line, Arrow, Rect, Text, Image as KonvaImage, Transformer } from 'react
 import type Konva from 'konva';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
 
-function ImageObj({ obj, common }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'> }) {
+function ImageObj({ obj, common, onLoaded }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'>; onLoaded?: () => void }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   useEffect(() => {
     if (!obj.src) return;
+    let alive = true;
     const i = new window.Image();
-    i.onload = () => setImg(i);
+    i.onload = () => { if (!alive) return; setImg(i); onLoaded?.(); };
     i.src = obj.src;
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [obj.src]);
   if (!img) return null;
   return <KonvaImage {...common} image={img} width={obj.width} height={obj.height} />;
@@ -29,6 +32,9 @@ interface AnnotationObjectsProps {
 
 export default function AnnotationObjects({ objects, draft, selectedId, activeTool, onSelect, onErase, onChange }: AnnotationObjectsProps) {
   const trRef = useRef<Konva.Transformer>(null);
+  // Bumped when an ImageObj finishes decoding, so the Transformer rebinds once the
+  // (initially null) image node actually exists in the stage.
+  const [imgLoadTick, setImgLoadTick] = useState(0);
 
   // Bind the Transformer to the selected node
   useEffect(() => {
@@ -38,7 +44,7 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
     const node = selectedId && stage ? stage.findOne(`#${selectedId}`) : null;
     tr.nodes(node ? [node as Konva.Node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, objects, activeTool]);
+  }, [selectedId, objects, activeTool, imgLoadTick]);
 
   // Object click: select (pointer) or erase; ignored for draw tools so you can draw over objects
   const handleObj = (e: Konva.KonvaEventObject<MouseEvent>, id: string) => {
@@ -76,7 +82,7 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
       case 'text':
         return <Text key={obj.id} {...common} text={obj.text} fontSize={obj.fontSize} fill={obj.color} fontStyle="bold" />;
       case 'image':
-        return <ImageObj key={obj.id} obj={obj} common={common} />;
+        return <ImageObj key={obj.id} obj={obj} common={common} onLoaded={() => setImgLoadTick((t) => t + 1)} />;
       default:
         return null;
     }
