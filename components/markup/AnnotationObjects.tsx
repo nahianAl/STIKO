@@ -1,9 +1,21 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { Line, Arrow, Rect, Text, Transformer } from 'react-konva';
+import { useEffect, useRef, useState } from 'react';
+import { Line, Arrow, Rect, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
+
+function ImageObj({ obj, common }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'> }) {
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (!obj.src) return;
+    const i = new window.Image();
+    i.onload = () => setImg(i);
+    i.src = obj.src;
+  }, [obj.src]);
+  if (!img) return null;
+  return <KonvaImage {...common} image={img} width={obj.width} height={obj.height} />;
+}
 
 interface AnnotationObjectsProps {
   objects: AnnotationObject[];
@@ -63,6 +75,8 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
         return <Rect key={obj.id} {...common} width={obj.width} height={obj.height} stroke={obj.color} strokeWidth={obj.strokeWidth} />;
       case 'text':
         return <Text key={obj.id} {...common} text={obj.text} fontSize={obj.fontSize} fill={obj.color} fontStyle="bold" />;
+      case 'image':
+        return <ImageObj key={obj.id} obj={obj} common={common} />;
       default:
         return null;
     }

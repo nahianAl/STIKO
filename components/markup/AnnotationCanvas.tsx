@@ -11,6 +11,7 @@ export interface AnnotationCanvasHandle {
   captureSnapshot: () => string | null;
   clear: () => void;
   hasObjects: () => boolean;
+  insertImage: (file: File) => void;
 }
 
 interface AnnotationCanvasProps {
@@ -80,6 +81,23 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     },
     clear: () => ann.clear(),
     hasObjects: () => ann.hasObjects(),
+    insertImage: (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const src = reader.result as string;
+        const im = new window.Image();
+        im.onload = () => {
+          const maxW = size.width * 0.5;
+          const maxH = size.height * 0.5;
+          const scale = Math.min(maxW / im.width, maxH / im.height, 1);
+          const w = im.width * scale;
+          const h = im.height * scale;
+          ann.addImage({ x: (size.width - w) / 2, y: (size.height - h) / 2 }, src, w, h);
+        };
+        im.src = src;
+      };
+      reader.readAsDataURL(file);
+    },
   }));
 
   // Fit the background image within the stage, centered (letterbox), so the drawn snapshot matches what was on screen.

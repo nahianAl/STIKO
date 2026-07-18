@@ -194,6 +194,7 @@ export default function PortalPage() {
   const [annotating, setAnnotating] = useState(false);
   const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Selected file (needed before 3D state)
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
@@ -372,17 +373,22 @@ export default function PortalPage() {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
 
-  // Start an annotation session when a draw tool is picked (only session-starter).
-  useEffect(() => {
+  // Starts an annotation session (captures the live-view snapshot for non-PDF files).
+  // Shared by the draw-tool session-starter effect below and the insert-image action.
+  const startAnnotationSession = useCallback(() => {
     if (annotating) return;
-    if (!DRAW_TOOLS.includes(activeTool)) return;
     setAnnotating(true);
     if (!isPDFFile) {
       const container = viewerAreaRef.current;
-      const snapshot = container ? captureViewerSnapshot(container) : null;
-      setViewerSnapshot(snapshot);
+      setViewerSnapshot(container ? captureViewerSnapshot(container) : null);
     }
-  }, [activeTool, annotating, isPDFFile]);
+  }, [annotating, isPDFFile]);
+
+  // Start an annotation session when a draw tool is picked (only session-starter).
+  useEffect(() => {
+    if (!DRAW_TOOLS.includes(activeTool)) return;
+    startAnnotationSession();
+  }, [activeTool, startAnnotationSession]);
 
   // Tag placement and drawing are mutually exclusive — disarm tagging when a draw tool is selected.
   useEffect(() => {
@@ -495,6 +501,22 @@ export default function PortalPage() {
     endSession();
   };
 
+  // Insert-image action: ensure a session is running (captures the snapshot for non-PDF),
+  // then open the file picker within the same user gesture.
+  const handleInsertImage = () => {
+    startAnnotationSession();
+    imageInputRef.current?.click();
+  };
+
+  const handleImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const surface = isPDFFile ? pdfKonvaRef.current : annotationCanvasRef.current;
+    surface?.insertImage(file);
+    setActiveTool('pointer');
+  };
+
   const handleCommentPinClick = useCallback((comment: Comment) => {
     setActiveCommentId((prev) => (prev === comment.id ? null : comment.id));
     if (comment.timestamp != null) {
@@ -579,6 +601,7 @@ export default function PortalPage() {
 
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
       <PortalTopBar
         project={project}
         portal={portal}
@@ -617,6 +640,7 @@ export default function PortalPage() {
             onStrokeWidthChange={setDrawingStrokeWidth}
             tagging={tagging}
             onToggleTagging={() => setTagging((t) => !t)}
+            onInsertImage={handleInsertImage}
           />
 
           {/* Annotation mode banner */}

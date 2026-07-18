@@ -20,6 +20,7 @@ export interface PDFKonvaViewerHandle {
   getCurrentPage: () => number;
   clearDrawings: () => void;
   hasObjects: () => boolean;
+  insertImage: (file: File) => void;
 }
 
 interface PDFKonvaViewerProps {
@@ -100,6 +101,23 @@ function PDFKonvaViewer(
       getCurrentPage: () => currentPage,
       clearDrawings: () => ann.clear(),
       hasObjects: () => ann.hasObjects(),
+      insertImage: (file: File) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const src = reader.result as string;
+          const im = new window.Image();
+          im.onload = () => {
+            const maxW = pageSize.width * 0.5;
+            const maxH = pageSize.height * 0.5;
+            const scale = Math.min(maxW / im.width, maxH / im.height, 1);
+            const w = im.width * scale;
+            const h = im.height * scale;
+            ann.addImage({ x: (pageSize.width - w) / 2, y: (pageSize.height - h) / 2 }, src, w, h);
+          };
+          im.src = src;
+        };
+        reader.readAsDataURL(file);
+      },
     }));
 
     // Load PDF document

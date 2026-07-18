@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 
-export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'text';
+export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'image';
 export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 export interface AnnotationObject {
@@ -12,6 +12,7 @@ export interface AnnotationObject {
   x: number; y: number;           // rect/text origin; drag offset for all types
   width: number; height: number;  // rect
   text: string; fontSize: number; // text
+  src: string;                    // image
   rotation: number; scaleX: number; scaleY: number;
   color: string; strokeWidth: number;
 }
@@ -27,7 +28,7 @@ export function useAnnotationObjects() {
 
   const base = (type: AnnotationObjectType, color: string, strokeWidth: number): AnnotationObject => ({
     id: `obj-${idRef.current++}`, type, points: [], x: 0, y: 0, width: 0, height: 0,
-    text: '', fontSize: 16, rotation: 0, scaleX: 1, scaleY: 1, color, strokeWidth,
+    text: '', fontSize: 16, src: '', rotation: 0, scaleX: 1, scaleY: 1, color, strokeWidth,
   });
 
   const startDraw = useCallback((tool: AnnTool, p: { x: number; y: number }, color: string, strokeWidth: number) => {
@@ -80,6 +81,14 @@ export function useAnnotationObjects() {
     return o.id;
   }, []);
 
+  const addImage = useCallback((p: { x: number; y: number }, src: string, width: number, height: number) => {
+    const o = base('image', '#000000', 0);
+    o.x = p.x; o.y = p.y; o.src = src; o.width = width; o.height = height;
+    setObjects((prev) => [...prev, o]);
+    setSelectedId(o.id);
+    return o.id;
+  }, []);
+
   const updateObject = useCallback((id: string, patch: Partial<AnnotationObject>) => {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   }, []);
@@ -95,5 +104,5 @@ export function useAnnotationObjects() {
 
   const hasObjects = useCallback(() => objects.length > 0, [objects]);
 
-  return { objects, draft, selectedId, setSelectedId, startDraw, moveDraw, endDraw, addText, updateObject, deleteObject, clear, hasObjects };
+  return { objects, draft, selectedId, setSelectedId, startDraw, moveDraw, endDraw, addText, addImage, updateObject, deleteObject, clear, hasObjects };
 }
