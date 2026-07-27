@@ -12,6 +12,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
+import ViewGizmo from './ViewGizmo';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
@@ -247,6 +248,7 @@ export default function ModelViewerInner({
           />
         </Suspense>
         <OrbitControls makeDefault />
+        <ViewGizmo />
       </Canvas>
     </div>
   );
