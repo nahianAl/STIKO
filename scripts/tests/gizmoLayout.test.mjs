@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   GIZMO_MARGIN_PX,
   GIZMO_HALF_EXTENT_PX,
+  CUBE_SIZE_PX,
+  TRIAD_ORIGIN_PX,
+  TRIAD_AXIS_PX,
   isPointerOverGizmo,
 } from '../../lib/gizmoLayout.ts';
 
@@ -41,4 +44,26 @@ test('the rect tracks a different canvas size', () => {
   const h2 = 300;
   assert.equal(isPointerOverGizmo(w2 - GIZMO_MARGIN_PX, h2 - GIZMO_MARGIN_PX, w2, h2), true);
   assert.equal(isPointerOverGizmo(cx, cy, w2, h2), false);
+});
+
+test('the derived half extent has its documented value', () => {
+  // Pinned so any geometry change surfaces as a deliberate diff rather than silent drift.
+  assert.equal(GIZMO_HALF_EXTENT_PX, 98);
+});
+
+test('the guard covers the cube viewed corner-on', () => {
+  const cubeReach = (CUBE_SIZE_PX / 2) * Math.sqrt(3);
+  assert.ok(
+    GIZMO_HALF_EXTENT_PX >= cubeReach,
+    `half extent ${GIZMO_HALF_EXTENT_PX} does not cover cube reach ${cubeReach}`,
+  );
+});
+
+test('the guard covers the triad including its axis-head sprites', () => {
+  // Sprite reaches half its world scale past its centre; drei grows a hovered head to 1.2x.
+  const triadReach = Math.hypot(...TRIAD_ORIGIN_PX) + TRIAD_AXIS_PX + TRIAD_AXIS_PX * 0.5 * 1.2;
+  assert.ok(
+    GIZMO_HALF_EXTENT_PX >= triadReach,
+    `half extent ${GIZMO_HALF_EXTENT_PX} does not cover triad reach ${triadReach}`,
+  );
 });

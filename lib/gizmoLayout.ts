@@ -13,20 +13,35 @@
 
 export const GIZMO_MARGIN_PX = 80;
 
+/** Cube edge length. drei's GizmoViewcube hardcodes a 60-unit group scale on a unit box. */
+export const CUBE_SIZE_PX = 60;
+
+/** Triad origin relative to the gizmo centre — just off the cube's front-lower-left corner. */
+export const TRIAD_ORIGIN_PX: readonly [number, number, number] = [-30, -30, 32];
+
+/** Axis length, and the world scale drei applies to each axis-head sprite. */
+export const TRIAD_AXIS_PX = 28;
+
+// A sprite's on-screen size is its world scale times a unit quad, so it reaches half its
+// scale beyond its centre. drei grows a hovered head to 1.2x.
+const HEAD_HALF_WIDTH_PX = TRIAD_AXIS_PX * 0.5 * 1.2;
+
+const CUBE_REACH_PX = (CUBE_SIZE_PX / 2) * Math.sqrt(3);
+const TRIAD_REACH_PX = Math.hypot(...TRIAD_ORIGIN_PX) + TRIAD_AXIS_PX + HEAD_HALF_WIDTH_PX;
+
 /**
- * Half-width of the square the cube and triad can occupy, in any camera orientation.
+ * Half-width of the square the gizmo can occupy in any camera orientation.
  *
- * The cube is 60px on a side, so a corner-on view reaches 60 * sqrt(3) / 2 ≈ 52px from
- * centre. The triad reaches further: its origin sits at (-30, -30, 32) — about 53px out —
- * and its axes extend 28px beyond that, so 81px is the worst case. Measured against a
- * running viewport the visible footprint peaked near 70px; 85 keeps margin for orientations
- * that were not sampled.
+ * Derived rather than hand-tuned: the guard has to cover whatever the component actually
+ * draws, and a literal here would silently drift the first time the triad is resized. The
+ * gizmo rotates freely, so each reach is a 3D distance from the centre — an orthographic
+ * projection can only shorten it, never lengthen it.
  *
- * Erring large is the safe direction. Too small lets a click land on visible gizmo chrome
- * and drop a comment pin behind it — the bug the guard exists to prevent. Too large only
- * suppresses pin placement in a corner the gizmo already occupies, and never blocks orbiting.
+ * Too small lets a click land on visible gizmo chrome and drop a comment pin behind it,
+ * which is the bug this guard exists to prevent. Too large only suppresses pin placement in
+ * a corner the gizmo already occupies, and never blocks orbiting.
  */
-export const GIZMO_HALF_EXTENT_PX = 85;
+export const GIZMO_HALF_EXTENT_PX = Math.ceil(Math.max(CUBE_REACH_PX, TRIAD_REACH_PX));
 
 /** True when a pointer at (x, y) is over the gizmo and should not reach the scene. */
 export function isPointerOverGizmo(
