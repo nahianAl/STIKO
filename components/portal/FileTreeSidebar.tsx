@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
 
@@ -34,7 +33,8 @@ interface FileTreeSidebarProps {
   onSelectFile: (fileId: string) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
-  submitHref?: string;
+  /** Opens the new-version drawer (2e). Absent when the viewer can't upload. */
+  onSubmitVersion?: () => void;
 }
 
 interface FolderNode {
@@ -202,7 +202,7 @@ export default function FileTreeSidebar({
   onSelectFile,
   collapsed,
   onToggleCollapse,
-  submitHref,
+  onSubmitVersion,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
   const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
@@ -302,9 +302,11 @@ export default function FileTreeSidebar({
         )}
       </div>
 
-      {submitHref && (
-        <Link
-          href={submitHref}
+      {/* Opens the drawer (2e) rather than navigating — the package stays
+          mounted behind it, so no zoom or scroll is lost. */}
+      {onSubmitVersion && (
+        <button
+          onClick={onSubmitVersion}
           className="flex-shrink-0 flex items-center justify-center gap-2 text-white font-bold text-[13px] py-2.5 rounded-[11px] shadow-stiko-primary transition-[filter] hover:brightness-[0.97]"
           style={{ background: 'linear-gradient(135deg, #8094F5, #5B60FF)' }}
         >
@@ -312,7 +314,7 @@ export default function FileTreeSidebar({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
           Submit new version
-        </Link>
+        </button>
       )}
     </div>
   );

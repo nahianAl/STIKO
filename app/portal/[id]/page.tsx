@@ -7,6 +7,7 @@ import PortalTopBar from '@/components/portal/PortalTopBar';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
+import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
@@ -165,6 +166,11 @@ export default function PortalPage() {
   const [commentsCollapsed, setCommentsCollapsed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // 2e: submitting a version is a drawer over this view, not a route change —
+  // no navigation, no reload, no lost zoom or scroll.
+  const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
+  const [canUpload, setCanUpload] = useState(false);
+
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
   const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
@@ -270,26 +276,31 @@ export default function PortalPage() {
     setContentTransform(transform);
   }, []);
 
-  // Fetch portal details and parent project
+  // Fetch package details and the parent project's NAME for the breadcrumb.
+  //
+  // The name comes from the package's own access endpoint rather than
+  // /api/projects/[id]: a guest is not a project member, so that route
+  // correctly refuses them (01 — guests cannot see the project). They still
+  // need the name as breadcrumb context, which is package-scoped information
+  // they are already entitled to.
   useEffect(() => {
     const fetchPortal = async () => {
       try {
         const res = await fetch(`/api/portals/${portalId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setPortal(data);
-          try {
-            const projRes = await fetch(`/api/projects/${data.projectId}`);
-            if (projRes.ok) {
-              const projData = await projRes.json();
-              setProject(projData);
-            }
-          } catch (projErr) {
-            console.error('Failed to fetch project:', projErr);
-          }
+        if (!res.ok) return;
+        setPortal(await res.json());
+
+        const accessRes = await fetch(`/api/portals/${portalId}/access`);
+        if (accessRes.ok) {
+          const info = await accessRes.json();
+          setProject({
+            id: info.package.projectId,
+            name: info.package.projectName,
+            createdAt: '',
+          });
         }
       } catch (err) {
-        console.error('Failed to fetch portal:', err);
+        console.error('Failed to fetch package:', err);
       }
     };
     fetchPortal();
@@ -300,6 +311,7 @@ export default function PortalPage() {
     const fetchParticipants = async () => {
       try {
         const res = await fetch(`/api/participants?portalId=${portalId}`);
+        if (!res.ok) return;
         const data = await res.json();
         setParticipants(data);
       } catch (err) {
@@ -307,6 +319,15 @@ export default function PortalPage() {
       }
     };
     fetchParticipants();
+  }, [portalId]);
+
+  // What this viewer is allowed to do here. Drives whether the submit
+  // affordances render at all — a commenter never sees them.
+  useEffect(() => {
+    fetch(`/api/portals/${portalId}/access`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info) => setCanUpload(Boolean(info?.access?.canUpload)))
+      .catch(() => setCanUpload(false));
   }, [portalId]);
 
   // Fetch versions and select latest
@@ -350,6 +371,14 @@ export default function PortalPage() {
   useEffect(() => {
     if (selectedVersionId) {
       fetchFiles(selectedVersionId);
+      // Record that this person opened the version. This is what makes 4b's
+      // not-opened / viewed-no-comment distinction real, and what keeps the
+      // personal "NEW VERSION" pill honest.
+      fetch('/api/version-views', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versionId: selectedVersionId }),
+      }).catch(() => {});
     }
   }, [selectedVersionId, fetchFiles]);
 
@@ -612,8 +641,9 @@ export default function PortalPage() {
       <PortalTopBar
         project={project}
         portal={portal}
-        participants={participants}
         portalId={portalId}
+        canUpload={canUpload}
+        onSubmitVersion={() => setVersionDrawerOpen(true)}
       />
 
       {/* 3-Panel Layout */}
@@ -633,7 +663,9 @@ export default function PortalPage() {
           onSelectFile={setSelectedFileId}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-          submitHref={`/portal/${portalId}/submit`}
+          onSubmitVersion={
+            canUpload ? () => setVersionDrawerOpen(true) : undefined
+          }
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
@@ -753,6 +785,39 @@ export default function PortalPage() {
           }
         />
       </div>
+
+      <NewVersionDrawer
+        isOpen={versionDrawerOpen}
+        onClose={() => setVersionDrawerOpen(false)}
+        portalId={portalId}
+        projectId={project?.id ?? ''}
+        packageName={portal?.name ?? ''}
+        nextVersionNumber={
+          versions.reduce((m, v) => Math.max(m, v.versionNumber), 0) + 1
+        }
+        currentVersionNumber={
+          versions.length > 0
+            ? versions.reduce((m, v) => Math.max(m, v.versionNumber), 0)
+            : null
+        }
+        existingFilenames={files.map((f) => f.filename)}
+        participants={participants.map((p) => ({
+          id: p.id,
+          name: p.email,
+        }))}
+        openComments={comments.filter((c) => !c.parentCommentId).length}
+        onPublished={() => {
+          // Refresh the rail and the file list in place — the whole point of
+          // the drawer is that nothing navigates.
+          fetch(`/api/versions?portalId=${portalId}`)
+            .then((r) => (r.ok ? r.json() : []))
+            .then((next: Version[]) => {
+              setVersions(next);
+              if (next.length > 0) setSelectedVersionId(next[0].id);
+            })
+            .catch(() => {});
+        }}
+      />
     </div>
   );
 }

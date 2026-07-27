@@ -73,11 +73,11 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
   );
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Share portal">
+    <Modal isOpen={isOpen} onClose={onClose} title="Share package">
       <div className="flex flex-col gap-5">
         {/* Invite by email */}
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-stiko-faint mb-2">Invite a participant</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-stiko-faint mb-2">Invite someone</p>
           <div className="flex items-center gap-2">
             <input
               type="email"

@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS users (
   email_verified TIMESTAMPTZ,
   image TEXT,
   password_hash TEXT,
+  job_title TEXT,
+  company TEXT,
+  email_paused_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -44,6 +47,8 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  description TEXT,
+  archived_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -51,6 +56,9 @@ CREATE TABLE IF NOT EXISTS portals (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  tag TEXT,
+  archived_at TIMESTAMPTZ,
+  link_access BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -62,6 +70,9 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
   email TEXT NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -78,6 +89,9 @@ CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
   portal_id TEXT NOT NULL REFERENCES portals(id) ON DELETE CASCADE,
   version_number INT NOT NULL,
+  changelog TEXT,
+  published_at TIMESTAMPTZ,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -122,4 +136,83 @@ CREATE TABLE IF NOT EXISTS markups (
   style JSONB NOT NULL,
   page_number INT DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ===========================================================================
+-- Redesign tables. Mirrored in lib/migrations/001-redesign.sql, which brings an
+-- existing database up to this shape. Keep the two in step.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS verdicts (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'changes_requested')),
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(version_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS verdicts_version_idx ON verdicts(version_id);
+
+CREATE TABLE IF NOT EXISTS project_members (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('owner', 'coordinator')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(project_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN (
+    'mention', 'new_version', 'comment_reply', 'new_comment',
+    'invite_accepted', 'changes_requested', 'approved'
+  )),
+  portal_id TEXT REFERENCES portals(id) ON DELETE CASCADE,
+  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  excerpt TEXT,
+  href TEXT NOT NULL,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS notifications_user_idx
+  ON notifications(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS notification_prefs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event TEXT NOT NULL,
+  in_app BOOLEAN NOT NULL DEFAULT TRUE,
+  email BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE(user_id, event)
+);
+
+CREATE TABLE IF NOT EXISTS portal_mutes (
+  id TEXT PRIMARY KEY,
+  portal_id TEXT NOT NULL REFERENCES portals(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(portal_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id TEXT PRIMARY KEY,
+  token TEXT UNIQUE NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS version_views (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  viewed_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(version_id, user_id)
 );

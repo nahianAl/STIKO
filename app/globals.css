@@ -2,8 +2,39 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The design system is app-wide now, not portal-scoped: 02-design-system.md
+   defines the field, the type and the link colours for every screen. */
 body {
-  color: #171717;
-  background: #f9fafb;
-  font-family: Arial, Helvetica, sans-serif;
+  color: #1c2030;
+  background: #f6f8fe;
+  font-family: var(--font-manrope), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 02: always define both — users add links later, and an undefined link
+   renders browser-blue. */
+a {
+  color: #5b60ff;
+  text-decoration: none;
+}
+a:hover {
+  color: #4247d6;
+}
+
+/* The comment pin is a teardrop with its tail at the bottom-left. */
+.stiko-pin {
+  border-radius: 50% 50% 50% 2px;
+}
+
+/* Scrims. Stacking matters: the scrim sits at z-5 and the drawer/modal at z-6,
+   and the document sheet must never carry a positive z-index or it paints
+   straight through. See the stacking note in 02. */
+.stiko-scrim {
+  background: rgba(28, 32, 48, 0.3);
+}
+.stiko-scrim-palette {
+  background: rgba(28, 32, 48, 0.34);
+}
+.stiko-scrim-tray {
+  background: rgba(28, 32, 48, 0.16);
 }

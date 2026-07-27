@@ -1,333 +1,393 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import Button from '@/components/ui/Button';
-import Modal from '@/components/ui/Modal';
+import { Column, Shell, TopBar } from '@/components/ui/Shell';
+import {
+  AvatarStack,
+  SkeletonBar,
+  StatusChip,
+  TagChip,
+} from '@/components/ui/Primitives';
 import EmptyState from '@/components/ui/EmptyState';
-import Header from '@/components/ui/Header';
+import AvatarMenu from '@/components/shell/AvatarMenu';
+import { AddPeopleModal } from '@/components/people/AddPeopleModal';
+import { TeamMatrix } from '@/components/people/TeamMatrix';
+import { WaitingOn } from '@/components/project/WaitingOn';
+import { STATUS_ACCENT } from '@/lib/status';
+import { relativeTime } from '@/lib/design';
+import { DISCLOSURE, EMPTY_DISCLOSURE } from '@/lib/disclosure';
 
-interface Project {
+export interface ProjectPerson {
   id: string;
   name: string;
-  createdAt: string;
+  email: string;
+  company: string | null;
+  role: string;
+  verdict: string | null;
+  viewedAt: string | null;
+  commentCount: number;
+  lastCommentAt: string | null;
 }
 
-interface Portal {
+export interface ProjectPackage {
   id: string;
-  projectId: string;
   name: string;
-  createdAt: string;
+  tag: string | null;
+  versionNumber: number | null;
+  changelog: string | null;
+  publishedAt: string | null;
+  updatedByName: string | null;
+  fileCount: number;
+  openComments: number;
+  status: keyof typeof STATUS_ACCENT;
+  people: ProjectPerson[];
+  pending: {
+    email: string;
+    role: string;
+    createdAt: string;
+    expiresAt: string;
+  }[];
 }
+
+interface Overview {
+  project: { id: string; name: string; createdAt: string };
+  members: {
+    id: string;
+    name: string;
+    email: string;
+    company: string | null;
+    role: string;
+    isYou: boolean;
+  }[];
+  packages: ProjectPackage[];
+  disclosure: {
+    packagesInProject: number;
+    peopleCount: number;
+    hasPublishedVersion: boolean;
+  };
+}
+
+type Tab = 'packages' | 'team' | 'activity';
 
 export default function ProjectPage() {
-  const params = useParams();
-  const projectId = params.id as string;
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [portals, setPortals] = useState<Portal[]>([]);
+  const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>('packages');
+  const [view, setView] = useState<'status' | 'waiting'>('status');
+  const [addPeopleOpen, setAddPeopleOpen] = useState(false);
 
-  // Portal creation
-  const [portalModalOpen, setPortalModalOpen] = useState(false);
-  const [newPortalName, setNewPortalName] = useState('');
-  const [creatingPortal, setCreatingPortal] = useState(false);
-
-  // Invite participant
-  const [inviteModalOpen, setInviteModalOpen] = useState(false);
-  const [invitePortalId, setInvitePortalId] = useState('');
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'viewer' | 'commenter' | 'uploader'>('viewer');
-  const [inviting, setInviting] = useState(false);
-  const [inviteLink, setInviteLink] = useState<string | null>(null);
-  const [linkCopied, setLinkCopied] = useState(false);
-
-  const fetchProject = async () => {
+  const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${projectId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setProject(data);
-      }
+      const res = await fetch(`/api/projects/${id}/overview`);
+      if (res.ok) setData(await res.json());
     } catch (err) {
-      console.error('Failed to fetch project:', err);
-    }
-  };
-
-  const fetchPortals = async () => {
-    try {
-      const res = await fetch(`/api/portals?projectId=${projectId}`);
-      const data = await res.json();
-      setPortals(data);
-    } catch (err) {
-      console.error('Failed to fetch portals:', err);
+      console.error('Failed to load project', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
-    fetchProject();
-    fetchPortals();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    load();
+  }, [load]);
 
-  const handleCreatePortal = async () => {
-    if (!newPortalName.trim()) return;
-    setCreatingPortal(true);
-    try {
-      await fetch('/api/portals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newPortalName.trim(), projectId }),
-      });
-      setNewPortalName('');
-      setPortalModalOpen(false);
-      await fetchPortals();
-    } catch (err) {
-      console.error('Failed to create portal:', err);
-    } finally {
-      setCreatingPortal(false);
-    }
-  };
+  const disclosure = useMemo(
+    () => ({
+      ...EMPTY_DISCLOSURE,
+      packagesInProject: data?.disclosure.packagesInProject ?? 0,
+      peopleCount: data?.disclosure.peopleCount ?? 0,
+      hasPublishedVersion: data?.disclosure.hasPublishedVersion ?? false,
+      reviewerCount: Math.max(
+        0,
+        ...(data?.packages.map((p) => p.people.length) ?? [0])
+      ),
+    }),
+    [data]
+  );
 
-  const handleInvite = async () => {
-    if (!inviteEmail.trim()) return;
-    setInviting(true);
-    try {
-      const res = await fetch('/api/participants', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          portalId: invitePortalId,
-          email: inviteEmail.trim(),
-          role: inviteRole,
-        }),
-      });
-      const data = await res.json();
-      const base = window.location.origin;
-      // Viewers get the portal link directly; uploaders/commenters get an invite token link
-      const link = inviteRole === 'viewer'
-        ? `${base}/portal/${invitePortalId}`
-        : `${base}/invite/${data.token}`;
-      setInviteEmail('');
-      setInviteRole('viewer');
-      setInviteLink(link);
-    } catch (err) {
-      console.error('Failed to invite participant:', err);
-    } finally {
-      setInviting(false);
-    }
-  };
+  if (loading || !data) return <ProjectSkeleton />;
 
-  const openInviteModal = (portalId: string) => {
-    setInvitePortalId(portalId);
-    setInviteEmail('');
-    setInviteRole('viewer');
-    setInviteLink(null);
-    setLinkCopied(false);
-    setInviteModalOpen(true);
-  };
+  const showTabs = DISCLOSURE.showProjectTabs(disclosure);
+  const showTags = DISCLOSURE.showTags(disclosure);
+  const showStatus = DISCLOSURE.showStatusChips(disclosure);
+  const showWaitingOn = DISCLOSURE.showWaitingOn(disclosure);
 
-  const handleCopyLink = () => {
-    if (!inviteLink) return;
-    navigator.clipboard.writeText(inviteLink);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
-  };
+  const allPeople = Array.from(
+    new Map(
+      data.packages.flatMap((p) => p.people).map((p) => [p.id, p])
+    ).values()
+  );
 
   return (
-    <div className="min-h-screen">
-      <Header
-        breadcrumbs={[
-          { label: 'Dashboard', href: '/' },
-          { label: project?.name ?? 'Loading...' },
+    <Shell>
+      <TopBar
+        crumbs={[
+          { label: 'Projects', href: '/' },
+          { label: data.project.name },
         ]}
+        right={
+          <>
+            <Button onClick={() => router.push(`/new?project=${id}`)}>
+              New package
+            </Button>
+            <AvatarMenu />
+          </>
+        }
       />
 
-      {/* Content */}
-      <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-2xl font-semibold text-gray-900">
-            {project?.name ?? 'Loading...'}
-          </h2>
-          {portals.length > 0 && (
-            <Button onClick={() => setPortalModalOpen(true)}>
-              + New Portal
+      <Column width={1120}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-[26px] font-extrabold tracking-title text-stiko-ink">
+              {data.project.name}
+            </h1>
+            <p className="mt-1 text-[12.5px] text-stiko-muted">
+              {data.packages.length} package
+              {data.packages.length === 1 ? '' : 's'} ·{' '}
+              {disclosure.peopleCount} {disclosure.peopleCount === 1 ? 'person' : 'people'} ·
+              Started{' '}
+              {new Date(data.project.createdAt).toLocaleDateString(undefined, {
+                month: 'long',
+                year: 'numeric',
+              })}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {allPeople.length > 0 && (
+              <AvatarStack people={allPeople} size={30} />
+            )}
+            <Button variant="secondary" onClick={() => setAddPeopleOpen(true)}>
+              Manage people
             </Button>
-          )}
+          </div>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
-        ) : portals.length === 0 ? (
-          <EmptyState
-            message="Create your first portal to start collecting feedback"
-            actionLabel="Create Portal"
-            onAction={() => setPortalModalOpen(true)}
-          />
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {portals.map((portal) => (
-              <div
-                key={portal.id}
-                className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-200"
+        {/* 03: tabs are earned by 2+ packages AND 3+ people. Below that,
+            "People" is just a button, which the header already carries. */}
+        {showTabs && (
+          <nav className="mt-6 flex items-center gap-5 border-b border-stiko-border">
+            {(
+              [
+                ['packages', 'Packages'],
+                ['team', 'Team & access'],
+                ['activity', 'Activity'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`-mb-px border-b-2 pb-[10px] text-[14px] transition ${
+                  tab === key
+                    ? 'border-stiko-primary font-extrabold text-stiko-ink'
+                    : 'border-transparent font-semibold text-stiko-muted hover:text-stiko-ink'
+                }`}
               >
-                <Link href={`/portal/${portal.id}`} className="block mb-3">
-                  <h3 className="font-medium text-gray-900 mb-1">
-                    {portal.name}
-                  </h3>
-                  <p className="text-xs text-gray-400">
-                    Created{' '}
-                    {new Date(portal.createdAt).toLocaleDateString()}
-                  </p>
-                </Link>
-                <div className="flex gap-2 pt-2 border-t border-gray-100">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => openInviteModal(portal.id)}
-                  >
-                    Invite
-                  </Button>
-                  <Link href={`/portal/${portal.id}`}>
-                    <Button variant="secondary" size="sm">
-                      Open
-                    </Button>
-                  </Link>
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
+
+        {tab === 'packages' && (
+          <>
+            {showWaitingOn && (
+              <div className="mt-5 flex justify-end">
+                <div className="flex rounded-[10px] bg-white p-1 shadow-stiko-panel">
+                  {(['status', 'waiting'] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setView(v)}
+                      className={`rounded-[7px] px-3 py-[6px] text-[12px] font-bold transition ${
+                        view === v
+                          ? 'bg-stiko-tint text-stiko-primary'
+                          : 'text-stiko-muted hover:text-stiko-ink'
+                      }`}
+                    >
+                      {v === 'status' ? 'Status' : 'Waiting on'}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </main>
+            )}
 
-      {/* Create Portal Modal */}
-      <Modal
-        isOpen={portalModalOpen}
-        onClose={() => setPortalModalOpen(false)}
-        title="New Portal"
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleCreatePortal();
-          }}
-        >
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Portal Name
-          </label>
-          <input
-            type="text"
-            value={newPortalName}
-            onChange={(e) => setNewPortalName(e.target.value)}
-            placeholder="Enter portal name"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
-            autoFocus
-          />
-          <div className="flex justify-end gap-2 mt-4">
-            <Button
-              variant="secondary"
-              onClick={() => setPortalModalOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={creatingPortal || !newPortalName.trim()}
-            >
-              {creatingPortal ? 'Creating...' : 'Create'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Invite Participant Modal */}
-      <Modal
-        isOpen={inviteModalOpen}
-        onClose={() => setInviteModalOpen(false)}
-        title="Invite Participant"
-      >
-        {inviteLink ? (
-          <div>
-            <p className="text-sm text-gray-600 mb-3">
-              Participant added. Share this link with them:
-            </p>
-            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-              <span className="flex-1 text-xs text-gray-700 truncate font-mono">
-                {inviteLink}
-              </span>
-              <button
-                onClick={handleCopyLink}
-                className="flex-shrink-0 text-xs font-medium text-blue-600 hover:text-blue-700"
-              >
-                {linkCopied ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-            <div className="flex justify-end mt-4">
-              <Button onClick={() => setInviteModalOpen(false)}>Done</Button>
-            </div>
-          </div>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleInvite();
-            }}
-          >
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="participant@example.com"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
-                  autoFocus
+            {data.packages.length === 0 ? (
+              // 3f — a project with no packages. The whole panel is a drop target.
+              <div className="mt-6 rounded-shell border-2 border-dashed border-stiko-dashed bg-white p-6">
+                <EmptyState
+                  notes={[
+                    { color: 'blue', size: 74, rotate: -9 },
+                    { color: 'yellow', size: 78, rotate: 8 },
+                  ]}
+                  heading="A package is one set of drawings, reviewed over time"
+                  description="Level 3 — Structural. Podium & Canopy. Each keeps its own versions, people and comments."
+                  actionLabel="New package"
+                  onAction={() => router.push(`/new?project=${id}`)}
+                  secondary={
+                    <span className="text-[12.5px] text-stiko-faint">
+                      or drop files anywhere here
+                    </span>
+                  }
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Role
-                </label>
-                <select
-                  value={inviteRole}
-                  onChange={(e) =>
-                    setInviteRole(
-                      e.target.value as 'viewer' | 'commenter' | 'uploader'
-                    )
-                  }
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors bg-white"
-                >
-                  <option value="viewer">Viewer — can view files and comments</option>
-                  <option value="commenter">Commenter — can view and leave comments</option>
-                  <option value="uploader">Uploader — can submit new versions</option>
-                </select>
+            ) : view === 'waiting' ? (
+              <WaitingOn packages={data.packages} />
+            ) : (
+              <div className="mt-5 flex flex-col gap-3">
+                {data.packages.map((p) => (
+                  <ProjectPackageRow
+                    key={p.id}
+                    pkg={p}
+                    showTag={showTags}
+                    showStatus={showStatus}
+                  />
+                ))}
               </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <Button
-                variant="secondary"
-                onClick={() => setInviteModalOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={inviting || !inviteEmail.trim()}
-              >
-                {inviting ? 'Adding...' : 'Add & Get Link'}
-              </Button>
-            </div>
-          </form>
+            )}
+          </>
         )}
-      </Modal>
+
+        {tab === 'team' && (
+          <TeamMatrix
+            members={data.members}
+            packages={data.packages}
+            onChanged={load}
+            onAddPeople={() => setAddPeopleOpen(true)}
+          />
+        )}
+
+        {tab === 'activity' && (
+          <p className="mt-8 text-center text-[13px] text-stiko-muted">
+            Nothing has happened here yet.
+          </p>
+        )}
+      </Column>
+
+      <AddPeopleModal
+        isOpen={addPeopleOpen}
+        onClose={() => setAddPeopleOpen(false)}
+        projectName={data.project.name}
+        packages={data.packages}
+        onDone={load}
+      />
+    </Shell>
+  );
+}
+
+/** 2g — a package row inside the project. */
+function ProjectPackageRow({
+  pkg,
+  showTag,
+  showStatus,
+}: {
+  pkg: ProjectPackage;
+  showTag: boolean;
+  showStatus: boolean;
+}) {
+  const router = useRouter();
+  const open = () => router.push(`/portal/${pkg.id}`);
+  const needsAttention =
+    pkg.status === 'changes_requested' || pkg.openComments > 0;
+
+  return (
+    <div
+      className="flex items-center justify-between gap-4 rounded-panel bg-white px-5 py-[18px] shadow-stiko-panel"
+      style={{ borderLeft: `3px solid ${STATUS_ACCENT[pkg.status]}` }}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="truncate text-[15.5px] font-extrabold text-stiko-ink">
+            {pkg.name}
+          </h3>
+          {showTag && pkg.tag && <TagChip tag={pkg.tag} />}
+          {showStatus && <StatusChip status={pkg.status} />}
+        </div>
+        <p className="mt-[5px] truncate text-[12.5px] text-stiko-muted">
+          {pkg.versionNumber != null ? (
+            <>
+              V{pkg.versionNumber}
+              {pkg.changelog ? ` · “${pkg.changelog}”` : ''}
+              {pkg.publishedAt
+                ? ` · updated ${relativeTime(pkg.publishedAt)}`
+                : ''}
+              {pkg.updatedByName ? ` by ${pkg.updatedByName}` : ''}
+            </>
+          ) : (
+            'No files yet'
+          )}
+        </p>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-5">
+        {pkg.versionNumber != null ? (
+          <>
+            <div className="text-center">
+              <div
+                className={`text-[17px] font-extrabold ${
+                  pkg.openComments > 0 ? 'text-[#B23A52]' : 'text-stiko-ink'
+                }`}
+              >
+                {pkg.openComments}
+              </div>
+              <div className="text-[10.5px] text-stiko-faint">open</div>
+            </div>
+            <div className="text-center">
+              <div className="text-[17px] font-extrabold text-stiko-ink">
+                {pkg.fileCount}
+              </div>
+              <div className="text-[10.5px] text-stiko-faint">files</div>
+            </div>
+            {pkg.people.length > 0 && (
+              <AvatarStack people={pkg.people} size={26} />
+            )}
+            <Button
+              variant={needsAttention ? 'primary' : 'secondary'}
+              onClick={open}
+            >
+              Open
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={open}>
+              Invite people
+            </Button>
+            <Button onClick={open}>Add files</Button>
+          </>
+        )}
+      </div>
     </div>
+  );
+}
+
+function ProjectSkeleton() {
+  return (
+    <Shell>
+      <div className="flex h-[52px] shrink-0 items-center rounded-panel bg-white px-[18px] shadow-stiko-panel">
+        <SkeletonBar width={200} height={14} />
+      </div>
+      <Column width={1120}>
+        <SkeletonBar width={280} height={22} />
+        <div className="mt-6 flex flex-col gap-3">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between rounded-panel bg-white px-5 py-[18px] shadow-stiko-panel"
+            >
+              <div className="flex flex-col gap-2">
+                <SkeletonBar width={200} height={14} />
+                <SkeletonBar width={320} height={11} secondary />
+              </div>
+              <SkeletonBar width={70} height={30} secondary />
+            </div>
+          ))}
+        </div>
+      </Column>
+    </Shell>
   );
 }

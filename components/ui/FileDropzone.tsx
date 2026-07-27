@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useState, useCallback } from 'react';
+import { FileChip } from './Primitives';
 
 export interface FileWithPath {
   file: File;
@@ -10,6 +11,10 @@ export interface FileWithPath {
 interface FileDropzoneProps {
   files: FileWithPath[];
   onFilesChange: (files: FileWithPath[]) => void;
+  title?: string;
+  hint?: string;
+  /** Compact padding for the version drawer (2e). */
+  compact?: boolean;
 }
 
 function formatFileSize(bytes: number): string {
@@ -64,7 +69,13 @@ async function readDirectoryEntries(entry: FileSystemDirectoryEntry): Promise<Fi
   return results;
 }
 
-export default function FileDropzone({ files, onFilesChange }: FileDropzoneProps) {
+export default function FileDropzone({
+  files,
+  onFilesChange,
+  title = 'Drop drawings, models or PDFs',
+  hint = 'Folders keep their structure · PDF, DWG, GLB, STEP, images, video',
+  compact = false,
+}: FileDropzoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -151,8 +162,7 @@ export default function FileDropzone({ files, onFilesChange }: FileDropzoneProps
   };
 
   const removeFile = (index: number) => {
-    const updated = files.filter((_, i) => i !== index);
-    onFilesChange(updated);
+    onFilesChange(files.filter((_, i) => i !== index));
   };
 
   // Group files by top-level folder for display
@@ -181,41 +191,43 @@ export default function FileDropzone({ files, onFilesChange }: FileDropzoneProps
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`cursor-pointer rounded-xl border-2 border-dashed p-10 text-center transition-colors duration-150 ${
+        className={`cursor-pointer rounded-panel border-2 border-dashed text-center transition duration-150 ${
+          compact ? 'px-5 py-5' : 'px-5 py-[30px]'
+        } ${
           isDragging
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-300 bg-gray-50 hover:border-gray-400'
+            ? 'border-stiko-primary bg-stiko-tint'
+            : 'border-stiko-dashed bg-stiko-app hover:border-stiko-primary'
         }`}
       >
-        <svg
-          className="mx-auto h-10 w-10 text-gray-400 mb-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
+        <span className="mx-auto mb-3 flex h-[46px] w-[46px] items-center justify-center rounded-panel bg-white shadow-stiko-panel">
+          <svg
+            className="h-[19px] w-[19px] text-stiko-primary"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2.2}
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-          />
-        </svg>
-        <p className="text-sm text-gray-600 mb-1">
-          Drag and drop files or folders here, or click to browse files
-        </p>
-        <p className="text-xs text-gray-400 mb-2">
-          Supports images, videos, PDFs, and 3D files
-        </p>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            folderInputRef.current?.click();
-          }}
-          className="text-xs text-blue-600 hover:text-blue-700 hover:underline"
-        >
-          or select a folder
-        </button>
+          >
+            <path d="M12 16V4m0 0L8 8m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+          </svg>
+        </span>
+        <p className="text-[15px] font-bold text-stiko-ink">{title}</p>
+        <p className="mt-[3px] text-[12.5px] text-stiko-muted">{hint}</p>
+        <div className="mt-2 flex items-center justify-center gap-3 text-[12.5px] font-bold">
+          <span className="text-stiko-primary">or browse files</span>
+          <span className="text-stiko-crumb">·</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              folderInputRef.current?.click();
+            }}
+            className="text-stiko-primary hover:text-stiko-primary-hover"
+          >
+            select a folder
+          </button>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -234,15 +246,22 @@ export default function FileDropzone({ files, onFilesChange }: FileDropzoneProps
       </div>
 
       {files.length > 0 && (
-        <div className="mt-4 space-y-1">
+        <div className="mt-3 flex flex-col gap-1">
           {groupedFiles.map((group) => (
-            <div key={group.folder ?? '__root__'}>
+            <div key={group.folder ?? '__root__'} className="flex flex-col gap-1">
               {group.folder && (
-                <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                <div className="flex items-center gap-[6px] px-1 pt-1 text-[11.5px] font-bold text-stiko-muted">
+                  <svg
+                    className="h-[14px] w-[14px]"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.2}
+                    strokeLinecap="round"
+                  >
+                    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                   </svg>
-                  {group.folder}/
+                  {group.folder}
                 </div>
               )}
               {group.items.map(({ entry, index }) => {
@@ -252,35 +271,37 @@ export default function FileDropzone({ files, onFilesChange }: FileDropzoneProps
                 return (
                   <div
                     key={`${entry.path}-${index}`}
-                    className={`flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2 ${
-                      group.folder ? 'ml-6' : ''
+                    className={`flex items-center justify-between gap-3 rounded-[10px] bg-stiko-app px-3 py-[9px] ${
+                      group.folder ? 'ml-4' : ''
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex min-w-0 items-center gap-[10px]">
+                      <FileChip filename={entry.file.name} />
+                      <span className="truncate text-[12.5px] font-bold text-stiko-ink">
+                        {displayName}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-stiko-faint">
+                        {formatFileSize(entry.file.size)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${displayName}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFile(index);
+                      }}
+                      className="shrink-0 text-stiko-faint transition hover:text-[#B23A52]"
+                    >
                       <svg
-                        className="h-4 w-4 text-gray-400 flex-shrink-0"
+                        className="h-[15px] w-[15px]"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
+                        strokeWidth={2.2}
+                        strokeLinecap="round"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                      <div className="min-w-0">
-                        <p className="text-sm text-gray-900 truncate">{displayName}</p>
-                        <p className="text-xs text-gray-400">{formatFileSize(entry.file.size)}</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => removeFile(index)}
-                      className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0 ml-2"
-                    >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        <path d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
                   </div>

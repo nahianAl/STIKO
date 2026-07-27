@@ -7,10 +7,18 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Owned projects AND ones this user coordinates — 01's two-tier model means
+  // a coordinator has the same access as the owner, so filtering on owner_id
+  // alone would hide projects they can fully manage.
   const rows = await sql`
-    SELECT id, owner_id AS "ownerId", name, created_at AS "createdAt"
-    FROM projects WHERE owner_id = ${session.user.id}
-    ORDER BY created_at DESC
+    SELECT DISTINCT pr.id, pr.owner_id AS "ownerId", pr.name,
+           pr.created_at AS "createdAt"
+    FROM projects pr
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${session.user.id}
+    WHERE pr.archived_at IS NULL
+      AND (pr.owner_id = ${session.user.id} OR pm.user_id IS NOT NULL)
+    ORDER BY pr.created_at DESC
   `;
   return NextResponse.json(rows);
 }

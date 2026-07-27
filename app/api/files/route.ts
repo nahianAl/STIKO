@@ -1,9 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
+import { auth } from '@/lib/auth';
+import { getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const versionId = searchParams.get('versionId');
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const versionId = request.nextUrl.searchParams.get('versionId');
+  if (!versionId) {
+    return NextResponse.json({ error: 'versionId required' }, { status: 400 });
+  }
+
+  // A package is a permission boundary. This route previously listed the files
+  // of any version to anyone who knew its id, signed in or not.
+  const versionRows = await sql`
+    SELECT portal_id AS "portalId" FROM versions WHERE id = ${versionId}
+  `;
+  if (!versionRows[0]) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  const access = await getPackageAccess(session.user.id, versionRows[0].portalId);
+  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const rows = await sql`
     SELECT id, version_id AS "versionId", filename, storage_key AS "storageKey",

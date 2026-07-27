@@ -1,12 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import AuthShell, { PasswordStrength } from '@/components/auth/AuthShell';
+import Button from '@/components/ui/Button';
+import { ErrorBanner, Field, Input } from '@/components/ui/Primitives';
 
-export default function SignupPage() {
+function SignupForm() {
   const router = useRouter();
+  // Bug #1: this page linked from /invite/[token] as
+  // /signup?callbackUrl=/invite/... but never read the parameter, so every
+  // invited user who created an account landed on an empty dashboard with no
+  // way back. /login already did this correctly; this mirrors it.
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get('callbackUrl') ?? '/';
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -32,73 +41,82 @@ export default function SignupPage() {
       return;
     }
 
-    // Auto sign-in after signup
     await signIn('credentials', { email, password, redirect: false });
-    router.push('/');
+    router.push(callbackUrl);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-gray-900">Stiko</h1>
-          <p className="text-sm text-gray-500 mt-1">Create your account</p>
-        </div>
+    <AuthShell
+      title="Create your account"
+      subtitle="Send your first drawings out in a minute."
+      below={
+        <>
+          Already have an account?{' '}
+          <Link
+            href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+            className="font-bold"
+          >
+            Sign in
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col gap-[15px]">
+        {error && <ErrorBanner>{error}</ErrorBanner>}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              autoFocus
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-            <input
+        <Field label="Name">
+          <Input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            autoFocus
+            autoComplete="name"
+            placeholder="Marcus Reyes"
+          />
+        </Field>
+
+        <Field label="Work email">
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+            placeholder="you@company.com"
+          />
+        </Field>
+
+        <div>
+          <Field label="Password">
+            <Input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              autoComplete="new-password"
             />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-blue-600 text-white py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {loading ? 'Creating account...' : 'Create account'}
-          </button>
-        </form>
+          </Field>
+          <PasswordStrength password={password} />
+        </div>
 
-        <p className="text-center text-sm text-gray-500 mt-4">
-          Already have an account?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">
-            Sign in
-          </Link>
+        <Button type="submit" fullWidth disabled={loading} className="!py-3">
+          {loading ? 'Creating account…' : 'Create account'}
+        </Button>
+
+        <p className="text-center text-[11.5px] leading-[1.5] text-stiko-faint">
+          By creating an account you agree to our Terms and Privacy Policy.
         </p>
-      </div>
-    </div>
+      </form>
+    </AuthShell>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
   );
 }
