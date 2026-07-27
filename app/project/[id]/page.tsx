@@ -77,16 +77,29 @@ export default function ProjectPage() {
 
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('packages');
   const [view, setView] = useState<'status' | 'waiting'>('status');
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch(`/api/projects/${id}/overview`);
-      if (res.ok) setData(await res.json());
+      if (!res.ok) {
+        // Same rule as home: a failure is never rendered as "still loading".
+        const body = await res.json().catch(() => ({}));
+        setError(
+          res.status === 403 || res.status === 404
+            ? 'This project doesn’t exist, or you don’t have access to it.'
+            : (body.error ?? `Couldn’t load this project (${res.status}).`)
+        );
+        return;
+      }
+      setData(await res.json());
     } catch (err) {
       console.error('Failed to load project', err);
+      setError('Couldn’t reach the server.');
     } finally {
       setLoading(false);
     }
@@ -110,7 +123,31 @@ export default function ProjectPage() {
     [data]
   );
 
-  if (loading || !data) return <ProjectSkeleton />;
+  if (loading) return <ProjectSkeleton />;
+
+  if (error || !data) {
+    return (
+      <Shell>
+        <TopBar crumbs={[{ label: 'Projects', href: '/' }]} right={<AvatarMenu />} />
+        <Column width={720}>
+          <div className="mt-10 rounded-panel bg-white p-8 text-center shadow-stiko-panel">
+            <h1 className="text-[19px] font-extrabold text-stiko-ink">
+              Couldn&apos;t load this project
+            </h1>
+            <p className="mt-2 text-[13px] leading-[1.6] text-stiko-muted">
+              {error ?? 'Something went wrong on our side.'}
+            </p>
+            <div className="mt-6 flex justify-center gap-2">
+              <Button variant="secondary" onClick={() => router.push('/')}>
+                Back to your packages
+              </Button>
+              <Button onClick={load}>Try again</Button>
+            </div>
+          </div>
+        </Column>
+      </Shell>
+    );
+  }
 
   const showTabs = DISCLOSURE.showProjectTabs(disclosure);
   const showTags = DISCLOSURE.showTags(disclosure);

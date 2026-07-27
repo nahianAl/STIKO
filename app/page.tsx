@@ -26,22 +26,39 @@ export default function Home() {
   const [isGuestOnly, setIsGuestOnly] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       const [homeRes, notifRes] = await Promise.all([
         fetch('/api/home'),
         fetch('/api/notifications'),
       ]);
-      if (homeRes.ok) {
-        const data = await homeRes.json();
-        setPackages(data.packages);
-        setDisclosure(data.disclosure);
-        setIsGuestOnly(data.isGuestOnly);
+
+      if (!homeRes.ok) {
+        // A failure must never render as "still loading". Without this the
+        // skeleton stays on screen forever and the real cause is invisible.
+        const body = await homeRes.json().catch(() => ({}));
+        setError(
+          homeRes.status === 401
+            ? 'Your session has expired.'
+            : (body.error ?? `Couldn’t load your packages (${homeRes.status}).`)
+        );
+        return;
       }
+
+      const data = await homeRes.json();
+      setPackages(data.packages);
+      setDisclosure(data.disclosure);
+      setIsGuestOnly(data.isGuestOnly);
+
+      // Notifications are supporting detail; losing them must not take the
+      // whole screen down.
       if (notifRes.ok) setNotifications(await notifRes.json());
     } catch (err) {
       console.error('Failed to load home', err);
+      setError('Couldn’t reach the server.');
     } finally {
       setLoading(false);
     }
@@ -53,8 +70,13 @@ export default function Home() {
 
   const newPackage = () => router.push('/new');
 
-  if (loading || !disclosure) {
+  if (loading) {
     return <HomeSkeleton />;
+  }
+
+  // Anything that isn't "still loading" gets a real answer, never the skeleton.
+  if (error || !disclosure) {
+    return <HomeError message={error} onRetry={load} />;
   }
 
   // 03: everything on the right of the top bar is earned.
@@ -328,6 +350,55 @@ function NeedsYouRow({ pkg }: { pkg: PackageCard }) {
         {isMention ? 'Reply' : 'Review'}
       </span>
     </button>
+  );
+}
+
+/**
+ * Shown when the load actually failed. Separate from the skeleton on purpose:
+ * an error that renders as a loading state is a screen nobody can debug or
+ * escape from.
+ */
+function HomeError({
+  message,
+  onRetry,
+}: {
+  message: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <Shell>
+      <TopBar right={<AvatarMenu />} />
+      <Column width={720}>
+        <div className="mt-10 rounded-panel bg-white p-8 text-center shadow-stiko-panel">
+          <span
+            className="mx-auto flex h-[44px] w-[44px] items-center justify-center rounded-[13px]"
+            style={{ background: '#FFE2E2' }}
+          >
+            <svg
+              className="h-5 w-5"
+              style={{ color: '#B23A52' }}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+          </span>
+          <h1 className="mt-4 text-[19px] font-extrabold text-stiko-ink">
+            Couldn&apos;t load your packages
+          </h1>
+          <p className="mt-2 text-[13px] leading-[1.6] text-stiko-muted">
+            {message ?? 'Something went wrong on our side.'}
+          </p>
+          <div className="mt-6">
+            <Button onClick={onRetry}>Try again</Button>
+          </div>
+        </div>
+      </Column>
+    </Shell>
   );
 }
 

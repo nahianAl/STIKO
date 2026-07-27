@@ -13,6 +13,30 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const data = await getHomeData(session.user.id);
-  return NextResponse.json(data);
+  try {
+    const data = await getHomeData(session.user.id);
+    return NextResponse.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[api/home] query failed:', message);
+
+    // A missing table means the redesign's migration has not been applied.
+    // Say so plainly — this is the single most likely cause of a fresh install
+    // failing here, and an opaque 500 sends people looking in the wrong place.
+    if (/relation .* does not exist|column .* does not exist/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            'The database is missing tables this version needs. Run `npm run migrate` to apply lib/migrations.',
+          detail: message,
+        },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: 'Could not load your packages.' },
+      { status: 500 }
+    );
+  }
 }

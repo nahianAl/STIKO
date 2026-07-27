@@ -2,16 +2,24 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+Copy `.env.local.example` to `.env.local` and fill it in, then bring the
+database up to date **before** starting the app:
+
+```bash
+set -a && . .env.local && set +a
+npm run migrate          # applies lib/schema.sql, then lib/migrations/*.sql
+npm run migrate -- --dry # preview without changing anything
+```
+
+`npm run migrate` is safe to re-run: every statement is `IF NOT EXISTS`, and
+applied migrations are recorded in `schema_migrations`. Skipping it leaves the
+database without the tables the app queries, and pages that need them will
+report that the migration is outstanding.
+
+Then run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
