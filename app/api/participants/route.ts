@@ -4,6 +4,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
 import { sendEmail, inviteEmail } from '@/lib/email';
+import { appBaseUrl } from '@/lib/appUrl';
 
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -79,8 +80,8 @@ export async function POST(request: NextRequest) {
     WHERE po.id = ${portalId}
   `;
 
-  const base = process.env.NEXTAUTH_URL ?? request.nextUrl.origin;
-  const link = `${base}/invite/${rows[0].token}`;
+  // Configured host only — see lib/appUrl.ts.
+  const link = `${appBaseUrl()}/invite/${rows[0].token}`;
 
   const result = await sendEmail({
     to: email,

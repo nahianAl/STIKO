@@ -4,6 +4,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
 import { sendEmail, newVersionEmail } from '@/lib/email';
+import { appBaseUrl } from '@/lib/appUrl';
 
 /**
  * Publish a draft version.
@@ -72,8 +73,9 @@ export async function POST(request: NextRequest) {
     SELECT po.name AS "packageName" FROM portals po WHERE po.id = ${version.portalId}
   `;
   const packageName = context[0]?.packageName ?? 'a package';
-  const base = process.env.NEXTAUTH_URL ?? request.nextUrl.origin;
-  const link = `${base}/portal/${version.portalId}`;
+  // Configured host only — never the request's. A Host-derived link in an
+  // outbound email is a phishing link wearing our sender.
+  const link = `${appBaseUrl()}/portal/${version.portalId}`;
 
   if (notify) {
     // Everyone on the package except the publisher, minus anyone who muted it.

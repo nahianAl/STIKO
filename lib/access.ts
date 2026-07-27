@@ -102,6 +102,32 @@ export async function isProjectMember(
   return rows.length > 0;
 }
 
+/**
+ * The package a file belongs to, or null if there is no such file.
+ *
+ * Anything keyed by fileId — comments, markups, downloads — must resolve
+ * through here before answering, or the fileId itself becomes the capability.
+ */
+export async function portalForFile(fileId: string): Promise<string | null> {
+  const rows = await sql`
+    SELECT v.portal_id AS "portalId"
+    FROM files f JOIN versions v ON v.id = f.version_id
+    WHERE f.id = ${fileId}
+    LIMIT 1
+  `;
+  return rows[0] ? (rows[0].portalId as string) : null;
+}
+
+/** Convenience: the caller's access to the package a file lives in. */
+export async function getFileAccess(
+  userId: string,
+  fileId: string
+): Promise<Access | null> {
+  const portalId = await portalForFile(fileId);
+  if (!portalId) return null;
+  return getPackageAccess(userId, portalId);
+}
+
 /** Every package id this user may see, across everything. */
 export async function visiblePackageIds(userId: string): Promise<string[]> {
   const rows = await sql`

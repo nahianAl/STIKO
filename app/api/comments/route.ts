@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getDownloadPresignedUrl } from '@/lib/s3';
+import { getFileAccess } from '@/lib/access';
 
 // Ensure new columns exist (runs once per cold start)
 let migrationAttempted = false;
@@ -18,8 +19,22 @@ async function ensureCommentColumns() {
 }
 
 export async function GET(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const fileId = searchParams.get('fileId');
+  if (!fileId) {
+    return NextResponse.json({ error: 'fileId required' }, { status: 400 });
+  }
+
+  // This route resolves attachments and snapshots to presigned URLs, so without
+  // a check it hands out package contents to anyone holding a file id — and
+  // would route straight around the authorization on /api/files/url.
+  const access = await getFileAccess(session.user.id, fileId);
+  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   await ensureCommentColumns();
 
@@ -85,10 +100,31 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const session = await auth();
-  const { fileId, content, xPosition, yPosition, worldX, worldY, worldZ, parentCommentId, author, snapshotUrl, pageNumber, timestamp, attachments } =
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { fileId, content, xPosition, yPosition, worldX, worldY, worldZ, parentCommentId, snapshotUrl, pageNumber, timestamp, attachments } =
     await request.json();
 
-  const resolvedAuthor = session?.user?.name || session?.user?.email || author || 'Anonymous';
+  if (!fileId) {
+    return NextResponse.json({ error: 'fileId required' }, { status: 400 });
+  }
+
+  // Anyone could previously post a comment onto any file id, anonymously. 01
+  // has no anonymous role — every role arrives through an invitation — and a
+  // viewer is explicitly view-only.
+  const access = await getFileAccess(session.user.id, fileId);
+  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!access.canComment) {
+    return NextResponse.json(
+      { error: 'Your role on this package is view-only' },
+      { status: 403 }
+    );
+  }
+
+  // The author is the session, never a client-supplied string.
+  const resolvedAuthor = session.user.name || session.user.email || 'Someone';
   const attachmentsJson = JSON.stringify(attachments ?? []);
 
   await ensureCommentColumns();
