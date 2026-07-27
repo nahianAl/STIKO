@@ -12,6 +12,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
+import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import ViewGizmo from './ViewGizmo';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
@@ -157,6 +158,11 @@ function SceneInteraction({
       if (!commentToolActive || !onSceneClick) return;
 
       const rect = gl.domElement.getBoundingClientRect();
+
+      // The gizmo is a HUD layer, not scene geometry, and its React Three Fiber
+      // stopPropagation does not reach this native listener — so exclude its rect by hand.
+      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)) return;
+
       mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
