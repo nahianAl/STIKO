@@ -2,7 +2,7 @@
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid, Center } from '@react-three/drei';
-import { Suspense, useRef, useCallback, useEffect, useMemo } from 'react';
+import { Suspense, useRef, useCallback, useEffect, useMemo, useImperativeHandle, type Ref } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -29,12 +29,22 @@ export interface PinScreenPosition {
   visible: boolean;
 }
 
+export interface ModelViewerHandle {
+  /**
+   * Re-renders the model scene alone, without the gizmo HUD drei layers on top.
+   * Call immediately before reading pixels off the canvas — the next animation frame
+   * restores the normal composite.
+   */
+  renderCleanFrame: () => void;
+}
+
 export interface ModelViewerInnerProps {
   url: string;
   commentToolActive?: boolean;
   onSceneClick?: (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => void;
   worldPins?: WorldPin[];
   onPinPositionsUpdate?: (positions: Map<string, PinScreenPosition>) => void;
+  handleRef?: Ref<ModelViewerHandle>;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -201,12 +211,25 @@ function SceneInteraction({
   return null;
 }
 
+function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> }) {
+  const { gl, scene, camera } = useThree();
+  useImperativeHandle(
+    handleRef,
+    () => ({
+      renderCleanFrame: () => gl.render(scene, camera),
+    }),
+    [gl, scene, camera],
+  );
+  return null;
+}
+
 export default function ModelViewerInner({
   url,
   commentToolActive = false,
   onSceneClick,
   worldPins = [],
   onPinPositionsUpdate,
+  handleRef,
 }: ModelViewerInnerProps) {
   return (
     <div className="h-full w-full" style={{ minHeight: 400, cursor: commentToolActive ? 'crosshair' : undefined }}>
@@ -249,6 +272,7 @@ export default function ModelViewerInner({
         </Suspense>
         <OrbitControls makeDefault />
         <ViewGizmo />
+        <CleanFrameRenderer handleRef={handleRef} />
       </Canvas>
     </div>
   );

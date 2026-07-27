@@ -12,7 +12,7 @@ const ModelViewerInner = dynamic(() => import('./ModelViewerInner'), {
   ),
 });
 
-export type { WorldPin, PinScreenPosition } from './ModelViewerInner';
+export type { WorldPin, PinScreenPosition, ModelViewerHandle } from './ModelViewerInner';
 
 export default function ModelViewer(props: ModelViewerInnerProps) {
   return <ModelViewerInner {...props} />;

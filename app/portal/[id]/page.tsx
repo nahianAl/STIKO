@@ -9,7 +9,7 @@ import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
-import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle } from '@/components/viewers/ViewerContainer';
+import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import type { Comment } from '@/lib/types';
@@ -193,6 +193,7 @@ export default function PortalPage() {
   const [viewportImage, setViewportImage] = useState<string | null>(null);
   const [annotating, setAnnotating] = useState(false);
   const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
+  const modelViewerRef = useRef<ModelViewerHandle>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -380,6 +381,9 @@ export default function PortalPage() {
     setAnnotating(true);
     if (!isPDFFile) {
       const container = viewerAreaRef.current;
+      // The 3D viewport composites the gizmo HUD into the same buffer the snapshot reads,
+      // so ask it for a model-only frame first. No-op for image and video viewers.
+      modelViewerRef.current?.renderCleanFrame();
       setViewerSnapshot(container ? captureViewerSnapshot(container) : null);
     }
   }, [annotating, isPDFFile]);
@@ -585,6 +589,7 @@ export default function PortalPage() {
             activeCommentId={activeCommentId}
             onCommentPinClick={handleCommentPinClick}
             pdfViewerRef={pdfKonvaRef}
+            modelViewerRef={modelViewerRef}
             pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
             onObjectCreated={() => setActiveTool('pointer')}
           />

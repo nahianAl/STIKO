@@ -10,11 +10,12 @@ import dynamic from 'next/dynamic';
 const PDFKonvaViewer = dynamic(() => import('./PDFKonvaViewer'), { ssr: false });
 import type { PDFKonvaViewerHandle } from './PDFKonvaViewer';
 import ModelViewer from './ModelViewer';
-import type { WorldPin, PinScreenPosition } from './ModelViewer';
+import type { WorldPin, PinScreenPosition, ModelViewerHandle } from './ModelViewer';
 
 export type { WorldPin, PinScreenPosition };
 export type { ContentTransform };
 export type { PDFKonvaViewerHandle };
+export type { ModelViewerHandle };
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -38,6 +39,7 @@ interface ViewerContainerProps {
   activeCommentId?: string | null;
   onCommentPinClick?: (comment: Comment) => void;
   pdfViewerRef?: React.Ref<PDFKonvaViewerHandle>;
+  modelViewerRef?: React.Ref<ModelViewerHandle>;
   pendingCommentId?: string | null;
   onObjectCreated?: () => void;
 }
@@ -55,7 +57,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, pendingCommentId, onObjectCreated,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -113,7 +115,7 @@ export default function ViewerContainer({
       />
     );
   }
-  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} />;
+  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} />;
 
   return (
     <div className="flex h-full w-full items-center justify-center">
