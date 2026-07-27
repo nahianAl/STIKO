@@ -23,16 +23,22 @@ export default function ViewGizmo() {
         strokeColor="#E4E5EC"
       />
       {/* Display-only: the cube's six faces already snap to the six axis views, so
-          interactive axis heads would be a second hit target for the same action. */}
-      <group position={[-30, -30, 30]} scale={45}>
-        <GizmoViewport
-          disabled
-          hideNegativeAxes
-          axisColors={['#E5484D', '#30A46C', '#3E63DD']}
-          labelColor="#1C2030"
-          font={GIZMO_FONT}
-        />
-      </group>
+          interactive axis heads would be a second hit target for the same action.
+
+          position/scale go on GizmoViewport itself, never on a wrapping group: drei sets
+          scale 40 on its own root group and then spreads props over it, so an outer scale
+          multiplies rather than replaces. The origin sits just off the cube's front-lower-
+          left corner (the cube spans ±30), pulled forward in z to avoid coplanar z-fighting
+          with the front face. */}
+      <GizmoViewport
+        disabled
+        hideNegativeAxes
+        position={[-30, -30, 32]}
+        scale={28}
+        axisColors={['#E5484D', '#30A46C', '#3E63DD']}
+        labelColor="#1C2030"
+        font={GIZMO_FONT}
+      />
     </GizmoHelper>
   );
 }
