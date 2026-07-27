@@ -91,6 +91,7 @@ export class STEPLoader extends THREE.Loader {
         color: materialColor,
         roughness: 0.6,
         metalness: 0.3,
+        side: THREE.DoubleSide,
       });
 
       group.add(new THREE.Mesh(geometry, material));

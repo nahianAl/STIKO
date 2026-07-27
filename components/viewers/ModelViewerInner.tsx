@@ -11,6 +11,7 @@ import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
+import { makeDoubleSided } from '@/lib/threeMaterials';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
@@ -39,12 +40,14 @@ const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
   color: '#8899aa',
   roughness: 0.6,
   metalness: 0.3,
+  side: THREE.DoubleSide,
 });
 
 const VERTEX_COLOR_MATERIAL = new THREE.MeshStandardMaterial({
   vertexColors: true,
   roughness: 0.6,
   metalness: 0.3,
+  side: THREE.DoubleSide,
 });
 
 function getExtFromUrl(url: string): string {
@@ -84,6 +87,15 @@ function Model({ url }: { url: string }) {
       data.computeVertexNormals();
     }
   }, [ext, data]);
+
+  // Materials that ship inside the file (OBJ / 3DS / DAE / STEP / glTF) are single-sided
+  // by default, which hides the far inner wall of thin or perforated parts when you look
+  // through an opening. STL and PLY use the shared materials above, already double-sided.
+  useMemo(() => {
+    const root: THREE.Object3D | undefined =
+      data instanceof THREE.Object3D ? data : (data as GLTF | Collada | undefined)?.scene;
+    if (root) makeDoubleSided(root);
+  }, [data]);
 
   if (ext === '.obj') {
     return <primitive object={data} />;
