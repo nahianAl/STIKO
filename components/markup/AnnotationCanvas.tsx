@@ -135,8 +135,11 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
 
   const cursor = activeTool === 'pointer' ? 'default' : activeTool === 'eraser' ? ERASER_CURSOR : 'crosshair';
 
+  // The dark matte fills the letterbox around the snapshot. With no snapshot it would be
+  // an opaque black viewport, so stay transparent and let the live viewer (which the portal
+  // keeps visible in that case) show through.
   return (
-    <div ref={containerRef} className="absolute inset-0 bg-gray-900" style={{ cursor }}>
+    <div ref={containerRef} className={`absolute inset-0 ${backgroundDataUrl ? 'bg-gray-900' : 'bg-transparent'}`} style={{ cursor }}>
       {size.width > 0 && size.height > 0 && (
         <Stage
           ref={stageRef}

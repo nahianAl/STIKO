@@ -554,7 +554,9 @@ export default function PortalPage() {
       );
     }
 
-    const isHidden = (annotating && !isPDFFile) || !!viewportImage;
+    // Only swap the live viewer out once a snapshot actually replaced it — if the capture
+    // failed there is nothing behind the annotation surface, and hiding it blanks the viewport.
+    const isHidden = (annotating && !isPDFFile && !!viewerSnapshot) || !!viewportImage;
 
     return (
       <>

@@ -97,10 +97,14 @@ export default function ImageViewer({ url, onTransformChange }: ImageViewerProps
             transition: isDragging ? 'none' : 'transform 0.1s ease-out',
           }}
         >
+          {/* crossOrigin is required, not cosmetic: the presigned S3 URL is a different
+              origin, and without it the annotation snapshot's 2D canvas is tainted and
+              toDataURL throws SecurityError. Matches VideoViewer. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={url}
             alt="File preview"
+            crossOrigin="anonymous"
             className="max-h-[80vh] max-w-full object-contain"
             draggable={false}
           />
