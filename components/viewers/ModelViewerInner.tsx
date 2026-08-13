@@ -12,6 +12,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
+import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import ViewGizmo from './ViewGizmo';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -229,6 +230,59 @@ function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> 
   return null;
 }
 
+// Direction the camera is placed in, relative to the model's centre — the 3/4 view the
+// viewer has always opened on, now expressed as a direction rather than a fixed position.
+const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
+
+/**
+ * Frames the camera on the loaded model and sizes the clipping planes to it.
+ *
+ * Mounted with `key={url}` inside <Suspense>, so it runs exactly once per loaded model:
+ * React commits the whole boundary together, meaning the geometry is already in the scene
+ * graph when this effect fires. Deliberately does NOT re-run on viewport resize — refitting
+ * there would throw away the user's zoom and pan every time a side panel is toggled.
+ */
+function FitCameraToModel({ targetRef }: { targetRef: React.RefObject<THREE.Object3D> }) {
+  const { camera, controls, size } = useThree();
+
+  useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+
+    target.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(target);
+    if (box.isEmpty()) return;
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+
+    const cam = camera as THREE.PerspectiveCamera;
+    const framing = framingForRadius(sphere.radius, cam.fov, size.width / size.height);
+
+    cam.position.copy(sphere.center).addScaledVector(VIEW_DIRECTION, framing.distance);
+    cam.near = framing.near;
+    cam.far = framing.far;
+    cam.updateProjectionMatrix();
+
+    // OrbitControls orbits its target, so it has to move to the model's centre too —
+    // otherwise a model centred away from the origin swings around empty space.
+    const orbit = controls as unknown as {
+      target: THREE.Vector3;
+      minDistance: number;
+      maxDistance: number;
+      update: () => void;
+    } | null;
+    if (orbit?.target) {
+      orbit.target.copy(sphere.center);
+      orbit.minDistance = framing.minDistance;
+      orbit.maxDistance = framing.maxDistance;
+      orbit.update();
+    }
+    // One-shot per model: see the note above about resize.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera, controls]);
+
+  return null;
+}
+
 export default function ModelViewerInner({
   url,
   commentToolActive = false,
@@ -237,9 +291,13 @@ export default function ModelViewerInner({
   onPinPositionsUpdate,
   handleRef,
 }: ModelViewerInnerProps) {
+  const modelRef = useRef<THREE.Group>(null);
+
   return (
     <div className="h-full w-full" style={{ minHeight: 400, cursor: commentToolActive ? 'crosshair' : undefined }}>
       <Canvas
+        // Position and clipping planes are placeholders only — FitCameraToModel overwrites
+        // all three from the model's bounding sphere as soon as it loads.
         camera={{ position: [3, 3, 3], fov: 50 }}
         style={{ background: '#f0f0f0' }}
         gl={{ preserveDrawingBuffer: true }}
@@ -255,8 +313,13 @@ export default function ModelViewerInner({
           <ambientLight intensity={0.5} />
           <directionalLight position={[5, 10, 5]} intensity={1} />
           <Center>
-            <Model url={url} />
+            <group ref={modelRef}>
+              <Model url={url} />
+            </group>
           </Center>
+          {/* Keyed by url so it refits whenever a different model loads. Inside <Suspense>
+              so the geometry is present in the scene graph by the time its effect runs. */}
+          <FitCameraToModel key={url} targetRef={modelRef} />
           <Grid
             args={[10, 10]}
             cellSize={0.5}
