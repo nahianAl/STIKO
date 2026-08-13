@@ -43,9 +43,9 @@ test('the stacking offsets separate ground, shadow and axes at every scale', () 
 
 test('the shadow sits below the model base, or ContactShadows captures nothing', () => {
   // drei aims the shadow's orthographic camera straight UP from its own position, so it only
-  // sees geometry above it. <Center top> puts the model's base at y=0; a shadow at or above
-  // that leaves the underside behind the camera and renders no shadow at all. Verified in the
-  // viewport: moving it above y=0 made the shadow vanish.
+  // sees geometry above it. These are offsets relative to the model's base, so a shadow at or
+  // above that base leaves the model's underside behind the camera and renders no shadow at
+  // all. Verified in the viewport: moving it above the base made the shadow vanish.
   for (const r of RADII) {
     const { groundY, shadowY, axesY } = sceneScaleForRadius(r);
     assert.ok(shadowY < 0, `r=${r}: shadow at ${shadowY} would see nothing`);
