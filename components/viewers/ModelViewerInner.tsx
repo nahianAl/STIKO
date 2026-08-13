@@ -2,7 +2,7 @@
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid, Center } from '@react-three/drei';
-import { Suspense, useRef, useCallback, useEffect, useMemo, useImperativeHandle, type Ref } from 'react';
+import { Suspense, useRef, useCallback, useEffect, useMemo, useState, useImperativeHandle, type Ref } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -29,6 +29,15 @@ export interface PinScreenPosition {
   x: number;
   y: number;
   visible: boolean;
+}
+
+export interface ModelBounds {
+  /** World-space centre of the model. With <Center bottom>, its y is height / 2, not 0. */
+  center: THREE.Vector3;
+  /** Bounding-sphere radius — the single number all scene sizing derives from. */
+  radius: number;
+  /** Bounding-box Y extent, used for the Y axis length and the shadow's depth range. */
+  height: number;
 }
 
 export interface ModelViewerHandle {
@@ -235,16 +244,20 @@ function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> 
 const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
 
 /**
- * Frames the camera on the loaded model and sizes the clipping planes to it.
+ * Measures the loaded model once and publishes its bounds.
  *
  * Mounted with `key={url}` inside <Suspense>, so it runs exactly once per loaded model:
  * React commits the whole boundary together, meaning the geometry is already in the scene
- * graph when this effect fires. Deliberately does NOT re-run on viewport resize — refitting
- * there would throw away the user's zoom and pan every time a side panel is toggled.
+ * graph when this effect fires. Runs as an effect rather than a layout effect so that
+ * <Center>'s own layout effect has already positioned the model.
  */
-function FitCameraToModel({ targetRef }: { targetRef: React.RefObject<THREE.Object3D> }) {
-  const { camera, controls, size } = useThree();
-
+function MeasureModel({
+  targetRef,
+  onMeasured,
+}: {
+  targetRef: React.RefObject<THREE.Object3D>;
+  onMeasured: (bounds: ModelBounds) => void;
+}) {
   useEffect(() => {
     const target = targetRef.current;
     if (!target) return;
@@ -254,10 +267,32 @@ function FitCameraToModel({ targetRef }: { targetRef: React.RefObject<THREE.Obje
     if (box.isEmpty()) return;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
 
-    const cam = camera as THREE.PerspectiveCamera;
-    const framing = framingForRadius(sphere.radius, cam.fov, size.width / size.height);
+    onMeasured({
+      center: sphere.center.clone(),
+      radius: sphere.radius,
+      height: box.max.y - box.min.y,
+    });
+    // One-shot per model; the component is remounted by key when the url changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    cam.position.copy(sphere.center).addScaledVector(VIEW_DIRECTION, framing.distance);
+  return null;
+}
+
+/**
+ * Frames the camera on the measured model and sizes the clipping planes to it.
+ *
+ * Deliberately does NOT re-run on viewport resize — refitting there would throw away the
+ * user's zoom and pan every time a side panel is toggled.
+ */
+function FitCameraToModel({ bounds }: { bounds: ModelBounds }) {
+  const { camera, controls, size } = useThree();
+
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    const framing = framingForRadius(bounds.radius, cam.fov, size.width / size.height);
+
+    cam.position.copy(bounds.center).addScaledVector(VIEW_DIRECTION, framing.distance);
     cam.near = framing.near;
     cam.far = framing.far;
     cam.updateProjectionMatrix();
@@ -271,14 +306,14 @@ function FitCameraToModel({ targetRef }: { targetRef: React.RefObject<THREE.Obje
       update: () => void;
     } | null;
     if (orbit?.target) {
-      orbit.target.copy(sphere.center);
+      orbit.target.copy(bounds.center);
       orbit.minDistance = framing.minDistance;
       orbit.maxDistance = framing.maxDistance;
       orbit.update();
     }
     // One-shot per model: see the note above about resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camera, controls]);
+  }, [bounds, camera, controls]);
 
   return null;
 }
@@ -292,6 +327,11 @@ export default function ModelViewerInner({
   handleRef,
 }: ModelViewerInnerProps) {
   const modelRef = useRef<THREE.Group>(null);
+  const [bounds, setBounds] = useState<ModelBounds | null>(null);
+
+  // Drop stale sizing the moment a different model is selected, so the ground and axes are
+  // never drawn at the previous model's scale.
+  useEffect(() => setBounds(null), [url]);
 
   return (
     <div className="h-full w-full" style={{ minHeight: 400, cursor: commentToolActive ? 'crosshair' : undefined }}>
@@ -312,14 +352,15 @@ export default function ModelViewerInner({
         >
           <ambientLight intensity={0.5} />
           <directionalLight position={[5, 10, 5]} intensity={1} />
-          <Center>
+          {/* bottom: the model's base sits at y=0 so it rests on the ground plane rather
+              than being bisected by it. */}
+          <Center bottom>
             <group ref={modelRef}>
               <Model url={url} />
             </group>
           </Center>
-          {/* Keyed by url so it refits whenever a different model loads. Inside <Suspense>
-              so the geometry is present in the scene graph by the time its effect runs. */}
-          <FitCameraToModel key={url} targetRef={modelRef} />
+          <MeasureModel key={url} targetRef={modelRef} onMeasured={setBounds} />
+          {bounds && <FitCameraToModel key={url} bounds={bounds} />}
           <Grid
             args={[10, 10]}
             cellSize={0.5}
