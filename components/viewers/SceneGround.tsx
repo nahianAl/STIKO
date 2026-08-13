@@ -7,7 +7,7 @@ import { sceneScaleForRadius } from '@/lib/sceneScale';
 
 // Slightly darker than the #f0f0f0 canvas background, and cool enough to sit under the
 // #8899aa model without muddying it.
-const GROUND_COLOR = '#E4E7F0';
+const GROUND_COLOR = '#E4E5EC';
 const SHADOW_COLOR = '#1C2030';
 
 /**
@@ -54,11 +54,16 @@ export default function SceneGround({ radius, height }: { radius: number; height
           the transparent rim composites over the background instead of punching a hole. */}
       <mesh position={[0, scale.groundY, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={-1}>
         <circleGeometry args={[scale.groundRadius, 64]} />
+        {/* toneMapped={false}: R3F applies ACES filmic tone mapping by default, which lifts
+            light colours toward white and washed this plane out until it was indistinguishable
+            from the background. The ground is flat UI-ish colour, not lit material, so it
+            should render exactly as authored — drei's own gizmo materials do the same. */}
         <meshBasicMaterial
           color={GROUND_COLOR}
           alphaMap={alphaMap}
           transparent
           depthWrite={false}
+          toneMapped={false}
         />
       </mesh>
 

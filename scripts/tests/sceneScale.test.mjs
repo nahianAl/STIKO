@@ -41,6 +41,19 @@ test('the stacking offsets separate ground, shadow and axes at every scale', () 
   }
 });
 
+test('the shadow sits below the model base, or ContactShadows captures nothing', () => {
+  // drei aims the shadow's orthographic camera straight UP from its own position, so it only
+  // sees geometry above it. <Center top> puts the model's base at y=0; a shadow at or above
+  // that leaves the underside behind the camera and renders no shadow at all. Verified in the
+  // viewport: moving it above y=0 made the shadow vanish.
+  for (const r of RADII) {
+    const { groundY, shadowY, axesY } = sceneScaleForRadius(r);
+    assert.ok(shadowY < 0, `r=${r}: shadow at ${shadowY} would see nothing`);
+    assert.ok(groundY < shadowY, `r=${r}: ground must stay under the shadow`);
+    assert.ok(axesY > 0, `r=${r}: axes at ${axesY} would be buried by the ground`);
+  }
+});
+
 test('each dimension uses its own documented factor', () => {
   // Pinned exactly: proportionality alone cannot tell factor 2 from factor 20, and cannot
   // catch one field being derived from another field's factor.
@@ -49,9 +62,10 @@ test('each dimension uses its own documented factor', () => {
     assert.equal(s.groundRadius, r * 4, `groundRadius factor drifted at r=${r}`);
     assert.equal(s.axisHalfLength, r * 2, `axisHalfLength factor drifted at r=${r}`);
     assert.equal(s.shadowScale, r * 2.5, `shadowScale factor drifted at r=${r}`);
-    assert.equal(s.surfaceOffset, r * 1e-3, `surfaceOffset factor drifted at r=${r}`);
-    assert.equal(s.shadowY, s.surfaceOffset, `shadowY must be one step up at r=${r}`);
-    assert.equal(s.axesY, s.surfaceOffset * 2, `axesY must be two steps up at r=${r}`);
+    assert.equal(s.surfaceOffset, r * 5e-3, `surfaceOffset factor drifted at r=${r}`);
+    assert.equal(s.groundY, s.surfaceOffset * -2, `groundY must be two steps down at r=${r}`);
+    assert.equal(s.shadowY, s.surfaceOffset * -1, `shadowY must be one step down at r=${r}`);
+    assert.equal(s.axesY, s.surfaceOffset, `axesY must be one step up at r=${r}`);
   }
 });
 
@@ -61,19 +75,31 @@ test('the degenerate fallback also produces exact factors', () => {
   assert.equal(s.groundRadius, 4);
   assert.equal(s.axisHalfLength, 2);
   assert.equal(s.shadowScale, 2.5);
-  assert.equal(s.surfaceOffset, 1e-3);
-  assert.equal(s.groundY, 0);
+  assert.equal(s.surfaceOffset, 5e-3);
+  assert.equal(s.groundY, -10e-3);
+  assert.equal(s.shadowY, -5e-3);
+  assert.equal(s.axesY, 5e-3);
 });
+
+// Sizes must be positive; stack positions are signed by design, so they are checked
+// separately rather than being lumped into a blanket "> 0" sweep that would miss a sign flip.
+const SIZE_FIELDS = ['groundRadius', 'axisHalfLength', 'surfaceOffset', 'shadowScale'];
+const STACK_FIELDS = ['groundY', 'shadowY', 'axesY'];
 
 test('a degenerate radius still produces a usable scene', () => {
   for (const bad of [0, -5, Number.NaN]) {
     const s = sceneScaleForRadius(bad);
-    for (const [key, value] of Object.entries(s)) {
-      if (key === 'groundY') {
-        assert.equal(value, 0, `radius ${bad} moved the ground off zero`);
-        continue;
-      }
-      assert.ok(Number.isFinite(value) && value > 0, `radius ${bad} produced ${key}=${value}`);
+    for (const key of SIZE_FIELDS) {
+      assert.ok(Number.isFinite(s[key]) && s[key] > 0, `radius ${bad} produced ${key}=${s[key]}`);
     }
+    for (const key of STACK_FIELDS) {
+      assert.ok(Number.isFinite(s[key]), `radius ${bad} produced ${key}=${s[key]}`);
+    }
+    assert.ok(s.groundY < s.shadowY && s.shadowY < 0 && s.axesY > 0, `radius ${bad} broke the stack order`);
+    assert.equal(
+      Object.keys(s).length,
+      SIZE_FIELDS.length + STACK_FIELDS.length,
+      'a field was added to SceneScale without being covered here',
+    );
   }
 });
