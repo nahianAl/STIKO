@@ -32,7 +32,7 @@ export interface PinScreenPosition {
 }
 
 export interface ModelBounds {
-  /** World-space centre of the model. With <Center bottom>, its y is height / 2, not 0. */
+  /** World-space centre of the model. With <Center top>, its y is height / 2, not 0. */
   center: THREE.Vector3;
   /** Bounding-sphere radius — the single number all scene sizing derives from. */
   radius: number;
@@ -352,9 +352,10 @@ export default function ModelViewerInner({
         >
           <ambientLight intensity={0.5} />
           <directionalLight position={[5, 10, 5]} intensity={1} />
-          {/* bottom: the model's base sits at y=0 so it rests on the ground plane rather
-              than being bisected by it. */}
-          <Center bottom>
+          {/* top: counter-intuitive, but this is the prop that puts the model's BASE at y=0
+              (drei applies vAlign = +height/2), so it rests on the ground plane rather than
+              being bisected by it. `bottom` would hang the model below zero. */}
+          <Center top>
             <group ref={modelRef}>
               <Model url={url} />
             </group>
