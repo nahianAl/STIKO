@@ -1,7 +1,7 @@
 'use client';
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
-import { OrbitControls, Environment, Center } from '@react-three/drei';
+import { OrbitControls, Center } from '@react-three/drei';
 import { Suspense, useRef, useCallback, useEffect, useMemo, useState, useImperativeHandle, type Ref } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -17,6 +17,7 @@ import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import ViewGizmo from './ViewGizmo';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
+import SceneLighting from './SceneLighting';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
@@ -63,14 +64,14 @@ export interface ModelViewerInnerProps {
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
   color: '#8899aa',
   roughness: 0.6,
-  metalness: 0.3,
+  metalness: 0,
   side: THREE.DoubleSide,
 });
 
 const VERTEX_COLOR_MATERIAL = new THREE.MeshStandardMaterial({
   vertexColors: true,
   roughness: 0.6,
-  metalness: 0.3,
+  metalness: 0,
   side: THREE.DoubleSide,
 });
 
@@ -360,8 +361,7 @@ export default function ModelViewerInner({
             </mesh>
           }
         >
-          <ambientLight intensity={0.5} />
-          <directionalLight position={[5, 10, 5]} intensity={1} />
+          <SceneLighting />
           {/* Deliberately NOT <Center top>: comment pins are stored in world space, so moving
               the model would displace every pin saved before this change. The ground stack is
               offset down to the model's base instead — same picture, no data break. */}
@@ -380,7 +380,6 @@ export default function ModelViewerInner({
               <SceneAxes radius={bounds.radius} height={bounds.height} />
             </group>
           )}
-          <Environment preset="studio" />
           <SceneInteraction
             commentToolActive={commentToolActive}
             onSceneClick={onSceneClick}

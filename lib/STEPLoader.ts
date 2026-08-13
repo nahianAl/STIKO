@@ -90,7 +90,7 @@ export class STEPLoader extends THREE.Loader {
       const material = new THREE.MeshStandardMaterial({
         color: materialColor,
         roughness: 0.6,
-        metalness: 0.3,
+        metalness: 0,
         side: THREE.DoubleSide,
       });
 
