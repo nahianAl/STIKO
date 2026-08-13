@@ -32,22 +32,47 @@ test('the axes extend beyond the model itself', () => {
 
 test('the stacking offsets separate ground, shadow and axes at every scale', () => {
   for (const r of RADII) {
-    const { surfaceOffset } = sceneScaleForRadius(r);
-    const ground = 0;
-    const shadow = surfaceOffset;
-    const axes = surfaceOffset * 2;
-    assert.ok(shadow > ground, `r=${r}: shadow would z-fight the ground`);
-    assert.ok(axes > shadow, `r=${r}: axes would z-fight the shadow`);
+    const { groundY, shadowY, axesY, surfaceOffset } = sceneScaleForRadius(r);
+    assert.ok(shadowY > groundY, `r=${r}: shadow would z-fight the ground`);
+    assert.ok(axesY > shadowY, `r=${r}: axes would z-fight the shadow`);
     // Large enough to survive depth-buffer quantisation, small enough not to look detached.
     assert.ok(surfaceOffset > r * 1e-5, `r=${r}: offset ${surfaceOffset} risks z-fighting`);
     assert.ok(surfaceOffset < r * 1e-2, `r=${r}: offset ${surfaceOffset} would float visibly`);
   }
 });
 
+test('each dimension uses its own documented factor', () => {
+  // Pinned exactly: proportionality alone cannot tell factor 2 from factor 20, and cannot
+  // catch one field being derived from another field's factor.
+  for (const r of RADII) {
+    const s = sceneScaleForRadius(r);
+    assert.equal(s.groundRadius, r * 4, `groundRadius factor drifted at r=${r}`);
+    assert.equal(s.axisHalfLength, r * 2, `axisHalfLength factor drifted at r=${r}`);
+    assert.equal(s.shadowScale, r * 2.5, `shadowScale factor drifted at r=${r}`);
+    assert.equal(s.surfaceOffset, r * 1e-3, `surfaceOffset factor drifted at r=${r}`);
+    assert.equal(s.shadowY, s.surfaceOffset, `shadowY must be one step up at r=${r}`);
+    assert.equal(s.axesY, s.surfaceOffset * 2, `axesY must be two steps up at r=${r}`);
+  }
+});
+
+test('the degenerate fallback also produces exact factors', () => {
+  // Guarded radius is 1, so every factor should appear at face value.
+  const s = sceneScaleForRadius(0);
+  assert.equal(s.groundRadius, 4);
+  assert.equal(s.axisHalfLength, 2);
+  assert.equal(s.shadowScale, 2.5);
+  assert.equal(s.surfaceOffset, 1e-3);
+  assert.equal(s.groundY, 0);
+});
+
 test('a degenerate radius still produces a usable scene', () => {
   for (const bad of [0, -5, Number.NaN]) {
     const s = sceneScaleForRadius(bad);
     for (const [key, value] of Object.entries(s)) {
+      if (key === 'groundY') {
+        assert.equal(value, 0, `radius ${bad} moved the ground off zero`);
+        continue;
+      }
       assert.ok(Number.isFinite(value) && value > 0, `radius ${bad} produced ${key}=${value}`);
     }
   }

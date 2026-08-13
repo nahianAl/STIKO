@@ -16,6 +16,12 @@ export interface SceneScale {
   surfaceOffset: number;
   /** Half-extent of the contact shadow's footprint. */
   shadowScale: number;
+  /** Y position of the ground plane. Always 0 — the model's base rests here. */
+  groundY: number;
+  /** Y position of the contact shadow: one step above the ground. */
+  shadowY: number;
+  /** Y position of the axis lines: one step above the shadow. */
+  axesY: number;
 }
 
 const GROUND_RADIUS_FACTOR = 4;
@@ -35,5 +41,10 @@ export function sceneScaleForRadius(radius: number): SceneScale {
     axisHalfLength: r * AXIS_HALF_LENGTH_FACTOR,
     surfaceOffset: r * SURFACE_OFFSET_FACTOR,
     shadowScale: r * SHADOW_SCALE_FACTOR,
+    // The stack lives here rather than in the components so the ordering is one tested fact
+    // instead of a convention each consumer has to remember.
+    groundY: 0,
+    shadowY: r * SURFACE_OFFSET_FACTOR,
+    axesY: r * SURFACE_OFFSET_FACTOR * 2,
   };
 }
