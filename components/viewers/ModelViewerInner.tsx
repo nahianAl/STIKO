@@ -1,7 +1,7 @@
 'use client';
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
-import { OrbitControls, Environment, Grid, Center } from '@react-three/drei';
+import { OrbitControls, Environment, Center } from '@react-three/drei';
 import { Suspense, useRef, useCallback, useEffect, useMemo, useState, useImperativeHandle, type Ref } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -15,6 +15,7 @@ import { makeDoubleSided } from '@/lib/threeMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import ViewGizmo from './ViewGizmo';
+import SceneGround from './SceneGround';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
@@ -362,17 +363,7 @@ export default function ModelViewerInner({
           </Center>
           <MeasureModel key={url} targetRef={modelRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel key={url} bounds={bounds} />}
-          <Grid
-            args={[10, 10]}
-            cellSize={0.5}
-            cellThickness={0.5}
-            cellColor="#aaa"
-            sectionSize={2}
-            sectionThickness={1}
-            sectionColor="#888"
-            fadeDistance={10}
-            position={[0, -0.01, 0]}
-          />
+          {bounds && <SceneGround radius={bounds.radius} height={bounds.height} />}
           <Environment preset="studio" />
           <SceneInteraction
             commentToolActive={commentToolActive}
