@@ -16,6 +16,7 @@ import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import ViewGizmo from './ViewGizmo';
 import SceneGround from './SceneGround';
+import SceneAxes from './SceneAxes';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
@@ -364,6 +365,7 @@ export default function ModelViewerInner({
           <MeasureModel key={url} targetRef={modelRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel key={url} bounds={bounds} />}
           {bounds && <SceneGround radius={bounds.radius} height={bounds.height} />}
+          {bounds && <SceneAxes radius={bounds.radius} height={bounds.height} />}
           <Environment preset="studio" />
           <SceneInteraction
             commentToolActive={commentToolActive}
