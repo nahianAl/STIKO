@@ -8,6 +8,9 @@ import { sceneScaleForRadius } from '@/lib/sceneScale';
 // Slightly darker than the #f0f0f0 canvas background, and cool enough to sit under the
 // #8899aa model without muddying it.
 const GROUND_COLOR = '#E4E5EC';
+// Unlike the ground plane, drei's ContactShadows hard-codes its own material with no
+// toneMapped escape hatch, so this colour still goes through ACES filmic tone mapping and
+// will not match this hex exactly on screen.
 const SHADOW_COLOR = '#1C2030';
 
 /**
@@ -45,8 +48,10 @@ export default function SceneGround({ radius, height }: { radius: number; height
 
   // A perfectly flat model (a plane, a 2D DXF-style export) has zero height, which would
   // give the shadow camera a zero depth range and render nothing. groundRadius / 4 is the
-  // guarded radius from sceneScaleForRadius, so this is never zero.
-  const shadowFar = Math.max(height, scale.groundRadius / 4) * 1.1;
+  // guarded radius from sceneScaleForRadius, so this is never zero. height > 0 also rejects
+  // NaN (an undefined or degenerate bounding box), matching the guard in SceneAxes.
+  const safeHeight = height > 0 ? height : scale.groundRadius / 4;
+  const shadowFar = Math.max(safeHeight, scale.groundRadius / 4) * 1.1;
 
   return (
     <>

@@ -16,8 +16,8 @@ const AXIS_LINE_WIDTH = 1.5;
 export default function SceneAxes({ radius, height }: { radius: number; height: number }) {
   const scale = sceneScaleForRadius(radius);
 
-  // axesY is two steps up: one clears the ground, the second clears the contact shadow.
-  // The stack ordering lives in sceneScale.ts so it is tested, not re-derived here.
+  // axesY is one step above the model's base; the ground and shadow sit below it, so the
+  // lines are never drawn over. The ordering lives in sceneScale.ts so it is tested once.
   const y = scale.axesY;
   const half = scale.axisHalfLength;
 

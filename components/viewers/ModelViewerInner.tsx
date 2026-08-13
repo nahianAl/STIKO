@@ -34,7 +34,7 @@ export interface PinScreenPosition {
 }
 
 export interface ModelBounds {
-  /** World-space centre of the model. With <Center top>, its y is height / 2, not 0. */
+  /** World-space centre of the model. <Center> keeps this at the world origin. */
   center: THREE.Vector3;
   /** Bounding-sphere radius — the single number all scene sizing derives from. */
   radius: number;
@@ -154,13 +154,15 @@ function SceneInteraction({
   onSceneClick,
   worldPins,
   onPinPositionsUpdate,
+  modelRef,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
   worldPins: WorldPin[];
   onPinPositionsUpdate?: ModelViewerInnerProps['onPinPositionsUpdate'];
+  modelRef: React.RefObject<THREE.Object3D>;
 }) {
-  const { camera, gl, scene } = useThree();
+  const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
   const mouse = useRef(new THREE.Vector2());
   const tempVec3 = useRef(new THREE.Vector3());
@@ -168,6 +170,9 @@ function SceneInteraction({
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {
       if (!commentToolActive || !onSceneClick) return;
+
+      const model = modelRef.current;
+      if (!model) return;
 
       const rect = gl.domElement.getBoundingClientRect();
 
@@ -179,7 +184,10 @@ function SceneInteraction({
       mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
       raycaster.current.setFromCamera(mouse.current, camera);
-      const intersects = raycaster.current.intersectObjects(scene.children, true);
+      // Scoped to the model alone, not the whole scene: the ground disc, contact shadow and
+      // axis lines are all Mesh-derived and large enough to fill the viewport, so they would
+      // otherwise catch clicks intended for empty background and drop pins in space.
+      const intersects = raycaster.current.intersectObject(model, true);
 
       for (const hit of intersects) {
         if (hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh) {
@@ -197,7 +205,7 @@ function SceneInteraction({
         }
       }
     },
-    [commentToolActive, onSceneClick, camera, gl, scene]
+    [commentToolActive, onSceneClick, camera, gl, modelRef]
   );
 
   useEffect(() => {
@@ -354,24 +362,31 @@ export default function ModelViewerInner({
         >
           <ambientLight intensity={0.5} />
           <directionalLight position={[5, 10, 5]} intensity={1} />
-          {/* top: counter-intuitive, but this is the prop that puts the model's BASE at y=0
-              (drei applies vAlign = +height/2), so it rests on the ground plane rather than
-              being bisected by it. `bottom` would hang the model below zero. */}
-          <Center top>
+          {/* Deliberately NOT <Center top>: comment pins are stored in world space, so moving
+              the model would displace every pin saved before this change. The ground stack is
+              offset down to the model's base instead — same picture, no data break. */}
+          <Center>
             <group ref={modelRef}>
               <Model url={url} />
             </group>
           </Center>
           <MeasureModel key={url} targetRef={modelRef} onMeasured={setBounds} />
-          {bounds && <FitCameraToModel key={url} bounds={bounds} />}
-          {bounds && <SceneGround radius={bounds.radius} height={bounds.height} />}
-          {bounds && <SceneAxes radius={bounds.radius} height={bounds.height} />}
+          {bounds && <FitCameraToModel bounds={bounds} />}
+          {bounds && (
+            // The ground stack is authored relative to the model's base; this puts that base
+            // wherever the model actually sits, without moving the model itself.
+            <group position={[0, bounds.center.y - bounds.height / 2, 0]}>
+              <SceneGround radius={bounds.radius} height={bounds.height} />
+              <SceneAxes radius={bounds.radius} height={bounds.height} />
+            </group>
+          )}
           <Environment preset="studio" />
           <SceneInteraction
             commentToolActive={commentToolActive}
             onSceneClick={onSceneClick}
             worldPins={worldPins}
             onPinPositionsUpdate={onPinPositionsUpdate}
+            modelRef={modelRef}
           />
         </Suspense>
         <OrbitControls makeDefault />

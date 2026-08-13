@@ -16,11 +16,11 @@ export interface SceneScale {
   surfaceOffset: number;
   /** Half-extent of the contact shadow's footprint. */
   shadowScale: number;
-  /** Y position of the ground plane: two steps below the model's base, which rests at y=0. */
+  /** Y offset of the ground plane, relative to the model's base: two steps below it. */
   groundY: number;
-  /** Y position of the contact shadow: between the ground and the model's base. */
+  /** Y offset of the contact shadow, relative to the model's base: between the ground and the base. */
   shadowY: number;
-  /** Y position of the axis lines: one step above the model's base, so they read on top. */
+  /** Y offset of the axis lines, relative to the model's base: one step above it, so they read on top. */
   axesY: number;
 }
 
@@ -41,22 +41,25 @@ export function sceneScaleForRadius(radius: number): SceneScale {
   // An empty or degenerate model still needs a usable scene rather than NaN.
   const r = Number.isFinite(radius) && radius > 0 ? radius : 1;
 
+  const offset = r * SURFACE_OFFSET_FACTOR;
+
   return {
     groundRadius: r * GROUND_RADIUS_FACTOR,
     axisHalfLength: r * AXIS_HALF_LENGTH_FACTOR,
-    surfaceOffset: r * SURFACE_OFFSET_FACTOR,
+    surfaceOffset: offset,
     shadowScale: r * SHADOW_SCALE_FACTOR,
     // The stack lives here rather than in the components so the ordering is one tested fact
     // instead of a convention each consumer has to remember.
     //
-    // The whole stack sits BELOW the model's base, which <Center top> puts at y=0. That is
-    // not cosmetic: drei's ContactShadows aims an orthographic camera straight UP from its
-    // own position, so it only captures geometry above it. Place the shadow above the base
-    // and the model's underside falls behind that camera, and no shadow renders at all —
-    // verified in the viewport, where moving it above y=0 made the shadow vanish entirely.
-    groundY: r * SURFACE_OFFSET_FACTOR * -2,
-    shadowY: r * SURFACE_OFFSET_FACTOR * -1,
+    // All three values are offsets RELATIVE TO THE MODEL'S BASE — the caller positions a group
+    // at the model's base and renders the furniture inside it. The whole stack sits BELOW that
+    // base. That is not cosmetic: drei's ContactShadows aims an orthographic camera straight UP
+    // from its own position, so it only captures geometry above it. Place the shadow above the
+    // base and the model's underside falls behind that camera, and no shadow renders at all —
+    // verified in the viewport, where moving it above the base made the shadow vanish entirely.
+    groundY: offset * -2,
+    shadowY: offset * -1,
     // Axes go above the base instead, or the ground would draw over them.
-    axesY: r * SURFACE_OFFSET_FACTOR,
+    axesY: offset,
   };
 }
