@@ -180,6 +180,7 @@ function SceneInteraction({
   onPinPositionsUpdate,
   modelRef,
   transform,
+  clipPlaneRef,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
@@ -187,6 +188,7 @@ function SceneInteraction({
   onPinPositionsUpdate?: ModelViewerInnerProps['onPinPositionsUpdate'];
   modelRef: React.RefObject<THREE.Object3D>;
   transform: ObjectTransform;
+  clipPlaneRef: React.MutableRefObject<THREE.Plane | null>;
 }) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -216,21 +218,28 @@ function SceneInteraction({
       const intersects = raycaster.current.intersectObject(model, true);
 
       for (const hit of intersects) {
-        if (hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh) {
-          const point = hit.point;
-          const projected = point.clone().project(camera);
-          const screenPercent = {
-            x: ((projected.x + 1) / 2) * 100,
-            y: ((1 - projected.y) / 2) * 100,
-          };
-          // Stored relative to the model, so the pin travels with it when it is moved.
-          const local = worldToModel([point.x, point.y, point.z], transform);
-          onSceneClick({ x: local[0], y: local[1], z: local[2] }, screenPercent);
-          break;
-        }
+        if (!(hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh)) continue;
+
+        // Raycaster ignores clipping planes entirely, so the hidden half stays fully
+        // hittable. Without this, clicking into an opened cavity drops the pin on the
+        // invisible near half — and it then appears to float in space once the section is
+        // cleared. distanceToPoint is negative on the side three clips away.
+        const clip = clipPlaneRef.current;
+        if (clip && clip.distanceToPoint(hit.point) < 0) continue;
+
+        const point = hit.point;
+        const projected = point.clone().project(camera);
+        const screenPercent = {
+          x: ((projected.x + 1) / 2) * 100,
+          y: ((1 - projected.y) / 2) * 100,
+        };
+        // Stored relative to the model, so the pin travels with it when it is moved.
+        const local = worldToModel([point.x, point.y, point.z], transform);
+        onSceneClick({ x: local[0], y: local[1], z: local[2] }, screenPercent);
+        break;
       }
     },
-    [commentToolActive, onSceneClick, camera, gl, modelRef, transform]
+    [commentToolActive, onSceneClick, camera, gl, modelRef, transform, clipPlaneRef]
   );
 
   useEffect(() => {
@@ -572,6 +581,7 @@ export default function ModelViewerInner({
             onPinPositionsUpdate={onPinPositionsUpdate}
             modelRef={modelRef}
             transform={safeTransform}
+            clipPlaneRef={clipPlaneRef}
           />
         </Suspense>
         <OrbitControls makeDefault />
