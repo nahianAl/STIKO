@@ -193,7 +193,7 @@ function SceneInteraction({
 
       // The gizmo is a HUD layer, not scene geometry, and its React Three Fiber
       // stopPropagation does not reach this native listener — so exclude its rect by hand.
-      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)) return;
+      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width)) return;
 
       mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;

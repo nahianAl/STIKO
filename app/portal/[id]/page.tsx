@@ -12,6 +12,7 @@ import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
+import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import type { Comment, FileRecord } from '@/lib/types';
@@ -744,9 +745,6 @@ export default function PortalPage() {
             tagging={tagging}
             onToggleTagging={() => setTagging((t) => !t)}
             onInsertImage={handleInsertImage}
-            showTransformTools={canTransform && is3DFile}
-            transformMode={transformMode}
-            onTransformModeChange={setTransformMode}
           />
 
           {/* Annotation mode banner */}
@@ -798,6 +796,12 @@ export default function PortalPage() {
                 the control would adjust a camera nobody is looking at there either. */}
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <FocalLengthControl value={focalLength} onChange={setFocalLength} />
+            )}
+
+            {/* Same gate as the focal control, plus the permission: only a role that may
+                transform ever sees these. Opposite corner, same baseline. */}
+            {selectedFileId && is3DFile && !annotating && !viewportImage && canTransform && (
+              <TransformTools mode={transformMode} onModeChange={setTransformMode} />
             )}
 
             {annotating && !isPDFFile && (

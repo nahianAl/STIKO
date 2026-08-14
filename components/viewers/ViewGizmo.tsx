@@ -10,7 +10,7 @@ const GIZMO_FONT = '600 20px Inter, system-ui, -apple-system, sans-serif';
 
 export default function ViewGizmo() {
   return (
-    <GizmoHelper alignment="bottom-right" margin={[GIZMO_MARGIN_PX, GIZMO_MARGIN_PX]}>
+    <GizmoHelper alignment="top-right" margin={[GIZMO_MARGIN_PX, GIZMO_MARGIN_PX]}>
       <GizmoViewcube
         font={GIZMO_FONT}
         color="#FFFFFF"
@@ -24,7 +24,8 @@ export default function ViewGizmo() {
           position/scale go on GizmoViewport itself, never on a wrapping group: drei sets
           scale 40 on its own root group and then spreads props over it, so an outer scale
           multiplies rather than replaces. Origin and axis length live in lib/gizmoLayout.ts,
-          shared with the click-guard math so the two can never drift apart. */}
+          shared with the click-guard math so the two can never drift apart — the origin puts
+          the axes along the cube's edges, so the triad stays inside the cube's silhouette. */}
       <GizmoViewport
         disabled
         hideNegativeAxes
