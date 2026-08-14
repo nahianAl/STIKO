@@ -60,6 +60,11 @@ export interface Comment {
   content: string;
   xPosition: number | null;
   yPosition: number | null;
+  /**
+   * 3D pin position, in the MODEL's own frame, not the world's — so a pin travels with its
+   * object when someone moves or rotates it. Rows written before object placement existed are
+   * already correct: they were placed at the identity transform, where the frames coincide.
+   */
   worldX: number | null;
   worldY: number | null;
   worldZ: number | null;

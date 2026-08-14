@@ -123,6 +123,9 @@ CREATE TABLE IF NOT EXISTS comments (
   content TEXT NOT NULL,
   x_position FLOAT,
   y_position FLOAT,
+  -- 3D pin position, in the MODEL's own frame, not the world's — so a pin travels with its
+  -- object when someone moves or rotates it. Rows written before object placement existed are
+  -- already correct: they were placed at the identity transform, where the frames coincide.
   world_x FLOAT,
   world_y FLOAT,
   world_z FLOAT,

@@ -284,6 +284,24 @@ export default function PortalPage() {
         );
       } catch (e) {
         console.error('Failed to save object transform:', e);
+        // Put the object back where it is actually persisted. The gizmo has already moved the
+        // group directly, and nothing else will undo that — leaving it there would mean the
+        // view and the stored placement disagree, and any comment pin placed next would be
+        // saved against the wrong frame. A fresh object identity is what makes the viewer's
+        // re-apply effect fire, since the values themselves are unchanged.
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === selectedFileId
+              ? {
+                  ...f,
+                  transform: {
+                    position: [...f.transform.position] as [number, number, number],
+                    rotation: [...f.transform.rotation] as [number, number, number],
+                  },
+                }
+              : f
+          )
+        );
       }
     },
     [selectedFileId]
@@ -343,7 +361,10 @@ export default function PortalPage() {
         setCanUpload(Boolean(info?.access?.canUpload));
         setCanTransform(Boolean(info?.access?.canTransform));
       })
-      .catch(() => setCanUpload(false));
+      .catch(() => {
+        setCanUpload(false);
+        setCanTransform(false);
+      });
   }, [portalId]);
 
   // Fetch versions and select latest

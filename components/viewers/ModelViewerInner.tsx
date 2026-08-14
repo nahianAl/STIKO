@@ -14,7 +14,7 @@ import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
-import { IDENTITY_TRANSFORM, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
+import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
@@ -382,6 +382,10 @@ export default function ModelViewerInner({
   transformMode,
   onTransformCommit,
 }: ModelViewerInnerProps) {
+  // The write path validates, but a row could still carry something unusable. A NaN here would
+  // make the object vanish with no error anywhere, so fall back rather than propagate it.
+  const safeTransform = isValidTransform(transform) ? transform : IDENTITY_TRANSFORM;
+
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
   const [bounds, setBounds] = useState<ModelBounds | null>(null);
@@ -389,6 +393,18 @@ export default function ModelViewerInner({
   // Drop stale sizing the moment a different model is selected, so the ground and axes are
   // never drawn at the previous model's scale.
   useEffect(() => setBounds(null), [url]);
+
+  // TransformControls mutates this group directly while dragging, and R3F will not put it back
+  // — its prop diffing compares against the previous prop, not the object's real state. So when
+  // the page hands us a transform again (notably after a failed save, where it re-sends the
+  // persisted value), re-apply it by hand. Without this the object stays at a pose that was
+  // never saved, while the pin maths still uses the persisted one.
+  useEffect(() => {
+    const group = transformRef.current;
+    if (!group) return;
+    group.position.set(safeTransform.position[0], safeTransform.position[1], safeTransform.position[2]);
+    group.rotation.set(safeTransform.rotation[0], safeTransform.rotation[1], safeTransform.rotation[2]);
+  }, [safeTransform]);
 
   return (
     <div className="h-full w-full" style={{ minHeight: 400, cursor: commentToolActive ? 'crosshair' : undefined }}>
@@ -408,13 +424,16 @@ export default function ModelViewerInner({
           }
         >
           <SceneLighting />
-          {/* The transform group wraps <Center>, never the reverse: <Center> re-centres
-              whatever it contains, so a transform applied inside it would be measured and
-              cancelled out, and the object would spring back as it was dragged. */}
+          {/* The transform group wraps <Center>, never the reverse. <Center> re-centres its
+              contents and measures them with its own world matrix forced to identity, so it
+              cannot see an ancestor — but a transform placed INSIDE it would be measured and
+              cancelled out. Not visibly, either: Center's effect does not re-run as the object
+              is dragged, so the failure is a stored placement silently discarded at first
+              paint, permanently, rather than anything you would notice while dragging. */}
           <group
             ref={transformRef}
-            position={transform.position}
-            rotation={transform.rotation}
+            position={safeTransform.position}
+            rotation={safeTransform.rotation}
           >
             {/* Deliberately NOT <Center top>: comment pins are stored relative to the
                 model, so moving the model would displace every pin saved before this
@@ -441,7 +460,7 @@ export default function ModelViewerInner({
             worldPins={worldPins}
             onPinPositionsUpdate={onPinPositionsUpdate}
             modelRef={modelRef}
-            transform={transform}
+            transform={safeTransform}
           />
         </Suspense>
         <OrbitControls makeDefault />
