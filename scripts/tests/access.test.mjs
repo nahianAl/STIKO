@@ -30,3 +30,15 @@ test('viewers and commenters cannot transform', () => {
   assert.equal(capabilitiesFor('viewer').canTransform, false);
   assert.equal(capabilitiesFor('commenter').canTransform, false);
 });
+
+test('an unrecognised role is denied everything, not left undefined', () => {
+  // The database CHECK constraint can gain a role the TypeScript union has not, and it
+  // reaches capabilitiesFor through an unchecked cast. Returning undefined would leave the
+  // Access object with no capability keys at all — falsy today, but only by accident.
+  assert.deepEqual(capabilitiesFor('reviewer'), {
+    canComment: false,
+    canUpload: false,
+    canTransform: false,
+    canManagePeople: false,
+  });
+});
