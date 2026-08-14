@@ -7,6 +7,8 @@ interface CommentComposerProps {
   onTextChange: (t: string) => void;
   pendingFiles: File[];
   onFilesChange: (files: File[]) => void;
+  /** Open an attached image for markup. Absent = thumbnails are inert. */
+  onAnnotateFile?: (index: number) => void;
   tagging: boolean;
   hasTag: boolean;
   onClearTag: () => void;
@@ -16,7 +18,7 @@ interface CommentComposerProps {
 }
 
 export default function CommentComposer({
-  text, onTextChange, pendingFiles, onFilesChange,
+  text, onTextChange, pendingFiles, onFilesChange, onAnnotateFile,
   tagging, hasTag, onClearTag, onSubmit, submitting, inputRef,
 }: CommentComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,8 +67,23 @@ export default function CommentComposer({
           {filePreviews.map(({ file, url }, i) => (
             <div key={i} className="relative group">
               {url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={url} alt={file.name} className="h-14 w-14 rounded-lg object-cover border border-stiko-border" />
+                <button
+                  type="button"
+                  onClick={() => onAnnotateFile?.(i)}
+                  disabled={!onAnnotateFile}
+                  title="Click to mark up"
+                  className="relative block h-14 w-14 overflow-hidden rounded-lg border border-stiko-border disabled:cursor-default"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={file.name} className="h-full w-full object-cover" />
+                  {onAnnotateFile && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-stiko-ink/50 text-white opacity-0 transition-opacity hover:opacity-100">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </span>
+                  )}
+                </button>
               ) : (
                 <div className="h-14 w-14 rounded-lg bg-white border border-stiko-border flex items-center justify-center text-[9px] text-stiko-muted">
                   {file.name.split('.').pop()}
