@@ -16,6 +16,7 @@ export async function GET(
 ) {
   const rows = await sql`
     SELECT t.id, t.token, t.portal_id AS "portalId", t.role, t.email,
+           t.multi_use AS "multiUse",
            t.expires_at AS "expiresAt", t.used_at AS "usedAt",
            t.revoked_at AS "revokedAt",
            po.name AS "packageName", pr.name AS "projectName",
@@ -71,7 +72,10 @@ export async function GET(
     token: invite.token,
     portalId: invite.portalId,
     role: invite.role,
+    // Null for a share link — the page then asks the visitor for their own
+    // address instead of showing a fixed one they cannot change.
     email: invite.email,
+    multiUse: Boolean(invite.multiUse),
     packageName: invite.packageName,
     projectName: invite.projectName,
     inviterName: invite.inviterName ?? 'Someone',
@@ -112,16 +116,24 @@ export async function POST(
     return NextResponse.json({ error: 'expired' }, { status: 410 });
   }
 
-  await sql`
+  const joined = await sql`
     INSERT INTO participants (id, portal_id, user_id, role)
     VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role})
     ON CONFLICT (portal_id, user_id) DO NOTHING
+    RETURNING id
   `;
 
-  await sql`UPDATE invite_tokens SET used_at = NOW() WHERE token = ${params.token}`;
+  // A share link is not consumed by the person who walks through it — stamping
+  // used_at would retire the link for everyone behind them, since every
+  // "still pending" query filters on it. It still expires and can still be
+  // revoked; those are the ways it ends.
+  if (!invite.multi_use) {
+    await sql`UPDATE invite_tokens SET used_at = NOW() WHERE token = ${params.token}`;
+  }
 
-  // Tell the inviter it landed.
-  if (invite.invited_by && invite.invited_by !== session.user.id) {
+  // Tell the inviter it landed — but only for someone who actually joined.
+  // Re-opening a share link you are already on must not ping them again.
+  if (joined.length > 0 && invite.invited_by && invite.invited_by !== session.user.id) {
     const portalRows = await sql`
       SELECT name FROM portals WHERE id = ${invite.portal_id}
     `;

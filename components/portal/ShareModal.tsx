@@ -151,7 +151,11 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
             </button>
           </div>
           {shareLink && linkRow(shareLink, 'link')}
-          <p className="mt-1.5 text-[11px] text-stiko-faint">Anyone with the link can sign in and join as {linkRole}.</p>
+          <p className="mt-1.5 text-[11px] text-stiko-faint">
+            Anyone with the link can sign in and join as {linkRole}. It stays
+            usable by more than one person, expires in 14 days, and can be
+            revoked from People.
+          </p>
         </div>
 
         {error && <p className="text-[12px] font-semibold text-[#B23A52]">{error}</p>}

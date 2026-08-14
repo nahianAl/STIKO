@@ -32,7 +32,10 @@ interface Person {
 }
 
 interface Pending {
-  email: string;
+  token: string;
+  /** Null for a share link, which was addressed to nobody. */
+  email: string | null;
+  multiUse: boolean;
   role: Role;
   createdAt: string;
   expiresAt: string;
@@ -113,13 +116,24 @@ export default function PackagePeople() {
     load();
   };
 
-  const revoke = async (email: string) => {
-    await fetch('/api/participants/role', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: email, portalId: id, role: null }),
-    });
-    toast('Invitation revoked');
+  // Two handles, because an invitation has two shapes. An email invite is keyed
+  // on its recipient, like every other row in the people matrix. A share link
+  // has no recipient, so the token is the only thing that identifies it.
+  const revoke = async (p: Pending) => {
+    if (p.email) {
+      await fetch('/api/participants/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: p.email, portalId: id, role: null }),
+      });
+    } else {
+      await fetch('/api/invites', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portalId: id, token: p.token }),
+      });
+    }
+    toast(p.multiUse ? 'Share link revoked' : 'Invitation revoked');
     load();
   };
 
@@ -254,16 +268,22 @@ export default function PackagePeople() {
                   (new Date(p.expiresAt).getTime() - Date.now()) / 3_600_000;
                 return (
                   <div
-                    key={p.email}
+                    key={p.token}
                     className="flex items-center gap-3 border-b border-stiko-border py-[10px] last:border-0"
                   >
-                    <Avatar id={p.email} name={p.email} size={32} pending />
+                    <Avatar
+                      id={p.email ?? p.token}
+                      name={p.email ?? 'Link'}
+                      size={32}
+                      pending
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-bold text-stiko-ink">
-                        {p.email}
+                        {p.email ?? 'Anyone with the link'}
                       </div>
                       <div className="truncate text-[11.5px] text-stiko-muted">
-                        <span className="capitalize">{p.role}</span> · invited{' '}
+                        <span className="capitalize">{p.role}</span> ·{' '}
+                        {p.multiUse ? 'link created' : 'invited'}{' '}
                         {relativeTime(p.createdAt)}
                         {hoursLeft > 0 && hoursLeft < 24 && (
                           <span className="ml-1 font-bold text-[#B23A52]">
@@ -273,14 +293,17 @@ export default function PackagePeople() {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-3 text-[12px] font-bold">
+                      {/* Nothing to resend a share link to. */}
+                      {p.email && (
+                        <button
+                          onClick={() => resend(p.email!, p.role)}
+                          className="text-stiko-primary hover:text-stiko-primary-hover"
+                        >
+                          Resend
+                        </button>
+                      )}
                       <button
-                        onClick={() => resend(p.email, p.role)}
-                        className="text-stiko-primary hover:text-stiko-primary-hover"
-                      >
-                        Resend
-                      </button>
-                      <button
-                        onClick={() => revoke(p.email)}
+                        onClick={() => revoke(p)}
                         className="text-[#B23A52] hover:opacity-80"
                       >
                         Revoke

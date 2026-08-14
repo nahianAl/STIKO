@@ -68,6 +68,9 @@ export async function GET(
         FROM invite_tokens
         WHERE portal_id = ANY(${packageIds})
           AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()
+          -- Share links are excluded: this feeds "who are we waiting on", and a
+          -- link is not a person who has yet to respond.
+          AND multi_use = FALSE
       `
     : [];
 

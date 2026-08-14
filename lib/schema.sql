@@ -67,7 +67,10 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
   token TEXT UNIQUE NOT NULL,
   portal_id TEXT NOT NULL REFERENCES portals(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('viewer', 'commenter', 'uploader')),
-  email TEXT NOT NULL,
+  -- Null for a share link, which has no named recipient. See 003-share-links.sql.
+  email TEXT,
+  -- A share link is not consumed by the first person to accept it.
+  multi_use BOOLEAN NOT NULL DEFAULT FALSE,
   expires_at TIMESTAMPTZ NOT NULL,
   used_at TIMESTAMPTZ,
   revoked_at TIMESTAMPTZ,

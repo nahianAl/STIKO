@@ -36,7 +36,18 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(rows);
 }
 
-/** POST — issue an invitation. Same tokenised link for every role (bug #2). */
+/**
+ * POST — issue an invitation. Same tokenised link for every role (bug #2).
+ *
+ * Two shapes, told apart by whether an email was given:
+ *
+ *   with an email → a normal invitation, addressed and sent to that person,
+ *                   consumed by them when they accept.
+ *   without one   → a share link: no recipient, nothing emailed, and NOT
+ *                   consumed on acceptance, so it can be pasted somewhere and
+ *                   used by more than one person. Same 14-day expiry, same
+ *                   revocation. See lib/migrations/003-share-links.sql.
+ */
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -45,9 +56,14 @@ export async function POST(request: NextRequest) {
 
   const { portalId, email, role, note } = await request.json();
 
-  if (!portalId || !email || !role) {
+  // A blank email is a share link, not a malformed invitation.
+  const recipient =
+    typeof email === 'string' && email.trim() ? email.trim() : null;
+  const isShareLink = recipient === null;
+
+  if (!portalId || !role) {
     return NextResponse.json(
-      { error: 'portalId, email and role are required' },
+      { error: 'portalId and role are required' },
       { status: 400 }
     );
   }
@@ -66,9 +82,9 @@ export async function POST(request: NextRequest) {
 
   const rows = await sql`
     INSERT INTO invite_tokens
-      (id, token, portal_id, role, email, expires_at, invited_by, note)
+      (id, token, portal_id, role, email, multi_use, expires_at, invited_by, note)
     VALUES (
-      ${uuidv4()}, ${token}, ${portalId}, ${role}, ${email},
+      ${uuidv4()}, ${token}, ${portalId}, ${role}, ${recipient}, ${isShareLink},
       ${expiresAt.toISOString()}, ${session.user.id}, ${note ?? null}
     )
     RETURNING token
@@ -83,22 +99,32 @@ export async function POST(request: NextRequest) {
   // Configured host only — see lib/appUrl.ts.
   const link = `${appBaseUrl()}/invite/${rows[0].token}`;
 
-  const result = await sendEmail({
-    to: email,
-    ...inviteEmail({
-      inviterName: session.user.name ?? 'Someone',
-      packageName: context[0]?.packageName ?? 'a package',
-      projectName: context[0]?.projectName ?? '',
-      role,
-      link,
-      note,
-    }),
-  });
+  // Nothing to send for a share link — there is no recipient. Reporting
+  // emailDelivered: false here is not a failure, and the UI must not present it
+  // as one; it simply shows the link to copy.
+  const result = isShareLink
+    ? { delivered: false }
+    : await sendEmail({
+        to: recipient,
+        ...inviteEmail({
+          inviterName: session.user.name ?? 'Someone',
+          packageName: context[0]?.packageName ?? 'a package',
+          projectName: context[0]?.projectName ?? '',
+          role,
+          link,
+          note,
+        }),
+      });
 
   // Report delivery honestly — the UI adjusts its wording rather than claiming
   // an email went out when no provider is configured.
   return NextResponse.json(
-    { token: rows[0].token, link, emailDelivered: result.delivered },
+    {
+      token: rows[0].token,
+      link,
+      emailDelivered: result.delivered,
+      isShareLink,
+    },
     { status: 201 }
   );
 }

@@ -23,7 +23,10 @@ interface InviteInfo {
   token: string;
   portalId: string;
   role: 'viewer' | 'commenter' | 'uploader';
-  email: string;
+  /** Null for a share link, which is addressed to nobody in particular. */
+  email: string | null;
+  /** A share link: reusable, so this page must not assume a fixed identity. */
+  multiUse: boolean;
   packageName: string;
   projectName: string;
   inviterName: string;
@@ -246,6 +249,12 @@ function InviteAuth({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // An email invite names its recipient and the field is read-only — the whole
+  // point is that the account matches who was invited. A share link names
+  // nobody, so the visitor supplies their own address.
+  const [typedEmail, setTypedEmail] = useState('');
+  const email = invite.email ?? typedEmail.trim();
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -255,7 +264,7 @@ function InviteAuth({
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: invite.email, password }),
+        body: JSON.stringify({ name, email, password }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -266,7 +275,7 @@ function InviteAuth({
     }
 
     const result = await signIn('credentials', {
-      email: invite.email,
+      email,
       password,
       redirect: false,
     });
@@ -366,20 +375,31 @@ function InviteAuth({
             )}
 
             <Field label="Email">
-              <div className="relative">
+              {invite.email ? (
+                <div className="relative">
+                  <Input
+                    type="email"
+                    value={invite.email}
+                    readOnly
+                    className="bg-stiko-app pr-[104px]"
+                  />
+                  <span
+                    className="absolute right-[10px] top-1/2 -translate-y-1/2 rounded-chip px-[6px] py-[3px] text-[10px] font-bold uppercase"
+                    style={{ background: '#EDFFDA', color: '#4B7A28' }}
+                  >
+                    From invite
+                  </span>
+                </div>
+              ) : (
                 <Input
                   type="email"
-                  value={invite.email}
-                  readOnly
-                  className="bg-stiko-app pr-[104px]"
+                  value={typedEmail}
+                  onChange={(e) => setTypedEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                  placeholder="name@email.com"
                 />
-                <span
-                  className="absolute right-[10px] top-1/2 -translate-y-1/2 rounded-chip px-[6px] py-[3px] text-[10px] font-bold uppercase"
-                  style={{ background: '#EDFFDA', color: '#4B7A28' }}
-                >
-                  From invite
-                </span>
-              </div>
+              )}
             </Field>
 
             <div>
@@ -412,8 +432,10 @@ function InviteAuth({
             </Note>
 
             <p className="text-[11.5px] leading-[1.5] text-stiko-faint">
-              By continuing you agree to our Terms and Privacy Policy. This
-              invite is for {invite.email} and expires in 14 days.
+              By continuing you agree to our Terms and Privacy Policy.{' '}
+              {invite.email
+                ? `This invite is for ${invite.email} and expires in 14 days.`
+                : `This is a shared link — anyone with it can join as ${invite.role}. It expires in 14 days.`}
             </p>
           </form>
         </div>
