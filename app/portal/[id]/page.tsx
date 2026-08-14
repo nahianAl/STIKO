@@ -156,6 +156,7 @@ export default function PortalPage() {
   // no navigation, no reload, no lost zoom or scroll.
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [canUpload, setCanUpload] = useState(false);
+  const [canTransform, setCanTransform] = useState(false);
 
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
@@ -194,6 +195,9 @@ export default function PortalPage() {
 
   // 3D comment pin state
   const [worldPinPositions, setWorldPinPositions] = useState<Map<string, PinScreenPosition>>(new Map());
+
+  // null hides the gizmo. Only ever set for a role that may transform.
+  const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | null>(null);
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
@@ -262,6 +266,29 @@ export default function PortalPage() {
     setContentTransform(transform);
   }, []);
 
+  // Persist the 3D object's move/rotate gizmo transform once a drag ends.
+  const handleTransformCommit = useCallback(
+    async (transform: { position: [number, number, number]; rotation: [number, number, number] }) => {
+      if (!selectedFileId) return;
+      try {
+        const res = await fetch(`/api/files/${selectedFileId}/transform`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(transform),
+        });
+        if (!res.ok) throw new Error(`Transform save failed: ${res.status}`);
+        // Keep the in-memory file in step so a re-render does not snap the object back
+        // to the position it had when the list was last fetched.
+        setFiles((prev) =>
+          prev.map((f) => (f.id === selectedFileId ? { ...f, transform } : f))
+        );
+      } catch (e) {
+        console.error('Failed to save object transform:', e);
+      }
+    },
+    [selectedFileId]
+  );
+
   // Fetch package details and the parent project's NAME for the breadcrumb.
   //
   // The name comes from the package's own access endpoint rather than
@@ -312,7 +339,10 @@ export default function PortalPage() {
   useEffect(() => {
     fetch(`/api/portals/${portalId}/access`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((info) => setCanUpload(Boolean(info?.access?.canUpload)))
+      .then((info) => {
+        setCanUpload(Boolean(info?.access?.canUpload));
+        setCanTransform(Boolean(info?.access?.canTransform));
+      })
       .catch(() => setCanUpload(false));
   }, [portalId]);
 
@@ -414,6 +444,21 @@ export default function PortalPage() {
     if (DRAW_TOOLS.includes(activeTool)) setTagging(false);
   }, [activeTool]);
 
+  // The transform gizmo and the comment/draw tools are mutually exclusive too: drei's
+  // TransformControls does not stop pointer-event propagation, so a drag started on a
+  // rotate ring near the model could fall through to the comment-pin or drawing handlers
+  // underneath it and drop a pin (or start a stroke) at the same time. Arming one disarms
+  // the other, in both directions.
+  useEffect(() => {
+    if (!transformMode) return;
+    setTagging(false);
+    setActiveTool('pointer');
+  }, [transformMode]);
+
+  useEffect(() => {
+    if (tagging || DRAW_TOOLS.includes(activeTool)) setTransformMode(null);
+  }, [tagging, activeTool]);
+
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
     setViewerSnapshot(null);
@@ -425,6 +470,7 @@ export default function PortalPage() {
     setComposerFiles([]);
     setPendingTag(null);
     setTagging(false);
+    setTransformMode(null);
   }, [selectedFileId]);
 
   const handleSelectVersion = (versionId: string) => {
@@ -593,6 +639,9 @@ export default function PortalPage() {
             worldPins={worldPins}
             onPinPositionsUpdate={handlePinPositionsUpdate}
             onTransformChange={handleTransformChange}
+            transform={selectedFile.transform}
+            transformMode={canTransform ? transformMode : null}
+            onTransformCommit={handleTransformCommit}
             activeTool={activeTool}
             tagging={tagging}
             annotating={annotating}
@@ -666,6 +715,9 @@ export default function PortalPage() {
             tagging={tagging}
             onToggleTagging={() => setTagging((t) => !t)}
             onInsertImage={handleInsertImage}
+            showTransformTools={canTransform && is3DFile}
+            transformMode={transformMode}
+            onTransformModeChange={setTransformMode}
           />
 
           {/* Annotation mode banner */}

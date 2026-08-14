@@ -15,6 +15,10 @@ interface DrawingToolsProps {
   tagging: boolean;
   onToggleTagging: () => void;
   onInsertImage: () => void;
+  /** Only true for a 3D file and a role that may transform. Hides the group entirely. */
+  showTransformTools?: boolean;
+  transformMode?: 'translate' | 'rotate' | null;
+  onTransformModeChange?: (mode: 'translate' | 'rotate' | null) => void;
 }
 
 const SHAPE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
@@ -122,6 +126,9 @@ export default function DrawingTools({
   tagging,
   onToggleTagging,
   onInsertImage,
+  showTransformTools = false,
+  transformMode = null,
+  onTransformModeChange,
 }: DrawingToolsProps) {
   const strokes = useDropdown();
 
@@ -167,6 +174,32 @@ export default function DrawingTools({
             <path d="M21 15l-5-5L5 21" />
           </svg>
         </button>
+
+        {/* Move / rotate the object itself. 3D only, and only for a role that may. */}
+        {showTransformTools && onTransformModeChange && (
+          <>
+            <button
+              title="Move object"
+              onClick={() => onTransformModeChange(transformMode === 'translate' ? null : 'translate')}
+              className={slot(transformMode === 'translate')}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2v20M2 12h20" />
+                <path d="M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3" />
+              </svg>
+            </button>
+            <button
+              title="Rotate object"
+              onClick={() => onTransformModeChange(transformMode === 'rotate' ? null : 'rotate')}
+              className={slot(transformMode === 'rotate')}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <polyline points="21 3 21 9 15 9" />
+              </svg>
+            </button>
+          </>
+        )}
 
         {/* Stroke width (compact popover) */}
         <div ref={strokes.ref} className="relative">
