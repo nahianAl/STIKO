@@ -7,47 +7,45 @@ import {
   MIN_FOCAL_LENGTH,
   MAX_FOCAL_LENGTH,
   fovForFocalLength,
-  focalLengthForFov,
   clampFocalLength,
   parseFocalLength,
 } from '../../lib/focalLength.ts';
 
-const ASPECTS = [16 / 9, 1000 / 700, 1, 9 / 16];
-
-test('fov matches three.js for every preset at every aspect', () => {
-  // three is the authority: the viewer calls camera.setFocalLength, so if this module
-  // disagrees the number on the control will not describe what is on screen. Cross-checking
-  // against the real camera rather than restating our own formula is the whole point.
-  for (const aspect of ASPECTS) {
+test('fov matches three.js for every preset, against a 24mm frame height', () => {
+  // three stays the oracle for the arithmetic even though we no longer use its aspect
+  // behaviour: with filmGauge 24 and any aspect <= 1, three's own getFilmHeight() is
+  // 24 / max(aspect, 1) = 24, exactly our fixed frame. Both aspects below must agree,
+  // which is also what proves our fov ignores the viewport shape.
+  for (const aspect of [1, 0.5]) {
     for (const mm of FOCAL_LENGTH_PRESETS) {
       const camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
+      camera.filmGauge = 24;
       camera.setFocalLength(mm);
       assert.ok(
-        Math.abs(fovForFocalLength(mm, aspect) - camera.fov) < 1e-9,
-        `aspect ${aspect}, ${mm}mm: ${fovForFocalLength(mm, aspect)} !== ${camera.fov}`,
+        Math.abs(fovForFocalLength(mm) - camera.fov) < 1e-9,
+        `aspect ${aspect}, ${mm}mm: ${fovForFocalLength(mm)} !== ${camera.fov}`,
       );
     }
   }
 });
 
-test('focal length round-trips through fov', () => {
-  for (const aspect of ASPECTS) {
-    for (const mm of [...FOCAL_LENGTH_PRESETS, 8, 12.5, 300]) {
-      const back = focalLengthForFov(fovForFocalLength(mm, aspect), aspect);
-      assert.ok(Math.abs(back - mm) < 1e-9, `aspect ${aspect}: ${mm} -> ${back}`);
-    }
+test('fov is the same whatever the viewport shape', () => {
+  // The regression this whole change exists to prevent: a panel toggle must not zoom the
+  // model. fovForFocalLength takes no aspect, so this is true by construction — the test
+  // guards against someone reintroducing an aspect parameter.
+  assert.equal(fovForFocalLength.length, 1);
+  for (const mm of FOCAL_LENGTH_PRESETS) {
+    assert.ok(Number.isFinite(fovForFocalLength(mm)));
   }
 });
 
 test('a longer lens is always a narrower field of view', () => {
   // Monotonicity is what makes the control feel sane; an inverted branch would still
   // round-trip and still look plausible in isolation.
-  for (const aspect of ASPECTS) {
-    for (let i = 1; i < FOCAL_LENGTH_PRESETS.length; i++) {
-      const wider = fovForFocalLength(FOCAL_LENGTH_PRESETS[i - 1], aspect);
-      const longer = fovForFocalLength(FOCAL_LENGTH_PRESETS[i], aspect);
-      assert.ok(longer < wider, `aspect ${aspect}: ${FOCAL_LENGTH_PRESETS[i]}mm not narrower`);
-    }
+  for (let i = 1; i < FOCAL_LENGTH_PRESETS.length; i++) {
+    const wider = fovForFocalLength(FOCAL_LENGTH_PRESETS[i - 1]);
+    const longer = fovForFocalLength(FOCAL_LENGTH_PRESETS[i]);
+    assert.ok(longer < wider, `${FOCAL_LENGTH_PRESETS[i]}mm not narrower`);
   }
 });
 

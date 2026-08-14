@@ -338,22 +338,23 @@ function MeasureModel({
 /**
  * Drives the camera's field of view from a focal length in millimetres.
  *
- * Re-applied on resize as well as on change: three derives fov from the focal length AND the
- * aspect ratio, so a fixed fov would make the number on the control stop describing what is
- * on screen the moment the window changes shape.
+ * The fov depends on the lens alone (see lib/focalLength.ts), so this does NOT need to
+ * re-run on resize — that is deliberate, and it is why collapsing a side panel reveals more
+ * scene rather than zooming the model.
  *
- * Rendered BEFORE FitCameraToModel on purpose. The fit reads `cam.fov` when its effect runs
- * to work out how far back to sit, and React fires sibling effects in mount order — flip the
- * two and every model gets framed with the wrong lens on first paint.
+ * FitCameraToModel reads cam.fov when it works out how far back to sit, so it must never run
+ * before this has set it. What guarantees that is not the sibling order below but the fact
+ * that FitCameraToModel is gated on `bounds`, which starts null and is reset to null on every
+ * url change — so the two can never mount in the same commit. Keep that gate.
  */
 function ApplyFocalLength({ focalLength }: { focalLength: number }) {
-  const { camera, size } = useThree();
+  const { camera } = useThree();
 
   useEffect(() => {
     const cam = camera as THREE.PerspectiveCamera;
-    cam.fov = fovForFocalLength(focalLength, size.width / size.height);
+    cam.fov = fovForFocalLength(focalLength);
     cam.updateProjectionMatrix();
-  }, [camera, focalLength, size.width, size.height]);
+  }, [camera, focalLength]);
 
   return null;
 }
@@ -437,8 +438,10 @@ export default function ModelViewerInner({
     <div className="h-full w-full" style={{ minHeight: 400, cursor: commentToolActive ? 'crosshair' : undefined }}>
       <Canvas
         // Position and clipping planes are placeholders only — FitCameraToModel overwrites
-        // all three from the model's bounding sphere as soon as it loads.
-        camera={{ position: [3, 3, 3], fov: 50 }}
+        // all three from the model's bounding sphere as soon as it loads. fov is derived from
+        // the default focal length rather than a literal, since focal length is the source of
+        // truth and ApplyFocalLength overwrites it anyway once mounted.
+        camera={{ position: [3, 3, 3], fov: fovForFocalLength(DEFAULT_FOCAL_LENGTH) }}
         style={{ background: '#f0f0f0' }}
         gl={{ preserveDrawingBuffer: true }}
       >

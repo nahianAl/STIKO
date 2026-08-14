@@ -4,6 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import { FOCAL_LENGTH_PRESETS, parseFocalLength } from '@/lib/focalLength';
 
 /**
+ * Trims a focal length to at most one decimal place for display, dropping a trailing `.0`.
+ *
+ * `parseFocalLength` does not round the stored value — only what's shown needs to fit the
+ * pill. `42.55555` displays as `42.6`; `35` displays as `35`.
+ */
+function formatFocalLength(millimetres: number): string {
+  return (Math.round(millimetres * 10) / 10).toString();
+}
+
+/**
  * Camera focal length, as a single pill: eye icon, the value, and an arrow that opens the
  * presets upward.
  *
@@ -45,7 +55,7 @@ export default function FocalLengthControl({
   }, [editing]);
 
   const startEditing = () => {
-    setDraft(String(value));
+    setDraft(formatFocalLength(value));
     setEditing(true);
     setOpen(false);
   };
@@ -116,7 +126,7 @@ export default function FocalLengthControl({
             title="Set focal length"
             className="w-12 text-left text-xs text-stiko-ink"
           >
-            {value}mm
+            {formatFocalLength(value)}mm
           </button>
         )}
 

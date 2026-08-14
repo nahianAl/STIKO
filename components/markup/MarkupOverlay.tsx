@@ -81,7 +81,7 @@ export default function MarkupOverlay({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0"
+      className="absolute inset-0 z-30"
       style={{
         pointerEvents: passThrough3DTag ? 'none' : (tagging ? 'all' : 'none'),
         cursor: tagging && !passThrough3DTag ? 'crosshair' : undefined,

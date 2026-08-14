@@ -2,18 +2,26 @@
  * Camera focal length for the 3D viewer, in millimetres.
  *
  * Focal length is the source of truth and field of view is derived from it, because fov
- * alone is meaningless without the frame it is measured against. three models the frame as
- * a 35mm-wide gauge, so the same lens gives a different fov on a differently-shaped
- * viewport — which is why callers must re-apply the focal length when the viewport resizes
- * rather than setting fov once.
+ * alone is meaningless without the frame it is measured against. Unlike three's own
+ * PerspectiveCamera, which derives the frame height from a fixed film WIDTH divided by the
+ * viewport aspect, this module fixes the frame HEIGHT instead: one lens, one angle of view,
+ * whatever shape the viewport is. See the note on `FRAME_HEIGHT` for why.
  *
- * The formulae below mirror three's own PerspectiveCamera. That duplication is deliberate:
- * the control needs to convert without holding a camera. The tests cross-check every preset
- * against a real THREE.PerspectiveCamera so the two cannot drift apart.
+ * The tests cross-check every preset against a real THREE.PerspectiveCamera (with its film
+ * gauge pinned so its own aspect-dependence cancels out) so the arithmetic cannot drift.
  */
 
-/** three's PerspectiveCamera.filmGauge default: the film's WIDTH, in millimetres. */
-const FILM_GAUGE = 35;
+/**
+ * The 35mm-format frame HEIGHT, in millimetres.
+ *
+ * three's PerspectiveCamera derives fov from a fixed film WIDTH divided by the viewport
+ * aspect, which means the same lens gives a different angle of view on a differently-shaped
+ * viewport — so merely collapsing a side panel would zoom the model. We fix the frame height
+ * instead: one lens, one angle of view, whatever shape the viewport is. Resizing then reveals
+ * or hides scene, as it did before this control existed, and the number on the control still
+ * describes what is on screen.
+ */
+const FRAME_HEIGHT = 24;
 
 /** Standard lens steps, wide to telephoto. Any value between them can still be typed. */
 export const FOCAL_LENGTH_PRESETS: readonly number[] = [15, 24, 35, 50, 85, 135];
@@ -24,21 +32,9 @@ export const DEFAULT_FOCAL_LENGTH = 35;
 export const MIN_FOCAL_LENGTH = 8;
 export const MAX_FOCAL_LENGTH = 300;
 
-/** The film's height for a given aspect — a wider frame is a shorter one at fixed width. */
-function filmHeight(aspect: number): number {
-  const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
-  return FILM_GAUGE / Math.max(safeAspect, 1);
-}
-
-/** Vertical field of view in DEGREES, matching three's PerspectiveCamera.setFocalLength. */
-export function fovForFocalLength(focalLength: number, aspect: number): number {
-  return (2 * Math.atan(filmHeight(aspect) / (2 * focalLength)) * 180) / Math.PI;
-}
-
-/** The inverse, matching three's PerspectiveCamera.getFocalLength. */
-export function focalLengthForFov(fov: number, aspect: number): number {
-  const vExtentSlope = Math.tan(((fov / 2) * Math.PI) / 180);
-  return (0.5 * filmHeight(aspect)) / vExtentSlope;
+/** Vertical field of view in DEGREES. Depends on the lens alone, never on the viewport. */
+export function fovForFocalLength(focalLength: number): number {
+  return (2 * Math.atan(FRAME_HEIGHT / (2 * focalLength)) * 180) / Math.PI;
 }
 
 export function clampFocalLength(value: number): number {
