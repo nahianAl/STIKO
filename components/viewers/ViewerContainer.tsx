@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
+import type { CrossSection } from '@/lib/crossSection';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -32,6 +33,7 @@ interface ViewerContainerProps {
   transformMode?: 'translate' | 'rotate' | null;
   onTransformCommit?: (transform: ObjectTransform) => void;
   focalLength?: number;
+  crossSection?: CrossSection | null;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -62,7 +64,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, transform, transformMode, onTransformCommit, focalLength,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, transform, transformMode, onTransformCommit, focalLength, crossSection,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -120,7 +122,7 @@ export default function ViewerContainer({
       />
     );
   }
-  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} />;
+  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} crossSection={crossSection} />;
 
   return (
     <div className="flex h-full w-full items-center justify-center">

@@ -11,12 +11,12 @@ import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
-import { makeDoubleSided } from '@/lib/threeMaterials';
+import { makeDoubleSided, setClippingPlanes } from '@/lib/threeMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
-import type { ModelBox } from '@/lib/crossSection';
+import { planeForSection, type CrossSection, type ModelBox } from '@/lib/crossSection';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
@@ -80,6 +80,8 @@ export interface ModelViewerInnerProps {
   onTransformCommit?: (transform: ObjectTransform) => void;
   /** Camera focal length in millimetres. Drives the field of view. */
   focalLength?: number;
+  /** Null when the model is not sectioned. */
+  crossSection?: CrossSection | null;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -373,6 +375,57 @@ function ApplyFocalLength({ focalLength }: { focalLength: number }) {
 }
 
 /**
+ * Clips the model to a single plane.
+ *
+ * The plane is built in the model's own frame and pushed into world space every frame, not
+ * on prop change: TransformControls mutates the target group directly while dragging without
+ * going through React props, so a change-driven sync would leave the cut lagging behind the
+ * object mid-drag.
+ */
+function ApplyCrossSection({
+  section,
+  box,
+  modelRef,
+  transformRef,
+  planeRef,
+}: {
+  section: CrossSection | null;
+  box: ModelBox;
+  modelRef: React.RefObject<THREE.Object3D>;
+  transformRef: React.RefObject<THREE.Object3D>;
+  planeRef: React.MutableRefObject<THREE.Plane | null>;
+}) {
+  // One plane instance, mutated in place, in an array whose identity never changes — see
+  // setClippingPlanes on why the array must not be rebuilt per frame.
+  const planes = useRef<THREE.Plane[]>([new THREE.Plane()]);
+  const enabled = section !== null;
+
+  useEffect(() => {
+    const model = modelRef.current;
+    if (!model) return;
+
+    setClippingPlanes(model, enabled ? planes.current : null);
+    planeRef.current = enabled ? planes.current[0] : null;
+
+    // useLoader caches loader results, so these materials are shared and outlive this
+    // viewer. A plane left behind renders the model clipped the next time the file is
+    // opened, with no control on screen to explain it and no way back short of a reload.
+    return () => {
+      setClippingPlanes(model, null);
+      planeRef.current = null;
+    };
+  }, [enabled, modelRef, planeRef]);
+
+  useFrame(() => {
+    const frame = transformRef.current;
+    if (!section || !frame) return;
+    planes.current[0].copy(planeForSection(section, box)).applyMatrix4(frame.matrixWorld);
+  });
+
+  return null;
+}
+
+/**
  * Frames the camera on the measured model and sizes the clipping planes to it.
  *
  * Deliberately does NOT re-run on viewport resize — refitting there would throw away the
@@ -422,6 +475,7 @@ export default function ModelViewerInner({
   transformMode,
   onTransformCommit,
   focalLength = DEFAULT_FOCAL_LENGTH,
+  crossSection = null,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
@@ -429,6 +483,8 @@ export default function ModelViewerInner({
 
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
+  // Written by ApplyCrossSection, read by SceneInteraction's raycast guard.
+  const clipPlaneRef = useRef<THREE.Plane | null>(null);
   const [bounds, setBounds] = useState<ModelBounds | null>(null);
 
   // Drop stale sizing the moment a different model is selected, so the ground and axes are
@@ -456,7 +512,9 @@ export default function ModelViewerInner({
         // truth and ApplyFocalLength overwrites it anyway once mounted.
         camera={{ position: [3, 3, 3], fov: fovForFocalLength(DEFAULT_FOCAL_LENGTH) }}
         style={{ background: '#f0f0f0' }}
-        gl={{ preserveDrawingBuffer: true }}
+        // localClippingEnabled is what makes per-material clippingPlanes take effect at all;
+        // without it the cross-section silently does nothing.
+        gl={{ preserveDrawingBuffer: true, localClippingEnabled: true }}
       >
         <Suspense
           fallback={
@@ -490,6 +548,15 @@ export default function ModelViewerInner({
           <ApplyFocalLength focalLength={focalLength} />
           <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
+          {bounds && (
+            <ApplyCrossSection
+              section={crossSection}
+              box={bounds.box}
+              modelRef={modelRef}
+              transformRef={transformRef}
+              planeRef={clipPlaneRef}
+            />
+          )}
           {bounds && (
             // The ground stack is authored relative to the model's base; this puts that base
             // wherever the model actually sits, without moving the model itself.
