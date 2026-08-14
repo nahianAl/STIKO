@@ -16,6 +16,7 @@ import { framingForRadius } from '@/lib/cameraFraming';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
+import type { ModelBox } from '@/lib/crossSection';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
@@ -44,6 +45,14 @@ export interface ModelBounds {
   radius: number;
   /** Bounding-box Y extent, used for the Y axis length and the shadow's depth range. */
   height: number;
+  /**
+   * Axis-aligned bounds in the model's own frame, before the placement transform.
+   *
+   * The cross-section slider needs this rather than `radius`: driven off the bounding
+   * SPHERE, a slider on a wide flat model — a tabletop, a panel — would spend most of its
+   * travel outside the geometry doing nothing visible.
+   */
+  box: ModelBox;
 }
 
 export interface ModelViewerHandle {
@@ -327,6 +336,10 @@ function MeasureModel({
       center: sphere.center.clone(),
       radius: sphere.radius,
       height: box.max.y - box.min.y,
+      box: {
+        min: [box.min.x, box.min.y, box.min.z],
+        max: [box.max.x, box.max.y, box.max.z],
+      },
     });
     // One-shot per model; the component is remounted by key when the url changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
