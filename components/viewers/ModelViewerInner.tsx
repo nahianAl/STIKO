@@ -14,7 +14,7 @@ import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
-import { IDENTITY_TRANSFORM, type ObjectTransform } from '@/lib/objectTransform';
+import { IDENTITY_TRANSFORM, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import ViewGizmo from './ViewGizmo';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
@@ -159,12 +159,14 @@ function SceneInteraction({
   worldPins,
   onPinPositionsUpdate,
   modelRef,
+  transform,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
   worldPins: WorldPin[];
   onPinPositionsUpdate?: ModelViewerInnerProps['onPinPositionsUpdate'];
   modelRef: React.RefObject<THREE.Object3D>;
+  transform: ObjectTransform;
 }) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -201,15 +203,14 @@ function SceneInteraction({
             x: ((projected.x + 1) / 2) * 100,
             y: ((1 - projected.y) / 2) * 100,
           };
-          onSceneClick(
-            { x: point.x, y: point.y, z: point.z },
-            screenPercent
-          );
+          // Stored relative to the model, so the pin travels with it when it is moved.
+          const local = worldToModel([point.x, point.y, point.z], transform);
+          onSceneClick({ x: local[0], y: local[1], z: local[2] }, screenPercent);
           break;
         }
       }
     },
-    [commentToolActive, onSceneClick, camera, gl, modelRef]
+    [commentToolActive, onSceneClick, camera, gl, modelRef, transform]
   );
 
   useEffect(() => {
@@ -225,7 +226,8 @@ function SceneInteraction({
     const positions = new Map<string, PinScreenPosition>();
 
     for (const pin of worldPins) {
-      tempVec3.current.set(pin.worldX, pin.worldY, pin.worldZ);
+      const world = modelToWorld([pin.worldX, pin.worldY, pin.worldZ], transform);
+      tempVec3.current.set(world[0], world[1], world[2]);
       tempVec3.current.project(camera);
 
       const x = ((tempVec3.current.x + 1) / 2) * 100;
@@ -416,6 +418,7 @@ export default function ModelViewerInner({
             worldPins={worldPins}
             onPinPositionsUpdate={onPinPositionsUpdate}
             modelRef={modelRef}
+            transform={transform}
           />
         </Suspense>
         <OrbitControls makeDefault />
