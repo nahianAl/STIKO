@@ -12,11 +12,13 @@ import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
+import CrossSectionControl from '@/components/viewers/CrossSectionControl';
 import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import type { Comment, FileRecord } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
+import { DEFAULT_CROSS_SECTION, type CrossSection } from '@/lib/crossSection';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -206,6 +208,12 @@ export default function PortalPage() {
   // the design, so it is deliberately not persisted the way the object transform is.
   const [focalLength, setFocalLength] = useState(DEFAULT_FOCAL_LENGTH);
 
+  // Session only, like the focal length: a cut is a way of looking at the model, not a
+  // property of the design. Null means not sectioned; the last cut is remembered in
+  // `lastSection` so toggling the tool off and on does not throw away your position.
+  const [crossSection, setCrossSection] = useState<CrossSection | null>(null);
+  const lastSection = useRef<CrossSection>(DEFAULT_CROSS_SECTION);
+
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
     const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
@@ -265,6 +273,11 @@ export default function PortalPage() {
 
   const handlePinPositionsUpdate = useCallback((positions: Map<string, PinScreenPosition>) => {
     setWorldPinPositions(positions);
+  }, []);
+
+  const handleCrossSectionChange = useCallback((next: CrossSection | null) => {
+    if (next) lastSection.current = next;
+    setCrossSection(next);
   }, []);
 
   // Content transform for markups to follow image zoom/pan
@@ -500,6 +513,8 @@ export default function PortalPage() {
     setTagging(false);
     setTransformMode(null);
     setFocalLength(DEFAULT_FOCAL_LENGTH);
+    setCrossSection(null);
+    lastSection.current = DEFAULT_CROSS_SECTION;
   }, [selectedFileId]);
 
   const handleSelectVersion = (versionId: string) => {
@@ -671,6 +686,7 @@ export default function PortalPage() {
             transform={selectedFile.transform}
             transformMode={canTransform ? transformMode : null}
             focalLength={focalLength}
+            crossSection={crossSection}
             onTransformCommit={handleTransformCommit}
             activeTool={activeTool}
             tagging={tagging}
@@ -795,12 +811,21 @@ export default function PortalPage() {
             )}
 
             {/* Hidden during a markup session: the live viewer is replaced by a frozen
-                snapshot then, so this would sit on the drawing surface and adjust a camera
+                snapshot then, so these would sit on the drawing surface and drive a viewer
                 nobody is looking at. Also hidden while an attachment/snapshot is open in the
-                viewport (viewportImage set): the live viewer is hidden behind it then too, so
-                the control would adjust a camera nobody is looking at there either. */}
+                viewport (viewportImage set), where the live viewer is behind it.
+
+                items-end: both controls open their panels upward, so they must be anchored
+                by their bottom edge or the pills shift as panels appear. */}
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
-              <FocalLengthControl value={focalLength} onChange={setFocalLength} />
+              <div className="absolute bottom-3 left-3 z-20 flex items-end gap-2">
+                <FocalLengthControl value={focalLength} onChange={setFocalLength} />
+                <CrossSectionControl
+                  section={crossSection}
+                  lastSection={lastSection.current}
+                  onChange={handleCrossSectionChange}
+                />
+              </div>
             )}
 
             {/* Same gate as the focal control, plus the permission: only a role that may
