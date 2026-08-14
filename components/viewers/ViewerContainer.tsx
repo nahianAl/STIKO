@@ -5,6 +5,7 @@ import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { CrossSection } from '@/lib/crossSection';
+import LoadingCube from '@/components/ui/LoadingCube';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -95,7 +96,7 @@ export default function ViewerContainer({
   if (!url) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <span className="h-6 w-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+        <LoadingCube size={36} label="Loading file…" />
       </div>
     );
   }

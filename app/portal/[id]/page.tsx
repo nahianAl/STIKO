@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import LoadingCube from '@/components/ui/LoadingCube';
 import PortalTopBar from '@/components/portal/PortalTopBar';
 import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
@@ -646,7 +647,7 @@ export default function PortalPage() {
     if (filesLoading) {
       return (
         <div className="flex items-center justify-center h-full">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          <LoadingCube label="Loading files…" />
         </div>
       );
     }
@@ -711,7 +712,7 @@ export default function PortalPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+        <LoadingCube label="Loading package…" />
       </div>
     );
   }

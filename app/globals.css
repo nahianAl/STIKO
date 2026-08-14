@@ -38,3 +38,67 @@ a:hover {
 .stiko-scrim-tray {
   background: rgba(28, 32, 48, 0.16);
 }
+
+/* Loading cube — six faces folded into a solid, tumbling on two axes.
+   Lives here rather than in Tailwind classes for the same reason .stiko-pin
+   does: preserve-3d plus six per-face 3D transforms has no readable utility
+   form. The depth offsets come off --cube-size instead of the source
+   snippet's hardcoded 22px, so a 28px cube still closes at the seams. */
+.stiko-cube {
+  position: relative;
+  width: var(--cube-size, 44px);
+  height: var(--cube-size, 44px);
+  transform-style: preserve-3d;
+  animation: stiko-cube-tumble 2s infinite ease;
+}
+.stiko-cube > div {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(91, 96, 255, 0.2);
+  border: 2px solid #5b60ff;
+}
+.stiko-cube > div:nth-of-type(1) {
+  transform: translateZ(calc(var(--cube-size, 44px) / -2)) rotateY(180deg);
+}
+.stiko-cube > div:nth-of-type(2) {
+  transform: rotateY(-270deg) translateX(50%);
+  transform-origin: top right;
+}
+.stiko-cube > div:nth-of-type(3) {
+  transform: rotateY(270deg) translateX(-50%);
+  transform-origin: center left;
+}
+.stiko-cube > div:nth-of-type(4) {
+  transform: rotateX(90deg) translateY(-50%);
+  transform-origin: top center;
+}
+.stiko-cube > div:nth-of-type(5) {
+  transform: rotateX(-90deg) translateY(50%);
+  transform-origin: bottom center;
+}
+.stiko-cube > div:nth-of-type(6) {
+  transform: translateZ(calc(var(--cube-size, 44px) / 2));
+}
+
+@keyframes stiko-cube-tumble {
+  0% {
+    transform: rotate(45deg) rotateX(-25deg) rotateY(25deg);
+  }
+  50% {
+    transform: rotate(45deg) rotateX(-385deg) rotateY(25deg);
+  }
+  100% {
+    transform: rotate(45deg) rotateX(-385deg) rotateY(385deg);
+  }
+}
+
+/* A continuously tumbling 3D object is precisely what this query is for. Hold
+   the static pose — the cube still reads as "something is happening" because
+   it only ever appears while something is. */
+@media (prefers-reduced-motion: reduce) {
+  .stiko-cube {
+    animation: none;
+    transform: rotate(45deg) rotateX(-25deg) rotateY(25deg);
+  }
+}
