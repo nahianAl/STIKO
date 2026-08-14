@@ -810,28 +810,37 @@ export default function PortalPage() {
               />
             )}
 
-            {/* Hidden during a markup session: the live viewer is replaced by a frozen
-                snapshot then, so these would sit on the drawing surface and drive a viewer
-                nobody is looking at. Also hidden while an attachment/snapshot is open in the
-                viewport (viewportImage set), where the live viewer is behind it.
+            {/* Both viewport control groups are hidden during a markup session: the live
+                viewer is replaced by a frozen snapshot then, so they would sit on the drawing
+                surface and drive a viewer nobody is looking at. Same while an
+                attachment/snapshot is open in the viewport (viewportImage set), where the live
+                viewer is behind it.
 
-                items-end: both controls open their panels upward, so they must be anchored
-                by their bottom edge or the pills shift as panels appear. */}
+                items-end on both rows: the focal presets and the cross-section panel open
+                upward, so the rows must be anchored by their bottom edge or the buttons shift
+                as a panel appears. */}
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <div className="absolute bottom-3 left-3 z-20 flex items-end gap-2">
                 <FocalLengthControl value={focalLength} onChange={setFocalLength} />
+              </div>
+            )}
+
+            {/* Cross-section, move, rotate — separate chips at even spacing. Cross-section is
+                a way of LOOKING at the model so everyone gets it; move and rotate change the
+                design itself, so only a role that may transform sees them. That is why the
+                permission gate is on the two buttons rather than the row: without a permission
+                a viewer still gets the cross-section, alone. */}
+            {selectedFileId && is3DFile && !annotating && !viewportImage && (
+              <div className="absolute bottom-3 right-3 z-20 flex items-end gap-2">
                 <CrossSectionControl
                   section={crossSection}
                   lastSection={lastSection.current}
                   onChange={handleCrossSectionChange}
                 />
+                {canTransform && (
+                  <TransformTools mode={transformMode} onModeChange={setTransformMode} />
+                )}
               </div>
-            )}
-
-            {/* Same gate as the focal control, plus the permission: only a role that may
-                transform ever sees these. Opposite corner, same baseline. */}
-            {selectedFileId && is3DFile && !annotating && !viewportImage && canTransform && (
-              <TransformTools mode={transformMode} onModeChange={setTransformMode} />
             )}
 
             {annotating && !isPDFFile && (

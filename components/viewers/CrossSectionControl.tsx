@@ -1,9 +1,11 @@
 'use client';
 
 import { SECTION_AXES, type CrossSection, type SectionAxis } from '@/lib/crossSection';
+import ViewportToolButton from './ViewportToolButton';
+import { SliceIcon } from './viewportToolIcons';
 
 /**
- * Cross-section control: a toggle pill that opens an axis picker, a slider and a flip button.
+ * Cross-section control: a toggle button that opens an axis picker, a slider and a flip button.
  *
  * `section` is null when the model is not sectioned. Enabling restores `lastSection` rather
  * than re-defaulting, so a cut you have just positioned survives toggling the tool off and
@@ -27,12 +29,17 @@ export default function CrossSectionControl({
     }`;
 
   return (
-    <div className="relative select-none">
+    <div className="relative flex">
       {section && (
-        <div className="mb-1.5 flex items-center gap-1 rounded-panel bg-white shadow-stiko-sheet border border-stiko-border h-8 px-1.5">
+        // Absolute, not in flow: the panel is far wider than the 34px button, and in flow it
+        // would widen this flex item and shove the move/rotate buttons along with it.
+        // Right-aligned because this is the leftmost of the three — anchored left it would
+        // run out past them and off the edge of the viewport.
+        <div className="absolute bottom-full right-0 mb-2 flex items-center gap-1 rounded-panel bg-white shadow-stiko-sheet border border-stiko-border h-9 px-1.5">
           {SECTION_AXES.map((axis: SectionAxis) => (
             <button
               key={axis}
+              type="button"
               onClick={() => onChange({ ...section, axis })}
               aria-pressed={section.axis === axis}
               className={axisSlot(section.axis === axis)}
@@ -53,6 +60,7 @@ export default function CrossSectionControl({
           />
 
           <button
+            type="button"
             title="Flip which half is kept"
             aria-label="Flip which half is kept"
             aria-pressed={section.flipped}
@@ -71,23 +79,13 @@ export default function CrossSectionControl({
         </div>
       )}
 
-      <div className="flex items-center rounded-panel bg-white shadow-stiko-panel border border-stiko-border h-8 px-1">
-        <button
-          title="Cross-section"
-          aria-label="Cross-section"
-          aria-pressed={active}
-          onClick={() => onChange(active ? null : lastSection)}
-          className={`flex h-6 w-6 items-center justify-center rounded-[8px] transition-colors ${
-            active ? 'bg-stiko-tint text-stiko-primary' : 'text-stiko-muted hover:bg-stiko-tint'
-          }`}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 8h18" />
-            <path d="M5 8V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3" />
-            <path d="M19 8v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8" strokeDasharray="3 3" />
-          </svg>
-        </button>
-      </div>
+      <ViewportToolButton
+        label="Cross-section"
+        active={active}
+        onClick={() => onChange(active ? null : lastSection)}
+      >
+        {SliceIcon}
+      </ViewportToolButton>
     </div>
   );
 }
