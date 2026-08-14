@@ -106,6 +106,12 @@ CREATE TABLE IF NOT EXISTS files (
   converted_storage_key TEXT DEFAULT NULL,
   conversion_job_id TEXT DEFAULT NULL,
   folder_path TEXT DEFAULT NULL,
+  position_x FLOAT NOT NULL DEFAULT 0,
+  position_y FLOAT NOT NULL DEFAULT 0,
+  position_z FLOAT NOT NULL DEFAULT 0,
+  rotation_x FLOAT NOT NULL DEFAULT 0,
+  rotation_y FLOAT NOT NULL DEFAULT 0,
+  rotation_z FLOAT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -1,3 +1,5 @@
+import type { ObjectTransform } from '@/lib/objectTransform';
+
 export interface Project {
   id: string;
   name: string;
@@ -38,6 +40,8 @@ export interface FileRecord {
   convertedStorageKey: string | null;
   conversionJobId: string | null;
   folderPath: string | null;
+  /** Where the object has been placed in the 3D viewer. Identity for non-3D files. */
+  transform: ObjectTransform;
 }
 
 export interface CommentAttachment {

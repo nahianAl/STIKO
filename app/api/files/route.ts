@@ -33,9 +33,23 @@ export async function GET(request: NextRequest) {
            converted_storage_key AS "convertedStorageKey",
            conversion_job_id AS "conversionJobId",
            folder_path AS "folderPath",
+           position_x AS "positionX", position_y AS "positionY", position_z AS "positionZ",
+           rotation_x AS "rotationX", rotation_y AS "rotationY", rotation_z AS "rotationZ",
            created_at AS "createdAt"
     FROM files WHERE version_id = ${versionId}
     ORDER BY folder_path ASC NULLS FIRST, created_at ASC
   `;
-  return NextResponse.json(rows);
+
+  const files = rows.map((row) => {
+    const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
+    return {
+      ...file,
+      transform: {
+        position: [positionX, positionY, positionZ],
+        rotation: [rotationX, rotationY, rotationZ],
+      },
+    };
+  });
+
+  return NextResponse.json(files);
 }
