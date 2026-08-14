@@ -102,19 +102,26 @@ export function newVersionEmail(opts: {
   publisherName: string;
   packageName: string;
   versionNumber: number;
-  changelog: string;
+  /**
+   * Optional since 2026-08-14. When absent the whole "What changed" block is
+   * dropped — interpolating it unconditionally emailed a bare pair of quotes.
+   */
+  changelog?: string | null;
   link: string;
 }): Omit<EmailMessage, 'to'> {
+  const note = opts.changelog?.trim();
+
+  // Built by pushing rather than filter(Boolean) like inviteEmail above: the
+  // blank separators here are meaningful, and filter(Boolean) eats them.
+  const lines = [
+    `${opts.publisherName} published version ${opts.versionNumber} of ${opts.packageName}.`,
+  ];
+  if (note) lines.push(``, `What changed:`, `"${note}"`);
+  lines.push(``, `Review it here: ${opts.link}`);
+
   return {
     subject: `Version ${opts.versionNumber} of ${opts.packageName} is ready to review`,
-    body: [
-      `${opts.publisherName} published version ${opts.versionNumber} of ${opts.packageName}.`,
-      ``,
-      `What changed:`,
-      `"${opts.changelog}"`,
-      ``,
-      `Review it here: ${opts.link}`,
-    ].join('\n'),
+    body: lines.join('\n'),
   };
 }
 
