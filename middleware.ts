@@ -13,7 +13,12 @@ const PUBLIC_PATHS = [
   // Safe to open: the token is an unguessable UUID and is the only credential
   // the GET accepts, and the POST that actually joins you to the package calls
   // auth() itself and 401s without a session.
-  '/api/invite',
+  //
+  // The trailing slash is load-bearing. These are prefix matches, and
+  // '/api/invites' — the pending-invite roster and the revoke endpoint —
+  // startsWith('/api/invite'). Without it, opening the token route also opens
+  // package management to anyone.
+  '/api/invite/',
   '/api/auth',
   '/api/conversions/webhook',
   '/api/files',

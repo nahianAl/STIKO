@@ -91,8 +91,11 @@ export function InviteProblem({
     );
   }
 
-  // 3n — expired or revoked. Same shape, different copy.
+  // 3n — expired, revoked, or already used. Same shape, different copy. "Used"
+  // must not borrow the expired wording: the link is not old, it belonged to
+  // someone else and they have already walked through it.
   const revoked = kind === 'revoked';
+  const used = kind === 'used';
   return (
     <ProblemCard
       tone="yellow"
@@ -100,7 +103,9 @@ export function InviteProblem({
       title={
         revoked
           ? 'This invitation is no longer valid'
-          : 'This invitation has expired'
+          : used
+            ? 'This invitation has already been used'
+            : 'This invitation has expired'
       }
     >
       <p className="text-[13px] leading-[1.6] text-stiko-muted">
@@ -110,6 +115,14 @@ export function InviteProblem({
             <b className="text-stiko-ink">{packageName ?? 'this package'}</b> was
             withdrawn. {inviterName ?? 'The person who invited you'} can send you
             a fresh one in a click.
+          </>
+        ) : used ? (
+          <>
+            Invitations to{' '}
+            <b className="text-stiko-ink">{packageName ?? 'a package'}</b> are
+            for one person and this one has been accepted.{' '}
+            {inviterName ?? 'The person who invited you'} can send you your own
+            in a click.
           </>
         ) : (
           <>

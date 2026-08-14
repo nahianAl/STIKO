@@ -36,8 +36,29 @@ export async function GET(
   if (invite.revokedAt) {
     return NextResponse.json({ error: 'revoked' }, { status: 410 });
   }
-  if (new Date(invite.expiresAt as string) < new Date()) {
-    return NextResponse.json({ error: 'expired' }, { status: 410 });
+  // A consumed invite stops describing the package. Closing only the POST would
+  // leave the preview open: this route is public (it has to be — being invited
+  // happens before you have an account), and it hands back the package and
+  // project names, the inviter's name AND email, the changelog, every filename
+  // in the latest version, and the display name of everyone already on it. A
+  // forwarded or leaked link would keep serving all of that for the rest of the
+  // 14 days, and by then the token is in neither the pending list nor the
+  // email-keyed revoke, so there is nothing left to switch off.
+  //
+  // Same exemption as the POST, for the same reason: the person who already
+  // accepted may click their own link again, and they can see all of this
+  // inside the package anyway. A share link is exempt by design.
+  if (invite.usedAt && !invite.multiUse) {
+    const session = await auth();
+    const already = session?.user?.id
+      ? await sql`
+          SELECT 1 FROM participants
+          WHERE portal_id = ${invite.portalId} AND user_id = ${session.user.id}
+        `
+      : [];
+    if (already.length === 0) {
+      return NextResponse.json({ error: 'used' }, { status: 410 });
+    }
   }
 
   // The latest published version, and the files inside it.
