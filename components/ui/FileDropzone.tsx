@@ -2,6 +2,11 @@
 
 import React, { useRef, useState, useCallback } from 'react';
 import { FileChip } from './Primitives';
+import {
+  ACCEPT_ATTRIBUTE,
+  extensionOf,
+  partitionBySupport,
+} from '@/lib/fileFormats';
 
 export interface FileWithPath {
   file: File;
@@ -73,16 +78,25 @@ export default function FileDropzone({
   files,
   onFilesChange,
   title = 'Drop drawings, models or PDFs',
-  hint = 'Folders keep their structure · PDF, DWG, GLB, STEP, images, video',
+  hint = 'Folders keep their structure · PDF, DWG, DXF, GLB, STEP, OBJ, STL, images, video',
   compact = false,
 }: FileDropzoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Names refused by the last add, shown until the next one. Drag-drop, the
+  // file picker and the folder picker all funnel through addFiles, so this is
+  // the only gate the feature needs.
+  const [rejected, setRejected] = useState<string[]>([]);
 
   const addFiles = useCallback(
     (newFiles: FileWithPath[]) => {
-      onFilesChange([...files, ...newFiles]);
+      const { accepted, rejected: refused } = partitionBySupport(
+        newFiles,
+        (f) => f.file.name
+      );
+      setRejected(refused.map((f) => f.file.name));
+      if (accepted.length > 0) onFilesChange([...files, ...accepted]);
     },
     [files, onFilesChange]
   );
@@ -232,6 +246,7 @@ export default function FileDropzone({
           ref={fileInputRef}
           type="file"
           multiple
+          accept={ACCEPT_ATTRIBUTE}
           onChange={handleFileInput}
           className="hidden"
         />
@@ -244,6 +259,62 @@ export default function FileDropzone({
           className="hidden"
         />
       </div>
+
+      {rejected.length > 0 && (
+        <div
+          role="alert"
+          className="mt-3 rounded-[10px] px-[13px] py-[11px] text-[12.5px]"
+          style={{ background: '#FFE2E2', color: '#B23A52' }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-bold">
+                {rejected.length === 1
+                  ? "1 file can't be added"
+                  : `${rejected.length} files can't be added`}
+              </p>
+              <p className="mt-[3px] leading-[1.5]">
+                Stiko can&apos;t open{' '}
+                {rejected.length === 1 ? "this format" : "these formats"} yet.
+                Everything else was added.
+              </p>
+              <ul className="mt-[6px] flex flex-col gap-[2px]">
+                {rejected.slice(0, 5).map((name, i) => (
+                  <li key={`${name}-${i}`} className="truncate font-medium">
+                    {name}
+                    <span className="ml-1 opacity-70">
+                      ({extensionOf(name) ? `.${extensionOf(name)}` : "no extension"})
+                    </span>
+                  </li>
+                ))}
+                {rejected.length > 5 && (
+                  <li className="opacity-70">+{rejected.length - 5} more</li>
+                )}
+              </ul>
+            </div>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRejected([]);
+              }}
+              className="shrink-0 opacity-60 transition hover:opacity-100"
+            >
+              <svg
+                className="h-[15px] w-[15px]"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.2}
+                strokeLinecap="round"
+              >
+                <path d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {files.length > 0 && (
         <div className="mt-3 flex flex-col gap-1">
