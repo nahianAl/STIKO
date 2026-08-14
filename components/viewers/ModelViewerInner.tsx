@@ -416,9 +416,12 @@ function ApplyCrossSection({
     setClippingPlanes(model, enabled ? planes.current : null);
     planeRef.current = enabled ? planes.current[0] : null;
 
-    // useLoader caches loader results, so these materials are shared and outlive this
-    // viewer. A plane left behind renders the model clipped the next time the file is
-    // opened, with no control on screen to explain it and no way back short of a reload.
+    // useLoader caches loader results, so glTF/OBJ materials are shared and outlive this
+    // viewer. STL and PLY are worse: they render with DEFAULT_MATERIAL / VERTEX_COLOR_MATERIAL
+    // above, module-level singletons shared by every STL/PLY opened in the session and never
+    // disposed — so a missed cleanup here does not just linger in this file, it clips every
+    // STL/PLY opened afterwards too, with no control on screen to explain it and no way back
+    // short of a reload.
     return () => {
       setClippingPlanes(model, null);
       planeRef.current = null;
@@ -558,7 +561,12 @@ export default function ModelViewerInner({
           <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (
+            // key={url}: ApplyCrossSection's cleanup clears clippingPlanes from the materials
+            // under modelRef, but nothing in the effect tracks which model modelRef points at.
+            // Forcing a remount on model change guarantees the cleanup runs against the model
+            // it applied to, before modelRef can be pointing at a different one.
             <ApplyCrossSection
+              key={url}
               section={crossSection}
               box={bounds.box}
               modelRef={modelRef}

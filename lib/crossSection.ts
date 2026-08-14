@@ -10,7 +10,7 @@ import * as THREE from 'three';
 
 export type SectionAxis = 'x' | 'y' | 'z';
 
-/** In index order, so a caller can map an axis onto a coordinate without a lookup table. */
+/** In index order, so `indexOf` maps an axis onto its coordinate in a `ModelBox` tuple. */
 export const SECTION_AXES: readonly SectionAxis[] = ['x', 'y', 'z'];
 
 export interface CrossSection {
