@@ -710,10 +710,10 @@ export default function PortalPage() {
   }, []);
 
   const renderFileViewer = () => {
-    if (filesLoading) {
+    if (loading || filesLoading) {
       return (
         <div className="flex items-center justify-center h-full">
-          <LoadingCube label="Loading files…" />
+          <LoadingCube label={loading ? 'Loading package…' : 'Loading files…'} />
         </div>
       );
     }
@@ -777,14 +777,6 @@ export default function PortalPage() {
     );
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <LoadingCube label="Loading package…" />
-      </div>
-    );
-  }
-
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
@@ -816,6 +808,7 @@ export default function PortalPage() {
           onSubmitVersion={
             canUpload ? () => setVersionDrawerOpen(true) : undefined
           }
+          loading={loading}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
@@ -852,7 +845,7 @@ export default function PortalPage() {
 
             {/* Markup tools float over the top of the viewport rather than taking a row above
                 it. Hidden while an attachment is open there — there is nothing to mark up. */}
-            {!viewportImage && (
+            {!loading && !viewportImage && (
               <DrawingTools
                 activeTool={activeTool}
                 onToolChange={setActiveTool}

@@ -4,7 +4,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
-import LoadingCube from '@/components/ui/LoadingCube';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
 
@@ -577,7 +576,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
           </p>
         ) : loading ? (
           <div className="flex items-center justify-center py-8">
-            <LoadingCube size={28} label="Loading comments…" />
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-stiko-primary border-t-transparent" />
           </div>
         ) : topLevelComments.length === 0 ? (
           <div className="text-center py-10">

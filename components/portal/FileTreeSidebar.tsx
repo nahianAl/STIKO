@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
+import { SkeletonBar } from '@/components/ui/Primitives';
 
 interface Version {
   id: string;
@@ -35,6 +36,8 @@ interface FileTreeSidebarProps {
   onToggleCollapse?: () => void;
   /** Opens the new-version drawer (2e). Absent when the viewer can't upload. */
   onSubmitVersion?: () => void;
+  /** True while versions are still being fetched — shows skeleton placeholders instead of the empty state. */
+  loading?: boolean;
 }
 
 interface FolderNode {
@@ -203,6 +206,7 @@ export default function FileTreeSidebar({
   collapsed,
   onToggleCollapse,
   onSubmitVersion,
+  loading,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
   const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
@@ -246,7 +250,14 @@ export default function FileTreeSidebar({
       {/* Versions — each card is a filled bar that expands to its own files/folders */}
       <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto">
         {versions.length === 0 ? (
-          <p className="text-[13px] text-stiko-faint py-2">Submit your first version to get started</p>
+          loading ? (
+            <div className="flex flex-col gap-2">
+              <SkeletonBar height={44} />
+              <SkeletonBar height={44} secondary />
+            </div>
+          ) : (
+            <p className="text-[13px] text-stiko-faint py-2">Submit your first version to get started</p>
+          )
         ) : (
           versions.map((version) => {
             const isSelected = version.id === selectedVersionId;
