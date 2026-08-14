@@ -25,21 +25,19 @@ interface AccessInfo {
  * The review-view top bar (06).
  *
  * Right side: the avatar stack — which is also the trigger for "Who can see
- * this" (4d) — then the primary "Submit new version", which opens the drawer
- * rather than navigating away (2e).
+ * this" (4d) — then Share.
+ *
+ * "Submit new version" used to live here too. It is now only in the version
+ * sidebar, next to the versions it creates. One entry point, not two.
  */
 export default function PortalTopBar({
   project,
   portal,
   portalId,
-  canUpload,
-  onSubmitVersion,
 }: {
   project: Project | null;
   portal: Portal | null;
   portalId: string;
-  canUpload: boolean;
-  onSubmitVersion: () => void;
 }) {
   const [info, setInfo] = useState<AccessInfo | null>(null);
   const [showShare, setShowShare] = useState(false);
@@ -100,9 +98,6 @@ export default function PortalTopBar({
           </Button>
         )}
 
-        {canUpload && (
-          <Button onClick={onSubmitVersion}>Submit new version</Button>
-        )}
       </div>
 
       <ShareModal

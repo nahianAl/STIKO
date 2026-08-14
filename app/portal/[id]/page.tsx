@@ -806,13 +806,9 @@ export default function PortalPage() {
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
-      <PortalTopBar
-        project={project}
-        portal={portal}
-        portalId={portalId}
-        canUpload={canUpload}
-        onSubmitVersion={() => setVersionDrawerOpen(true)}
-      />
+      {/* Submitting a version is the sidebar's job now — it sits next to the
+          versions it creates, and the top bar had the only other copy. */}
+      <PortalTopBar project={project} portal={portal} portalId={portalId} />
 
       {/* 3-Panel Layout */}
       <div className={`flex-1 grid gap-3 overflow-hidden min-h-0 ${

@@ -7,9 +7,16 @@ import React, { useEffect } from 'react';
  * 12px) rather than to the viewport edge, so the shell's gutter is preserved and
  * the package stays visibly mounted behind it.
  *
- * Stacking, per the note in 02: scrim at z-5, drawer at z-6, and the document
- * sheet underneath must not carry a positive z-index or it paints straight
- * through the scrim.
+ * Stacking: 02 originally put the scrim at z-5 and the drawer at z-6, on the
+ * rule that the content underneath carries no positive z-index. That rule did
+ * not survive contact with the review viewport, whose floating controls sit at
+ * z-20 and z-50 — they need to clear the viewer canvas, so they punched
+ * straight through the scrim and painted over the drawer's own footer.
+ *
+ * A drawer is a modal surface and belongs in the modal tier, where its peer
+ * Modal (z-60/61) already sits. It is one step below Modal, so a confirm opened
+ * from inside a drawer still wins, and above every page-level layer (the
+ * highest is the sticky Header at z-50).
  */
 export default function Drawer({
   isOpen,
@@ -42,7 +49,7 @@ export default function Drawer({
   return (
     <>
       <div
-        className="stiko-scrim fixed inset-0 z-[5]"
+        className="stiko-scrim fixed inset-0 z-[58]"
         onClick={onClose}
         aria-hidden
       />
@@ -50,7 +57,7 @@ export default function Drawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="fixed bottom-3 right-3 top-3 z-[6] flex flex-col overflow-hidden rounded-sheet bg-white shadow-stiko-drawer"
+        className="fixed bottom-3 right-3 top-3 z-[59] flex flex-col overflow-hidden rounded-sheet bg-white shadow-stiko-drawer"
         style={{ width }}
       >
         <header className="flex items-start justify-between border-b border-stiko-border px-[22px] py-[18px]">
