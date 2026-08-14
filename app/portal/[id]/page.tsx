@@ -11,9 +11,11 @@ import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
+import FocalLengthControl from '@/components/viewers/FocalLengthControl';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import type { Comment, FileRecord } from '@/lib/types';
+import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -198,6 +200,10 @@ export default function PortalPage() {
 
   // null hides the gizmo. Only ever set for a role that may transform.
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | null>(null);
+
+  // Session only: a lens is how you happen to be looking at something, not a property of
+  // the design, so it is deliberately not persisted the way the object transform is.
+  const [focalLength, setFocalLength] = useState(DEFAULT_FOCAL_LENGTH);
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
@@ -492,6 +498,7 @@ export default function PortalPage() {
     setPendingTag(null);
     setTagging(false);
     setTransformMode(null);
+    setFocalLength(DEFAULT_FOCAL_LENGTH);
   }, [selectedFileId]);
 
   const handleSelectVersion = (versionId: string) => {
@@ -662,6 +669,7 @@ export default function PortalPage() {
             onTransformChange={handleTransformChange}
             transform={selectedFile.transform}
             transformMode={canTransform ? transformMode : null}
+            focalLength={focalLength}
             onTransformCommit={handleTransformCommit}
             activeTool={activeTool}
             tagging={tagging}
@@ -781,6 +789,13 @@ export default function PortalPage() {
                 contentTransform={viewerSnapshot ? null : contentTransform}
                 pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
               />
+            )}
+
+            {/* Hidden during a markup session: the live viewer is replaced by a frozen
+                snapshot then, so this would sit on the drawing surface and adjust a camera
+                nobody is looking at. */}
+            {selectedFileId && is3DFile && !annotating && (
+              <FocalLengthControl value={focalLength} onChange={setFocalLength} />
             )}
 
             {annotating && !isPDFFile && (
