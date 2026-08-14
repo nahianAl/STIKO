@@ -13,6 +13,7 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
+import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import ViewGizmo from './ViewGizmo';
@@ -68,6 +69,8 @@ export interface ModelViewerInnerProps {
   /** Set to a mode to show the move/rotate gizmo. Null or absent hides it entirely. */
   transformMode?: 'translate' | 'rotate' | null;
   onTransformCommit?: (transform: ObjectTransform) => void;
+  /** Camera focal length in millimetres. Drives the field of view. */
+  focalLength?: number;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -333,6 +336,29 @@ function MeasureModel({
 }
 
 /**
+ * Drives the camera's field of view from a focal length in millimetres.
+ *
+ * Re-applied on resize as well as on change: three derives fov from the focal length AND the
+ * aspect ratio, so a fixed fov would make the number on the control stop describing what is
+ * on screen the moment the window changes shape.
+ *
+ * Rendered BEFORE FitCameraToModel on purpose. The fit reads `cam.fov` when its effect runs
+ * to work out how far back to sit, and React fires sibling effects in mount order — flip the
+ * two and every model gets framed with the wrong lens on first paint.
+ */
+function ApplyFocalLength({ focalLength }: { focalLength: number }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    cam.fov = fovForFocalLength(focalLength, size.width / size.height);
+    cam.updateProjectionMatrix();
+  }, [camera, focalLength, size.width, size.height]);
+
+  return null;
+}
+
+/**
  * Frames the camera on the measured model and sizes the clipping planes to it.
  *
  * Deliberately does NOT re-run on viewport resize — refitting there would throw away the
@@ -381,6 +407,7 @@ export default function ModelViewerInner({
   transform = IDENTITY_TRANSFORM,
   transformMode,
   onTransformCommit,
+  focalLength = DEFAULT_FOCAL_LENGTH,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
@@ -444,6 +471,7 @@ export default function ModelViewerInner({
               </group>
             </Center>
           </group>
+          <ApplyFocalLength focalLength={focalLength} />
           <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (

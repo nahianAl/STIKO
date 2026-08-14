@@ -31,6 +31,7 @@ interface ViewerContainerProps {
   transform?: ObjectTransform;
   transformMode?: 'translate' | 'rotate' | null;
   onTransformCommit?: (transform: ObjectTransform) => void;
+  focalLength?: number;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -61,7 +62,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, transform, transformMode, onTransformCommit,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, transform, transformMode, onTransformCommit, focalLength,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -119,7 +120,7 @@ export default function ViewerContainer({
       />
     );
   }
-  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} />;
+  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} />;
 
   return (
     <div className="flex h-full w-full items-center justify-center">
