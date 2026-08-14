@@ -793,8 +793,10 @@ export default function PortalPage() {
 
             {/* Hidden during a markup session: the live viewer is replaced by a frozen
                 snapshot then, so this would sit on the drawing surface and adjust a camera
-                nobody is looking at. */}
-            {selectedFileId && is3DFile && !annotating && (
+                nobody is looking at. Also hidden while an attachment/snapshot is open in the
+                viewport (viewportImage set): the live viewer is hidden behind it then too, so
+                the control would adjust a camera nobody is looking at there either. */}
+            {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <FocalLengthControl value={focalLength} onChange={setFocalLength} />
             )}
 
