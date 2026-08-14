@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
+import type { ObjectTransform } from '@/lib/objectTransform';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -27,6 +28,7 @@ interface ViewerContainerProps {
   worldPins?: WorldPin[];
   onPinPositionsUpdate?: (positions: Map<string, PinScreenPosition>) => void;
   onTransformChange?: (transform: ContentTransform) => void;
+  transform?: ObjectTransform;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -57,7 +59,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, transform,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -115,7 +117,7 @@ export default function ViewerContainer({
       />
     );
   }
-  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} />;
+  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} />;
 
   return (
     <div className="flex h-full w-full items-center justify-center">

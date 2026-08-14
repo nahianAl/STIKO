@@ -14,6 +14,7 @@ import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
+import { IDENTITY_TRANSFORM, type ObjectTransform } from '@/lib/objectTransform';
 import ViewGizmo from './ViewGizmo';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
@@ -59,6 +60,8 @@ export interface ModelViewerInnerProps {
   worldPins?: WorldPin[];
   onPinPositionsUpdate?: (positions: Map<string, PinScreenPosition>) => void;
   handleRef?: Ref<ModelViewerHandle>;
+  /** Where the object has been placed. Identity when absent. */
+  transform?: ObjectTransform;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -264,17 +267,33 @@ const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
  */
 function MeasureModel({
   targetRef,
+  transformRef,
   onMeasured,
 }: {
   targetRef: React.RefObject<THREE.Object3D>;
+  transformRef: React.RefObject<THREE.Object3D>;
   onMeasured: (bounds: ModelBounds) => void;
 }) {
   useEffect(() => {
     const target = targetRef.current;
-    if (!target) return;
+    const frame = transformRef.current;
+    if (!target || !frame) return;
 
-    target.updateWorldMatrix(true, true);
+    // Measure in frame S — the model as loaded and centred, before the user's placement.
+    // Applying the inverse afterwards would not do: inverting the world-space AABB of a
+    // rotated box inflates it. Zeroing the transform and restoring it is exact.
+    const position = frame.position.clone();
+    const quaternion = frame.quaternion.clone();
+    frame.position.set(0, 0, 0);
+    frame.quaternion.identity();
+    frame.updateWorldMatrix(true, true);
+
     const box = new THREE.Box3().setFromObject(target);
+
+    frame.position.copy(position);
+    frame.quaternion.copy(quaternion);
+    frame.updateWorldMatrix(true, true);
+
     if (box.isEmpty()) return;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
 
@@ -336,8 +355,10 @@ export default function ModelViewerInner({
   worldPins = [],
   onPinPositionsUpdate,
   handleRef,
+  transform = IDENTITY_TRANSFORM,
 }: ModelViewerInnerProps) {
   const modelRef = useRef<THREE.Group>(null);
+  const transformRef = useRef<THREE.Group>(null);
   const [bounds, setBounds] = useState<ModelBounds | null>(null);
 
   // Drop stale sizing the moment a different model is selected, so the ground and axes are
@@ -362,15 +383,24 @@ export default function ModelViewerInner({
           }
         >
           <SceneLighting />
-          {/* Deliberately NOT <Center top>: comment pins are stored in world space, so moving
-              the model would displace every pin saved before this change. The ground stack is
-              offset down to the model's base instead — same picture, no data break. */}
-          <Center>
-            <group ref={modelRef}>
-              <Model url={url} />
-            </group>
-          </Center>
-          <MeasureModel key={url} targetRef={modelRef} onMeasured={setBounds} />
+          {/* The transform group wraps <Center>, never the reverse: <Center> re-centres
+              whatever it contains, so a transform applied inside it would be measured and
+              cancelled out, and the object would spring back as it was dragged. */}
+          <group
+            ref={transformRef}
+            position={transform.position}
+            rotation={transform.rotation}
+          >
+            {/* Deliberately NOT <Center top>: comment pins are stored relative to the
+                model, so moving the model would displace every pin saved before this
+                change. The ground stack is offset down to the model's base instead. */}
+            <Center>
+              <group ref={modelRef}>
+                <Model url={url} />
+              </group>
+            </Center>
+          </group>
+          <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (
             // The ground stack is authored relative to the model's base; this puts that base
