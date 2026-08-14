@@ -16,6 +16,7 @@ import { framingForRadius } from '@/lib/cameraFraming';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import ViewGizmo from './ViewGizmo';
+import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
 import SceneLighting from './SceneLighting';
@@ -62,6 +63,9 @@ export interface ModelViewerInnerProps {
   handleRef?: Ref<ModelViewerHandle>;
   /** Where the object has been placed. Identity when absent. */
   transform?: ObjectTransform;
+  /** Set to a mode to show the move/rotate gizmo. Null or absent hides it entirely. */
+  transformMode?: 'translate' | 'rotate' | null;
+  onTransformCommit?: (transform: ObjectTransform) => void;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -358,6 +362,8 @@ export default function ModelViewerInner({
   onPinPositionsUpdate,
   handleRef,
   transform = IDENTITY_TRANSFORM,
+  transformMode,
+  onTransformCommit,
 }: ModelViewerInnerProps) {
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
@@ -422,6 +428,13 @@ export default function ModelViewerInner({
           />
         </Suspense>
         <OrbitControls makeDefault />
+        {transformMode && onTransformCommit && bounds && (
+          <TransformGizmo
+            targetRef={transformRef}
+            mode={transformMode}
+            onCommit={onTransformCommit}
+          />
+        )}
         <ViewGizmo />
         <CleanFrameRenderer handleRef={handleRef} />
       </Canvas>
