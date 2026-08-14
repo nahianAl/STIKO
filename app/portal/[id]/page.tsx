@@ -191,11 +191,19 @@ export default function PortalPage() {
   // An attachment/snapshot opened for full viewing in the center viewport
   const [viewportImage, setViewportImage] = useState<string | null>(null);
   const [annotating, setAnnotating] = useState(false);
-  // Index into composerFiles while marking up an attachment the user has picked
-  // but not yet posted. Null means the session is the ordinary one over the
-  // viewer. It decides three things: which surface draws, whether Done replaces
-  // or appends, and what the banner says.
-  const [annotatingAttachment, setAnnotatingAttachment] = useState<number | null>(null);
+  // Always mirrors `annotating`, but read fresh (not closed over) so async
+  // callbacks — e.g. the FileReader below — can check "is a session already
+  // running" at the instant they're about to commit, not at the instant they
+  // were created.
+  const annotatingRef = useRef(annotating);
+  annotatingRef.current = annotating;
+  // The exact File being marked up while annotating an attachment the user has
+  // picked but not yet posted. Null means the session is the ordinary one over
+  // the viewer. Identity (not position) on purpose: the composer's remove
+  // button can reorder/shrink composerFiles mid-session, and an index would
+  // then point at a different, unrelated file. Decides three things: which
+  // surface draws, whether Done replaces or appends, and what the banner says.
+  const [annotatingFile, setAnnotatingFile] = useState<File | null>(null);
   const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const modelViewerRef = useRef<ModelViewerHandle>(null);
   const viewerAreaRef = useRef<HTMLDivElement>(null);
@@ -485,12 +493,19 @@ export default function PortalPage() {
   // rather than a screenshot of the viewer.
   const handleAnnotateAttachment = useCallback(
     (index: number) => {
+      // Cheap early exit — avoids reading the file at all for the common case.
+      if (annotatingRef.current) return;
       const file = composerFiles[index];
       if (!file || !file.type.startsWith('image/')) return;
       const reader = new FileReader();
       reader.onload = () => {
+        // Re-check here, not just above: readAsDataURL is async, so a second
+        // click (another thumbnail, or a draw tool) can land while this read
+        // is in flight. The state that matters is whatever is true right now,
+        // at commit time — not whatever was true when this callback started.
+        if (annotatingRef.current) return;
         setViewerSnapshot(reader.result as string);
-        setAnnotatingAttachment(index);
+        setAnnotatingFile(file);
         setAnnotating(true);
         setActiveTool('pointer');
       };
@@ -530,7 +545,7 @@ export default function PortalPage() {
     setViewerSnapshot(null);
     setViewportImage(null);
     setAnnotating(false);
-    setAnnotatingAttachment(null);
+    setAnnotatingFile(null);
     setActiveTool('pointer');
     setContentTransform(null);
     setComposerText('');
@@ -608,7 +623,7 @@ export default function PortalPage() {
 
   const endSession = () => {
     setAnnotating(false);
-    setAnnotatingAttachment(null);
+    setAnnotatingFile(null);
     setViewerSnapshot(null);
     annotationCanvasRef.current?.clear();
     pdfKonvaRef.current?.clearDrawings();
@@ -621,24 +636,27 @@ export default function PortalPage() {
     `${original.replace(/\.[^./]+$/, '')}-markup.jpg`;
 
   const handleAnnotationDone = async () => {
-    const index = annotatingAttachment;
+    const original = annotatingFile;
     try {
       // An attachment session always draws on AnnotationCanvas, whatever the
       // selected package file is — the PDF surface belongs to the PDF.
       const surface =
-        isPDFFile && index === null ? pdfKonvaRef.current : annotationCanvasRef.current;
+        isPDFFile && original === null ? pdfKonvaRef.current : annotationCanvasRef.current;
       if (surface?.hasObjects()) {
         const dataUrl = surface.captureSnapshot();
         if (dataUrl) {
-          const original = index !== null ? composerFiles[index] : null;
           const file = await dataUrlToFile(
             dataUrl,
             original ? markupName(original.name) : `annotation-${Date.now()}.jpg`
           );
           setComposerFiles((prev) => {
-            // Appending is also the fallback when the attachment was removed
-            // mid-session and the index no longer points at anything.
-            if (index === null || index >= prev.length) return [...prev, file];
+            // Look the File up by identity, not a remembered position: the
+            // composer's remove button is live throughout the session and can
+            // reorder or shrink this array. Appending is also the fallback
+            // when the attachment was removed mid-session — the capture must
+            // never be silently dropped, and must never land on a bystander.
+            const index = original ? prev.indexOf(original) : -1;
+            if (index === -1) return [...prev, file];
             return prev.map((f, i) => (i === index ? file : f));
           });
         }
@@ -666,7 +684,11 @@ export default function PortalPage() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const surface = isPDFFile ? pdfKonvaRef.current : annotationCanvasRef.current;
+    // Same rule as the other surface-selection gates: an attachment session
+    // always draws on AnnotationCanvas, even when the selected package file
+    // is a PDF and PDFKonvaViewer is what's normally active.
+    const surface =
+      isPDFFile && annotatingFile === null ? pdfKonvaRef.current : annotationCanvasRef.current;
     surface?.insertImage(file);
     setActiveTool('pointer');
   };
@@ -711,7 +733,7 @@ export default function PortalPage() {
     // Only swap the live viewer out once a snapshot actually replaced it — if the capture
     // failed there is nothing behind the annotation surface, and hiding it blanks the viewport.
     // An attachment session always has a background, and always hides the viewer.
-    const annotatingOnCanvas = annotating && (!isPDFFile || annotatingAttachment !== null);
+    const annotatingOnCanvas = annotating && (!isPDFFile || annotatingFile !== null);
     const isHidden = (annotatingOnCanvas && !!viewerSnapshot) || !!viewportImage;
 
     return (
@@ -737,7 +759,7 @@ export default function PortalPage() {
             onTransformCommit={handleTransformCommit}
             activeTool={activeTool}
             tagging={tagging}
-            annotating={annotating && annotatingAttachment === null}
+            annotating={annotating && annotatingFile === null}
             color={drawingColor}
             strokeWidth={drawingStrokeWidth}
             fileId={selectedFileId!}
@@ -803,8 +825,8 @@ export default function PortalPage() {
             <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-700 flex-shrink-0">
               <span className="flex items-center gap-2">
                 <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-                {annotatingAttachment !== null
-                  ? `Marking up ${composerFiles[annotatingAttachment]?.name ?? 'attachment'} — Done replaces the attachment`
+                {annotatingFile !== null
+                  ? `Marking up ${annotatingFile.name} — Done replaces the attachment`
                   : 'Annotating — draw on the file, then attach it to a comment'}
               </span>
               <span className="flex items-center gap-1.5">
@@ -892,7 +914,7 @@ export default function PortalPage() {
               </div>
             )}
 
-            {annotating && (!isPDFFile || annotatingAttachment !== null) && (
+            {annotating && (!isPDFFile || annotatingFile !== null) && (
               <AnnotationCanvas
                 backgroundDataUrl={viewerSnapshot}
                 activeTool={activeTool as AnnTool}
@@ -943,7 +965,7 @@ export default function PortalPage() {
               onTextChange={setComposerText}
               pendingFiles={composerFiles}
               onFilesChange={setComposerFiles}
-              onAnnotateFile={handleAnnotateAttachment}
+              onAnnotateFile={annotating ? undefined : handleAnnotateAttachment}
               tagging={tagging}
               hasTag={!!pendingTag}
               onClearTag={() => setPendingTag(null)}
