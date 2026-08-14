@@ -57,17 +57,27 @@ Three deliberate changes from the source snippet:
    animation and holds the static tilted pose. A continuously tumbling 3D
    object is exactly the case that query exists for.
 
-### Call sites replaced
+### Call sites
+
+**Amended after review of the built feature.** The cube belongs to the review
+viewport and nowhere else — it is that panel's signature, not a general-purpose
+spinner. Two of the four originally planned call sites were withdrawn.
 
 | File | What is loading | Size |
 | --- | --- | --- |
-| `app/portal/[id]/page.tsx` (~L714) | portal first load | 44 |
-| `app/portal/[id]/page.tsx` (~L649) | file list for a version | 44 |
-| `components/viewers/ViewerContainer.tsx` (~L98) | presigned URL fetch | 36 |
-| `components/portal/CommentsPanel.tsx` (~L579) | comments for a file | 28 |
+| `app/portal/[id]/page.tsx` | first load, and the file list for a version | 44 |
+| `components/viewers/ViewerContainer.tsx` | presigned URL fetch | 36 |
+
+The first load no longer paints a bare indicator on a blank screen. The
+three-panel shell renders immediately with the cube in the empty viewport,
+which means the sidebar must not assert *"Submit your first version to get
+started"* before it knows: it takes a `loading` prop and shows two skeleton
+bars shaped like version cards instead. `DrawingTools` is gated on `!loading`
+so a live toolbar never sits over the cube.
 
 ### Explicitly not replaced
 
+- The comments panel keeps its small ring. It is a side panel, not the viewport.
 - The 16px rings inside buttons (`CommentsPanel.tsx` send button, upload hint).
   A tumbling cube inside a 32px button is illegible.
 - The home and project skeletons.
