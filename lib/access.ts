@@ -1,4 +1,8 @@
 import { sql } from '@/lib/db';
+import { capabilitiesFor, type Capabilities, type EffectiveRole, type PackageRole, type ProjectRole } from '@/lib/capabilities';
+
+export { capabilitiesFor };
+export type { Capabilities, EffectiveRole, PackageRole, ProjectRole };
 
 /**
  * Access control — stiko_handoff/01.
@@ -15,17 +19,10 @@ import { sql } from '@/lib/db';
  *     existence of anyone on them.
  */
 
-export type PackageRole = 'viewer' | 'commenter' | 'uploader';
-export type ProjectRole = 'owner' | 'coordinator';
-export type EffectiveRole = PackageRole | ProjectRole;
-
-export interface Access {
+export interface Access extends Capabilities {
   role: EffectiveRole;
   /** Project members can see the project and all its packages. */
   isProjectMember: boolean;
-  canComment: boolean;
-  canUpload: boolean;
-  canManagePeople: boolean;
 }
 
 /**
@@ -54,35 +51,17 @@ export async function getPackageAccess(
   if (!row) return null;
 
   if (row.ownerId === userId) {
-    return {
-      role: 'owner',
-      isProjectMember: true,
-      canComment: true,
-      canUpload: true,
-      canManagePeople: true,
-    };
+    return { role: 'owner', isProjectMember: true, ...capabilitiesFor('owner') };
   }
 
   if (row.memberRole === 'coordinator') {
-    return {
-      role: 'coordinator',
-      isProjectMember: true,
-      canComment: true,
-      canUpload: true,
-      canManagePeople: true,
-    };
+    return { role: 'coordinator', isProjectMember: true, ...capabilitiesFor('coordinator') };
   }
 
   const guest = row.guestRole as PackageRole | null;
   if (!guest) return null;
 
-  return {
-    role: guest,
-    isProjectMember: false,
-    canComment: guest === 'commenter' || guest === 'uploader',
-    canUpload: guest === 'uploader',
-    canManagePeople: false,
-  };
+  return { role: guest, isProjectMember: false, ...capabilitiesFor(guest) };
 }
 
 /** Whether this user can see the project itself (members only, never guests). */
