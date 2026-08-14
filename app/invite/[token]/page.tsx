@@ -75,7 +75,15 @@ export default function InvitePage() {
     if (res.ok) {
       router.push(data.redirectPath);
     } else {
-      setError(data.error ?? 'Could not accept this invitation');
+      // The route answers with codes, not sentences. Showing "used" to a person
+      // standing in front of a dead link tells them nothing.
+      const SAID: Record<string, string> = {
+        used: 'This invitation has already been used. Ask for a new one.',
+        expired: 'This invitation has expired. Ask for a new one.',
+        revoked: 'This invitation was revoked.',
+        not_found: 'This invitation no longer exists.',
+      };
+      setError(SAID[data.error] ?? 'Could not accept this invitation');
       setAccepting(false);
     }
   };

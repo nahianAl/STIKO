@@ -116,6 +116,26 @@ export async function POST(
     return NextResponse.json({ error: 'expired' }, { status: 410 });
   }
 
+  // Single use has to be enforced HERE, not just recorded. used_at was written
+  // on acceptance but never read as a gate, so an addressed invite could be
+  // forwarded and redeemed by anyone — and once used it vanished from the
+  // pending list and from the email-keyed revoke, leaving a live link with no
+  // handle to kill it. A multi_use token is a share link and is exempt by
+  // design; it ends by expiring or being revoked.
+  //
+  // The person who already accepted is let through rather than shown an error:
+  // they are a participant, and the page they are standing on has no other way
+  // forward.
+  if (invite.used_at && !invite.multi_use) {
+    const already = await sql`
+      SELECT 1 FROM participants
+      WHERE portal_id = ${invite.portal_id} AND user_id = ${session.user.id}
+    `;
+    if (already.length === 0) {
+      return NextResponse.json({ error: 'used' }, { status: 410 });
+    }
+  }
+
   const joined = await sql`
     INSERT INTO participants (id, portal_id, user_id, role)
     VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role})

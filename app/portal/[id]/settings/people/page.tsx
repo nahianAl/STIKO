@@ -32,7 +32,8 @@ interface Person {
 }
 
 interface Pending {
-  token: string;
+  /** Only sent for a share link — an addressed invite is keyed on its email. */
+  token: string | null;
   /** Null for a share link, which was addressed to nobody. */
   email: string | null;
   multiUse: boolean;
@@ -120,7 +121,7 @@ export default function PackagePeople() {
   // on its recipient, like every other row in the people matrix. A share link
   // has no recipient, so the token is the only thing that identifies it.
   const revoke = async (p: Pending) => {
-    if (p.email) {
+    if (p.email || !p.token) {
       await fetch('/api/participants/role', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,11 +269,11 @@ export default function PackagePeople() {
                   (new Date(p.expiresAt).getTime() - Date.now()) / 3_600_000;
                 return (
                   <div
-                    key={p.token}
+                    key={p.token ?? p.email ?? p.createdAt}
                     className="flex items-center gap-3 border-b border-stiko-border py-[10px] last:border-0"
                   >
                     <Avatar
-                      id={p.email ?? p.token}
+                      id={p.email ?? p.token ?? p.createdAt}
                       name={p.email ?? 'Link'}
                       size={32}
                       pending

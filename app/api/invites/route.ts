@@ -24,8 +24,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  // The token is returned only for a share link, which has no email and so has
+  // nothing else to identify or revoke it by. An addressed invite is keyed on
+  // its recipient everywhere, so handing back its token would put a redeemable
+  // credential for someone else's invitation into a browser and any request log
+  // that sees this response, for no gain.
   const rows = await sql`
-    SELECT token, email, role, multi_use AS "multiUse",
+    SELECT CASE WHEN multi_use THEN token END AS token,
+           email, role, multi_use AS "multiUse",
            created_at AS "createdAt", expires_at AS "expiresAt"
     FROM invite_tokens
     WHERE portal_id = ${portalId}

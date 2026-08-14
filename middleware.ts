@@ -5,6 +5,15 @@ const PUBLIC_PATHS = [
   '/login',
   '/signup',
   '/invite',
+  // The invite PAGE was public but the route it reads was not, so a logged-out
+  // visitor's fetch was redirected to /login, came back as HTML, failed to
+  // parse, and every invite rendered as "nothing here". Being invited is by
+  // definition something you do before you have an account.
+  //
+  // Safe to open: the token is an unguessable UUID and is the only credential
+  // the GET accepts, and the POST that actually joins you to the package calls
+  // auth() itself and 401s without a session.
+  '/api/invite',
   '/api/auth',
   '/api/conversions/webhook',
   '/api/files',
@@ -12,16 +21,9 @@ const PUBLIC_PATHS = [
   '/api/snapshots',
 ];
 
-// Paths that require auth
-const PROTECTED_PATHS = [
-  '/',
-  '/project',
-  '/api/projects',
-  '/api/portals',
-  '/api/versions',
-  '/api/participants',
-  '/api/invite',
-];
+// There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed
+// /api/invite was protected — which is exactly the bug above, written down and
+// believed. Everything not matched below requires auth; that is the rule.
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;

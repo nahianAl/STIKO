@@ -37,11 +37,14 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
     emailValue: string,
     role: Role
   ): Promise<{ link: string; emailDelivered: boolean } | null> => {
+    // No recipient means a share link, and the route wants that said out loud
+    // rather than inferred from the empty field.
+    const shareLink = !emailValue;
     try {
       const res = await fetch('/api/participants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portalId, email: emailValue, role }),
+        body: JSON.stringify({ portalId, email: emailValue, role, shareLink }),
       });
       if (!res.ok) return null;
       const { token, emailDelivered } = await res.json();

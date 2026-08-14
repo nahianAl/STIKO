@@ -54,16 +54,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { portalId, email, role, note } = await request.json();
+  const { portalId, email, role, note, shareLink } = await request.json();
 
-  // A blank email is a share link, not a malformed invitation.
-  const recipient =
+  // Asked for explicitly. Inferring "mint a public standing-access link" from a
+  // missing email would mean any caller that dropped the field — a client
+  // regression, an `email: undefined`, a bulk import — silently got one instead
+  // of the 400 it used to get.
+  const isShareLink = shareLink === true;
+  const typed =
     typeof email === 'string' && email.trim() ? email.trim() : null;
-  const isShareLink = recipient === null;
+  // One value decides all three downstream uses — who the row is addressed to,
+  // who gets emailed, and whether anything is emailed at all — so they cannot
+  // disagree. A share link is addressed to nobody even if an email came along
+  // with the request.
+  const recipient = isShareLink ? null : typed;
 
   if (!portalId || !role) {
     return NextResponse.json(
       { error: 'portalId and role are required' },
+      { status: 400 }
+    );
+  }
+  if (!isShareLink && !recipient) {
+    return NextResponse.json(
+      { error: 'email is required unless shareLink is true' },
       { status: 400 }
     );
   }
@@ -102,7 +116,7 @@ export async function POST(request: NextRequest) {
   // Nothing to send for a share link — there is no recipient. Reporting
   // emailDelivered: false here is not a failure, and the UI must not present it
   // as one; it simply shows the link to copy.
-  const result = isShareLink
+  const result = !recipient
     ? { delivered: false }
     : await sendEmail({
         to: recipient,
