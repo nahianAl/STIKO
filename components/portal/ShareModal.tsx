@@ -16,16 +16,27 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Who the last invite actually reached, and whether mail really went out.
+  // The server sends the invitation itself; this modal used to throw that
+  // answer away and tell people to copy a link the recipient had already been
+  // emailed. `delivered` is false when no mail provider is configured, and the
+  // copy-the-link fallback is the honest thing to show then.
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [delivered, setDelivered] = useState(false);
 
   // Reset the form each time the modal closes so a stale link/email doesn't reappear on reopen.
   useEffect(() => {
     if (!isOpen) {
       setEmail(''); setInviteLink(null); setShareLink(null);
       setError(null); setBusy(null); setCopied(null);
+      setSentTo(null); setDelivered(false);
     }
   }, [isOpen]);
 
-  const createInvite = async (emailValue: string, role: Role): Promise<string | null> => {
+  const createInvite = async (
+    emailValue: string,
+    role: Role
+  ): Promise<{ link: string; emailDelivered: boolean } | null> => {
     try {
       const res = await fetch('/api/participants', {
         method: 'POST',
@@ -33,19 +44,30 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
         body: JSON.stringify({ portalId, email: emailValue, role }),
       });
       if (!res.ok) return null;
-      const { token } = await res.json();
-      return `${window.location.origin}/invite/${token}`;
+      const { token, emailDelivered } = await res.json();
+      return {
+        link: `${window.location.origin}/invite/${token}`,
+        emailDelivered: Boolean(emailDelivered),
+      };
     } catch {
       return null;
     }
   };
 
   const handleInvite = async () => {
-    if (!email.trim() || busy) return;
+    const recipient = email.trim();
+    if (!recipient || busy) return;
     setBusy('invite'); setError(null);
     try {
-      const link = await createInvite(email.trim(), inviteRole);
-      if (link) setInviteLink(link); else setError('Could not create the invite. Please try again.');
+      const result = await createInvite(recipient, inviteRole);
+      if (result) {
+        setInviteLink(result.link);
+        setDelivered(result.emailDelivered);
+        setSentTo(recipient);
+        setEmail('');
+      } else {
+        setError('Could not create the invite. Please try again.');
+      }
     } finally { setBusy(null); }
   };
 
@@ -53,8 +75,9 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
     if (busy) return;
     setBusy('link'); setError(null);
     try {
-      const link = await createInvite('', linkRole);
-      if (link) setShareLink(link); else setError('Could not create the link. Please try again.');
+      const result = await createInvite('', linkRole);
+      if (result) setShareLink(result.link);
+      else setError('Could not create the link. Please try again.');
     } finally { setBusy(null); }
   };
 
@@ -90,11 +113,28 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
             <button onClick={handleInvite} disabled={!email.trim() || busy === 'invite'} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
-              {busy === 'invite' ? '…' : 'Create'}
+              {busy === 'invite' ? '…' : 'Send'}
             </button>
           </div>
+
+          {sentTo && delivered && (
+            <div className="mt-2 rounded-lg px-2.5 py-2 text-[12px] font-semibold" style={{ background: '#EDFFDA', color: '#4B7A28' }}>
+              Invite emailed to {sentTo}
+            </div>
+          )}
+          {sentTo && !delivered && (
+            <div className="mt-2 rounded-lg px-2.5 py-2 text-[12px] font-semibold" style={{ background: '#FFFCCE', color: '#7A5E00' }}>
+              Invite created, but we couldn’t email it — send them this link instead.
+            </div>
+          )}
+
           {inviteLink && linkRow(inviteLink, 'invite')}
-          <p className="mt-1.5 text-[11px] text-stiko-faint">An invite link is generated — copy and send it to them.</p>
+
+          <p className="mt-1.5 text-[11px] text-stiko-faint">
+            {sentTo && delivered
+              ? 'They can use the link above too — it’s the same invitation.'
+              : 'We email them the invite link. It expires in 14 days.'}
+          </p>
         </div>
 
         <div className="h-px bg-stiko-border" />
