@@ -48,15 +48,26 @@ test('world and model conversions round-trip under a combined transform', () => 
   }
 });
 
-test('an Euler rotation survives the quaternion round-trip the gizmo performs', () => {
-  // The gizmo reads back a quaternion and converts it to Euler XYZ before saving; the
-  // viewer converts those stored angles back to a rotation. If writer and reader ever
-  // disagree on the order, orientation is silently corrupted — it looks like a bad
-  // model rather than a bug. Emulating that round-trip here makes it fail loudly.
-  const rotation = [0.4, -0.9, 1.3];
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation, 'XYZ'));
-  const back = new THREE.Euler().setFromQuaternion(q, 'XYZ');
-  close([back.x, back.y, back.z], rotation, 'euler round trip');
+test('the module composes Euler angles in XYZ order, not some other order', () => {
+  // The reference is built from explicit per-axis matrices, NOT from a THREE.Euler, so this
+  // is an independent oracle rather than a restatement of the implementation. Angles about
+  // all three axes are required: a single-axis rotation is identical under every ordering
+  // and cannot discriminate.
+  const rotation = [Math.PI / 2, Math.PI / 2, 0.7];
+  const [rx, ry, rz] = rotation;
+  const reference = new THREE.Matrix4()
+    .makeRotationX(rx)
+    .multiply(new THREE.Matrix4().makeRotationY(ry))
+    .multiply(new THREE.Matrix4().makeRotationZ(rz));
+
+  const point = [0.3, -0.7, 1.1];
+  const expected = new THREE.Vector3(...point).applyMatrix4(reference);
+
+  close(
+    modelToWorld(point, { position: [0, 0, 0], rotation }),
+    [expected.x, expected.y, expected.z],
+    'euler order drifted from XYZ',
+  );
 });
 
 test('validation accepts a well-formed transform', () => {
