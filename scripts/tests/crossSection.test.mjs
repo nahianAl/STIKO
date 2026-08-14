@@ -28,6 +28,20 @@ test('flipping swaps exactly which half survives', () => {
   }
 });
 
+test('an off-centre cut proves the flip negates the cut itself, not just which side is kept', () => {
+  // At offset 0.5 the cut coordinate is 0, and -0 === 0, so a flip that forgot to negate the
+  // plane's constant would still pass every centred assertion above — +cut and -cut are the
+  // same number there. Only an off-centre cut, where the coordinate is nonzero, can catch that.
+  const section = { axis: 'x', offset: 0.75, flipped: false };
+  const plane = planeForSection(section, BOX); // cuts at x = 0.5, keeps x <= 0.5
+  assert.equal(kept(plane, [0.4, 0, 0]), true);
+  assert.equal(kept(plane, [0.6, 0, 0]), false);
+
+  const flipped = planeForSection({ ...section, flipped: true }, BOX); // keeps x >= 0.5
+  assert.equal(kept(flipped, [0.4, 0, 0]), false);
+  assert.equal(kept(flipped, [0.6, 0, 0]), true);
+});
+
 test('the offset extremes keep everything and nothing', () => {
   const all = planeForSection({ axis: 'x', offset: 1, flipped: false }, BOX);
   const none = planeForSection({ axis: 'x', offset: 0, flipped: false }, BOX);
