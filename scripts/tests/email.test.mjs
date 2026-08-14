@@ -12,7 +12,7 @@ const BASE = {
 test('a note is quoted under a "What changed" heading', () => {
   const mail = newVersionEmail({ ...BASE, changelog: 'Shear tabs added at grid line 4' });
 
-  assert.match(mail.body, /What changed:/);
+  assert.match(mail.body, /\n\nWhat changed:/);
   assert.match(mail.body, /"Shear tabs added at grid line 4"/);
   assert.match(mail.body, /Review it here: https:\/\/stiko\.example\/portal\/abc/);
 });
