@@ -47,9 +47,11 @@ export interface ModelBounds {
 
 export interface ModelViewerHandle {
   /**
-   * Re-renders the model scene alone, without the gizmo HUD drei layers on top.
-   * Call immediately before reading pixels off the canvas — the next animation frame
-   * restores the normal composite.
+   * Re-renders the model scene alone for a snapshot: the navigation cube lives in a separate
+   * HUD scene and is excluded automatically, and anything in the main scene marked
+   * `userData.excludeFromSnapshot` — the transform handles — is hidden for the render.
+   * Call immediately before reading pixels off the canvas; the next animation frame restores
+   * the normal composite.
    */
   renderCleanFrame: () => void;
 }
@@ -252,7 +254,22 @@ function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> 
   useImperativeHandle(
     handleRef,
     () => ({
-      renderCleanFrame: () => gl.render(scene, camera),
+      renderCleanFrame: () => {
+        // Viewer chrome that lives in the main scene rather than a HUD layer — currently the
+        // transform handles — must not appear in the captured snapshot.
+        const hidden: THREE.Object3D[] = [];
+        scene.traverse((object) => {
+          if (object.userData?.excludeFromSnapshot && object.visible) {
+            object.visible = false;
+            hidden.push(object);
+          }
+        });
+        try {
+          gl.render(scene, camera);
+        } finally {
+          for (const object of hidden) object.visible = true;
+        }
+      },
     }),
     [gl, scene, camera],
   );
