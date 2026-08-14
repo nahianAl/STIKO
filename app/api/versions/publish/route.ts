@@ -13,8 +13,9 @@ import { appBaseUrl } from '@/lib/appUrl';
  * only once, with every file already registered. A partial upload never
  * publishes, because the client only calls this after all files land.
  *
- * The changelog is required (2e). Without it reviewers re-review everything,
- * which is the single biggest waste in the current product.
+ * The changelog was required until 2026-08-14 and is now optional. What is
+ * still enforced is that the version has files: a note is a courtesy, an empty
+ * version is a bug reviewers have to chase.
  */
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -24,12 +25,10 @@ export async function POST(request: NextRequest) {
 
   const { versionId, changelog, notify = true } = await request.json();
 
-  if (typeof changelog !== 'string' || !changelog.trim()) {
-    return NextResponse.json(
-      { error: 'A "what changed" note is required' },
-      { status: 400 }
-    );
-  }
+  // One representation of "no note" — NULL. Every display site already guards
+  // on null, so an empty string would be a second, unguarded one.
+  const note =
+    typeof changelog === 'string' && changelog.trim() ? changelog.trim() : null;
 
   const versionRows = await sql`
     SELECT portal_id AS "portalId", version_number AS "versionNumber",
@@ -65,7 +64,7 @@ export async function POST(request: NextRequest) {
 
   await sql`
     UPDATE versions
-    SET published_at = NOW(), changelog = ${changelog.trim()}
+    SET published_at = NOW(), changelog = ${note}
     WHERE id = ${versionId}
   `;
 
@@ -99,7 +98,7 @@ export async function POST(request: NextRequest) {
           ${uuidv4()}, ${r.id}, 'new_version', ${version.portalId},
           ${session.user.id},
           ${`Version ${version.versionNumber} published in ${packageName}`},
-          ${changelog.trim()}, ${link}
+          ${note}, ${link}
         )
       `;
 
@@ -123,7 +122,7 @@ export async function POST(request: NextRequest) {
             publisherName: session.user.name ?? 'Someone',
             packageName,
             versionNumber: Number(version.versionNumber),
-            changelog: changelog.trim(),
+            changelog: note,
             link,
           }),
         });

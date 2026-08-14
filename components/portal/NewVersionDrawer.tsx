@@ -88,11 +88,9 @@ export function NewVersionDrawer({
   const publish = async () => {
     setError(null);
 
-    // The changelog is not optional. Without it reviewers re-review everything.
-    if (!changelog.trim()) {
-      setError('Tell your reviewers what changed — this one is required.');
-      return;
-    }
+    // The note is optional: a self-evident change, or a publish under time
+    // pressure, should not be blocked on prose. Files are still required —
+    // an empty version is the half-version reviewers must never receive.
     if (files.length === 0) {
       setError('Add at least one file.');
       return;
@@ -134,7 +132,11 @@ export function NewVersionDrawer({
     const res = await fetch('/api/versions/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ versionId, changelog: changelog.trim(), notify }),
+      body: JSON.stringify({
+        versionId,
+        changelog: changelog.trim() || null,
+        notify,
+      }),
     });
 
     if (!res.ok) {
@@ -196,7 +198,7 @@ export function NewVersionDrawer({
           />
         )}
 
-        <Field label="What changed" hint="required">
+        <Field label="What changed" hint="optional">
           <Textarea
             value={changelog}
             onChange={(e) => setChangelog(e.target.value)}
