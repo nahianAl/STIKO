@@ -240,6 +240,13 @@ export default function PortalPage() {
     return ext === 'pdf';
   }, [selectedFile]);
 
+  // Which surface a markup session draws on. A PDF draws directly on its own
+  // PDFKonvaViewer surface — except when the session is marking up a picked-but-not-
+  // posted attachment, which is never the PDF being reviewed and so always draws on
+  // AnnotationCanvas instead. Every other file type always draws on AnnotationCanvas.
+  // Single source of truth for a rule that used to be hand-written at five call sites.
+  const drawsOnCanvas = !isPDFFile || annotatingFile !== null;
+
   const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
 
   // Live preview: include the not-yet-posted tag among the pins so the user sees exactly where it lands.
@@ -504,6 +511,10 @@ export default function PortalPage() {
         // is in flight. The state that matters is whatever is true right now,
         // at commit time — not whatever was true when this callback started.
         if (annotatingRef.current) return;
+        // An open attachment/snapshot (viewportImage) fills the viewport at a higher
+        // z-index than AnnotationCanvas and has no session of its own to clear it —
+        // without this the session starts hidden behind it, with no visible tools.
+        setViewportImage(null);
         setViewerSnapshot(reader.result as string);
         setAnnotatingFile(file);
         setAnnotating(true);
@@ -638,27 +649,39 @@ export default function PortalPage() {
   const handleAnnotationDone = async () => {
     const original = annotatingFile;
     try {
-      // An attachment session always draws on AnnotationCanvas, whatever the
-      // selected package file is — the PDF surface belongs to the PDF.
-      const surface =
-        isPDFFile && original === null ? pdfKonvaRef.current : annotationCanvasRef.current;
-      if (surface?.hasObjects()) {
-        const dataUrl = surface.captureSnapshot();
-        if (dataUrl) {
-          const file = await dataUrlToFile(
-            dataUrl,
-            original ? markupName(original.name) : `annotation-${Date.now()}.jpg`
-          );
-          setComposerFiles((prev) => {
-            // Look the File up by identity, not a remembered position: the
-            // composer's remove button is live throughout the session and can
-            // reorder or shrink this array. Appending is also the fallback
-            // when the attachment was removed mid-session — the capture must
-            // never be silently dropped, and must never land on a bystander.
-            const index = original ? prev.indexOf(original) : -1;
-            if (index === -1) return [...prev, file];
-            return prev.map((f, i) => (i === index ? file : f));
-          });
+      if (original !== null) {
+        // Attachment session: the surface is always AnnotationCanvas (never the union —
+        // an attachment is never the PDF being reviewed). Capture at the background
+        // image's own resolution, cropped to its fitted region: the whole-stage capture
+        // the ordinary session below uses would letterbox and resample the attachment
+        // Done is about to replace.
+        const surface = annotationCanvasRef.current;
+        if (surface?.hasObjects()) {
+          const dataUrl = surface.captureSnapshot({ native: true });
+          if (dataUrl) {
+            const file = await dataUrlToFile(dataUrl, markupName(original.name));
+            setComposerFiles((prev) => {
+              // Look the File up by identity, not a remembered position: the
+              // composer's remove button is live throughout the session and can
+              // reorder or shrink this array. Appending is also the fallback
+              // when the attachment was removed mid-session — the capture must
+              // never be silently dropped, and must never land on a bystander.
+              const index = prev.indexOf(original);
+              if (index === -1) return [...prev, file];
+              return prev.map((f, i) => (i === index ? file : f));
+            });
+          }
+        }
+      } else {
+        // Ordinary session: PDF draws directly on its own surface; everything else
+        // draws on AnnotationCanvas over a viewer-snapshot background.
+        const surface = drawsOnCanvas ? annotationCanvasRef.current : pdfKonvaRef.current;
+        if (surface?.hasObjects()) {
+          const dataUrl = surface.captureSnapshot();
+          if (dataUrl) {
+            const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
+            setComposerFiles((prev) => [...prev, file]);
+          }
         }
       }
     } catch (e) {
@@ -687,8 +710,7 @@ export default function PortalPage() {
     // Same rule as the other surface-selection gates: an attachment session
     // always draws on AnnotationCanvas, even when the selected package file
     // is a PDF and PDFKonvaViewer is what's normally active.
-    const surface =
-      isPDFFile && annotatingFile === null ? pdfKonvaRef.current : annotationCanvasRef.current;
+    const surface = drawsOnCanvas ? annotationCanvasRef.current : pdfKonvaRef.current;
     surface?.insertImage(file);
     setActiveTool('pointer');
   };
@@ -733,7 +755,7 @@ export default function PortalPage() {
     // Only swap the live viewer out once a snapshot actually replaced it — if the capture
     // failed there is nothing behind the annotation surface, and hiding it blanks the viewport.
     // An attachment session always has a background, and always hides the viewer.
-    const annotatingOnCanvas = annotating && (!isPDFFile || annotatingFile !== null);
+    const annotatingOnCanvas = annotating && drawsOnCanvas;
     const isHidden = (annotatingOnCanvas && !!viewerSnapshot) || !!viewportImage;
 
     return (
@@ -759,7 +781,11 @@ export default function PortalPage() {
             onTransformCommit={handleTransformCommit}
             activeTool={activeTool}
             tagging={tagging}
-            annotating={annotating && annotatingFile === null}
+            // ViewerContainer only forwards this to PDFKonvaViewer (a no-op for every
+            // other file type), where it means "draw directly on the PDF's own
+            // surface" — i.e. the ordinary, non-attachment PDF session. That is
+            // `annotating && !drawsOnCanvas`, not drawsOnCanvas itself.
+            annotating={annotating && !drawsOnCanvas}
             color={drawingColor}
             strokeWidth={drawingStrokeWidth}
             fileId={selectedFileId!}
@@ -845,7 +871,7 @@ export default function PortalPage() {
 
             {/* Markup tools float over the top of the viewport rather than taking a row above
                 it. Hidden while an attachment is open there — there is nothing to mark up. */}
-            {!loading && !viewportImage && (
+            {!loading && !filesLoading && !viewportImage && (
               <DrawingTools
                 activeTool={activeTool}
                 onToolChange={setActiveTool}
@@ -907,7 +933,7 @@ export default function PortalPage() {
               </div>
             )}
 
-            {annotating && (!isPDFFile || annotatingFile !== null) && (
+            {annotating && drawsOnCanvas && (
               <AnnotationCanvas
                 backgroundDataUrl={viewerSnapshot}
                 activeTool={activeTool as AnnTool}

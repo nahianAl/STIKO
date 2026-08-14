@@ -40,6 +40,13 @@ async function readDirectoryEntries(entry: FileSystemDirectoryEntry): Promise<Fi
 
   const processEntry = async (e: FileSystemEntry, basePath: string) => {
     if (e.isFile) {
+      // Finder (and other OS file managers) write hidden metadata files — .DS_Store above
+      // all — into every real directory, including ones a user drags in deliberately. The
+      // <input webkitdirectory> picker path (handleFolderInput below) already filters these
+      // out; keep this filter so a plain folder drop doesn't trip the unsupported-format
+      // banner on files the user never chose to add. Do not delete this "for symmetry" —
+      // it IS the symmetry.
+      if (e.name.startsWith('.')) return;
       const file = await getFile(e as FileSystemFileEntry);
       const path = basePath ? `${basePath}/${e.name}` : e.name;
       results.push({ file, path });

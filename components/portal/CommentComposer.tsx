@@ -71,7 +71,7 @@ export default function CommentComposer({
                   type="button"
                   onClick={() => onAnnotateFile?.(i)}
                   disabled={!onAnnotateFile}
-                  title="Click to mark up"
+                  title={onAnnotateFile ? 'Click to mark up' : undefined}
                   className="relative block h-14 w-14 overflow-hidden rounded-lg border border-stiko-border disabled:cursor-default"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}

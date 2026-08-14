@@ -8,7 +8,17 @@ import AnnotationObjects from './AnnotationObjects';
 import { ERASER_CURSOR } from '@/lib/cursors';
 
 export interface AnnotationCanvasHandle {
-  captureSnapshot: () => string | null;
+  /**
+   * With no argument (or `{ native: false }`), captures the whole stage at a
+   * fixed pixelRatio — correct for the ordinary viewer-snapshot session, whose
+   * background already fills the stage.
+   *
+   * With `{ native: true }` and a background image present, crops the capture
+   * to the fitted background region and restores the image's own resolution —
+   * used when Done is about to replace a picked attachment, so the result
+   * isn't letterboxed and resampled to the stage's aspect ratio.
+   */
+  captureSnapshot: (opts?: { native?: boolean }) => string | null;
   clear: () => void;
   hasObjects: () => boolean;
   insertImage: (file: File) => void;
@@ -69,13 +79,41 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ann.selectedId, ann.deleteObject]);
 
+  // Fit the background image within the stage, centered (letterbox), so the drawn snapshot
+  // matches what was on screen. Computed once here (rather than separately in the render body
+  // and in captureSnapshot below) so the two can't drift apart.
+  const bgFit = (() => {
+    if (!bgImage || !size.width || !size.height) return null;
+    const scale = Math.min(size.width / bgImage.width, size.height / bgImage.height);
+    const w = bgImage.width * scale;
+    const h = bgImage.height * scale;
+    return { x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h };
+  })();
+
   useImperativeHandle(handleRef, () => ({
-    captureSnapshot: () => {
+    captureSnapshot: (opts) => {
       const stage = stageRef.current;
       if (!stage) return null;
       stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
       stage.draw();
-      const url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
+      let url: string;
+      if (opts?.native && bgImage && bgFit && bgFit.width > 0 && bgFit.height > 0) {
+        // Crop to the fitted background box and pick a pixelRatio that maps its width
+        // back to the source image's natural width, so the capture comes out at the
+        // attachment's own resolution instead of the whole (letterboxed) stage.
+        const pixelRatio = bgImage.width / bgFit.width;
+        url = stage.toDataURL({
+          x: bgFit.x,
+          y: bgFit.y,
+          width: bgFit.width,
+          height: bgFit.height,
+          pixelRatio,
+          mimeType: 'image/jpeg',
+          quality: 0.88,
+        });
+      } else {
+        url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
+      }
       ann.setSelectedId(null);
       return url;
     },
@@ -99,15 +137,6 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
       reader.readAsDataURL(file);
     },
   }));
-
-  // Fit the background image within the stage, centered (letterbox), so the drawn snapshot matches what was on screen.
-  const bgFit = (() => {
-    if (!bgImage || !size.width || !size.height) return null;
-    const scale = Math.min(size.width / bgImage.width, size.height / bgImage.height);
-    const w = bgImage.width * scale;
-    const h = bgImage.height * scale;
-    return { x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h };
-  })();
 
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = e.target.getStage();
