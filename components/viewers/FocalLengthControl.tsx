@@ -88,7 +88,9 @@ export default function FocalLengthControl({
         </div>
       )}
 
-      <div className="flex items-center gap-1 rounded-panel bg-white shadow-stiko-panel border border-stiko-border h-8 pl-2 pr-1">
+      {/* pl-2.5 against pr-1 looks lopsided but is not: the chevron sits in a w-6 button that
+          already centres its 12px icon, so its visible edge lands 10px in — matching the eye. */}
+      <div className="flex items-center gap-1 rounded-panel bg-white shadow-stiko-panel border border-stiko-border h-8 pl-2.5 pr-1">
         <svg
           width="14"
           height="14"
@@ -118,13 +120,13 @@ export default function FocalLengthControl({
               if (e.key === 'Escape') setEditing(false);
             }}
             aria-label="Focal length in millimetres"
-            className="w-12 bg-transparent text-xs text-stiko-ink outline-none"
+            className="w-12 bg-transparent text-center text-xs text-stiko-ink outline-none"
           />
         ) : (
           <button
             onClick={startEditing}
             title="Set focal length"
-            className="w-12 text-left text-xs text-stiko-ink"
+            className="w-12 text-center text-xs text-stiko-ink"
           >
             {formatFocalLength(value)}mm
           </button>
