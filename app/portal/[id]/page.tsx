@@ -13,7 +13,7 @@ import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
-import type { Comment } from '@/lib/types';
+import type { Comment, FileRecord } from '@/lib/types';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -39,20 +39,6 @@ interface Version {
   portalId: string;
   versionNumber: number;
   createdAt: string;
-}
-
-interface FileRecord {
-  id: string;
-  versionId: string;
-  filename: string;
-  storageKey: string;
-  fileSize: number;
-  fileType: string;
-  createdAt: string;
-  conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
-  convertedStorageKey: string | null;
-  conversionJobId: string | null;
-  folderPath: string | null;
 }
 
 interface Participant {
