@@ -735,18 +735,6 @@ export default function PortalPage() {
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
         <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
-          <DrawingTools
-            activeTool={activeTool}
-            onToolChange={setActiveTool}
-            color={drawingColor}
-            onColorChange={setDrawingColor}
-            strokeWidth={drawingStrokeWidth}
-            onStrokeWidthChange={setDrawingStrokeWidth}
-            tagging={tagging}
-            onToggleTagging={() => setTagging((t) => !t)}
-            onInsertImage={handleInsertImage}
-          />
-
           {/* Annotation mode banner */}
           {annotating && (
             <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-700 flex-shrink-0">
@@ -774,6 +762,23 @@ export default function PortalPage() {
           <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden bg-white rounded-panel shadow-stiko-panel">
             <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, #F6F8FE 0 16px, #FBFCFF 16px 32px)' }} />
             {renderFileViewer()}
+
+            {/* Markup tools float over the top of the viewport rather than taking a row above
+                it. Hidden while an attachment is open there — there is nothing to mark up. */}
+            {!viewportImage && (
+              <DrawingTools
+                activeTool={activeTool}
+                onToolChange={setActiveTool}
+                color={drawingColor}
+                onColorChange={setDrawingColor}
+                strokeWidth={drawingStrokeWidth}
+                onStrokeWidthChange={setDrawingStrokeWidth}
+                tagging={tagging}
+                onToggleTagging={() => setTagging((t) => !t)}
+                onInsertImage={handleInsertImage}
+                offsetTop={isPDFFile ? 45 : 12}
+              />
+            )}
             {selectedFileId && !isPDFFile && !annotating && (
               <MarkupOverlay
                 fileId={selectedFileId}
