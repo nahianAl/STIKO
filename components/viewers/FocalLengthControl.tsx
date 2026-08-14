@@ -66,7 +66,7 @@ export default function FocalLengthControl({
   };
 
   return (
-    <div ref={rootRef} className="absolute bottom-3 left-3 z-20 select-none">
+    <div ref={rootRef} className="relative select-none">
       {open && (
         <div className="mb-1.5 overflow-hidden rounded-panel bg-white shadow-stiko-sheet border border-stiko-border">
           {FOCAL_LENGTH_PRESETS.map((mm) => (
