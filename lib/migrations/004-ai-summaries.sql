@@ -2,11 +2,13 @@
 --
 -- Two caches and a switch.
 --
--- Staleness is deliberately NOT a column. A brief records how many comments it
--- covered (`covered_count`) and the newest comment it saw (`covered_through`);
--- whether it is stale is a comparison against a live COUNT at read time. A
--- boolean would need invalidating from every route that writes a comment, and
--- would silently drift the first time one forgot.
+-- Staleness is deliberately NOT a column. It is computed at read time because a
+-- flag would need invalidating from every route that writes a comment, and would
+-- silently drift the first time one forgot.
+--
+-- A version brief is stale when its `covered_count` falls below the live COUNT of
+-- comments. A project brief is stale when its `covered_through` is older than the
+-- newest `generated_at` from its constituent version_summaries.
 --
 -- `covered_through` is written from the same query that built the payload, not
 -- from a fresh clock. A comment that lands while the model is thinking must not
