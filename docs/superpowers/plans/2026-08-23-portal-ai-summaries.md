@@ -2009,25 +2009,43 @@ export default function VersionBrief({
   // PREVIOUS version's data while already bound to the new versionId — and fire
   // a POST for the new version on the strength of the old one's facts.
   const loadedFor = useRef<string | null>(null);
+  // Always the version currently on screen. Both load() and generate() capture
+  // the version they were started for and compare against this after awaiting —
+  // a response that arrives after the user has moved on must be discarded, not
+  // applied. Without it a slow generate() for one version lands its brief, and
+  // its citation ids, into a different version's panel.
+  const currentVersion = useRef(versionId);
+  currentVersion.current = versionId;
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/versions/${versionId}/summary`);
+    const target = versionId;
+    const res = await fetch(`/api/versions/${target}/summary`);
+    if (target !== currentVersion.current) return;
     if (!res.ok) return;
     const body = await res.json();
-    loadedFor.current = versionId;
+    if (target !== currentVersion.current) return;
+    loadedFor.current = target;
     setData(body);
   }, [versionId]);
 
   const generate = useCallback(async () => {
+    const target = versionId;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/versions/${versionId}/summary`, { method: 'POST' });
+      const res = await fetch(`/api/versions/${target}/summary`, { method: 'POST' });
+      if (target !== currentVersion.current) return;
       const body = await res.json();
+      if (target !== currentVersion.current) return;
       // On failure the existing brief stays on screen; only the notice changes.
-      if (!res.ok) setError(body.error ?? 'Could not refresh the summary');
-      else setData(body);
+      if (!res.ok) {
+        setError(body.error ?? 'Could not refresh the summary');
+      } else {
+        loadedFor.current = target;
+        setData(body);
+      }
     } catch {
+      if (target !== currentVersion.current) return;
       setError('Could not reach the server');
     } finally {
       setBusy(false);
@@ -2037,6 +2055,7 @@ export default function VersionBrief({
   useEffect(() => {
     setData(null);
     setError(null);
+    setBusy(false);
     autoAttempted.current = null;
     loadedFor.current = null;
     load();
@@ -2164,6 +2183,8 @@ export default function VersionBrief({
 The `autoAttempted` ref caps auto-generation to one attempt per version per mount: `generate()` leaves `data.brief` null on failure, so `busy` cycling back to `false` alone would satisfy the effect's condition again and re-POST forever against a paid inference API on every provider outage — the ref, set before `generate()` runs and compared against the current `versionId`, breaks that loop while still letting the manual "Summarise" button (rendered whenever `configured && !brief && commentCount > 0`) retry on demand.
 
 The `loadedFor` ref exists because `setData(null)` in the versionId-reset effect only *queues* a state update — it has not applied within that same commit. Both effects run in the same commit when `versionId` changes: the reset effect clears `autoAttempted.current` synchronously and calls `load()`, but the auto-generate effect, gated on `autoAttempted.current !== versionId`, still sees the *previous* version's `data` in that commit (since `data` hasn't actually become `null` yet) while `versionId` and the `generate` closure are already bound to the *new* version — and the guard that would normally stop it was just cleared. Without `loadedFor`, this fires an automatic POST against the new version, justified by facts belonging to the version just left. `loadedFor.current` is set to `versionId` only inside `load()`, immediately before `setData(body)`, so it is only ever set for a version whose response has actually arrived; the auto-generate effect returns immediately, before evaluating any other condition, whenever `loadedFor.current !== versionId` — i.e. whenever the `data` currently in state cannot yet be trusted to belong to the version the effect is now bound to.
+
+`currentVersion` exists because `loadedFor` and `autoAttempted` only guard which version's `data` the auto-generate *effect* trusts — neither one protects `load()` or `generate()` themselves from applying a response that outlives the version it was requested for. Both functions `await` a network round trip; `versionId` can change (and the reset effect can fire) while that `await` is pending. `generate()` in particular is LLM-backed and can take seconds, long enough for the user to navigate to a different version, whose own `load()` completes first and legitimately sets `loadedFor.current` and `data` for the new version — after which the stale POST resolves and, without a guard, would overwrite them with the old version's brief (and citation `commentIds` that point at comments the new panel never mentions). `currentVersion` is a ref, not a second piece of state, so it updates synchronously in the render body (`currentVersion.current = versionId`) on every render — including the render that changes `versionId` — rather than waiting for an effect to commit; by the time any pending `await` inside `load()` or `generate()` resumes, it is guaranteed to already reflect whichever version is on screen. Each function captures `const target = versionId` as its first statement and, after every `await`, checks `target !== currentVersion.current` and returns before touching any state — `setData`, `setError`, or the `loadedFor.current` write all wait behind that check. `setBusy(false)` is the one exception: it stays unconditional in `generate()`'s `finally`, and the reset effect also sets `busy` back to `false` on a version change, so a discarded in-flight call can never leave `busy` stuck `true` on a version that never asked for it.
 
 - [ ] **Step 2: Render it inside the comments panel**
 

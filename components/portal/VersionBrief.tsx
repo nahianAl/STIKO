@@ -57,25 +57,43 @@ export default function VersionBrief({
   // PREVIOUS version's data while already bound to the new versionId — and fire
   // a POST for the new version on the strength of the old one's facts.
   const loadedFor = useRef<string | null>(null);
+  // Always the version currently on screen. Both load() and generate() capture
+  // the version they were started for and compare against this after awaiting —
+  // a response that arrives after the user has moved on must be discarded, not
+  // applied. Without it a slow generate() for one version lands its brief, and
+  // its citation ids, into a different version's panel.
+  const currentVersion = useRef(versionId);
+  currentVersion.current = versionId;
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/versions/${versionId}/summary`);
+    const target = versionId;
+    const res = await fetch(`/api/versions/${target}/summary`);
+    if (target !== currentVersion.current) return;
     if (!res.ok) return;
     const body = await res.json();
-    loadedFor.current = versionId;
+    if (target !== currentVersion.current) return;
+    loadedFor.current = target;
     setData(body);
   }, [versionId]);
 
   const generate = useCallback(async () => {
+    const target = versionId;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/versions/${versionId}/summary`, { method: 'POST' });
+      const res = await fetch(`/api/versions/${target}/summary`, { method: 'POST' });
+      if (target !== currentVersion.current) return;
       const body = await res.json();
+      if (target !== currentVersion.current) return;
       // On failure the existing brief stays on screen; only the notice changes.
-      if (!res.ok) setError(body.error ?? 'Could not refresh the summary');
-      else setData(body);
+      if (!res.ok) {
+        setError(body.error ?? 'Could not refresh the summary');
+      } else {
+        loadedFor.current = target;
+        setData(body);
+      }
     } catch {
+      if (target !== currentVersion.current) return;
       setError('Could not reach the server');
     } finally {
       setBusy(false);
@@ -85,6 +103,7 @@ export default function VersionBrief({
   useEffect(() => {
     setData(null);
     setError(null);
+    setBusy(false);
     autoAttempted.current = null;
     loadedFor.current = null;
     load();
