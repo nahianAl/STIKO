@@ -5,10 +5,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 /**
  * The AI brief above the comment list.
  *
- * Three states, deliberately distinct: absent (offer to summarise), present,
- * and present-but-stale (show it, say how far behind it is). The fact strip
- * renders in all three — and when summarisation is unconfigured, it is all
- * that renders, with an honest line instead of a brief.
+ * Four states, deliberately distinct: not configured (an honest line instead
+ * of a brief), configured with no brief yet (offer to summarise), brief
+ * current, and brief present-but-stale (show it, say how far behind it is).
+ * The fact strip renders in all four.
  */
 
 interface Theme {
@@ -52,11 +52,18 @@ export default function VersionBrief({
   // the versionId an auto-attempt has already been made for, capping it to
   // one automatic attempt per version per mount.
   const autoAttempted = useRef<string | null>(null);
+  // Which version the `data` in state was loaded for. setData is queued, so on a
+  // versionId change the auto-generate effect would otherwise still see the
+  // PREVIOUS version's data while already bound to the new versionId — and fire
+  // a POST for the new version on the strength of the old one's facts.
+  const loadedFor = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/versions/${versionId}/summary`);
     if (!res.ok) return;
-    setData(await res.json());
+    const body = await res.json();
+    loadedFor.current = versionId;
+    setData(body);
   }, [versionId]);
 
   const generate = useCallback(async () => {
@@ -68,6 +75,8 @@ export default function VersionBrief({
       // On failure the existing brief stays on screen; only the notice changes.
       if (!res.ok) setError(body.error ?? 'Could not refresh the summary');
       else setData(body);
+    } catch {
+      setError('Could not reach the server');
     } finally {
       setBusy(false);
     }
@@ -77,10 +86,12 @@ export default function VersionBrief({
     setData(null);
     setError(null);
     autoAttempted.current = null;
+    loadedFor.current = null;
     load();
   }, [load]);
 
   useEffect(() => {
+    if (loadedFor.current !== versionId) return;
     if (
       data?.enabled &&
       data.configured &&

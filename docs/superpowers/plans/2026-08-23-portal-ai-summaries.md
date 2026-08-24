@@ -1957,10 +1957,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 /**
  * The AI brief above the comment list.
  *
- * Three states, deliberately distinct: absent (offer to summarise), present,
- * and present-but-stale (show it, say how far behind it is). The fact strip
- * renders in all three — and when summarisation is unconfigured, it is all
- * that renders, with an honest line instead of a brief.
+ * Four states, deliberately distinct: not configured (an honest line instead
+ * of a brief), configured with no brief yet (offer to summarise), brief
+ * current, and brief present-but-stale (show it, say how far behind it is).
+ * The fact strip renders in all four.
  */
 
 interface Theme {
@@ -2004,11 +2004,18 @@ export default function VersionBrief({
   // the versionId an auto-attempt has already been made for, capping it to
   // one automatic attempt per version per mount.
   const autoAttempted = useRef<string | null>(null);
+  // Which version the `data` in state was loaded for. setData is queued, so on a
+  // versionId change the auto-generate effect would otherwise still see the
+  // PREVIOUS version's data while already bound to the new versionId — and fire
+  // a POST for the new version on the strength of the old one's facts.
+  const loadedFor = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/versions/${versionId}/summary`);
     if (!res.ok) return;
-    setData(await res.json());
+    const body = await res.json();
+    loadedFor.current = versionId;
+    setData(body);
   }, [versionId]);
 
   const generate = useCallback(async () => {
@@ -2020,6 +2027,8 @@ export default function VersionBrief({
       // On failure the existing brief stays on screen; only the notice changes.
       if (!res.ok) setError(body.error ?? 'Could not refresh the summary');
       else setData(body);
+    } catch {
+      setError('Could not reach the server');
     } finally {
       setBusy(false);
     }
@@ -2029,10 +2038,12 @@ export default function VersionBrief({
     setData(null);
     setError(null);
     autoAttempted.current = null;
+    loadedFor.current = null;
     load();
   }, [load]);
 
   useEffect(() => {
+    if (loadedFor.current !== versionId) return;
     if (
       data?.enabled &&
       data.configured &&
@@ -2151,6 +2162,8 @@ export default function VersionBrief({
 ```
 
 The `autoAttempted` ref caps auto-generation to one attempt per version per mount: `generate()` leaves `data.brief` null on failure, so `busy` cycling back to `false` alone would satisfy the effect's condition again and re-POST forever against a paid inference API on every provider outage — the ref, set before `generate()` runs and compared against the current `versionId`, breaks that loop while still letting the manual "Summarise" button (rendered whenever `configured && !brief && commentCount > 0`) retry on demand.
+
+The `loadedFor` ref exists because `setData(null)` in the versionId-reset effect only *queues* a state update — it has not applied within that same commit. Both effects run in the same commit when `versionId` changes: the reset effect clears `autoAttempted.current` synchronously and calls `load()`, but the auto-generate effect, gated on `autoAttempted.current !== versionId`, still sees the *previous* version's `data` in that commit (since `data` hasn't actually become `null` yet) while `versionId` and the `generate` closure are already bound to the *new* version — and the guard that would normally stop it was just cleared. Without `loadedFor`, this fires an automatic POST against the new version, justified by facts belonging to the version just left. `loadedFor.current` is set to `versionId` only inside `load()`, immediately before `setData(body)`, so it is only ever set for a version whose response has actually arrived; the auto-generate effect returns immediately, before evaluating any other condition, whenever `loadedFor.current !== versionId` — i.e. whenever the `data` currently in state cannot yet be trusted to belong to the version the effect is now bound to.
 
 - [ ] **Step 2: Render it inside the comments panel**
 
