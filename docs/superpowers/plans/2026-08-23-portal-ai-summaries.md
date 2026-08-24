@@ -520,7 +520,9 @@ export function validateProjectBrief(
       continue;
     }
 
-    sections.push({ portalId, body, versionIds: [...new Set(kept)] });
+    // Array.from, not [...set] — tsconfig.json sets no "target", so it
+    // defaults to ES5 and spreading an iterator is a TS2802.
+    sections.push({ portalId, body, versionIds: Array.from(new Set(kept)) });
   }
 
   if (sections.length === 0) return { brief: null, droppedSections };
@@ -2216,7 +2218,9 @@ export async function summarizeProject(
   const outcome = await composeProjectBrief(
     {
       projectName: rows[0].projectName,
-      packages: [...byPortal.values()],
+      // Array.from, not [...map.values()] — tsconfig.json sets no "target",
+      // so it defaults to ES5 and spreading an iterator is a TS2802.
+      packages: Array.from(byPortal.values()),
       coveredThrough,
     },
     provider
