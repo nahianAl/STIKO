@@ -1061,6 +1061,32 @@ test('activeModel falls back to the documented default', () => {
   assert.equal(activeModel(), 'something-else');
   delete process.env.ATLAS_MODEL;
 });
+
+test('a 2xx response with an unreadable body is reported honestly, not as unreachable', async () => {
+  // If res.json() were caught by the outer transport try/catch, this would
+  // regress to "Could not reach the summarisation provider" — untrue, since
+  // the provider was reached and answered 200. That would send an operator
+  // hunting for a DNS/TLS/timeout problem that does not exist.
+  const originalFetch = globalThis.fetch;
+  process.env.ATLAS_API_KEY = 'dummy-key';
+
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+    });
+
+    const result = await complete({ system: 's', user: 'u' });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /unreadable response body/i);
+    assert.doesNotMatch(result.reason, /could not reach/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.ATLAS_API_KEY;
+  }
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1134,7 +1160,13 @@ export async function complete(opts: CompleteOptions): Promise<CompleteResult> {
       return { ok: false, reason: 'The summarisation provider rejected the request' };
     }
 
-    const payload = await res.json();
+    let payload;
+    try {
+      payload = await res.json();
+    } catch {
+      console.error('[ai] provider returned an unreadable response body');
+      return { ok: false, reason: 'The summarisation provider returned an unreadable response body' };
+    }
     const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       console.error('[ai] provider returned no message content');
@@ -1159,7 +1191,7 @@ export async function complete(opts: CompleteOptions): Promise<CompleteResult> {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test scripts/tests/aiProvider.test.mjs`
-Expected: PASS — 2 tests, 0 failures.
+Expected: PASS — 3 tests, 0 failures.
 
 - [ ] **Step 5: Document the environment variables**
 

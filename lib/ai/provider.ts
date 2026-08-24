@@ -59,7 +59,13 @@ export async function complete(opts: CompleteOptions): Promise<CompleteResult> {
       return { ok: false, reason: 'The summarisation provider rejected the request' };
     }
 
-    const payload = await res.json();
+    let payload;
+    try {
+      payload = await res.json();
+    } catch {
+      console.error('[ai] provider returned an unreadable response body');
+      return { ok: false, reason: 'The summarisation provider returned an unreadable response body' };
+    }
     const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       console.error('[ai] provider returned no message content');
