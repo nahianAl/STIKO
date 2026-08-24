@@ -1043,6 +1043,7 @@ export default function PortalPage() {
           name: p.email,
         }))}
         openComments={comments.filter((c) => !c.parentCommentId).length}
+        latestVersionId={versions[0]?.id ?? null}
         onPublished={() => {
           // Refresh the rail and the file list in place — the whole point of
           // the drawer is that nothing navigates.

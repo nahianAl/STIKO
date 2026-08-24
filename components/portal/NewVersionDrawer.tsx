@@ -34,6 +34,7 @@ export function NewVersionDrawer({
   existingFilenames,
   participants,
   openComments,
+  latestVersionId,
   onPublished,
 }: {
   isOpen: boolean;
@@ -47,6 +48,8 @@ export function NewVersionDrawer({
   existingFilenames: string[];
   participants: { id: string; name: string }[];
   openComments: number;
+  /** The package's newest version, drafted from when "Suggest" is clicked. */
+  latestVersionId: string | null;
   onPublished: () => void;
 }) {
   const { toast } = useToast();
@@ -58,6 +61,8 @@ export function NewVersionDrawer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftVersionId, setDraftVersionId] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   const existing = useMemo(
     () => new Set(existingFilenames.map((f) => f.toLowerCase())),
@@ -84,6 +89,22 @@ export function NewVersionDrawer({
     reset();
     onClose();
   };
+
+  async function suggestChangelog() {
+    if (!latestVersionId) return;
+    setDrafting(true);
+    setDraftError(null);
+    try {
+      const res = await fetch(`/api/versions/${latestVersionId}/changelog-draft`, {
+        method: 'POST',
+      });
+      const body = await res.json();
+      if (!res.ok) setDraftError(body.error ?? 'Could not draft a changelog');
+      else setChangelog(body.changelog);
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   const publish = async () => {
     setError(null);
@@ -198,6 +219,19 @@ export function NewVersionDrawer({
           />
         )}
 
+        {latestVersionId && (
+          <div className="mb-1 flex items-center justify-end gap-2">
+            {draftError && <span className="text-xs text-red-600">{draftError}</span>}
+            <button
+              type="button"
+              onClick={suggestChangelog}
+              disabled={drafting}
+              className="text-xs font-medium text-gray-600 underline hover:text-gray-900 disabled:opacity-50"
+            >
+              {drafting ? 'Drafting…' : 'Suggest from open comments'}
+            </button>
+          </div>
+        )}
         <Field label="What changed" hint="optional">
           <Textarea
             value={changelog}
