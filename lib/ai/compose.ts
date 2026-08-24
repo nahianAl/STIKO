@@ -1,12 +1,18 @@
 import { complete } from './provider.ts';
-import { validateVersionBrief } from './validate.ts';
-import { buildVersionPrompt, capComments, labelAuthors } from './prompt.ts';
+import { validateVersionBrief, validateProjectBrief } from './validate.ts';
+import {
+  buildVersionPrompt,
+  buildProjectPrompt,
+  capComments,
+  labelAuthors,
+} from './prompt.ts';
 import type {
   Provider,
   VersionBrief,
   VersionFacts,
   RawComment,
   PriorTheme,
+  ProjectBrief,
 } from './types';
 
 /**
@@ -79,4 +85,49 @@ export async function composeVersionBrief(
     coveredThrough: load.coverage.maxCreatedAt,
     model: result.model,
   };
+}
+
+export interface ProjectLoad {
+  projectName: string;
+  packages: Array<{
+    portalId: string;
+    name: string;
+    versions: Array<{ versionId: string; versionNumber: number; headline: string }>;
+  }>;
+  coveredThrough: string;
+}
+
+export type ProjectComposeOutcome =
+  | { ok: true; brief: ProjectBrief; coveredThrough: string; model: string }
+  | { ok: false; reason: string };
+
+export async function composeProjectBrief(
+  load: ProjectLoad,
+  provider: Provider = complete
+): Promise<ProjectComposeOutcome> {
+  const { system, user } = buildProjectPrompt({
+    projectName: load.projectName,
+    packages: load.packages,
+  });
+
+  const result = await provider({ system, user });
+  if (!result.ok) return { ok: false, reason: result.reason };
+
+  const portalIds = new Set(load.packages.map((p) => p.portalId));
+  const versionIds = new Set(
+    load.packages.flatMap((p) => p.versions.map((v) => v.versionId))
+  );
+
+  const { brief, droppedSections } = validateProjectBrief(
+    result.data,
+    portalIds,
+    versionIds
+  );
+
+  if (droppedSections > 0) {
+    console.warn(`[ai] project validation dropped ${droppedSections} section(s)`);
+  }
+  if (!brief) return { ok: false, reason: 'No section survived citation validation' };
+
+  return { ok: true, brief, coveredThrough: load.coveredThrough, model: result.model };
 }
