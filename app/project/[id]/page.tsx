@@ -15,6 +15,7 @@ import AvatarMenu from '@/components/shell/AvatarMenu';
 import { AddPeopleModal } from '@/components/people/AddPeopleModal';
 import { TeamMatrix } from '@/components/people/TeamMatrix';
 import { WaitingOn } from '@/components/project/WaitingOn';
+import ProjectBrief from '@/components/project/ProjectBrief';
 import { STATUS_ACCENT } from '@/lib/status';
 import { relativeTime } from '@/lib/design';
 import { DISCLOSURE, EMPTY_DISCLOSURE } from '@/lib/disclosure';
@@ -233,6 +234,15 @@ export default function ProjectPage() {
 
         {tab === 'packages' && (
           <>
+            <div className="mt-6">
+              <ProjectBrief
+                projectId={id}
+                packageNames={Object.fromEntries(
+                  data.packages.map((p) => [p.id, p.name])
+                )}
+              />
+            </div>
+
             {showWaitingOn && (
               <div className="mt-5 flex justify-end">
                 <div className="flex rounded-[10px] bg-white p-1 shadow-stiko-panel">
