@@ -2268,21 +2268,31 @@ const [headlines, setHeadlines] = useState<Record<string, string>>({});
 useEffect(() => {
   let cancelled = false;
   (async () => {
-    const entries = await Promise.all(
-      versions.map(async (v) => {
-        const res = await fetch(`/api/versions/${v.id}/summary`);
-        if (!res.ok) return [v.id, ''] as const;
-        const body = await res.json();
-        return [v.id, body.brief?.headline ?? ''] as const;
-      })
-    );
-    if (!cancelled) setHeadlines(Object.fromEntries(entries.filter(([, h]) => h)));
+    try {
+      const entries = await Promise.all(
+        versions.map(async (v) => {
+          try {
+            const res = await fetch(`/api/versions/${v.id}/summary`);
+            if (!res.ok) return [v.id, ''] as const;
+            const body = await res.json();
+            return [v.id, body.brief?.headline ?? ''] as const;
+          } catch {
+            return [v.id, ''] as const;
+          }
+        })
+      );
+      if (!cancelled) setHeadlines(Object.fromEntries(entries.filter(([, h]) => h)));
+    } catch (err) {
+      console.error('Failed to fetch headlines:', err);
+    }
   })();
   return () => {
     cancelled = true;
   };
 }, [versions]);
 ```
+
+Each per-version fetch is wrapped in its own try/catch, deliberately, so a thrown error from `fetch()` (a dropped connection) or `res.json()` (a proxy returning HTML) costs only that one headline rather than rejecting the whole `Promise.all` batch and discarding every headline that already succeeded. The outer try/catch is belt-and-braces, matching how `fetchVersions` in this same file handles its failures.
 
 Pass `headlines` into `FileTreeSidebar`, add `headlines?: Record<string, string>` to its props, and render under each version bar's label:
 

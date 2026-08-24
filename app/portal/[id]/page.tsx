@@ -433,15 +433,23 @@ export default function PortalPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const entries = await Promise.all(
-        versions.map(async (v) => {
-          const res = await fetch(`/api/versions/${v.id}/summary`);
-          if (!res.ok) return [v.id, ''] as const;
-          const body = await res.json();
-          return [v.id, body.brief?.headline ?? ''] as const;
-        })
-      );
-      if (!cancelled) setHeadlines(Object.fromEntries(entries.filter(([, h]) => h)));
+      try {
+        const entries = await Promise.all(
+          versions.map(async (v) => {
+            try {
+              const res = await fetch(`/api/versions/${v.id}/summary`);
+              if (!res.ok) return [v.id, ''] as const;
+              const body = await res.json();
+              return [v.id, body.brief?.headline ?? ''] as const;
+            } catch {
+              return [v.id, ''] as const;
+            }
+          })
+        );
+        if (!cancelled) setHeadlines(Object.fromEntries(entries.filter(([, h]) => h)));
+      } catch (err) {
+        console.error('Failed to fetch headlines:', err);
+      }
     })();
     return () => {
       cancelled = true;
