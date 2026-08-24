@@ -1,11 +1,18 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 /**
- * The project roll-up above the package list. Sections cite down to the
- * version brief that made each claim, so a reader can always get to the
- * evidence in one click.
+ * The project roll-up above the package list. Each section names the
+ * package it draws on; when that package is one the page has listed, the
+ * name is a button that navigates to it — one click through to the
+ * package's own briefs and comments. `versionIds` is carried on each
+ * section (server-validated, citing the version briefs that made the
+ * claim) but not yet rendered as a link: this app has no per-version URL
+ * to point it at (the portal page doesn't read a version from the URL),
+ * so the package is as deep as click-through can go today. A future
+ * version-level deep link should read `versionIds` from here.
  */
 
 interface Section {
@@ -28,6 +35,7 @@ export default function ProjectBrief({
   projectId: string;
   packageNames: Record<string, string>;
 }) {
+  const router = useRouter();
   const [data, setData] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +57,8 @@ export default function ProjectBrief({
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Could not refresh the summary');
       else setData(body);
+    } catch {
+      setError('Could not reach the server');
     } finally {
       setBusy(false);
     }
@@ -76,14 +86,27 @@ export default function ProjectBrief({
         <>
           <p className="mt-2 text-sm font-medium text-gray-900">{data.brief.headline}</p>
           <ul className="mt-3 space-y-2">
-            {data.brief.sections.map((section) => (
-              <li key={section.portalId} className="text-sm text-gray-700">
-                <span className="font-medium text-gray-900">
-                  {packageNames[section.portalId] ?? 'Package'}
-                </span>{' '}
-                — {section.body}
-              </li>
-            ))}
+            {data.brief.sections.map((section) => {
+              const name = packageNames[section.portalId];
+              return (
+                <li key={section.portalId} className="text-sm text-gray-700">
+                  {name ? (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/portal/${section.portalId}`)}
+                      className="font-medium text-gray-900 underline"
+                    >
+                      {name}
+                    </button>
+                  ) : (
+                    <span className="font-medium text-gray-900">
+                      A package not shown here
+                    </span>
+                  )}{' '}
+                  — {section.body}
+                </li>
+              );
+            })}
           </ul>
           {data.stale && (
             <p className="mt-2 text-xs text-gray-500">
