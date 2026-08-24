@@ -3227,8 +3227,10 @@ const confirmedAiEnabledRef = useRef(aiEnabled);
         }
       }}
     />
-    AI summaries — comment text is sent to Atlas Cloud to generate them. Turning
-    this off deletes the summaries already generated for this project.
+    AI summaries — to generate them, comment text, file names, and package and
+    project names are sent to Atlas Cloud. Reviewer names are replaced with
+    labels and never sent, and neither are the files themselves. Turning this
+    off deletes the summaries already generated for this project.
   </label>
   {aiError && <p className="mt-1 text-xs text-red-600">{aiError}</p>}
 </div>

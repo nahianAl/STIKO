@@ -51,7 +51,7 @@ None of this blocks. All of it was accepted knowingly.
 
 ### Should not be forgotten
 
-1. **The disclosure text is inaccurate.** `app/project/[id]/page.tsx` tells owners "comment text is sent to Atlas Cloud". The payload also carries the project name, every package name and filenames. This is the one string whose only job is to be truthful to a client.
+1. ~~**The disclosure text is inaccurate.**~~ **Fixed 2026-08-24.** It now names comment text, file names, package names and the project name, and states that reviewer names are replaced and the files themselves are never sent. Verified against `lib/ai/prompt.ts` — that is the complete outgoing payload.
 2. **The fact strip is 4/5.** The spec fixes five facts; **"comments since last publish"** (`comments.created_at` against `versions.published_at`) was never implemented — absent from `VersionFacts` and from `facts.ts`.
 3. **The project tier is a weaker copy of the version tier.** Three gaps, one root cause, fix together:
    - `POST /api/projects/[id]/summary` calls the model unconditionally — no freshness short-circuit, so every Refresh click is a paid call rewriting current text. The version route has this.
