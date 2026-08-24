@@ -967,6 +967,7 @@ export default function PortalPage() {
         {/* Right Panel: Comments */}
         <CommentsPanel
           fileId={selectedFileId}
+          versionId={selectedVersionId}
           onCommentClick={handleCommentClick}
           activeCommentId={activeCommentId}
           refreshKey={commentsRefreshKey}
