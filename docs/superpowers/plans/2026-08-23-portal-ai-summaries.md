@@ -17,7 +17,8 @@
 - **No live inference in any test.** `summarize.ts` takes an injectable provider; tests pass canned responses.
 - **UI copy says "Package", code says "Portal".** Never surface the word "portal" to a user.
 - **Migrations run before the reading code deploys.** `npm run migrate` applies `lib/schema.sql` then `lib/migrations/*.sql` in name order; every statement must be safe to re-run.
-- **No database is available in this workspace.** There is no `.env.local`, `DATABASE_URL` is unset, and `psql` is not installed, so `npm run migrate` and every browser check are impossible here. The gate set for every task is therefore: `npm test`, `npx tsc --noEmit`, `npx next lint`, and `npm run build`. SQL and UI go unexercised end to end; that is a known, recorded limitation, not something to work around by inventing a database. **Never write a `.env.local`** — it would shadow real config later.
+- **No database is available in this workspace.** There is no `.env.local`, `DATABASE_URL` is unset, and `psql` is not installed, so `npm run migrate` and every browser check are impossible here. SQL and UI go unexercised end to end; that is a known, recorded limitation, not something to work around by inventing a database. **Never write a `.env.local`** — it would shadow real config later.
+- **The gate set is `npm test`, `npx tsc --noEmit`, `npx next lint`, and compilation.** For the last one: `npm run build` **cannot complete in this workspace and never could** — it reaches `✓ Compiled successfully`, then dies at "Collecting page data" with `DATABASE_URL environment variable is not set`, because route modules import `lib/db.ts`, which has thrown on a missing `DATABASE_URL` since the repo's first production commit. Verified: the pre-branch baseline (`5fc332b`) fails identically. **The gate is `✓ Compiled successfully`.** A compilation error is a real failure; the page-data error is not, and must not be reported as one.
 - **`lib/schema.sql` and `lib/migrations/` are kept in step** — the schema file states this explicitly.
 - Model is `ATLAS_MODEL`, defaulting to DeepSeek V4 Flash. Endpoint is `ATLAS_BASE_URL`, defaulting to `https://api.atlascloud.ai/v1`. Key is `ATLAS_API_KEY`.
 - Comment cap per brief: **150**, most recent first, with the omitted count stated in the brief.
@@ -1550,12 +1551,14 @@ Expected: FAIL — `Cannot find module '../../lib/ai/compose.ts'`
 
 - [ ] **Step 3: Write the pure half**
 
-Create `lib/ai/compose.ts`. Every import here is database-free, which is what lets the test above run:
+Create `lib/ai/compose.ts`. Every import here is database-free, which is what lets the test above run.
+
+**Note the explicit `.ts` extensions**, and that they are required only here. Every earlier `lib/ai` module imports its siblings with `import type`, which Node's type stripping erases before resolution ever happens. `compose.ts` is the first to need real *runtime* sibling imports, and Node's ESM resolver requires an explicit extension for a relative specifier — no flag waives it. The extensions are paired with `"allowImportingTsExtensions": true` in `tsconfig.json` (valid alongside the existing `"noEmit": true`), and `next build` reports `✓ Compiled successfully` with them, so webpack resolves them too.
 
 ```ts
-import { complete } from './provider';
-import { validateVersionBrief } from './validate';
-import { buildVersionPrompt, capComments, labelAuthors } from './prompt';
+import { complete } from './provider.ts';
+import { validateVersionBrief } from './validate.ts';
+import { buildVersionPrompt, capComments, labelAuthors } from './prompt.ts';
 import type {
   Provider,
   VersionBrief,
@@ -1909,7 +1912,10 @@ Expected: for both `GET` and `POST`, the `await gate` and `if (gated.error)` lin
 
 - [ ] **Step 4: Run the full gate set**
 
-Run: `npm test && npx tsc --noEmit && npx next lint && npm run build`
+Run: `npm test && npx tsc --noEmit && npx next lint`
+Expected: all pass.
+
+Then run `npm run build` and check for `✓ Compiled successfully`. It will then fail at "Collecting page data" with `DATABASE_URL environment variable is not set` — that failure is pre-existing (it happens on the baseline commit too) and is **not** a result of this task. Compilation success is the gate.
 Expected: tests pass, no type errors, no new lint errors, build succeeds.
 
 The build is the meaningful check for a route file — it compiles every handler and would catch a bad `params` signature or a bad import that `tsc` alone can miss in App Router files.
@@ -2152,7 +2158,10 @@ Expected: no errors.
 
 No database exists here, so the panel cannot be driven in a browser.
 
-Run: `npm test && npx tsc --noEmit && npx next lint && npm run build`
+Run: `npm test && npx tsc --noEmit && npx next lint`
+Expected: all pass.
+
+Then run `npm run build` and check for `✓ Compiled successfully`. It will then fail at "Collecting page data" with `DATABASE_URL environment variable is not set` — that failure is pre-existing (it happens on the baseline commit too) and is **not** a result of this task. Compilation success is the gate.
 Expected: all pass.
 
 Then confirm by reading `VersionBrief.tsx` that the three states are each reachable and distinct: `!data.brief && data.configured` renders "No summary yet", `!data.configured` renders the not-configured line, and `newSinceBrief > 0` renders the Refresh affordance. A single collapsed branch here would ship a panel that silently never offers to generate.
@@ -2227,7 +2236,10 @@ Pass `headlines` into `FileTreeSidebar`, add `headlines?: Record<string, string>
 
 - [ ] **Step 4: Run the gate set**
 
-Run: `npm test && npx tsc --noEmit && npx next lint && npm run build`
+Run: `npm test && npx tsc --noEmit && npx next lint`
+Expected: all pass.
+
+Then run `npm run build` and check for `✓ Compiled successfully`. It will then fail at "Collecting page data" with `DATABASE_URL environment variable is not set` — that failure is pre-existing (it happens on the baseline commit too) and is **not** a result of this task. Compilation success is the gate.
 Expected: all pass. The `grep` in Step 2 is what proves the deletion was safe; the build is what proves nothing else imported it.
 
 - [ ] **Step 5: Commit**
@@ -2720,7 +2732,10 @@ import ProjectBrief from '@/components/project/ProjectBrief';
 
 - [ ] **Step 3: Run the gate set**
 
-Run: `npm test && npx tsc --noEmit && npx next lint && npm run build`
+Run: `npm test && npx tsc --noEmit && npx next lint`
+Expected: all pass.
+
+Then run `npm run build` and check for `✓ Compiled successfully`. It will then fail at "Collecting page data" with `DATABASE_URL environment variable is not set` — that failure is pre-existing (it happens on the baseline commit too) and is **not** a result of this task. Compilation success is the gate.
 Expected: all pass. No database exists here, so the rendered states cannot be driven in a browser.
 
 - [ ] **Step 4: Commit**
@@ -2862,7 +2877,10 @@ Render the control immediately above the existing changelog textarea (around lin
 
 - [ ] **Step 3: Run the gate set, and confirm the route writes nothing**
 
-Run: `npm test && npx tsc --noEmit && npx next lint && npm run build`
+Run: `npm test && npx tsc --noEmit && npx next lint`
+Expected: all pass.
+
+Then run `npm run build` and check for `✓ Compiled successfully`. It will then fail at "Collecting page data" with `DATABASE_URL environment variable is not set` — that failure is pre-existing (it happens on the baseline commit too) and is **not** a result of this task. Compilation success is the gate.
 Expected: all pass.
 
 Then confirm the no-side-effects claim statically — this route is documented as read-only, and a stray write would persist text the uploader never approved:
