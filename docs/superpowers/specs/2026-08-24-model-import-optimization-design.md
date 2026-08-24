@@ -198,7 +198,9 @@ The direct-upload path writes `converted_storage_key` while leaving `conversion_
 
 ### Merging discards per-object identity
 
-`join()` collapses 1,282 nodes into 26. Verified safe against current behaviour: the transform gizmo targets the model root via `transformRef`, not sub-meshes, and comment-pin placement uses only `hit.point` converted to model-local space (`ModelViewerInner.tsx`), never object identity. `flatten()` bakes transforms into vertex data, so world positions — and therefore stored pin coordinates — are preserved.
+`join()` collapses 1,282 nodes into 26. Verified safe against current behaviour: the transform gizmo targets the model root via `transformRef`, not sub-meshes, and comment-pin placement uses only `hit.point` converted to model-local space (`ModelViewerInner.tsx`), never object identity.
+
+World positions are preserved, which is what keeps stored pin coordinates valid — but not by the mechanism first assumed. `join()` does **not** flatten everything to identity: it keeps one surviving node and rebases the merged vertices against that node's transform, so world position is `transform × local vertex`. Measured on three primitives at `[10,20,30]`, `[100,0,0]` and `[0,50,0]`: all three corners land back at exactly those world coordinates after merging. A test asserting on raw vertex values alone would misread this as corruption, so the test in the plan applies the surviving transform first.
 
 This does foreclose future per-object selection, isolation or per-part metadata on optimized models. Accepted deliberately; the original file is retained at `storage_key` if that is ever needed.
 
