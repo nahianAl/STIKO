@@ -13,7 +13,11 @@ import type { CompleteOptions, CompleteResult } from './types';
  */
 
 const DEFAULT_BASE_URL = 'https://api.atlascloud.ai/v1';
-const DEFAULT_MODEL = 'deepseek-v4-flash';
+// Atlas namespaces model ids by vendor. The bare form is a 400 with
+// {code:400, msg:"not found"}. Verified against GET /v1/models — do not
+// shorten it, and do not trust Atlas's own get-started guide, which shows an
+// unprefixed `deepseek-v3` that the catalogue does not contain.
+const DEFAULT_MODEL = 'deepseek-ai/deepseek-v4-flash';
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 export function isConfigured(): boolean {

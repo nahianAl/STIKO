@@ -1058,7 +1058,7 @@ test('with no API key the provider reports failure instead of throwing', async (
 
 test('activeModel falls back to the documented default', () => {
   delete process.env.ATLAS_MODEL;
-  assert.equal(activeModel(), 'deepseek-v4-flash');
+  assert.equal(activeModel(), 'deepseek-ai/deepseek-v4-flash');
 
   process.env.ATLAS_MODEL = 'something-else';
   assert.equal(activeModel(), 'something-else');
@@ -1117,7 +1117,7 @@ import type { CompleteOptions, CompleteResult } from './types';
  */
 
 const DEFAULT_BASE_URL = 'https://api.atlascloud.ai/v1';
-const DEFAULT_MODEL = 'deepseek-v4-flash';
+const DEFAULT_MODEL = 'deepseek-ai/deepseek-v4-flash';
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 export function isConfigured(): boolean {
@@ -1205,7 +1205,7 @@ Append to `.env.local.example`:
 # still show the computed fact strip, and the brief area says summarisation is
 # not configured rather than pretending. See lib/ai/provider.ts.
 # ATLAS_API_KEY=your-atlas-cloud-key
-# ATLAS_MODEL=deepseek-v4-flash
+# ATLAS_MODEL=deepseek-ai/deepseek-v4-flash
 # ATLAS_BASE_URL=https://api.atlascloud.ai/v1
 ```
 

@@ -18,7 +18,7 @@
 |---|---|
 | `DATABASE_URL` | Required. Already required by the app generally. |
 | `ATLAS_API_KEY` | Optional. Without it the feature degrades honestly — the SQL-computed fact strip still renders and the UI says summarising is not configured. It never pretends. |
-| `ATLAS_MODEL` | Defaults to `deepseek-v4-flash`. One env var swaps the model; the provider targets an OpenAI-compatible endpoint. |
+| `ATLAS_MODEL` | Defaults to `deepseek-ai/deepseek-v4-flash` — **vendor-prefixed**; the bare form is a 400 `not found`, and Atlas's own docs show an unprefixed id that does not exist. Confirm ids against `GET /v1/models`. One env var swaps the model; the provider targets an OpenAI-compatible endpoint. |
 
 Cost at a few thousand generations a month is roughly **$2**. Cost was never the constraint; reliable schema-valid JSON was.
 

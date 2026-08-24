@@ -16,7 +16,7 @@ test('with no API key the provider reports failure instead of throwing', async (
 
 test('activeModel falls back to the documented default', () => {
   delete process.env.ATLAS_MODEL;
-  assert.equal(activeModel(), 'deepseek-v4-flash');
+  assert.equal(activeModel(), 'deepseek-ai/deepseek-v4-flash');
 
   process.env.ATLAS_MODEL = 'something-else';
   assert.equal(activeModel(), 'something-else');
