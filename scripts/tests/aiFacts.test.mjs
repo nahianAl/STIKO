@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isStale } from '../../lib/ai/facts.ts';
+import { isStale } from '../../lib/ai/staleness.ts';
 
 test('a brief is stale when comments have been added since it was built', () => {
   assert.equal(isStale(10, 14), true);

@@ -1,3 +1,4 @@
+import { sql } from '@/lib/db';
 import type { VersionFacts, RawComment, PriorTheme } from './types';
 
 /**
@@ -8,38 +9,13 @@ import type { VersionFacts, RawComment, PriorTheme } from './types';
  * is available. The model is left with the one genuinely linguistic job.
  */
 
-/**
- * `sql` is loaded lazily, inside each function, rather than as a top-level
- * import.
- *
- * `lib/db` throws at import time when `DATABASE_URL` is unset, and resolving
- * its `@/` alias requires a bundler — neither is available to the plain `node
- * --test` runner this module's unit test (`isStale` only, per the brief) runs
- * under. Every other query-touching module in this codebase (`lib/access.ts`,
- * `lib/queries.ts`) is kept out of the test suite's import graph for the same
- * reason. A dynamic import defers both costs to call time, so importing this
- * file for `isStale` alone never touches the database layer, while Next.js —
- * which resolves `@/` for dynamic imports exactly as it does for static ones
- * — sees no behavioural difference at runtime.
- */
-async function loadSql() {
-  return (await import('@/lib/db')).sql;
-}
-
-/**
- * Staleness is a comparison, never a stored flag — a flag would have to be
- * invalidated from every route that writes a comment.
- *
- * `coveredCount` is null when no brief exists: that is "absent", not "stale",
- * and the UI offers a different affordance for each.
- */
-export function isStale(coveredCount: number | null, liveCount: number): boolean {
-  if (coveredCount === null) return false;
-  return liveCount > coveredCount;
-}
+// The pure half lives in ./staleness, not here, because a test can import
+// isStale without ever loading this module's top-level `@/lib/db` import —
+// which throws when DATABASE_URL is unset. Keep it split; do not fold it
+// back in.
+export { isStale } from './staleness';
 
 export async function versionFacts(versionId: string): Promise<VersionFacts> {
-  const sql = await loadSql();
   const rows = await sql`
     WITH v_comments AS (
       SELECT c.id, c.parent_comment_id, c.user_id, c.author, f.filename
@@ -87,7 +63,6 @@ export async function versionFacts(versionId: string): Promise<VersionFacts> {
 export async function versionCoverage(
   versionId: string
 ): Promise<{ count: number; maxCreatedAt: string }> {
-  const sql = await loadSql();
   const rows = await sql`
     SELECT COUNT(*)::int AS count,
            COALESCE(MAX(c.created_at), NOW()) AS "maxCreatedAt"
@@ -103,7 +78,6 @@ export async function versionCoverage(
 
 /** Newest first — capComments takes from the front. */
 export async function versionComments(versionId: string): Promise<RawComment[]> {
-  const sql = await loadSql();
   const rows = await sql`
     SELECT c.id,
            COALESCE(c.user_id, c.author) AS "authorKey",
@@ -121,7 +95,6 @@ export async function versionComments(versionId: string): Promise<RawComment[]> 
 
 /** Themes from the immediately preceding version, for recurrence detection. */
 export async function priorThemes(versionId: string): Promise<PriorTheme[]> {
-  const sql = await loadSql();
   const rows = await sql`
     SELECT vs.version_id AS "versionId", vs.themes
     FROM versions cur

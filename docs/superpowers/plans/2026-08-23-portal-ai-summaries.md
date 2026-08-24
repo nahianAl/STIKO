@@ -36,6 +36,7 @@
 | `lib/ai/validate.ts` | Citation guard. Pure, zero dependencies. |
 | `lib/ai/prompt.ts` | Pure prompt construction: capping, pseudonymising, message text. |
 | `lib/ai/provider.ts` | The Atlas Cloud seam. Plain `fetch`, honest failure. |
+| `lib/ai/staleness.ts` | `isStale` — pure staleness comparison. Dependency-free so a test can import it without `@/lib/db`. |
 | `lib/ai/facts.ts` | Deterministic fact strip + coverage queries. |
 | `lib/ai/summarize.ts` | Orchestration: load → prompt → provider → validate → upsert. |
 | `app/api/versions/[id]/summary/route.ts` | Version brief read/refresh |
@@ -1218,12 +1219,15 @@ git commit -m "feat(ai): add Atlas Cloud provider seam with honest degradation"
 ## Task 6: Facts and coverage queries
 
 **Files:**
+- Create: `lib/ai/staleness.ts`
 - Create: `lib/ai/facts.ts`
 - Test: `scripts/tests/aiFacts.test.mjs`
 
 **Interfaces:**
 - Consumes: `VersionFacts` from `lib/ai/types.ts`, `sql` from `lib/db`
-- Produces: `isStale(coveredCount, liveCount)`, `versionFacts(versionId)`, `versionCoverage(versionId)`, `versionComments(versionId)`, `priorThemes(versionId)`
+- Produces: `isStale(coveredCount, liveCount)` (from `lib/ai/staleness.ts`, re-exported by `lib/ai/facts.ts`), `versionFacts(versionId)`, `versionCoverage(versionId)`, `versionComments(versionId)`, `priorThemes(versionId)`
+
+`isStale` lives in its own module, `lib/ai/staleness.ts`, with zero imports. `facts.ts` imports `@/lib/db` at the top of the file, and `lib/db` throws at import time when `DATABASE_URL` is unset — which it always is in this workspace, which must never get a `.env.local`. A test that imports `isStale` would drag that whole import graph in with it, so the pure comparison is split into a dependency-free module the test can import on its own, exactly as `lib/capabilities.ts` is split out of `lib/access.ts`. `facts.ts` then re-exports `isStale` so every other consumer keeps importing it from one place.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1234,7 +1238,7 @@ Create `scripts/tests/aiFacts.test.mjs`:
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isStale } from '../../lib/ai/facts.ts';
+import { isStale } from '../../lib/ai/staleness.ts';
 
 test('a brief is stale when comments have been added since it was built', () => {
   assert.equal(isStale(10, 14), true);
@@ -1261,9 +1265,25 @@ test('a version with no brief yet is not described as stale', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test scripts/tests/aiFacts.test.mjs`
-Expected: FAIL — `Cannot find module '../../lib/ai/facts.ts'`
+Expected: FAIL — `Cannot find module '../../lib/ai/staleness.ts'`
 
 - [ ] **Step 3: Write the implementation**
+
+Create `lib/ai/staleness.ts`:
+
+```ts
+/**
+ * Staleness is a comparison, never a stored flag — a flag would have to be
+ * invalidated from every route that writes a comment.
+ *
+ * `coveredCount` is null when no brief exists: that is "absent", not "stale",
+ * and the UI offers a different affordance for each.
+ */
+export function isStale(coveredCount: number | null, liveCount: number): boolean {
+  if (coveredCount === null) return false;
+  return liveCount > coveredCount;
+}
+```
 
 Create `lib/ai/facts.ts`:
 
@@ -1279,17 +1299,11 @@ import type { VersionFacts, RawComment, PriorTheme } from './types';
  * is available. The model is left with the one genuinely linguistic job.
  */
 
-/**
- * Staleness is a comparison, never a stored flag — a flag would have to be
- * invalidated from every route that writes a comment.
- *
- * `coveredCount` is null when no brief exists: that is "absent", not "stale",
- * and the UI offers a different affordance for each.
- */
-export function isStale(coveredCount: number | null, liveCount: number): boolean {
-  if (coveredCount === null) return false;
-  return liveCount > coveredCount;
-}
+// The pure half lives in ./staleness, not here, because a test can import
+// isStale without ever loading this module's top-level `@/lib/db` import —
+// which throws when DATABASE_URL is unset. Keep it split; do not fold it
+// back in.
+export { isStale } from './staleness';
 
 export async function versionFacts(versionId: string): Promise<VersionFacts> {
   const rows = await sql`
@@ -1403,7 +1417,7 @@ Expected: PASS — 4 tests, 0 failures.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add lib/ai/facts.ts scripts/tests/aiFacts.test.mjs
+git add lib/ai/staleness.ts lib/ai/facts.ts scripts/tests/aiFacts.test.mjs
 git commit -m "feat(ai): add deterministic facts and coverage queries"
 ```
 
