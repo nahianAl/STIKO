@@ -1472,7 +1472,13 @@ const LOAD = {
     { id: 'c2', authorKey: 'u2', author: 'Ravi', text: 'Agreed', file: 'level3.step', isReply: true },
   ],
   priorThemes: [{ versionId: 'v2', title: 'Clearance', body: 'Raised before.' }],
-  coverage: { count: 2, maxCreatedAt: '2026-08-23T10:00:00Z' },
+  // Deliberately disagrees with comments.length (2): coverage.count is the
+  // watermark taken by the query that built the payload, and a third comment
+  // can land while the model is thinking — present in the live count but
+  // never sent. Do not "fix" this back to 2; that would make the assertion
+  // below pass even if composeVersionBrief re-derived the count from what it
+  // sent instead of reading the snapshot.
+  coverage: { count: 3, maxCreatedAt: '2026-08-23T10:00:00Z' },
 };
 
 const goodProvider = async () => ({
@@ -1494,7 +1500,7 @@ test('a good response becomes a brief carrying the payload watermark', async () 
   assert.equal(out.brief.themes[0].firstSeenVersionId, 'v2');
   // The watermark must be the snapshot the payload was built from, not a
   // fresh count taken after the model finished.
-  assert.equal(out.coveredCount, 2);
+  assert.equal(out.coveredCount, 3);
   assert.equal(out.coveredThrough, '2026-08-23T10:00:00Z');
   assert.equal(out.model, 'test-model');
 });
