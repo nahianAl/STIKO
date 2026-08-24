@@ -1772,7 +1772,7 @@ git commit -m "feat(ai): add version brief composition and upsert"
 
 **Interfaces:**
 - Consumes: `summarizeVersion`, `readVersionBrief` (Task 7); `versionFacts`, `versionCoverage`, `isStale` (Task 6); `isConfigured` (Task 5); `getPackageAccess` from `lib/access`
-- Produces: `GET` returning `{ enabled, configured, facts, brief, generatedAt, newSinceBrief }`; `POST` returning the same shape or `{ error, reason }`
+- Produces: `GET` returning `{ enabled, configured, facts, brief, generatedAt, newSinceBrief }`; `POST` returning the same shape on success, or `{ error }` with status 403 (summaries switched off) or 503 (generation failed)
 
 - [ ] **Step 1: Write the route**
 
