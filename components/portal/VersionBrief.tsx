@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * The AI brief above the comment list.
@@ -47,6 +47,11 @@ export default function VersionBrief({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  // generate() leaves data.brief null on failure, so without this the effect
+  // re-fires on every busy transition and loops against a paid API. Records
+  // the versionId an auto-attempt has already been made for, capping it to
+  // one automatic attempt per version per mount.
+  const autoAttempted = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/versions/${versionId}/summary`);
@@ -71,6 +76,7 @@ export default function VersionBrief({
   useEffect(() => {
     setData(null);
     setError(null);
+    autoAttempted.current = null;
     load();
   }, [load]);
 
@@ -82,9 +88,11 @@ export default function VersionBrief({
       data.facts.commentCount >= AUTO_GENERATE_THRESHOLD &&
       !busy
     ) {
+      if (autoAttempted.current === versionId) return;
+      autoAttempted.current = versionId;
       generate();
     }
-  }, [data, busy, generate]);
+  }, [data, busy, generate, versionId]);
 
   if (!data || !data.enabled) return null;
 
@@ -143,6 +151,16 @@ export default function VersionBrief({
               {data.configured
                 ? 'No summary yet.'
                 : 'Summarising is not configured for this deployment.'}
+              {data.configured && !data.brief && f.commentCount > 0 && (
+                <button
+                  type="button"
+                  onClick={generate}
+                  disabled={busy}
+                  className="ml-2 font-medium text-gray-900 underline disabled:opacity-50"
+                >
+                  {busy ? 'Summarising…' : 'Summarise'}
+                </button>
+              )}
             </p>
           )}
 
