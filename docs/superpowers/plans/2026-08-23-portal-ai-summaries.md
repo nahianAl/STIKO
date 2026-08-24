@@ -218,6 +218,16 @@ export interface PayloadComment {
   text: string;
   file: string;
   isReply: boolean;
+  /**
+   * Brand. `RawComment` has every field above plus `authorKey`, which makes it
+   * structurally assignable to this interface — TypeScript's structural typing
+   * cannot otherwise tell "real name" from "pseudonym", so a caller could skip
+   * `labelAuthors()` entirely and the compiler would accept it. This field
+   * exists only so `labelAuthors()` is the sole producer of a `PayloadComment`:
+   * it is not optional, because an optional field would restore assignability
+   * and undo the guarantee.
+   */
+  readonly pseudonymised: true;
 }
 
 /** A theme from an earlier version, supplied as context for recurrence. */
@@ -702,6 +712,22 @@ test('labelAuthors replaces every real name with a stable pseudonym', () => {
   assert.equal(labels.get('Reviewer A'), 'user-1');
 });
 
+test('labelFor is bijective past 26 authors: no collisions, and AA lands at index 26', () => {
+  // labelFor is a bijective base-26 ("Excel column") encoder. Two authors is
+  // not enough to catch an off-by-one in its carry logic, and a collision
+  // here would silently merge two distinct reviewers into one apparent voice.
+  const rows = Array.from({ length: 60 }, (_, i) =>
+    raw({ id: `c${i}`, authorKey: `user-${i}`, author: `Author ${i}` })
+  );
+  const { labelled } = labelAuthors(rows);
+
+  assert.equal(labelled.length, 60);
+  assert.equal(labelled[26].author, 'Reviewer AA');
+
+  const distinctLabels = new Set(labelled.map((c) => c.author));
+  assert.equal(distinctLabels.size, 60);
+});
+
 test('no real name or email survives into the prompt body', () => {
   // This is the privacy guarantee. If it regresses, personal data starts
   // leaving the building on every generation.
@@ -729,9 +755,10 @@ test('no real name or email survives into the prompt body', () => {
 });
 
 test('the prompt states an omitted count when comments were capped', () => {
+  const { labelled } = labelAuthors([raw()]);
   const { user } = buildVersionPrompt({
     versionNumber: 3,
-    comments: [raw({ author: 'Reviewer A' })],
+    comments: labelled,
     facts: {
       commentCount: 312,
       openThreadCount: 4,
@@ -748,9 +775,10 @@ test('the prompt states an omitted count when comments were capped', () => {
 });
 
 test('prior themes are supplied so recurrence can be detected', () => {
+  const { labelled } = labelAuthors([raw()]);
   const { user } = buildVersionPrompt({
     versionNumber: 4,
-    comments: [raw({ author: 'Reviewer A' })],
+    comments: labelled,
     facts: {
       commentCount: 1,
       openThreadCount: 0,
@@ -770,9 +798,10 @@ test('prior themes are supplied so recurrence can be detected', () => {
 });
 
 test('the system prompt demands ids only from the supplied set', () => {
+  const { labelled } = labelAuthors([raw()]);
   const { system } = buildVersionPrompt({
     versionNumber: 1,
-    comments: [raw({ author: 'Reviewer A' })],
+    comments: labelled,
     facts: {
       commentCount: 1,
       openThreadCount: 0,
@@ -853,6 +882,7 @@ export function labelAuthors(
       text: row.text,
       file: row.file,
       isReply: row.isReply,
+      pseudonymised: true as const,
     };
   });
 
@@ -980,7 +1010,7 @@ export function buildChangelogPrompt(input: {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test scripts/tests/aiPrompt.test.mjs`
-Expected: PASS — 7 tests, 0 failures.
+Expected: PASS — 8 tests, 0 failures.
 
 - [ ] **Step 5: Commit**
 

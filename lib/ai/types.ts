@@ -58,6 +58,16 @@ export interface PayloadComment {
   text: string;
   file: string;
   isReply: boolean;
+  /**
+   * Brand. `RawComment` has every field above plus `authorKey`, which makes it
+   * structurally assignable to this interface — TypeScript's structural typing
+   * cannot otherwise tell "real name" from "pseudonym", so a caller could skip
+   * `labelAuthors()` entirely and the compiler would accept it. This field
+   * exists only so `labelAuthors()` is the sole producer of a `PayloadComment`:
+   * it is not optional, because an optional field would restore assignability
+   * and undo the guarantee.
+   */
+  readonly pseudonymised: true;
 }
 
 /** A theme from an earlier version, supplied as context for recurrence. */

@@ -51,6 +51,7 @@ export function labelAuthors(
       text: row.text,
       file: row.file,
       isReply: row.isReply,
+      pseudonymised: true as const,
     };
   });
 
