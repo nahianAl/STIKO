@@ -38,7 +38,8 @@
 | `lib/ai/provider.ts` | The Atlas Cloud seam. Plain `fetch`, honest failure. |
 | `lib/ai/staleness.ts` | `isStale` — pure staleness comparison. Dependency-free so a test can import it without `@/lib/db`. |
 | `lib/ai/facts.ts` | Deterministic fact strip + coverage queries. |
-| `lib/ai/summarize.ts` | Orchestration: load → prompt → provider → validate → upsert. |
+| `lib/ai/compose.ts` | The pure half of orchestration: prompt → provider → validate. Database-free so tests can import it. |
+| `lib/ai/summarize.ts` | The database half: load → compose → upsert, plus cached reads. Imports `@/lib/db`, so no test may import it. |
 | `app/api/versions/[id]/summary/route.ts` | Version brief read/refresh |
 | `app/api/projects/[id]/summary/route.ts` | Project brief read/refresh |
 | `app/api/versions/[id]/changelog-draft/route.ts` | Changelog suggestion (returns text, writes nothing) |
@@ -1426,23 +1427,34 @@ git commit -m "feat(ai): add deterministic facts and coverage queries"
 ## Task 7: Version summarisation
 
 **Files:**
+- Create: `lib/ai/compose.ts`
 - Create: `lib/ai/summarize.ts`
 - Test: `scripts/tests/aiSummarize.test.mjs`
 
 **Interfaces:**
-- Consumes: `complete`/`activeModel` (Task 5), `validateVersionBrief` (Task 3), `buildVersionPrompt`/`capComments`/`labelAuthors` (Task 4), `versionFacts`/`versionCoverage`/`versionComments`/`priorThemes` (Task 6)
-- Produces: `summarizeVersion(versionId, provider?) => Promise<SummarizeOutcome>`, `readVersionBrief(versionId)`
+- Consumes: `complete` (Task 5), `validateVersionBrief` (Task 3), `buildVersionPrompt`/`capComments`/`labelAuthors` (Task 4), `versionFacts`/`versionCoverage`/`versionComments`/`priorThemes` (Task 6)
+- Produces: `composeVersionBrief(load, provider?)` and the `VersionLoad`/`ComposeOutcome` types (from `lib/ai/compose.ts`, re-exported by `lib/ai/summarize.ts`); `summarizeVersion(versionId, provider?)`, `readVersionBrief(versionId)`
+
+### Why this splits into two modules
+
+Same reason `isStale` lives in `lib/ai/staleness.ts` rather than `lib/ai/facts.ts`, and `capabilitiesFor` lives in `lib/capabilities.ts` rather than `lib/access.ts`.
+
+`summarizeVersion` needs `@/lib/db`, and `lib/db` throws at import time when `DATABASE_URL` is unset — which it always is in this workspace, and a `.env.local` must never be created here. A test importing `composeVersionBrief` from a module that also imports `@/lib/db` would drag that whole graph in and crash before a single assertion ran.
+
+So the pure half — `composeVersionBrief`, which takes its data as an argument and its provider by injection — goes in `lib/ai/compose.ts`, whose imports (`provider`, `validate`, `prompt`, `types`) are all database-free. The database half stays in `lib/ai/summarize.ts` and re-exports the compose functions so production code has one import surface.
+
+**Tests must import from `lib/ai/compose.ts` directly.** Importing the re-export from `summarize.ts` reintroduces exactly the crash this split exists to prevent.
 
 - [ ] **Step 1: Write the failing test**
 
-The database calls are injected alongside the provider so this is testable with no Neon connection.
+`composeVersionBrief` takes its loaded data as a plain argument and its provider by injection, so it is testable with no Neon connection and no network.
 
 Create `scripts/tests/aiSummarize.test.mjs`:
 
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { composeVersionBrief } from '../../lib/ai/summarize.ts';
+import { composeVersionBrief } from '../../lib/ai/compose.ts';
 
 const LOAD = {
   versionNumber: 3,
@@ -1534,19 +1546,16 @@ test('real author names never reach the provider', async () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test scripts/tests/aiSummarize.test.mjs`
-Expected: FAIL — `Cannot find module '../../lib/ai/summarize.ts'`
+Expected: FAIL — `Cannot find module '../../lib/ai/compose.ts'`
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 3: Write the pure half**
 
-Create `lib/ai/summarize.ts`:
+Create `lib/ai/compose.ts`. Every import here is database-free, which is what lets the test above run:
 
 ```ts
-import { v4 as uuidv4 } from 'uuid';
-import { sql } from '@/lib/db';
 import { complete } from './provider';
 import { validateVersionBrief } from './validate';
 import { buildVersionPrompt, capComments, labelAuthors } from './prompt';
-import { versionFacts, versionCoverage, versionComments, priorThemes } from './facts';
 import type {
   Provider,
   VersionBrief,
@@ -1626,6 +1635,32 @@ export async function composeVersionBrief(
     model: result.model,
   };
 }
+```
+
+- [ ] **Step 4: Write the database half**
+
+Create `lib/ai/summarize.ts`. This is the module that touches Neon, so nothing in `scripts/tests/` may import it:
+
+```ts
+import { v4 as uuidv4 } from 'uuid';
+import { sql } from '@/lib/db';
+import { complete } from './provider';
+import { composeVersionBrief } from './compose';
+import { versionFacts, versionCoverage, versionComments, priorThemes } from './facts';
+import type { Provider, VersionBrief } from './types';
+// `export ... from` does not bind locally, so ComposeOutcome is imported too —
+// summarizeVersion's return type needs it in scope.
+import type { ComposeOutcome } from './compose';
+
+/**
+ * The database half of summarisation.
+ *
+ * `composeVersionBrief` is re-exported so production code has one import
+ * surface — but tests must import it from './compose' directly, because this
+ * module's `@/lib/db` import throws when DATABASE_URL is unset.
+ */
+export { composeVersionBrief } from './compose';
+export type { VersionLoad, ComposeOutcome } from './compose';
 
 export async function summarizeVersion(
   versionId: string,
@@ -1702,20 +1737,20 @@ export async function readVersionBrief(versionId: string): Promise<{
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `node --test scripts/tests/aiSummarize.test.mjs`
 Expected: PASS — 5 tests, 0 failures.
 
-- [ ] **Step 5: Run the whole suite**
+- [ ] **Step 6: Run the whole suite**
 
 Run: `npm test`
 Expected: all existing tests plus the four new files pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add lib/ai/summarize.ts scripts/tests/aiSummarize.test.mjs
+git add lib/ai/compose.ts lib/ai/summarize.ts scripts/tests/aiSummarize.test.mjs
 git commit -m "feat(ai): add version brief composition and upsert"
 ```
 
@@ -2207,9 +2242,12 @@ git commit -m "feat(ai): show version headlines in the sidebar, drop dead Versio
 ## Task 11: Project roll-up
 
 **Files:**
-- Modify: `lib/ai/summarize.ts` (add project functions)
+- Modify: `lib/ai/compose.ts` (add `composeProjectBrief` — the pure, testable half)
+- Modify: `lib/ai/summarize.ts` (add `summarizeProject` and `readProjectBrief` — the database half)
 - Create: `app/api/projects/[id]/summary/route.ts`
 - Test: `scripts/tests/aiProjectSummarize.test.mjs`
+
+The same split as Task 7, for the same reason: the test imports `composeProjectBrief`, so that function must live in the module that never reaches `@/lib/db`.
 
 **Interfaces:**
 - Consumes: `buildProjectPrompt` (Task 4), `validateProjectBrief` (Task 3)
@@ -2222,7 +2260,7 @@ Create `scripts/tests/aiProjectSummarize.test.mjs`:
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { composeProjectBrief } from '../../lib/ai/summarize.ts';
+import { composeProjectBrief } from '../../lib/ai/compose.ts';
 
 const LOAD = {
   projectName: 'Riverside Depot',
@@ -2292,9 +2330,9 @@ test('a provider failure yields no brief', async () => {
 Run: `node --test scripts/tests/aiProjectSummarize.test.mjs`
 Expected: FAIL — `composeProjectBrief is not a function`
 
-- [ ] **Step 3: Add the project functions to `lib/ai/summarize.ts`**
+- [ ] **Step 3: Add the pure half to `lib/ai/compose.ts`**
 
-Append to `lib/ai/summarize.ts` (and extend the existing imports with `buildProjectPrompt` from `./prompt` and `validateProjectBrief` from `./validate`, plus `ProjectBrief` from `./types`):
+Append to `lib/ai/compose.ts`, extending its existing imports with `buildProjectPrompt` from `./prompt`, `validateProjectBrief` from `./validate`, and `ProjectBrief` from `./types`:
 
 ```ts
 export interface ProjectLoad {
@@ -2341,6 +2379,15 @@ export async function composeProjectBrief(
 
   return { ok: true, brief, coveredThrough: load.coveredThrough, model: result.model };
 }
+```
+
+- [ ] **Step 4: Add the database half to `lib/ai/summarize.ts`**
+
+Append to `lib/ai/summarize.ts`, extending its imports with `composeProjectBrief` from `./compose`, the `ProjectComposeOutcome` type from `./compose`, and `ProjectBrief` from `./types`. Also add `composeProjectBrief` and the two project types to the existing re-export block, so production code keeps one import surface:
+
+```ts
+export { composeProjectBrief } from './compose';
+export type { ProjectLoad, ProjectComposeOutcome } from './compose';
 
 export async function summarizeProject(
   projectId: string,
@@ -2451,12 +2498,12 @@ export async function readProjectBrief(projectId: string): Promise<{
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `node --test scripts/tests/aiProjectSummarize.test.mjs`
 Expected: PASS — 3 tests, 0 failures.
 
-- [ ] **Step 5: Write the route**
+- [ ] **Step 6: Write the route**
 
 Create `app/api/projects/[id]/summary/route.ts`:
 
@@ -2523,13 +2570,13 @@ export async function POST(
 }
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 7: Verify and commit**
 
 Run: `npx tsc --noEmit` — expected: no errors.
 Run: `npm test` — expected: all pass.
 
 ```bash
-git add lib/ai/summarize.ts scripts/tests/aiProjectSummarize.test.mjs "app/api/projects/[id]/summary/route.ts"
+git add lib/ai/compose.ts lib/ai/summarize.ts scripts/tests/aiProjectSummarize.test.mjs "app/api/projects/[id]/summary/route.ts"
 git commit -m "feat(ai): add project roll-up summarisation and route"
 ```
 
