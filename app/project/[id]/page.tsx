@@ -82,6 +82,7 @@ export default function ProjectPage() {
   const [tab, setTab] = useState<Tab>('packages');
   const [view, setView] = useState<'status' | 'waiting'>('status');
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(true);
 
   const load = useCallback(async () => {
     setError(null);
@@ -109,6 +110,25 @@ export default function ProjectPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Only the project owner can see or flip the AI summaries switch — 14 gates
+  // this stricter than package membership.
+  const isOwner = useMemo(
+    () => data?.members.some((m) => m.isYou && m.role === 'owner') ?? false,
+    [data]
+  );
+
+  useEffect(() => {
+    if (!isOwner) return;
+    fetch(`/api/projects/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body && typeof body.aiSummariesEnabled === 'boolean') {
+          setAiEnabled(body.aiSummariesEnabled);
+        }
+      })
+      .catch(() => {});
+  }, [id, isOwner]);
 
   const disclosure = useMemo(
     () => ({
@@ -205,6 +225,27 @@ export default function ProjectPage() {
             </Button>
           </div>
         </div>
+
+        {isOwner && (
+          <label className="mt-3 flex items-center gap-2 text-[11.5px] text-stiko-muted">
+            <input
+              type="checkbox"
+              checked={aiEnabled}
+              onChange={async (e) => {
+                const next = e.target.checked;
+                setAiEnabled(next);
+                await fetch(`/api/projects/${id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ aiSummariesEnabled: next }),
+                });
+              }}
+            />
+            AI summaries — comment text is sent to Atlas Cloud to generate them.
+            Turning this off deletes the summaries already generated for this
+            project.
+          </label>
+        )}
 
         {/* 03: tabs are earned by 2+ packages AND 3+ people. Below that,
             "People" is just a button, which the header already carries. */}
