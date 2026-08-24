@@ -1227,7 +1227,9 @@ git commit -m "feat(ai): add Atlas Cloud provider seam with honest degradation"
 
 **Interfaces:**
 - Consumes: `VersionFacts` from `lib/ai/types.ts`, `sql` from `lib/db`
-- Produces: `isStale(coveredCount, liveCount)` (from `lib/ai/staleness.ts`, re-exported by `lib/ai/facts.ts`), `versionFacts(versionId)`, `versionCoverage(versionId)`, `versionComments(versionId)`, `priorThemes(versionId)`
+- Produces: `isStale(coveredCount, liveCount)` (from `lib/ai/staleness.ts`, re-exported by `lib/ai/facts.ts`), `versionFacts(versionId)`, `versionCoverage(versionId)`, `versionComments(versionId)`, `versionCommentFiles(versionId)`, `priorThemes(versionId)`
+
+> **Amended 2026-08-24** (whole-branch review, blocking finding): added `versionCommentFiles(versionId) => Promise<Record<string, string>>`, a dedicated comment id → file id query (`SELECT c.id, c.file_id ... WHERE f.version_id = versionId`), used by Task 8's route to let a citation chip resolve which file it points at. Deliberately not built by reusing `versionComments` — that query also carries comment bodies and authors this does not need. See Task 8 and Task 9's amendments.
 
 `isStale` lives in its own module, `lib/ai/staleness.ts`, with zero imports. `facts.ts` imports `@/lib/db` at the top of the file, and `lib/db` throws at import time when `DATABASE_URL` is unset — which it always is in this workspace, which must never get a `.env.local`. A test that imports `isStale` would drag that whole import graph in with it, so the pure comparison is split into a dependency-free module the test can import on its own, exactly as `lib/capabilities.ts` is split out of `lib/access.ts`. `facts.ts` then re-exports `isStale` so every other consumer keeps importing it from one place.
 
@@ -1771,8 +1773,10 @@ git commit -m "feat(ai): add version brief composition and upsert"
 - Create: `app/api/versions/[id]/summary/route.ts`
 
 **Interfaces:**
-- Consumes: `summarizeVersion`, `readVersionBrief` (Task 7); `versionFacts`, `versionCoverage`, `isStale` (Task 6); `isConfigured` (Task 5); `getPackageAccess` from `lib/access`
-- Produces: `GET` returning `{ enabled, configured, facts, brief, generatedAt, newSinceBrief }`; `POST` returning the same shape on success, or `{ error }` with status 403 (summaries switched off) or 503 (generation failed)
+- Consumes: `summarizeVersion`, `readVersionBrief` (Task 7); `versionFacts`, `versionCoverage`, `versionCommentFiles`, `isStale` (Task 6); `isConfigured` (Task 5); `getPackageAccess` from `lib/access`
+- Produces: `GET` returning `{ enabled, configured, facts, brief, commentFiles, generatedAt, newSinceBrief }`; `POST` returning the same shape on success, or `{ error }` with status 403 (summaries switched off) or 503 (generation failed)
+
+> **Amended 2026-08-24** (whole-branch review, blocking finding): `versionComments` gathers a version's comments across every file, so a brief's citation chips can name a pin on any file — but the comment panel only ever has one file's comments loaded. The route now also returns `commentFiles: Record<string, string>`, a comment id → file id map built by a dedicated query (`versionCommentFiles` in `lib/ai/facts.ts`, Task 6), so a chip click can resolve which file to switch to before jumping to the comment. Computed only when a brief exists — `{}` otherwise, since there is nothing to resolve. See Task 9's amendment for the client side.
 
 - [ ] **Step 1: Write the route**
 
@@ -1783,7 +1787,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
-import { versionFacts, versionCoverage, isStale } from '@/lib/ai/facts';
+import { versionFacts, versionCoverage, versionCommentFiles, isStale } from '@/lib/ai/facts';
 import { summarizeVersion, readVersionBrief } from '@/lib/ai/summarize';
 import { isConfigured } from '@/lib/ai/provider';
 
@@ -1838,6 +1842,7 @@ async function payload(versionId: string, enabled: boolean) {
       configured: isConfigured(),
       facts,
       brief: null,
+      commentFiles: {},
       generatedAt: null,
       newSinceBrief: 0,
     };
@@ -1848,11 +1853,17 @@ async function payload(versionId: string, enabled: boolean) {
     versionCoverage(versionId),
   ]);
 
+  // Citation chips need to know which file each cited comment lives on, so a
+  // click can switch the panel to it before jumping to the comment — but
+  // there is nothing to resolve when there is no brief to cite from.
+  const commentFiles = brief ? await versionCommentFiles(versionId) : {};
+
   return {
     enabled: true,
     configured: isConfigured(),
     facts,
     brief,
+    commentFiles,
     generatedAt,
     newSinceBrief: isStale(coveredCount, coverage.count)
       ? coverage.count - (coveredCount ?? 0)
@@ -1940,10 +1951,26 @@ git commit -m "feat(ai): add version summary route"
 **Files:**
 - Create: `components/portal/VersionBrief.tsx`
 - Modify: `components/portal/CommentsPanel.tsx` (render `<VersionBrief>` above the comment list)
+- Modify: `app/portal/[id]/page.tsx` (2026-08-24 amendment — `handleSelectCitedComment`, threaded to `CommentsPanel` as `onSelectCitedComment`)
 
 **Interfaces:**
 - Consumes: `GET`/`POST /api/versions/[id]/summary` (Task 8)
 - Produces: `<VersionBrief versionId onSelectComment />`
+
+> **Amended 2026-08-24** (whole-branch review, blocking finding): the original `onSelectComment(commentId)` handler just did
+> `document.getElementById(`comment-${id}`)?.scrollIntoView(...)` — dead for any citation on a file other than the one
+> currently selected (the panel only ever loads one file's comments), dead for every chip when no file is selected yet,
+> and even a same-file hit bypassed `CommentsPanel`'s own activate-and-scroll effect, so it never got the highlight. The
+> fix threads the target file through: `onSelectComment` is now `(commentId: string, fileId: string) => void`, resolved
+> from `commentFiles` (Task 8); `VersionBrief` filters out any chip whose id is not in `commentFiles` rather than
+> rendering it dead; `CommentsPanel` gained an `onSelectCitedComment?: (commentId, fileId) => void` prop that it wires to
+> `VersionBrief`'s `onSelectComment`, forwarding to a new handler owned by `app/portal/[id]/page.tsx` (`handleSelectCitedComment`,
+> next to `handleCommentClick`/`handleCommentPinClick`), which selects the file if it differs from `selectedFileId` and then
+> sets `activeCommentId` — letting the existing effect (Step 1 above) own the scroll and highlight instead of duplicating it.
+> Because switching files triggers an async re-fetch of that file's comments, the existing scroll effect's dependency array
+> grew from `[activeCommentId]` to `[activeCommentId, comments]`, so it retries once the new file's comments actually land
+> in the DOM rather than firing once against the old file's list and finding nothing. Full trace in
+> `.superpowers/sdd/blocking-fix-report.md`.
 
 - [ ] **Step 1: Write the component**
 
@@ -1982,6 +2009,10 @@ interface Summary {
     mostAnnotatedFile: string | null;
   };
   brief: { headline: string; themes: Theme[] } | null;
+  /** Comment id → file id, for every comment cited anywhere in the brief. A
+   * chip whose id is missing here (e.g. the comment was deleted after the
+   * brief was generated) has nothing to resolve to and must not render. */
+  commentFiles: Record<string, string>;
   generatedAt: string | null;
   newSinceBrief: number;
 }
@@ -1993,7 +2024,10 @@ export default function VersionBrief({
   onSelectComment,
 }: {
   versionId: string;
-  onSelectComment: (commentId: string) => void;
+  /** Fired with the comment's id and the id of the file it lives on — the
+   * caller owns switching files and activating the comment, this component
+   * only knows where each citation resolves to. */
+  onSelectComment: (commentId: string, fileId: string) => void;
 }) {
   const [data, setData] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2113,16 +2147,21 @@ export default function VersionBrief({
                     )}
                     <span className="block">{theme.body}</span>
                     <span className="mt-1 flex flex-wrap gap-1">
-                      {theme.commentIds.map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => onSelectComment(id)}
-                          className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 hover:border-gray-500"
-                        >
-                          pin
-                        </button>
-                      ))}
+                      {theme.commentIds
+                        // A chip that cannot resolve to a file must not be shown at
+                        // all — rendering it dead (no scroll, no message) is worse
+                        // than not rendering it.
+                        .filter((id) => data.commentFiles[id])
+                        .map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => onSelectComment(id, data.commentFiles[id])}
+                            className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 hover:border-gray-500"
+                          >
+                            pin
+                          </button>
+                        ))}
                     </span>
                   </li>
                 ))}
@@ -2208,6 +2247,50 @@ Add a `versionId: string | null` prop to the component's props interface, thread
 ```
 
 If comment list items do not already carry `id={`comment-${comment.id}`}`, add it to the list item wrapper so the citation chips have a scroll target.
+
+> **Amended 2026-08-24** (whole-branch review, blocking finding): the inline `scrollIntoView` handler above shipped, then
+> turned out to be dead for most comments (see the amendment at the top of this task). It is replaced with:
+>
+> ```tsx
+> {versionId && (
+>   <VersionBrief
+>     versionId={versionId}
+>     onSelectComment={(id, commentFileId) => onSelectCitedComment?.(id, commentFileId)}
+>   />
+> )}
+> ```
+>
+> `CommentsPanel`'s props interface gained `onSelectCitedComment?: (commentId: string, fileId: string) => void`, and its
+> existing scroll-to-active-comment effect (originally keyed on `[activeCommentId]` alone) now also depends on `comments`,
+> so it retries after an async file switch lands new comments in the DOM:
+>
+> ```tsx
+> useEffect(() => {
+>   if (activeCommentId) {
+>     const el = document.getElementById(`comment-${activeCommentId}`);
+>     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+>   }
+> }, [activeCommentId, comments]);
+> ```
+>
+> `app/portal/[id]/page.tsx` passes `onSelectCitedComment={handleSelectCitedComment}`, a new handler next to
+> `handleCommentClick`/`handleCommentPinClick`:
+>
+> ```tsx
+> const handleSelectCitedComment = useCallback(
+>   (commentId: string, fileId: string) => {
+>     if (fileId !== selectedFileId) {
+>       setSelectedFileId(fileId);
+>     }
+>     setActiveCommentId(commentId);
+>   },
+>   [selectedFileId]
+> );
+> ```
+>
+> This works because the `useEffect` that resets per-file UI state on `selectedFileId` change (viewer snapshot, annotation
+> mode, composer draft, transform mode, etc.) never touches `activeCommentId` — so `activeCommentId` survives the file
+> switch, and the `[activeCommentId, comments]` effect above picks it up once the new file's comments render.
 
 - [ ] **Step 3: Verify it compiles**
 

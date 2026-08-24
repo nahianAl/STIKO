@@ -760,6 +760,24 @@ export default function PortalPage() {
     }
   }, []);
 
+  // A citation chip in the AI brief was clicked. Unlike handleCommentClick /
+  // handleCommentPinClick above, this is not a toggle — it is "take me there" —
+  // and the cited comment may live on a file other than the one on screen.
+  // Switch to that file first (a no-op if it's already selected: React bails
+  // out of the state update and the [selectedFileId] reset effect never
+  // fires), then set activeCommentId. CommentsPanel's own effect owns the
+  // scroll/highlight and re-runs once that file's comments have loaded, so
+  // there is nothing else to do here — never scrollIntoView directly.
+  const handleSelectCitedComment = useCallback(
+    (commentId: string, fileId: string) => {
+      if (fileId !== selectedFileId) {
+        setSelectedFileId(fileId);
+      }
+      setActiveCommentId(commentId);
+    },
+    [selectedFileId]
+  );
+
   const renderFileViewer = () => {
     if (loading || filesLoading) {
       return (
@@ -1005,6 +1023,7 @@ export default function PortalPage() {
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
           onViewImage={setViewportImage}
           onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
+          onSelectCitedComment={handleSelectCitedComment}
           composer={
             <CommentComposer
               text={composerText}

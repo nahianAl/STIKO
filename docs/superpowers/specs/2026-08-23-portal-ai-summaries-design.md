@@ -99,7 +99,7 @@ Generating v4's brief puts v3's themes in the prompt as prior context. The model
 
 ## Architecture
 
-Five modules, each independently understandable.
+Six modules below, each independently understandable, plus `lib/ai/facts.ts` — the deterministic fact-strip and coverage queries, already covered above under "Why SQL computes the facts" — and `lib/ai/types.ts`, which is shapes only. (This section was originally scoped around five modules, with a single `lib/ai/payload.ts` covering both prompt construction and orchestration. Implementation split that in two — `lib/ai/prompt.ts` for the pure half, `lib/ai/compose.ts` for the half that calls the provider — so the interesting behaviour stays testable without a database.)
 
 ### `lib/ai/provider.ts`
 
@@ -107,11 +107,13 @@ One function: `complete({ system, user, schema })`. Plain `fetch` against Atlas 
 
 Missing key returns `{ ok: false, reason }` — it never throws and never pretends. This is `lib/email.ts`'s dev transport, applied to inference: callers get an honest flag so the UI can say what is actually true.
 
-### `lib/ai/payload.ts`
+### `lib/ai/prompt.ts`
 
-Builds the request body from SQL and returns `{ body, sentIds, count, maxCreatedAt }`. Pseudonymises authors to stable labels (`Reviewer A`) before the request; real names are rehydrated client-side from the cited comment ids.
+Pure prompt construction — no database, no network, so it is the piece under the heaviest test coverage. `capComments` caps at 150 comments, most recent first, and reports `omittedCount`; a capped brief **says** it was capped in the prompt text — silent truncation would make it quietly wrong. `labelAuthors` pseudonymises authors to stable labels (`Reviewer A`) before the request; real names are rehydrated client-side from the cited comment ids. `buildVersionPrompt`, `buildProjectPrompt` and `buildChangelogPrompt` build the system/user message pair for each of the three prompts.
 
-Caps at 150 comments, most recent first, and reports `omittedCount`. A capped brief **says** it was capped — silent truncation would make it quietly wrong.
+### `lib/ai/compose.ts`
+
+The half of orchestration that is still database-free: `composeVersionBrief` and `composeProjectBrief` each run prompt → `provider.complete()` → `validate*`, and hand back either the validated brief plus its coverage watermark, or `{ ok: false, reason }`. Kept apart from `lib/ai/summarize.ts` (which does the SQL load and the upsert) specifically so this — the part with actual branching logic — can be tested by injecting a canned provider, with no `@/lib/db` import anywhere in the chain.
 
 ### `lib/ai/validate.ts`
 
@@ -126,7 +128,7 @@ A citation chip therefore cannot point at a comment the model invented.
 
 ### `lib/ai/summarize.ts`
 
-Orchestrates payload → provider → validate → upsert. Exports `summarizeVersion(id)` and `summarizeProject(id)`. The provider is injectable so tests never make a network call.
+The database half: load via `lib/ai/facts.ts` → `composeVersionBrief`/`composeProjectBrief` (`lib/ai/compose.ts`) → upsert, plus the cached reads (`readVersionBrief`, `readProjectBrief`). Exports `summarizeVersion(id)` and `summarizeProject(id)`. Imports `@/lib/db`, so — unlike `compose.ts` — nothing here can be imported by a test.
 
 ### `lib/ai/staleness.ts`
 
@@ -142,8 +144,10 @@ The single query comparing `covered_count` to the live count, shared by the read
 GET /api/versions/[id]/summary
   auth() → getPackageAccess(userId, portalId) → projects.ai_summaries_enabled
   → SELECT cached row + live comment count   (one round trip)
-  → { facts, brief | null, newSinceBrief: N, enabled }
+  → { facts, brief | null, commentFiles, newSinceBrief: N, enabled }
 ```
+
+`commentFiles` is a comment id → file id map (**added 2026-08-24**, whole-branch review — see "Citation chips" below), populated only when a brief exists. A brief's themes can cite pins from any file in the version, but the comments panel only ever has one file's comments loaded; a citation chip needs to know which file to switch to before it can jump to the comment it names.
 
 `getPackageAccess` is keyed on a user id, so anonymous link viewers fall out of decision #5 naturally rather than needing a separate check.
 
@@ -156,13 +160,14 @@ The client renders the fact strip from `facts` regardless. If `brief` is null an
 ```
 POST /api/versions/[id]/summary
   same gates
-  → payload.build()      → { body, sentIds, count, maxCreatedAt }
-  → provider.complete()
-  → validate(json, sentIds)
+  → load: versionFacts + versionCoverage + versionComments + priorThemes  (lib/ai/facts.ts)
+  → composeVersionBrief: capComments → labelAuthors → buildVersionPrompt (lib/ai/prompt.ts)
+    → provider.complete()
+    → validateVersionBrief(json, sentIds, priorVersionIds)               (lib/ai/validate.ts)
   → upsert covered_count = count, covered_through = maxCreatedAt
 ```
 
-**The watermark comes from the payload query, not from a fresh count after generation.** A comment landing during the seconds the model is thinking would otherwise be stamped as covered by a brief that never saw it — and because staleness is computed rather than flagged, that comment would be invisible forever rather than merely late.
+**The watermark comes from the coverage query taken alongside the load, not from a fresh count after generation.** A comment landing during the seconds the model is thinking would otherwise be stamped as covered by a brief that never saw it — and because staleness is computed rather than flagged, that comment would be invisible forever rather than merely late.
 
 ### Concurrency needs no locking
 
@@ -175,7 +180,7 @@ Two simultaneous refreshes both generate; the more complete brief wins, the stal
 
 ### Project briefs
 
-Same shape one level up. `payload.ts` reads `version_summaries` rather than comments, `covered_through` is the max `generated_at` consumed, and the validator checks every cited `versionId` belongs to that project.
+Same shape one level up. `summarizeProject` (`lib/ai/summarize.ts`) reads `version_summaries` rather than comments, `covered_through` is the max `generated_at` consumed, `composeProjectBrief` (`lib/ai/compose.ts`) builds the prompt and calls the provider, and the validator checks every cited `versionId` belongs to that project.
 
 ---
 
@@ -196,7 +201,7 @@ Same shape one level up. `payload.ts` reads `version_summaries` rather than comm
 
 | Surface | What lands there |
 |---|---|
-| `components/portal/CommentsPanel.tsx` | The version brief, above the comment list. Collapsible, collapse state persisted. Citation chips scroll the list to the pin they name. |
+| `components/portal/CommentsPanel.tsx` | The version brief, above the comment list. Collapsible, collapse state persisted. A citation chip switches to the pin's file if it isn't already selected, then scrolls to and highlights it — a chip that cannot resolve to a file (`commentFiles`, above) is not rendered at all rather than shown dead. |
 | `components/portal/FileTreeSidebar.tsx` | The headline only, one line under each version bar. Free — the text already exists — and it is what makes the feature discoverable without a nav entry. |
 | `app/project/[id]/page.tsx` | The project brief above the package rows, each section citing down to the version whose brief made the claim. |
 | `components/portal/NewVersionDrawer.tsx` | A **Suggest** control beside the existing changelog textarea. One call, on click, into an editable field — not auto-filled on open, which would spend a call every time the drawer opens and pre-commit text nobody asked for. |
@@ -229,7 +234,7 @@ Provider calls carry a ~20s `AbortSignal` and the routes an explicit `maxDuratio
 Existing pattern: `node --test scripts/tests/*.mjs`. **No live inference in tests** — the provider is injected and driven with canned responses.
 
 - **`validate.ts`** carries the heaviest coverage and is pure: a fabricated comment id is dropped; a theme left citing nothing is dropped; a `firstSeenVersionId` that does not precede the version is rejected. These are the tests that prove a citation chip cannot point at a comment that does not exist.
-- **`payload.ts`**: no real name or email appears in the outgoing body; the 150-comment cap sets `omittedCount`.
+- **`prompt.ts`**: no real name or email appears in the outgoing body; the 150-comment cap sets `omittedCount`.
 - **Staleness arithmetic**: insert comments after a brief, assert the flag flips and the count is right.
 - **`provider.ts`**: no key returns `{ ok: false }` rather than throwing.
 - **Access**: an anonymous link viewer gets no brief from either summary route.

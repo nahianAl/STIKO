@@ -30,6 +30,10 @@ interface Summary {
     mostAnnotatedFile: string | null;
   };
   brief: { headline: string; themes: Theme[] } | null;
+  /** Comment id → file id, for every comment cited anywhere in the brief. A
+   * chip whose id is missing here (e.g. the comment was deleted after the
+   * brief was generated) has nothing to resolve to and must not render. */
+  commentFiles: Record<string, string>;
   generatedAt: string | null;
   newSinceBrief: number;
 }
@@ -41,7 +45,10 @@ export default function VersionBrief({
   onSelectComment,
 }: {
   versionId: string;
-  onSelectComment: (commentId: string) => void;
+  /** Fired with the comment's id and the id of the file it lives on — the
+   * caller owns switching files and activating the comment, this component
+   * only knows where each citation resolves to. */
+  onSelectComment: (commentId: string, fileId: string) => void;
 }) {
   const [data, setData] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
@@ -161,16 +168,21 @@ export default function VersionBrief({
                     )}
                     <span className="block">{theme.body}</span>
                     <span className="mt-1 flex flex-wrap gap-1">
-                      {theme.commentIds.map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => onSelectComment(id)}
-                          className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 hover:border-gray-500"
-                        >
-                          pin
-                        </button>
-                      ))}
+                      {theme.commentIds
+                        // A chip that cannot resolve to a file must not be shown at
+                        // all — rendering it dead (no scroll, no message) is worse
+                        // than not rendering it.
+                        .filter((id) => data.commentFiles[id])
+                        .map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => onSelectComment(id, data.commentFiles[id])}
+                            className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 hover:border-gray-500"
+                          >
+                            pin
+                          </button>
+                        ))}
                     </span>
                   </li>
                 ))}

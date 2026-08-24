@@ -76,6 +76,30 @@ export async function versionCoverage(
   };
 }
 
+/**
+ * Comment id → file id, for the whole version.
+ *
+ * A brief's themes can cite pins from any file in the version (versionComments
+ * gathers across all of them), but the comment panel only ever has one file's
+ * comments loaded at a time. This is what lets a citation chip know which file
+ * to switch to before it can jump to the comment — a dedicated query rather
+ * than reusing versionComments, which also drags in bodies/authors this does
+ * not need.
+ */
+export async function versionCommentFiles(versionId: string): Promise<Record<string, string>> {
+  const rows = await sql`
+    SELECT c.id, c.file_id AS "fileId"
+    FROM comments c
+    JOIN files f ON f.id = c.file_id
+    WHERE f.version_id = ${versionId}
+  `;
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    map[row.id as string] = row.fileId as string;
+  }
+  return map;
+}
+
 /** Newest first — capComments takes from the front. */
 export async function versionComments(versionId: string): Promise<RawComment[]> {
   const rows = await sql`

@@ -19,6 +19,10 @@ interface CommentsPanelProps {
   composer?: React.ReactNode;
   onViewImage?: (url: string) => void;
   onCommentsChanged?: () => void;
+  /** A citation chip in the brief was clicked. The comment may live on a
+   * different file than the one currently selected, so this is owned by
+   * whoever owns `fileId`/`activeCommentId` (the page), not this panel. */
+  onSelectCitedComment?: (commentId: string, fileId: string) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -471,7 +475,7 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, versionId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, versionId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged, onSelectCitedComment }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
@@ -499,13 +503,20 @@ export default function CommentsPanel({ fileId, versionId, onCommentClick, activ
     fetchComments();
   }, [fetchComments, refreshKey]);
 
-  // Scroll to active comment
+  // Scroll to active comment. Also re-runs when `comments` changes (not just
+  // `activeCommentId`) because a citation chip for a comment on a different
+  // file sets both `fileId` and `activeCommentId` at once: the target's file
+  // switches, which starts an async re-fetch here, and the very first run of
+  // this effect finds the old file's comments still in the DOM — no element
+  // with the new id yet. Re-running once `comments` lands retries against the
+  // DOM the new fetch actually produced, without this component needing to
+  // know anything about *why* activeCommentId changed.
   useEffect(() => {
     if (activeCommentId) {
       const el = document.getElementById(`comment-${activeCommentId}`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, [activeCommentId]);
+  }, [activeCommentId, comments]);
 
   // Build threaded structure
   // File-wide tag numbers (1,2,3…) over positioned comments in fetch order (created_at ASC),
@@ -575,9 +586,7 @@ export default function CommentsPanel({ fileId, versionId, onCommentClick, activ
         {versionId && (
           <VersionBrief
             versionId={versionId}
-            onSelectComment={(id) => {
-              document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth' });
-            }}
+            onSelectComment={(id, commentFileId) => onSelectCitedComment?.(id, commentFileId)}
           />
         )}
         {!fileId ? (
