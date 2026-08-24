@@ -151,7 +151,7 @@ git commit -m "feat(ai): add version_summaries and project_summaries tables"
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `BriefTheme`, `VersionBrief`, `ProjectSection`, `ProjectBrief`, `VersionFacts`, `PayloadComment`, `CompleteOptions`, `CompleteResult`, `Provider`
+- Produces: `BriefTheme`, `VersionBrief`, `ProjectSection`, `ProjectBrief`, `VersionFacts`, `RawComment`, `PayloadComment`, `PriorTheme`, `CompleteOptions`, `CompleteResult`, `Provider` (11 exports; the Step 1 code block is authoritative)
 
 - [ ] **Step 1: Write the file**
 
