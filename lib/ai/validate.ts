@@ -88,6 +88,12 @@ export function validateVersionBrief(
   if (themes.length === 0) return { brief: null, droppedIds, droppedThemes };
 
   return {
+    // Themes beyond MAX_THEMES are truncated here, not counted in
+    // droppedThemes. droppedThemes is a fabrication signal — it means the
+    // model cited something that doesn't exist. Truncation is the opposite:
+    // the model produced more good, fully-cited themes than the format
+    // allows. Counting both under one number would conflate a quality
+    // problem with a formatting limit.
     brief: { headline, themes: themes.slice(0, MAX_THEMES) },
     droppedIds,
     droppedThemes,
