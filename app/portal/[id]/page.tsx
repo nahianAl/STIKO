@@ -149,6 +149,7 @@ export default function PortalPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [portal, setPortal] = useState<Portal | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
+  const [headlines, setHeadlines] = useState<Record<string, string>>({});
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
@@ -426,6 +427,26 @@ export default function PortalPage() {
     };
     fetchVersions();
   }, [portalId]);
+
+  // Fetch each version's one-line AI headline for the sidebar. GET never
+  // triggers the model — this only reads whatever brief already exists.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        versions.map(async (v) => {
+          const res = await fetch(`/api/versions/${v.id}/summary`);
+          if (!res.ok) return [v.id, ''] as const;
+          const body = await res.json();
+          return [v.id, body.brief?.headline ?? ''] as const;
+        })
+      );
+      if (!cancelled) setHeadlines(Object.fromEntries(entries.filter(([, h]) => h)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [versions]);
 
   // Fetch files when version changes
   const fetchFiles = useCallback(async (versionId: string) => {
@@ -820,6 +841,7 @@ export default function PortalPage() {
         {/* Left Panel: File Tree Sidebar */}
         <FileTreeSidebar
           versions={versions}
+          headlines={headlines}
           selectedVersionId={selectedVersionId}
           onSelectVersion={handleSelectVersion}
           files={files}

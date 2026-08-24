@@ -27,6 +27,8 @@ interface FileRecord {
 
 interface FileTreeSidebarProps {
   versions: Version[];
+  /** version id -> AI-generated one-line headline, when a brief exists for it. */
+  headlines?: Record<string, string>;
   selectedVersionId: string | null;
   onSelectVersion: (versionId: string) => void;
   files: FileRecord[];
@@ -198,6 +200,7 @@ function FileItem({
 
 export default function FileTreeSidebar({
   versions,
+  headlines,
   selectedVersionId,
   onSelectVersion,
   files,
@@ -281,6 +284,11 @@ export default function FileTreeSidebar({
                       {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
                     </span>
                     <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
+                    {headlines?.[version.id] && (
+                      <span className="mt-0.5 block truncate text-xs font-normal text-gray-500">
+                        {headlines[version.id]}
+                      </span>
+                    )}
                   </span>
                   <svg
                     className={`h-4 w-4 flex-shrink-0 transition-transform text-stiko-primary ${isSelected ? 'rotate-90' : ''}`}
