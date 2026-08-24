@@ -28,7 +28,7 @@ Rhino's exporter splits geometry per object and per material and merges nothing.
 Four factors compound it:
 
 1. `frameloop` is unset on the `Canvas` (`ModelViewerInner.tsx`), so those draw calls run at 60fps even when the scene is idle.
-2. Every named material carries `KHR_materials_transmission: {}` — an empty object. Three.js promotes *any* material carrying that key to `MeshPhysicalMaterial` (`GLTFLoader.js`, `GLTFMaterialsTransmissionExtension.getMaterialType`), its most expensive shader. Four materials have a real `transmissionFactor`, which additionally triggers a full extra scene render pass per frame.
+2. Every named material carries `KHR_materials_transmission: {}`, `KHR_materials_clearcoat: {}`, `KHR_materials_ior` and `KHR_materials_specular`. Any one of these promotes the material to `MeshPhysicalMaterial` (`GLTFLoader.js`, each extension's `getMaterialType`), three.js's most expensive shader. Four materials carry a real `transmissionFactor`, which additionally triggers a full extra scene render pass per frame. This is inherent to the file's authored materials and is **not** addressed by this work — see the note under the transform chain.
 3. `makeDoubleSided` disables backface culling on every material, doubling fragment work.
 4. Comment-pin raycasting walks all 7,995 meshes per click.
 
@@ -74,7 +74,7 @@ A **307× draw-call reduction with zero geometry loss.** Peak memory ran ~24× i
 |---|----------|--------|
 | 1 | Where geometry optimization runs | **Client-side, in a Web Worker, at upload time**, before the S3 PUT. No new infrastructure, no Vercel memory ceiling, no CloudConvert dependency. Cost is paid once per upload rather than once per view. |
 | 2 | Lossy simplification | **Never.** Strictly lossless: merge, dedup, weld, prune. Triangle count is preserved exactly. Stiko is a review tool; people approve and measure against these meshes. |
-| 3 | Where material repair runs | **At load, in the viewer.** Covers formats that never pass through the client optimizer (notably STEP→GLB), and leaves the stored asset faithful to what the designer exported. |
+| 3 | Where material repair runs | **At load, in the viewer.** Covers every format, including the non-glTF ones the optimizer cannot touch (STEP, OBJ, STL, PLY, DAE, 3DS), and leaves the stored asset faithful to what the designer exported. |
 | 4 | Material repair aggressiveness | **Fix metalness *and* lift near-black albedo**, but only on unnamed materials matching the exporter-default signature. Metalness-only would leave the 76k black triangles black and would not fix the reported bug. |
 | 5 | Existing uploaded files | **Not a concern — Stiko has no users yet.** No backfill script, no view-time fallback, no migration. |
 | 6 | STEP files | **Left unoptimized this pass.** STEP never becomes glTF, so this chain cannot apply to it (see below). Material repair still applies at runtime. |
@@ -99,7 +99,13 @@ join()      merge primitives by material        <- the 307x win
 prune()     drop orphaned nodes / meshes / accessors
 ```
 
-Followed by an extension-strip pass: remove `KHR_materials_transmission` from any material whose `transmissionFactor` is absent or `0`. This is what stops three.js promoting the material to `MeshPhysicalMaterial`. The mechanism is confirmed in `GLTFLoader.js`; the size of the win is **not yet measured** and must be verified during implementation.
+**No extension-stripping pass.** An earlier draft proposed removing no-op `KHR_materials_transmission` to demote materials from `MeshPhysicalMaterial` to `MeshStandardMaterial`. Measurement showed this does not work and the step was cut:
+
+- Stripping succeeds mechanically — on the reference file, 8 of 12 no-op instances are removed and the 4 real ones retained.
+- But `KHR_materials_clearcoat`, `KHR_materials_ior` and `KHR_materials_specular` **also** return `MeshPhysicalMaterial` from `getMaterialType`. The reference file's `ior: 1` and `specularFactor: 0.5` are both non-default, so those extensions are genuinely in use and the materials stay Physical either way.
+- Three.js only collects an object into the transmission render pass when `material.transmission > 0`, so the extra pass this was meant to eliminate was never running for no-op materials to begin with.
+
+The remaining benefit is a few unused uniforms. Not worth the code.
 
 `OptimizeStats` carries before/after primitive, triangle, node and byte counts, so the upload path can log what happened and tests can assert on it.
 
@@ -204,7 +210,6 @@ This does foreclose future per-object selection, isolation or per-part metadata 
 
 - A synthetic fragmented GLB collapses to one primitive per material
 - **Triangle count is identical before and after** — the lossless guarantee, asserted directly
-- A material with `transmissionFactor: 0` loses the extension; one with a real factor keeps it
 - Node transforms are baked correctly: a translated child's vertices land at the same world positions after `flatten()`
 
 `scripts/tests/repairMaterials.test.mjs`:
