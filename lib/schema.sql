@@ -228,3 +228,34 @@ CREATE TABLE IF NOT EXISTS version_views (
   viewed_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(version_id, user_id)
 );
+
+-- ===========================================================================
+-- AI summaries (2026-08-23). Mirrored in lib/migrations/004-ai-summaries.sql.
+-- ===========================================================================
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS ai_summaries_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+CREATE TABLE IF NOT EXISTS version_summaries (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL UNIQUE REFERENCES versions(id) ON DELETE CASCADE,
+  headline TEXT NOT NULL,
+  themes JSONB NOT NULL DEFAULT '[]',
+  covered_count INT NOT NULL,
+  covered_through TIMESTAMPTZ NOT NULL,
+  model TEXT NOT NULL,
+  generated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_summaries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  headline TEXT NOT NULL,
+  sections JSONB NOT NULL DEFAULT '[]',
+  covered_through TIMESTAMPTZ NOT NULL,
+  model TEXT NOT NULL,
+  generated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS comments_file_created_idx ON comments(file_id, created_at);
+CREATE INDEX IF NOT EXISTS files_version_idx ON files(version_id);
