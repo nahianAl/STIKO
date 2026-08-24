@@ -77,7 +77,7 @@ A **307× draw-call reduction with zero geometry loss.** Peak memory ran ~24× i
 | 3 | Where material repair runs | **At load, in the viewer.** Covers formats that never pass through the client optimizer (notably STEP→GLB), and leaves the stored asset faithful to what the designer exported. |
 | 4 | Material repair aggressiveness | **Fix metalness *and* lift near-black albedo**, but only on unnamed materials matching the exporter-default signature. Metalness-only would leave the 76k black triangles black and would not fix the reported bug. |
 | 5 | Existing uploaded files | **Not a concern — Stiko has no users yet.** No backfill script, no view-time fallback, no migration. |
-| 6 | STEP files | **Left unoptimized this pass.** Their GLB is produced server-side by CloudConvert and never reaches the uploader's browser. Material repair still applies at runtime. Deferred to a proper server-side step later rather than a browser-tab-dependent workaround. |
+| 6 | STEP files | **Left unoptimized this pass.** STEP never becomes glTF, so this chain cannot apply to it (see below). Material repair still applies at runtime. |
 | 7 | Failure policy | **Optimization never blocks an upload.** Any failure uploads the original; worst case is current behaviour. |
 
 ---
@@ -152,8 +152,19 @@ No schema change. `converted_storage_key` already means "the artifact the viewer
 | Upload | `storage_key` | `converted_storage_key` |
 |---|---|---|
 | Direct GLB / glTF | original, untouched | optimized GLB |
-| STEP | original STEP | CloudConvert GLB (unoptimized this pass) |
+| STEP, OBJ, STL, PLY, DAE, 3DS | original | `null` — loaded directly, see below |
 | Optimization skipped or failed | original | `null` |
+
+### Why only GLB and glTF
+
+`gltf-transform` operates on glTF documents, so the chain applies to `.glb` and `.gltf` only. Every other model format Stiko accepts is parsed straight into three.js objects by its own loader and never becomes glTF:
+
+- **STEP** is parsed **client-side** by `lib/STEPLoader.ts` via `occt-import-js` (the wasm binary copied by the `postinstall` script). It is never converted to GLB on the live path.
+- OBJ, STL, PLY, DAE and 3DS each use their own three.js loader in `ModelViewerInner.tsx`.
+
+`lib/cloudconvert.ts` does export `createStepToGlbJob`, but it is referenced **only** from `/api/conversions/retry` and is not wired into the upload flow — no code path calls it for a new upload. It is vestigial with respect to this work and must not be assumed live.
+
+Because material repair runs at load rather than at import, **all** of these formats still get the black-material fix. Only the geometry chain is GLB-scoped.
 
 Downloads continue to serve `storage_key`, so an uploader always gets their own file back byte-for-byte.
 
@@ -211,7 +222,7 @@ Manual verification: load `Rohit Resort Villas.glb` in the local viewer and conf
 ## Out of scope
 
 - Lossy simplification / decimation / LOD (decision 2). A genuinely heavy single mesh — photogrammetry, dense scans — is not helped by this work and remains a known limitation.
-- Server-side optimization of STEP→GLB output (decision 6).
+- Geometry optimization for non-glTF formats — STEP, OBJ, STL, PLY, DAE, 3DS (decision 6). `occt-import-js` output in particular is likely fragmented per solid and may need its own merge pass later, but that is a three.js-side problem, not a glTF one.
 - Backfill of existing files (decision 5).
 - Draco / meshopt compression. The chain already takes 21.7 MB to 9.4 MB; further transfer-size work is a separate concern from draw calls.
 - Texture compression and resizing.
