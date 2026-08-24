@@ -71,21 +71,35 @@ export async function PATCH(
     return NextResponse.json({ error: 'aiSummariesEnabled required' }, { status: 400 });
   }
 
-  await sql`
-    UPDATE projects SET ai_summaries_enabled = ${body.aiSummariesEnabled}
-    WHERE id = ${params.id}
-  `;
-
-  if (!body.aiSummariesEnabled) {
-    await sql`DELETE FROM project_summaries WHERE project_id = ${params.id}`;
+  if (body.aiSummariesEnabled) {
+    // Enabling: nothing to delete, nothing to make atomic. A plain UPDATE is
+    // honest about what this path does.
     await sql`
-      DELETE FROM version_summaries
-      WHERE version_id IN (
-        SELECT v.id FROM versions v
-        JOIN portals po ON po.id = v.portal_id
-        WHERE po.project_id = ${params.id}
-      )
+      UPDATE projects SET ai_summaries_enabled = TRUE
+      WHERE id = ${params.id}
     `;
+  } else {
+    // Disabling: the promise to the owner is that the generated text goes
+    // away. Both deletes and the flag flip run in one transaction so a
+    // mid-sequence failure can never leave the flag reading "off" while the
+    // summaries are still stored. Deletes are listed before the flag update
+    // so the code itself reads as "clear the data, then flip the flag" even
+    // though the transaction already makes the ordering atomic.
+    await sql.transaction([
+      sql`
+        DELETE FROM version_summaries
+        WHERE version_id IN (
+          SELECT v.id FROM versions v
+          JOIN portals po ON po.id = v.portal_id
+          WHERE po.project_id = ${params.id}
+        )
+      `,
+      sql`DELETE FROM project_summaries WHERE project_id = ${params.id}`,
+      sql`
+        UPDATE projects SET ai_summaries_enabled = FALSE
+        WHERE id = ${params.id}
+      `,
+    ]);
   }
 
   return NextResponse.json({ aiSummariesEnabled: body.aiSummariesEnabled });

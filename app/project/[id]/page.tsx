@@ -83,6 +83,7 @@ export default function ProjectPage() {
   const [view, setView] = useState<'status' | 'waiting'>('status');
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -227,24 +228,42 @@ export default function ProjectPage() {
         </div>
 
         {isOwner && (
-          <label className="mt-3 flex items-center gap-2 text-[11.5px] text-stiko-muted">
-            <input
-              type="checkbox"
-              checked={aiEnabled}
-              onChange={async (e) => {
-                const next = e.target.checked;
-                setAiEnabled(next);
-                await fetch(`/api/projects/${id}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ aiSummariesEnabled: next }),
-                });
-              }}
-            />
-            AI summaries — comment text is sent to Atlas Cloud to generate them.
-            Turning this off deletes the summaries already generated for this
-            project.
-          </label>
+          <div className="mt-3">
+            <label className="flex items-center gap-2 text-[11.5px] text-stiko-muted">
+              <input
+                type="checkbox"
+                checked={aiEnabled}
+                onChange={async (e) => {
+                  const next = e.target.checked;
+                  const previous = aiEnabled;
+                  setAiError(null);
+                  setAiEnabled(next);
+                  try {
+                    const res = await fetch(`/api/projects/${id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ aiSummariesEnabled: next }),
+                    });
+                    if (!res.ok) {
+                      setAiEnabled(previous);
+                      setAiError(
+                        'Couldn’t save that change — the switch is still ' +
+                          (previous ? 'on' : 'off') +
+                          '.'
+                      );
+                    }
+                  } catch {
+                    setAiEnabled(previous);
+                    setAiError('Couldn’t reach the server — nothing changed.');
+                  }
+                }}
+              />
+              AI summaries — comment text is sent to Atlas Cloud to generate them.
+              Turning this off deletes the summaries already generated for this
+              project.
+            </label>
+            {aiError && <p className="mt-1 text-xs text-red-600">{aiError}</p>}
+          </div>
         )}
 
         {/* 03: tabs are earned by 2+ packages AND 3+ people. Below that,

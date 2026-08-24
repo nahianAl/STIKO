@@ -3045,21 +3045,35 @@ export async function PATCH(
     return NextResponse.json({ error: 'aiSummariesEnabled required' }, { status: 400 });
   }
 
-  await sql`
-    UPDATE projects SET ai_summaries_enabled = ${body.aiSummariesEnabled}
-    WHERE id = ${params.id}
-  `;
-
-  if (!body.aiSummariesEnabled) {
-    await sql`DELETE FROM project_summaries WHERE project_id = ${params.id}`;
+  if (body.aiSummariesEnabled) {
+    // Enabling: nothing to delete, nothing to make atomic. A plain UPDATE is
+    // honest about what this path does.
     await sql`
-      DELETE FROM version_summaries
-      WHERE version_id IN (
-        SELECT v.id FROM versions v
-        JOIN portals po ON po.id = v.portal_id
-        WHERE po.project_id = ${params.id}
-      )
+      UPDATE projects SET ai_summaries_enabled = TRUE
+      WHERE id = ${params.id}
     `;
+  } else {
+    // Disabling: the promise to the owner is that the generated text goes
+    // away. Both deletes and the flag flip run in one transaction so a
+    // mid-sequence failure can never leave the flag reading "off" while the
+    // summaries are still stored. Deletes are listed before the flag update
+    // so the code itself reads as "clear the data, then flip the flag" even
+    // though the transaction already makes the ordering atomic.
+    await sql.transaction([
+      sql`
+        DELETE FROM version_summaries
+        WHERE version_id IN (
+          SELECT v.id FROM versions v
+          JOIN portals po ON po.id = v.portal_id
+          WHERE po.project_id = ${params.id}
+        )
+      `,
+      sql`DELETE FROM project_summaries WHERE project_id = ${params.id}`,
+      sql`
+        UPDATE projects SET ai_summaries_enabled = FALSE
+        WHERE id = ${params.id}
+      `,
+    ]);
   }
 
   return NextResponse.json({ aiSummariesEnabled: body.aiSummariesEnabled });
@@ -3068,29 +3082,51 @@ export async function PATCH(
 
 Ensure `NextRequest` is imported in that file's import list.
 
+**Why the disable path is transactional.** The three statements — two deletes and the flag update — used to run as independent, unawaited-transaction statements. If the `UPDATE` committed and a delete then failed (network blip, database error), the project would be left reading "summaries off" while the generated text was still stored: the owner believes the promise was kept when it was not. `@neondatabase/serverless` (`^1.0.2`, confirmed installed) exposes `sql.transaction([...])`, which takes an array of un-awaited tagged-template queries — a tagged template isn't executed until awaited or handed to `transaction` — and runs them as one all-or-nothing Postgres transaction. The enable path stays a single plain `UPDATE`: there is nothing to delete and nothing that needs atomicity.
+
 - [ ] **Step 2: Add the toggle to the project page**
 
 In `app/project/[id]/page.tsx`, render near the project header, visible only to the owner:
 
 ```tsx
-<label className="flex items-center gap-2 text-xs text-gray-500">
-  <input
-    type="checkbox"
-    checked={aiEnabled}
-    onChange={async (e) => {
-      const next = e.target.checked;
-      setAiEnabled(next);
-      await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ aiSummariesEnabled: next }),
-      });
-    }}
-  />
-  AI summaries — comment text is sent to Atlas Cloud to generate them. Turning
-  this off deletes the summaries already generated for this project.
-</label>
+<div className="mt-3">
+  <label className="flex items-center gap-2 text-[11.5px] text-stiko-muted">
+    <input
+      type="checkbox"
+      checked={aiEnabled}
+      onChange={async (e) => {
+        const next = e.target.checked;
+        const previous = aiEnabled;
+        setAiError(null);
+        setAiEnabled(next);
+        try {
+          const res = await fetch(`/api/projects/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ aiSummariesEnabled: next }),
+          });
+          if (!res.ok) {
+            setAiEnabled(previous);
+            setAiError(
+              'Couldn’t save that change — the switch is still ' +
+                (previous ? 'on' : 'off') +
+                '.'
+            );
+          }
+        } catch {
+          setAiEnabled(previous);
+          setAiError('Couldn’t reach the server — nothing changed.');
+        }
+      }}
+    />
+    AI summaries — comment text is sent to Atlas Cloud to generate them. Turning
+    this off deletes the summaries already generated for this project.
+  </label>
+  {aiError && <p className="mt-1 text-xs text-red-600">{aiError}</p>}
+</div>
 ```
+
+The optimistic update stays for the success case — `setAiEnabled(next)` happens immediately on click — but a non-2xx response or a thrown request reverts `aiEnabled` to its pre-click value and sets `aiError`, so the checkbox never shows a state the server didn't actually commit. `text-xs text-red-600` matches the error styling already used on this page's sibling components (`components/project/ProjectBrief.tsx`, `components/portal/VersionBrief.tsx`).
 
 Extend the project `GET` response in `app/api/projects/[id]/route.ts` to include `ai_summaries_enabled AS "aiSummariesEnabled"` so the page can initialise `aiEnabled`.
 
@@ -3098,20 +3134,23 @@ Extend the project `GET` response in `app/api/projects/[id]/route.ts` to include
 
 `psql` is not installed and no database exists, so this cannot be exercised. Check the two properties statically instead:
 
-Run: `grep -n "DELETE FROM\|aiSummariesEnabled" "app/api/projects/[id]/route.ts"`
+Run: `grep -n "DELETE FROM\|aiSummariesEnabled\|sql.transaction" "app/api/projects/[id]/route.ts"`
 
 Expected:
-1. Both `DELETE FROM project_summaries` and `DELETE FROM version_summaries` appear, and both sit inside the `if (!body.aiSummariesEnabled)` branch — deleting on enable would wipe briefs every time someone switched the feature back on.
+1. Both `DELETE FROM project_summaries` and `DELETE FROM version_summaries` appear, and both sit inside the `else` branch of `if (body.aiSummariesEnabled) { ... } else { ... }` — the `if` arm handles enable (plain `UPDATE`, no deletes), the `else` arm handles disable (both deletes plus the `UPDATE`, all inside `sql.transaction([...])`). Deleting on enable would wipe briefs every time someone switched the feature back on.
 2. The `version_summaries` delete is scoped by a subquery joining `versions → portals` on **this** `project_id`. An unscoped delete would destroy every project's briefs.
+3. The disable branch's three statements are un-awaited tagged templates passed as an array to `sql.transaction([...])`, not three separate `await sql\`...\`` calls — so a mid-sequence failure can't leave the flag flipped with data still stored.
 
 - [ ] **Step 4: Run the whole suite and commit**
 
-Run: `npm test` — expected: all pass.
+Run: `npm test` — expected: all pass (151, unchanged).
 Run: `npx tsc --noEmit` — expected: no errors.
+Run: `npx next lint` — expected: no warnings or errors.
+Run: `npm run build` — expected: reaches `✓ Compiled successfully` (fails afterward at "Collecting page data" on missing `DATABASE_URL`; that failure is pre-existing and environment-only, not a regression).
 
 ```bash
-git add "app/api/projects/[id]/route.ts" "app/project/[id]/page.tsx"
-git commit -m "feat(ai): add per-project AI summaries opt-out"
+git add "app/api/projects/[id]/route.ts" "app/project/[id]/page.tsx" docs/superpowers/plans/2026-08-23-portal-ai-summaries.md
+git commit -m "fix(ai): make switching summaries off atomic and honest about failure"
 ```
 
 ---
