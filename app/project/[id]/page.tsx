@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
@@ -84,6 +84,12 @@ export default function ProjectPage() {
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSaving, setAiSaving] = useState(false);
+  // Last value the server actually confirmed (via the initial GET, or a
+  // successful PATCH) — never the locally-captured optimistic state. A
+  // failure reverts to this, not to whatever the UI showed a moment ago,
+  // so a revert can never show something the server didn't agree to.
+  const confirmedAiEnabledRef = useRef(aiEnabled);
 
   const load = useCallback(async () => {
     setError(null);
@@ -126,6 +132,7 @@ export default function ProjectPage() {
       .then((body) => {
         if (body && typeof body.aiSummariesEnabled === 'boolean') {
           setAiEnabled(body.aiSummariesEnabled);
+          confirmedAiEnabledRef.current = body.aiSummariesEnabled;
         }
       })
       .catch(() => {});
@@ -233,11 +240,17 @@ export default function ProjectPage() {
               <input
                 type="checkbox"
                 checked={aiEnabled}
+                disabled={aiSaving}
                 onChange={async (e) => {
+                  // Belt-and-suspenders: the `disabled` attribute above
+                  // already stops the browser from firing another change
+                  // while a save is in flight, but guard here too so this
+                  // handler can never overlap itself.
+                  if (aiSaving) return;
                   const next = e.target.checked;
-                  const previous = aiEnabled;
                   setAiError(null);
                   setAiEnabled(next);
+                  setAiSaving(true);
                   try {
                     const res = await fetch(`/api/projects/${id}`, {
                       method: 'PATCH',
@@ -245,16 +258,22 @@ export default function ProjectPage() {
                       body: JSON.stringify({ aiSummariesEnabled: next }),
                     });
                     if (!res.ok) {
-                      setAiEnabled(previous);
+                      const confirmed = confirmedAiEnabledRef.current;
+                      setAiEnabled(confirmed);
                       setAiError(
                         'Couldn’t save that change — the switch is still ' +
-                          (previous ? 'on' : 'off') +
+                          (confirmed ? 'on' : 'off') +
                           '.'
                       );
+                    } else {
+                      confirmedAiEnabledRef.current = next;
                     }
                   } catch {
-                    setAiEnabled(previous);
+                    const confirmed = confirmedAiEnabledRef.current;
+                    setAiEnabled(confirmed);
                     setAiError('Couldn’t reach the server — nothing changed.');
+                  } finally {
+                    setAiSaving(false);
                   }
                 }}
               />

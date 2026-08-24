@@ -3089,16 +3089,35 @@ Ensure `NextRequest` is imported in that file's import list.
 In `app/project/[id]/page.tsx`, render near the project header, visible only to the owner:
 
 ```tsx
+const [aiEnabled, setAiEnabled] = useState(true);
+const [aiError, setAiError] = useState<string | null>(null);
+const [aiSaving, setAiSaving] = useState(false);
+// Last value the server actually confirmed (via the initial GET, or a
+// successful PATCH) — never the locally-captured optimistic state. A
+// failure reverts to this, not to whatever the UI showed a moment ago,
+// so a revert can never show something the server didn't agree to.
+const confirmedAiEnabledRef = useRef(aiEnabled);
+
+// ... in the GET-on-mount effect that seeds aiEnabled for the owner:
+//   setAiEnabled(body.aiSummariesEnabled);
+//   confirmedAiEnabledRef.current = body.aiSummariesEnabled;
+
 <div className="mt-3">
   <label className="flex items-center gap-2 text-[11.5px] text-stiko-muted">
     <input
       type="checkbox"
       checked={aiEnabled}
+      disabled={aiSaving}
       onChange={async (e) => {
+        // Belt-and-suspenders: the `disabled` attribute above already
+        // stops the browser from firing another change while a save is
+        // in flight, but guard here too so this handler can never
+        // overlap itself.
+        if (aiSaving) return;
         const next = e.target.checked;
-        const previous = aiEnabled;
         setAiError(null);
         setAiEnabled(next);
+        setAiSaving(true);
         try {
           const res = await fetch(`/api/projects/${id}`, {
             method: 'PATCH',
@@ -3106,16 +3125,22 @@ In `app/project/[id]/page.tsx`, render near the project header, visible only to 
             body: JSON.stringify({ aiSummariesEnabled: next }),
           });
           if (!res.ok) {
-            setAiEnabled(previous);
+            const confirmed = confirmedAiEnabledRef.current;
+            setAiEnabled(confirmed);
             setAiError(
               'Couldn’t save that change — the switch is still ' +
-                (previous ? 'on' : 'off') +
+                (confirmed ? 'on' : 'off') +
                 '.'
             );
+          } else {
+            confirmedAiEnabledRef.current = next;
           }
         } catch {
-          setAiEnabled(previous);
+          const confirmed = confirmedAiEnabledRef.current;
+          setAiEnabled(confirmed);
           setAiError('Couldn’t reach the server — nothing changed.');
+        } finally {
+          setAiSaving(false);
         }
       }}
     />
@@ -3126,9 +3151,15 @@ In `app/project/[id]/page.tsx`, render near the project header, visible only to 
 </div>
 ```
 
-The optimistic update stays for the success case — `setAiEnabled(next)` happens immediately on click — but a non-2xx response or a thrown request reverts `aiEnabled` to its pre-click value and sets `aiError`, so the checkbox never shows a state the server didn't actually commit. `text-xs text-red-600` matches the error styling already used on this page's sibling components (`components/project/ProjectBrief.tsx`, `components/portal/VersionBrief.tsx`).
+The optimistic update stays for the success case — `setAiEnabled(next)` happens immediately on click — but a non-2xx response or a thrown request reverts `aiEnabled`, and sets `aiError`, so the checkbox never shows a state the server didn't actually commit. `text-xs text-red-600` matches the error styling already used on this page's sibling components (`components/project/ProjectBrief.tsx`, `components/portal/VersionBrief.tsx`).
 
-Extend the project `GET` response in `app/api/projects/[id]/route.ts` to include `ai_summaries_enabled AS "aiSummariesEnabled"` so the page can initialise `aiEnabled`.
+**Why revert to a ref, not the locally-captured `previous`.** The first version of this handler captured `const previous = aiEnabled` at the top of the handler and reverted to that on failure. That is the current *optimistic* state, not server-confirmed truth, and nothing stopped two PATCHes from being in flight at once: click off (captures `previous = true`, shows off, PATCH-off in flight), click on again before it resolves (captures `previous = false`, shows on, PATCH-on in flight) — if PATCH-off fails it reverts to `true`, then PATCH-on fails and reverts to `false`, leaving the checkbox showing **off** while the server was never successfully changed and still holds **on**. That is the worst failure mode for this control: it tells the owner comment text is *not* being sent to Atlas Cloud when it still is. `confirmedAiEnabledRef` fixes this by holding only values the server has actually agreed to — set once when the seeding `GET` resolves, and updated only after a `PATCH` returns `ok`. A revert always lands on server truth, never on a stale optimistic guess.
+
+**Why the in-flight flag.** `aiSaving` is set before the `fetch` and cleared in a `finally`, so it clears on every exit path — success, a non-ok response, and a thrown/network error alike — and can never stick `true`. Tying the checkbox's `disabled` attribute to it means a browser will not deliver a second `onChange` while a save is running, so two requests can never overlap and race each other. The `if (aiSaving) return;` guard inside the handler is redundant with `disabled` under normal DOM behavior but costs nothing and removes any doubt.
+
+Extend the project `GET` response in `app/api/projects/[id]/route.ts` to include `ai_summaries_enabled AS "aiSummariesEnabled"` so the page can initialise `aiEnabled` and `confirmedAiEnabledRef`.
+
+Ensure `useRef` is imported alongside the other React hooks already imported in this file.
 
 - [ ] **Step 3: Verify the delete-on-off behaviour by reading the code**
 
