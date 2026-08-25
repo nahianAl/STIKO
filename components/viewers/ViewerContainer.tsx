@@ -71,19 +71,27 @@ export default function ViewerContainer({
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
+  // The optimized copy is what the viewer wants whenever one exists; downloads elsewhere
+  // still serve file.storageKey, so an uploader always gets their own file back untouched.
+  //
+  // This branches on convertedStorageKey alone and never on conversionStatus: a
+  // client-optimized GLB leaves conversion_status NULL, because that column means "a
+  // CloudConvert job reached this state" and nothing else.
+  const viewerKey = file.convertedStorageKey ?? file.storageKey;
+
   // Fetch presigned URL
   useEffect(() => {
     setUrl(null);
     setError(false);
 
-    fetch(`/api/files/url?key=${encodeURIComponent(file.storageKey)}`)
+    fetch(`/api/files/url?key=${encodeURIComponent(viewerKey)}`)
       .then(res => {
         if (!res.ok) throw new Error('Failed to get file URL');
         return res.json();
       })
       .then(data => setUrl(data.url))
       .catch(() => setError(true));
-  }, [file.storageKey]);
+  }, [viewerKey]);
 
   if (error) {
     return (
