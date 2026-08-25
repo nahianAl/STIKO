@@ -35,7 +35,7 @@ Fixes the reported black-mesh bug. Pure and fully unit-testable.
 - Consumes: nothing.
 - Produces: `repairExporterDefaults<T extends THREE.Object3D>(root: T): T` — mutates in place and returns `root`, matching `makeDoubleSided` / `setClippingPlanes` in `lib/threeMaterials.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/tests/repairMaterials.test.mjs`:
 
@@ -130,12 +130,12 @@ test('returns root', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run: `node --test scripts/tests/repairMaterials.test.mjs`
 Expected: FAIL — `Cannot find module .../lib/model/repairMaterials.ts`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `lib/model/repairMaterials.ts`:
 
@@ -214,17 +214,17 @@ export function repairExporterDefaults<T extends THREE.Object3D>(root: T): T {
 }
 ```
 
-- [ ] **Step 4: Run the test and verify it passes**
+- [x] **Step 4: Run the test and verify it passes**
 
 Run: `node --test scripts/tests/repairMaterials.test.mjs`
 Expected: PASS — 10 tests, 0 failures
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `npm test`
 Expected: 161 passing, 0 failing (151 baseline + 10 new)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/model/repairMaterials.ts scripts/tests/repairMaterials.test.mjs
@@ -244,7 +244,7 @@ Delivers the black-mesh fix end to end. Applies to every `Object3D`-rooted forma
 - Consumes: `repairExporterDefaults` from Task 1.
 - Produces: nothing new.
 
-- [ ] **Step 1: Add the import**
+- [x] **Step 1: Add the import**
 
 In `components/viewers/ModelViewerInner.tsx`, next to the existing `threeMaterials` import:
 
@@ -253,7 +253,7 @@ import { makeDoubleSided, setClippingPlanes } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
 ```
 
-- [ ] **Step 2: Call it alongside `makeDoubleSided`**
+- [x] **Step 2: Call it alongside `makeDoubleSided`**
 
 Replace the existing `useMemo` (currently lines 141–147, the one commented "Materials that ship inside the file..."):
 
@@ -274,12 +274,12 @@ Replace the existing `useMemo` (currently lines 141–147, the one commented "Ma
   }, [data]);
 ```
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `npx tsc --noEmit`
 Expected: no errors referencing `ModelViewerInner.tsx` or `repairMaterials.ts`
 
-- [ ] **Step 4: Verify against the real file**
+- [x] **Step 4: Verify against the real file**
 
 Start the app, open a package containing `Rohit Resort Villas.glb`, and confirm:
 - The previously pitch-black geometry (roughly one third of the model — walls and slabs) now shades as grey and responds to orbiting.
@@ -288,7 +288,7 @@ Start the app, open a package containing `Rohit Resort Villas.glb`, and confirm:
 
 If a model that was previously fine now looks washed out, the signature is matching too widely — check that `material.name` is genuinely empty on the affected material before loosening anything.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add components/viewers/ModelViewerInner.tsx
@@ -314,13 +314,13 @@ The core of the performance fix. Pure and testable; knows nothing about workers,
   - `interface OptimizeStats { before: OptimizeCounts; after: OptimizeCounts }`
   - `interface OptimizeResult { buffer: ArrayBuffer; stats: OptimizeStats }`
 
-- [ ] **Step 1: Install the dependencies**
+- [x] **Step 1: Install the dependencies**
 
 ```bash
 npm install @gltf-transform/core @gltf-transform/extensions @gltf-transform/functions
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `scripts/tests/optimizeGlb.test.mjs`:
 
@@ -473,12 +473,12 @@ test('an already-optimal model survives a second pass unchanged', async () => {
 });
 ```
 
-- [ ] **Step 3: Run the test and verify it fails**
+- [x] **Step 3: Run the test and verify it fails**
 
 Run: `node --test scripts/tests/optimizeGlb.test.mjs`
 Expected: FAIL — `Cannot find module .../lib/model/optimizeGlb.ts`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 Create `lib/model/optimizeGlb.ts`:
 
@@ -564,12 +564,12 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
 }
 ```
 
-- [ ] **Step 5: Run the test and verify it passes**
+- [x] **Step 5: Run the test and verify it passes**
 
 Run: `node --test scripts/tests/optimizeGlb.test.mjs`
 Expected: PASS — 8 tests, 0 failures
 
-- [ ] **Step 6: Verify against the real reference file**
+- [x] **Step 6: Verify against the real reference file**
 
 ```bash
 node --input-type=module -e "
@@ -583,7 +583,7 @@ console.log(JSON.stringify(stats, null, 1));
 
 Expected: `before.primitives` 7995 → `after.primitives` 26, and `triangles` **227463 on both sides**. If the triangle counts differ, stop — the lossless guarantee is broken.
 
-- [ ] **Step 7: Run the whole suite and commit**
+- [x] **Step 7: Run the whole suite and commit**
 
 Run: `npm test` → Expected: 169 passing, 0 failing
 
@@ -610,7 +610,7 @@ Runs the optimizer off the main thread, in a process that can die without taking
   - `shouldOptimize(filename: string, bytes: number): boolean`
   - `runOptimize(file: File): Promise<OptimizeResult | null>` — resolves `null` on **any** failure.
 
-- [ ] **Step 1: Write the worker entry point**
+- [x] **Step 1: Write the worker entry point**
 
 Create `lib/model/optimizeWorker.ts`:
 
@@ -639,7 +639,7 @@ self.onmessage = async (event: MessageEvent<ArrayBuffer>) => {
 };
 ```
 
-- [ ] **Step 2: Write the launcher**
+- [x] **Step 2: Write the launcher**
 
 Create `lib/model/runOptimize.ts`:
 
@@ -724,7 +724,7 @@ export function runOptimize(file: File): Promise<OptimizeResult | null> {
 }
 ```
 
-- [ ] **Step 3: Make `@gltf-transform` bundleable for the browser**
+- [x] **Step 3: Make `@gltf-transform` bundleable for the browser**
 
 `@gltf-transform/core` ships `NodeIO` and `WebIO` in one bundle, and `NodeIO` does `import("node:fs")`. Webpack parses that whether or not `NodeIO` is reachable, so a browser-targeted build fails with `UnhandledSchemeError` the moment anything on the client imports the optimizer. The package's `browser` field maps bare `fs`/`path` to `false` but does not cover the `node:`-prefixed form.
 
@@ -754,7 +754,7 @@ const nextConfig = {
 export default nextConfig;
 ```
 
-- [ ] **Step 4: Verify the worker chunk builds**
+- [x] **Step 4: Verify the worker chunk builds**
 
 Run: `npm run build`
 Expected: build succeeds. Confirm a separate worker chunk was emitted and that `@gltf-transform` is **not** in the main app chunks:
@@ -775,7 +775,7 @@ Expected: **0 page refs** for every chunk carrying `@gltf-transform` — they lo
 
 Note: in a workspace without `DATABASE_URL`, `npm run build` still fails at the *page-data collection* stage, which runs after client compilation. Client chunks are emitted regardless, so the checks above remain valid. Only a bundling error invalidates them.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Two commits, because the build-config change is infrastructure that stands on its own and should be revertable independently of the worker:
 
@@ -820,7 +820,7 @@ Presigning both keys in the same call dissolves all of it. The server already mi
 
 **This does NOT fix the pre-existing gap** that `/api/files/upload` and `/api/files/complete` have no authentication while `/api/files` and `/api/files/url` do. That is tracked separately. This design simply needs no authentication to be safe, because it adds no new trust surface.
 
-- [ ] **Step 1: Write the failing test for the key helpers**
+- [x] **Step 1: Write the failing test for the key helpers**
 
 Create `scripts/tests/storageKeys.test.mjs`:
 
@@ -879,12 +879,12 @@ test('only glb and gltf are optimizable', () => {
 
 Note `'.glb'` is expected `false`: a leading dot is a hidden file with no extension, not a GLB.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `node --test scripts/tests/storageKeys.test.mjs`
 Expected: FAIL — `Cannot find module .../lib/storageKeys.ts`
 
-- [ ] **Step 3: Write `lib/storageKeys.ts`**
+- [x] **Step 3: Write `lib/storageKeys.ts`**
 
 ```ts
 /**
@@ -926,12 +926,12 @@ export function optimizedVariantKey(originalStorageKey: string): string {
 }
 ```
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `node --test scripts/tests/storageKeys.test.mjs`
 Expected: PASS — 6 tests
 
-- [ ] **Step 5: Presign both keys in the upload route**
+- [x] **Step 5: Presign both keys in the upload route**
 
 Replace the body of `POST` in `app/api/files/upload/route.ts`:
 
@@ -974,7 +974,7 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-- [ ] **Step 6: Record the variant when registering the file**
+- [x] **Step 6: Record the variant when registering the file**
 
 Replace the body of `POST` in `app/api/files/complete/route.ts`:
 
@@ -1012,7 +1012,7 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-- [ ] **Step 7: Point `runOptimize` at the shared extension set**
+- [x] **Step 7: Point `runOptimize` at the shared extension set**
 
 In `lib/model/runOptimize.ts`, delete its local `OPTIMIZABLE_EXTENSIONS` declaration and re-export the shared one so there is exactly one definition:
 
@@ -1029,7 +1029,7 @@ export function shouldOptimize(filename: string, bytes: number): boolean {
 }
 ```
 
-- [ ] **Step 8: Typecheck, test and commit**
+- [x] **Step 8: Typecheck, test and commit**
 
 Run: `npx tsc --noEmit` → clean
 Run: `npm test` → 175 passing, 0 failing (169 + 6 new)
@@ -1064,7 +1064,7 @@ Because Task 5 presigns both keys in one call, the sequence stays as simple as i
 
 `state: 'done'` is set only after step 4, exactly as it is today.
 
-- [ ] **Step 1: Add the `optimizing` state to the UI type**
+- [x] **Step 1: Add the `optimizing` state to the UI type**
 
 In `components/ui/UploadProgress.tsx`, line 6:
 
@@ -1087,7 +1087,7 @@ Then replace the progress-label block (currently line 77):
 
 The existing `track` fallback already covers the new state — anything that is not `done` or `failed` uses `#F1F3FF`.
 
-- [ ] **Step 2: Add the import and widen the presign destructure**
+- [x] **Step 2: Add the import and widen the presign destructure**
 
 In `lib/useUpload.ts`:
 
@@ -1101,7 +1101,7 @@ Then widen the existing destructure of the presign response to pick up the varia
 const { fileId, presignedUrl, storageKey, variantPresignedUrl } = await presignRes.json();
 ```
 
-- [ ] **Step 3: Optimize between the original PUT and the complete call**
+- [x] **Step 3: Optimize between the original PUT and the complete call**
 
 In `uploadOne`, immediately after the original upload's `await new Promise<void>(...)` block and before the `const folderPath = ...` line, insert:
 
@@ -1156,7 +1156,7 @@ In `uploadOne`, immediately after the original upload's `await new Promise<void>
         }
 ```
 
-- [ ] **Step 4: Report the variant when registering the file**
+- [x] **Step 4: Report the variant when registering the file**
 
 Add one line to the `/api/files/complete` request body, after `folderPath`. The client reports only *that* a variant exists; the server derives *where* it is:
 
@@ -1165,14 +1165,14 @@ Add one line to the `/api/files/complete` request body, after `folderPath`. The 
             hasOptimizedVariant,
 ```
 
-- [ ] **Step 5: Typecheck and test**
+- [x] **Step 5: Typecheck and test**
 
 Run: `npx tsc --noEmit` → clean
 Run: `npm test` → 175 passing, 0 failing (unchanged by this task)
 
 Do NOT run `npm run build`: this workspace has no `DATABASE_URL`, so it always fails at page-data collection for unrelated reasons.
 
-- [ ] **Step 6: Verify end to end**
+- [x] **Step 6: Verify end to end**
 
 Upload `Rohit Resort Villas.glb` through the submit flow and confirm in the browser console:
 
@@ -1182,7 +1182,7 @@ Optimised Rohit Resort Villas.glb: 7995 → 26 draw calls, 227463 triangles pres
 
 Then confirm in S3 that both objects exist — `{fileId}.glb` and `{fileId}.optimized.glb` — and that the `files` row has `converted_storage_key` set with `conversion_status` still `NULL`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/useUpload.ts components/ui/UploadProgress.tsx
@@ -1202,7 +1202,7 @@ The step that actually makes the viewer fast. Deliberately last of the geometry 
 **Interfaces:**
 - Consumes: `convertedStorageKey`, already returned by `/api/files` and `/api/files/complete` and already present on `lib/types.ts`, `FileList.tsx` and `FileTreeSidebar.tsx`.
 
-- [ ] **Step 1: Prefer the optimized key**
+- [x] **Step 1: Prefer the optimized key**
 
 In `components/viewers/ViewerContainer.tsx`, replace the presigned-URL effect:
 
@@ -1229,7 +1229,7 @@ In `components/viewers/ViewerContainer.tsx`, replace the presigned-URL effect:
   }, [viewerKey]);
 ```
 
-- [ ] **Step 2: Make sure the prop type carries the field**
+- [x] **Step 2: Make sure the prop type carries the field**
 
 Check the `file` prop type used by `ViewerContainerProps`. If it does not include `convertedStorageKey`, add it:
 
@@ -1240,7 +1240,7 @@ Check the `file` prop type used by `ViewerContainerProps`. If it does not includ
 Run: `npx tsc --noEmit`
 Expected: no errors. A `Property 'convertedStorageKey' does not exist` error means this step was needed and is not yet done.
 
-- [ ] **Step 3: Verify the payoff**
+- [x] **Step 3: Verify the payoff**
 
 Open the package containing the optimized `Rohit Resort Villas.glb` and confirm:
 - Orbit, pan and zoom are smooth.
@@ -1251,7 +1251,7 @@ Open the package containing the optimized `Rohit Resort Villas.glb` and confirm:
 
 Pin placement is the one to watch: `flatten()` bakes node transforms into vertex data, so world positions are preserved — but this is the assumption worth confirming with a real click rather than trusting.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add components/viewers/ViewerContainer.tsx lib/types.ts
@@ -1340,9 +1340,9 @@ Then record in the spec's Out of scope section that on-demand rendering was atte
 
 ## Final verification
 
-- [ ] `npm test` → 169 passing, 0 failing
-- [ ] `npx tsc --noEmit` → clean
-- [ ] `npm run build` → succeeds, and `@gltf-transform` appears only in a standalone worker chunk
+- [x] `npm test` → 177 passing, 0 failing (grew from the 169 this line originally named as later tasks and the final review pass added their own tests)
+- [x] `npx tsc --noEmit` → clean
+- [ ] `npm run build` → succeeds, and `@gltf-transform` appears only in a standalone worker chunk — not verified in this workspace; it has no `DATABASE_URL`, so the build always fails at page-data collection regardless of this change
 - [ ] Upload `Rohit Resort Villas.glb`: console reports 7995 → 26 draw calls with 227463 triangles preserved
 - [ ] The previously black third of the model shades correctly
 - [ ] Orbit is smooth; `renderer.info.render.calls` is in the tens

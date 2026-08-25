@@ -91,6 +91,7 @@ Pure: `ArrayBuffer → { buffer: ArrayBuffer, stats: OptimizeStats }`. No DOM, n
 Transform chain. **The ordering is load-bearing** — `weld()` must precede `join()`, or `join` produces a primitive-restart state that `weld` then rejects:
 
 ```
+normalize() convert LINE_STRIP/LINE_LOOP/TRIANGLE_STRIP/TRIANGLE_FAN to LINES/TRIANGLES
 dedup()     merge identical accessors / materials / textures
 flatten()   bake node transforms, collapse hierarchy
 dedup()     again — flatten exposes new duplicates
@@ -98,6 +99,12 @@ weld()      index and merge co-located vertices
 join()      merge primitives by material        <- the 307x win
 prune()     drop orphaned nodes / meshes / accessors
 ```
+
+**Hazard found in review, since fixed: `join()` and primitive restart.** `join()` merges primitives that share a material by concatenating their index buffers, and when any of them use a *restart-capable* mode — `LINE_STRIP`, `LINE_LOOP`, `TRIANGLE_STRIP`, `TRIANGLE_FAN` — it splices a primitive-restart sentinel (`0xFFFF` / `0xFFFFFFFF`) between them and marks `KHR_mesh_primitive_restart` **required** on the output document. three.js r169 does not implement that extension; it only `console.warn`s and then reads every sentinel back as an ordinary vertex index. That index is out of range for the primitive it lives in, and three.js resolves an out-of-range index to `(0, 0, 0)` — so a model's line work (construction/dimension lines, in the CAD case that motivated this) turns into stray segments radiating to the model origin.
+
+The reference file carries 551 `LINE_STRIP` primitives and hit this exactly: the first version of the chain produced 12 merged `LINE_STRIP` primitives, 539 restart sentinels, and `extensionsRequired: ['KHR_mesh_primitive_restart']` — silently, because `measure()` (below) originally counted only triangles, so the "lossless" check stayed green while the line geometry was being destroyed.
+
+The fix is the `normalize()` step now shown first in the chain above: converting every restart-capable primitive to `LINES` / `TRIANGLES` *before* the rest of the chain runs means `join()` never has a reason to reach for a restart sentinel in the first place. `optimizeGlb` also throws if the document still requires an extension after the chain — a second, cheaper-than-correct backstop in case some future primitive shape defeats the normalization pass; any throw here is read by `runOptimize` as "upload the original," so it can only cost an optimization, never store an unreadable variant. `OptimizeStats.lineIndices` (alongside `triangles`) is what lets a test catch a regression in this area: a chain that mangles non-triangle geometry now fails on that count instead of passing silently.
 
 **No extension-stripping pass.** An earlier draft proposed removing no-op `KHR_materials_transmission` to demote materials from `MeshPhysicalMaterial` to `MeshStandardMaterial`. Measurement showed this does not work and the step was cut:
 
@@ -107,7 +114,7 @@ prune()     drop orphaned nodes / meshes / accessors
 
 The remaining benefit is a few unused uniforms. Not worth the code.
 
-`OptimizeStats` carries before/after primitive, triangle, node and byte counts, so the upload path can log what happened and tests can assert on it.
+`OptimizeStats` carries before/after primitive, triangle, line-index, node and byte counts, so the upload path can log what happened and tests can assert on it.
 
 **New dependencies:** `@gltf-transform/core`, `@gltf-transform/extensions`, `@gltf-transform/functions`. These must be reachable **only from the worker entry point**, never from a module in the main bundle — they are substantial, and the viewer must not pay for them on every page load. The worker itself is loaded lazily, so a session that never uploads a model never fetches them at all.
 
@@ -157,13 +164,16 @@ No schema change. `converted_storage_key` already means "the artifact the viewer
 
 | Upload | `storage_key` | `converted_storage_key` |
 |---|---|---|
-| Direct GLB / glTF | original, untouched | optimized GLB |
+| Direct GLB | original, untouched | optimized GLB |
+| Direct glTF (JSON) | original, untouched | `null` — never attempted, see below |
 | STEP, OBJ, STL, PLY, DAE, 3DS | original | `null` — loaded directly, see below |
 | Optimization skipped or failed | original | `null` |
 
-### Why only GLB and glTF
+**GLB only, not glTF.** `optimizeGlb` reads with `WebIO.readBinary`, which parses binary GLB exclusively; a JSON `.gltf` throws `Invalid glTF 2.0 binary.` there every time. An earlier revision of `OPTIMIZABLE_EXTENSIONS` listed `'gltf'` alongside `'glb'`, which meant every `.gltf` upload paid for a presign, a full read and a worker spawn only to fail and fall back to the original — silently, since failure-to-optimize is by design invisible to the uploader. `'gltf'` has been removed from that set; only `.glb` is ever attempted now.
 
-`gltf-transform` operates on glTF documents, so the chain applies to `.glb` and `.gltf` only. Every other model format Stiko accepts is parsed straight into three.js objects by its own loader and never becomes glTF:
+### Why only GLB
+
+`gltf-transform` operates on glTF documents in the abstract, but the concrete reader in use — `WebIO.readBinary` — parses binary GLB only; a JSON `.gltf` throws before the chain ever runs (see the storage-semantics note above). So in practice the chain applies to `.glb` alone. Every other model format Stiko accepts is parsed straight into three.js objects by its own loader and never becomes glTF at all:
 
 - **STEP** is parsed **client-side** by `lib/STEPLoader.ts` via `occt-import-js` (the wasm binary copied by the `postinstall` script). It is never converted to GLB on the live path.
 - OBJ, STL, PLY, DAE and 3DS each use their own three.js loader in `ModelViewerInner.tsx`.
@@ -180,7 +190,7 @@ Currently requests a presigned URL for `file.storageKey` directly. Must prefer `
 
 ### Idle rendering — `ModelViewerInner.tsx`
 
-`frameloop="demand"` and `dpr={[1, 2]}` on the `Canvas`. Landed as a **separate, independently revertable step**: `gl.preserveDrawingBuffer` and `CleanFrameRenderer` both exist to serve snapshot capture, and demand-mode rendering interacts with both. If verification shows snapshots or the headlight misbehave, this step reverts without touching anything else.
+Only `dpr={[1, 2]}` on the `Canvas` has landed. `frameloop="demand"` was scoped as a **separate, independently revertable step** for the same reason `dpr` was split out — `gl.preserveDrawingBuffer` and `CleanFrameRenderer` both exist to serve snapshot capture, and demand-mode rendering interacts with both — but it needs an interactive-browser audit of every control that changes the scene without moving the camera (see the plan's Task 8, Steps 3–5) before it can land, and that audit has not been run. Treat `frameloop="demand"` as **not implemented** until that step is done and committed.
 
 ---
 
@@ -213,6 +223,7 @@ This does foreclose future per-object selection, isolation or per-part metadata 
 - A synthetic fragmented GLB collapses to one primitive per material
 - **Triangle count is identical before and after** — the lossless guarantee, asserted directly
 - Node transforms are baked correctly: a translated child's vertices land at the same world positions after `flatten()`
+- A synthetic multi-material `LINE_STRIP` document survives with no required extensions and no out-of-range indices, and its line-index count is preserved exactly through the chain — added after the review found the primitive-restart hazard above; both assertions were confirmed to fail (via the required-extension guard, and independently on their own terms with that guard also disabled) when the `normalize()` step is removed
 
 `scripts/tests/repairMaterials.test.mjs`:
 
@@ -241,6 +252,9 @@ Manual verification: load `Rohit Resort Villas.glb` in the local viewer and conf
 | Risk | Mitigation |
 |---|---|
 | Worker OOM on large models in low-memory browsers | Size threshold plus worker isolation; failure falls back to the original upload |
+| Four uploads optimizing concurrently (the upload pool is 4-wide) each pay the ~24x-input memory peak, compounding toward the OOM risk above | `runOptimize` now serializes actual optimization work behind a module-level single-slot queue — the upload pool stays 4-wide, but only one optimization runs at a time |
 | Albedo lifting alters a deliberately black material | Signature requires an unnamed material with no maps and physically meaningless factors; authored materials are never matched |
-| `frameloop="demand"` breaks snapshot capture | Landed as an isolated, revertable step and verified against snapshot flow before merge |
+| `join()` merges restart-capable primitives (`LINE_STRIP`/`LINE_LOOP`/`TRIANGLE_STRIP`/`TRIANGLE_FAN`) using primitive-restart sentinels that three.js r169 cannot read, turning line geometry into stray segments at the model origin — found in review against the reference file's 551 `LINE_STRIP` primitives | Normalize restart-capable modes to `LINES`/`TRIANGLES` before the chain runs, plus a post-chain guard that throws if the document still requires an extension; see the architecture note above |
+| A variant exists but is unreadable by the viewer (three.js load error) | **No fallback yet — known gap, deliberately deferred.** With the primitive-restart hazard above fixed and the post-chain required-extension guard in place, the reachable cause of a stored-but-unreadable variant is closed, so this is now a defense-in-depth gap rather than a live bug. A proper fix (an error boundary around the viewer's model load, falling back to `storage_key`) needs its own design and is out of scope for this pass. |
+| `frameloop="demand"` breaks snapshot capture | **Not yet landed** — only `dpr={[1, 2]}` shipped. `frameloop="demand"` needs the interactive-browser control audit in the plan's Task 8, Steps 3–5 before it can merge; until then the viewer keeps rendering continuously, which costs battery/GPU but changes no behavior. |
 | No staging environment — production is the only environment | Every change is additive with a null-safe fallback path; the viewer behaves as it does today whenever `converted_storage_key` is absent |
