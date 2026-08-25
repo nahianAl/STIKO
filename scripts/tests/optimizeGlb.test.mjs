@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Document, WebIO } from '@gltf-transform/core';
+import { Document, Primitive, WebIO } from '@gltf-transform/core';
 import { optimizeGlb } from '../../lib/model/optimizeGlb.ts';
 
 /**
@@ -37,6 +37,68 @@ function fragmentedGlb(primitiveCount, materialCount = 1) {
 async function toArrayBuffer(doc) {
   const bin = await new WebIO().writeBinary(doc);
   return bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength);
+}
+
+/**
+ * A stand-in for the CAD construction/dimension lines that come out of Rhino alongside the
+ * triangle mesh: `stripCount` separate LINE_STRIP primitives (4 vertices each — a genuine
+ * polyline, not a degenerate one- or two-point stub), dealt round-robin across
+ * `materialCount` materials so join() has multiple same-material strips to merge.
+ *
+ * That merging is exactly what production KHR_mesh_primitive_restart: join() concatenates
+ * same-mode, same-material primitives that carry indices (weld() gives every primitive
+ * indices before join() runs) by splicing a restart sentinel between them. With 1 strip per
+ * material there is nothing to splice between, so materialCount must leave >=2 strips per
+ * material for the bug this guards against to actually reproduce.
+ */
+function fragmentedLineGlb(stripCount, materialCount = 1) {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = Array.from({ length: materialCount }, (_, m) =>
+    doc.createMaterial().setBaseColorFactor([m / materialCount, 0.2, 0.8, 1])
+  );
+
+  for (let i = 0; i < stripCount; i++) {
+    // Offset along X per strip so no two strips share a vertex position — weld() must not
+    // accidentally fuse geometry that belongs to different polylines.
+    const x = i * 10;
+    const position = doc
+      .createAccessor()
+      .setType('VEC3')
+      .setArray(new Float32Array([x, 0, 0, x + 1, 0, 0, x + 1, 1, 0, x + 2, 1, 0]))
+      .setBuffer(buffer);
+    const prim = doc
+      .createPrimitive()
+      .setMode(Primitive.Mode.LINE_STRIP)
+      .setAttribute('POSITION', position)
+      .setMaterial(materials[i % materialCount]);
+    scene.addChild(doc.createNode().setMesh(doc.createMesh().addPrimitive(prim)));
+  }
+  return doc;
+}
+
+/**
+ * Every sentinel that join() splices in for KHR_mesh_primitive_restart is a real integer
+ * value (0xFFFF / 0xFFFFFFFF) sitting in the indices buffer. If a document that requires the
+ * extension is ever read by something that doesn't implement it — three.js included — that
+ * sentinel is read back as an ordinary vertex index, which is out of range for the primitive
+ * it lives in and resolves to (0,0,0). This is what "stray line to the origin" means in
+ * practice, and it's the concrete thing these tests must find.
+ */
+function countOutOfRangeIndices(doc) {
+  let count = 0;
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const indices = prim.getIndices();
+      if (!indices) continue;
+      const vertexCount = prim.getAttribute('POSITION').getCount();
+      for (const index of indices.getArray()) {
+        if (index >= vertexCount) count++;
+      }
+    }
+  }
+  return count;
 }
 
 test('thousands of single-triangle primitives collapse to one per material', async () => {
@@ -143,4 +205,50 @@ test('an already-optimal model survives a second pass unchanged', async () => {
   const second = await optimizeGlb(first.buffer);
   assert.equal(second.stats.after.primitives, first.stats.after.primitives);
   assert.equal(second.stats.after.triangles, first.stats.after.triangles);
+});
+
+// --- C1 / I1: LINE_STRIP primitives must not turn into stray restart geometry ---
+//
+// The reference file that prompted this branch carries 551 LINE_STRIP primitives (Rhino's
+// construction/dimension lines). join() happily merges them using primitive-restart
+// sentinels and marks KHR_mesh_primitive_restart REQUIRED — an extension three.js r169 does
+// not implement. It only console.warns, then reads every sentinel back as an ordinary,
+// out-of-range vertex index, which resolves to (0,0,0): the model's line work turns into
+// stray segments radiating to the origin. Measured on the real file before the fix: 12
+// merged LINE_STRIP primitives, 539 restart sentinels, extensionsRequired
+// ['KHR_mesh_primitive_restart'].
+//
+// Both tests below must fail if the LINE_STRIP/LINE_LOOP/TRIANGLE_STRIP/TRIANGLE_FAN
+// normalisation loop in optimizeGlb.ts is removed — verified by temporarily deleting it: with
+// the loop gone, the belt-and-braces required-extensions guard throws (optimizeGlb rejects
+// instead of returning), which fails both `await` calls below just as surely as a bad
+// assertion would.
+
+test('LINE_STRIP primitives survive optimization with no required extensions', async () => {
+  const input = await toArrayBuffer(fragmentedLineGlb(6, 2));
+  const { buffer } = await optimizeGlb(input);
+
+  const reread = await new WebIO().readBinary(new Uint8Array(buffer));
+  assert.equal(
+    reread.getRoot().listExtensionsRequired().length,
+    0,
+    'output must not require an extension three.js cannot read'
+  );
+  assert.equal(
+    countOutOfRangeIndices(reread),
+    0,
+    'no index may point past the end of its primitive\'s vertex buffer'
+  );
+});
+
+test('line geometry index count is preserved exactly through the chain', async () => {
+  const input = await toArrayBuffer(fragmentedLineGlb(6, 2));
+  const { stats } = await optimizeGlb(input);
+
+  assert.ok(stats.before.lineIndices > 0, 'sanity check: the input must actually carry line geometry');
+  assert.equal(
+    stats.after.lineIndices,
+    stats.before.lineIndices,
+    'merging must not add restart sentinels or drop line indices'
+  );
 });
