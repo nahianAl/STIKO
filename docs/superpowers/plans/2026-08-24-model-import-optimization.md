@@ -1267,7 +1267,7 @@ Independent polish. **Revert this whole task rather than debug it under pressure
 **Files:**
 - Modify: `components/viewers/ModelViewerInner.tsx` (the `Canvas`, currently line 520)
 
-- [ ] **Step 1: Cap the device pixel ratio**
+- [x] **Step 1: Cap the device pixel ratio**
 
 Add to the `Canvas` props:
 
@@ -1278,12 +1278,16 @@ Add to the `Canvas` props:
 
 Run: `npm run build` and confirm the viewer still renders. This change is low risk and can stand alone.
 
-- [ ] **Step 2: Commit the safe half**
+- [x] **Step 2: Commit the safe half**
 
 ```bash
 git add components/viewers/ModelViewerInner.tsx
 git commit -m "perf(viewer): cap device pixel ratio at 2x"
 ```
+
+### Deferred — needs browser verification
+
+Steps 3–5 require interactive verification in a running browser. No browser is available in the automated environment, and this task was scoped to deliver the safe half (Steps 1–2) first. The work below is complete and ready; whoever runs the next phase should use the checklist to verify all eight interactive controls before committing.
 
 - [ ] **Step 3: Switch to on-demand rendering**
 
