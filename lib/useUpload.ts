@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { FileWithPath } from '@/components/ui/FileDropzone';
 import type { UploadItem } from '@/components/ui/UploadProgress';
+import { runOptimize, shouldOptimize } from '@/lib/model/runOptimize';
 
 /**
  * Parallel, per-file upload with progress and retry — gap #12.
@@ -52,7 +53,7 @@ export function useUpload() {
           }),
         });
         if (!presignRes.ok) throw new Error('Could not get an upload URL');
-        const { fileId, presignedUrl, storageKey } = await presignRes.json();
+        const { fileId, presignedUrl, storageKey, variantPresignedUrl } = await presignRes.json();
 
         // XHR rather than fetch: fetch still has no upload progress event.
         await new Promise<void>((resolve, reject) => {
@@ -77,6 +78,55 @@ export function useUpload() {
           xhr.send(entry.file);
         });
 
+        // Optimization happens AFTER the original is safely in S3, so a failure here can
+        // never cost the upload. The original is what the uploader downloads; the
+        // optimized copy is only ever what the viewer loads.
+        //
+        // The variant URL was presigned in the SAME call that presigned the original, so
+        // there is no second round trip and the client never names the object it uploads.
+        //
+        // The entire optimization block — including the runOptimize call — is wrapped in
+        // try/finally to enforce the invariant that state is ALWAYS restored on every path,
+        // even if runOptimize (or any future change) unexpectedly rejects.
+        let hasOptimizedVariant = false;
+        if (variantPresignedUrl && shouldOptimize(entry.file.name, entry.file.size)) {
+          patch(entry.path, { state: 'optimizing' });
+          try {
+            const optimized = await runOptimize(entry.file);
+
+            if (optimized) {
+              try {
+                const put = await fetch(variantPresignedUrl, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'model/gltf-binary' },
+                  body: optimized.buffer,
+                });
+                if (!put.ok) throw new Error(`Variant upload failed (${put.status})`);
+
+                hasOptimizedVariant = true;
+                const { before, after } = optimized.stats;
+                console.info(
+                  `Optimised ${entry.file.name}: ${before.primitives} → ${after.primitives} draw calls, ` +
+                    `${after.triangles} triangles preserved, ` +
+                    `${Math.round(before.bytes / 1024)}KB → ${Math.round(after.bytes / 1024)}KB`
+                );
+              } catch (err) {
+                // Same policy as everywhere else here: the original is already uploaded and
+                // the viewer falls back to it, so this is a downgrade, not a failure.
+                console.warn(`Could not store optimised copy of ${entry.file.name}`, err);
+                hasOptimizedVariant = false;
+              }
+            }
+          } catch (err) {
+            // Optimization may fail at any step: worker unavailable, timeout, out of memory,
+            // or any error from runOptimize. None of these should block or fail the upload.
+            console.warn(`Optimization failed for ${entry.file.name}`, err);
+            hasOptimizedVariant = false;
+          } finally {
+            patch(entry.path, { state: 'uploading' });
+          }
+        }
+
         const folderPath = entry.path.includes('/')
           ? entry.path.slice(0, entry.path.lastIndexOf('/'))
           : null;
@@ -92,6 +142,7 @@ export function useUpload() {
             fileSize: entry.file.size,
             fileType: entry.file.type || 'application/octet-stream',
             folderPath,
+            hasOptimizedVariant,
           }),
         });
         if (!completeRes.ok) throw new Error('Could not register the file');
