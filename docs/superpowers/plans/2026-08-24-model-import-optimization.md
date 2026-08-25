@@ -794,13 +794,24 @@ git commit -m "build: let @gltf-transform reach the browser worker bundle"
 Two additive changes. Both keep working unchanged when the new fields are absent.
 
 **Files:**
+- Create: `lib/storageKeys.ts`
+- Test: `scripts/tests/storageKeys.test.mjs`
 - Modify: `app/api/files/upload/route.ts`
 - Modify: `app/api/files/complete/route.ts`
 
 **Interfaces:**
 - Produces:
-  - `POST /api/files/upload` accepts optional `variantOfFileId: string`. When present it presigns `uploads/{projectId}/{portalId}/{versionId}/{variantOfFileId}.optimized.glb` and echoes that `fileId` back instead of minting a new one.
-  - `POST /api/files/complete` accepts optional `convertedStorageKey: string | null`, defaulting to `null`.
+  - `optimizedVariantKey(originalStorageKey: string): string` in `lib/storageKeys.ts` (new, pure).
+  - `POST /api/files/upload` accepts optional `variantOfStorageKey: string`. When present it returns `{ presignedUrl, storageKey }` for `optimizedVariantKey(variantOfStorageKey)` and mints no id — the variant belongs to a file that already has one.
+  - `POST /api/files/complete` accepts optional `hasOptimizedVariant: boolean`, defaulting to `false`.
+
+### Security note — why the client does NOT send the converted key
+
+An earlier draft had the client send `convertedStorageKey` as a string, and `/api/files/upload` build the variant key from a client-supplied `variantOfFileId`. Both an automated security review and the task review flagged this: it stores a **client-controlled value as the authoritative pointer the viewer later loads**, which is a new IDOR surface.
+
+The variant key is fully derivable from the original key, so the client never needs to name it. `lib/storageKeys.ts` owns that derivation and both routes use it, so the two can never disagree.
+
+Note the separate, **pre-existing** problem this does NOT fix: `/api/files/upload` and `/api/files/complete` have no authentication at all, while `/api/files` and `/api/files/url` do. A caller can already supply arbitrary `projectId`/`portalId`/`versionId`/`storageKey`. That is out of scope here — this change simply declines to add a new client-controlled pointer on top of it.
 
 - [ ] **Step 1: Add the variant branch to the presign route**
 
@@ -810,21 +821,21 @@ Replace the body of `POST` in `app/api/files/upload/route.ts`:
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
+import { optimizedVariantKey } from '@/lib/storageKeys';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
-  const { versionId, projectId, portalId, filename, contentType, variantOfFileId } =
+  const { versionId, projectId, portalId, filename, contentType, variantOfStorageKey } =
     await request.json();
 
-  // An optimized variant is a second object belonging to a file that already has an id, so
-  // it reuses that id rather than minting one — the two objects must stay associated.
-  if (variantOfFileId) {
-    const storageKey = `uploads/${projectId}/${portalId}/${versionId}/${variantOfFileId}.optimized.glb`;
+  // An optimized variant is a second object for a file that already exists, so it mints no
+  // id. The key is DERIVED from the original rather than accepted from the caller: the
+  // client never gets to name the object the viewer will later load.
+  if (variantOfStorageKey) {
+    const storageKey = optimizedVariantKey(variantOfStorageKey);
     return NextResponse.json({
-      fileId: variantOfFileId,
       presignedUrl: await getUploadPresignedUrl(storageKey, 'model/gltf-binary'),
       storageKey,
-      publicUrl: getPublicUrl(storageKey),
     });
   }
 
@@ -850,20 +861,24 @@ Replace the body of `POST` in `app/api/files/complete/route.ts`:
 ```ts
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
+import { optimizedVariantKey } from '@/lib/storageKeys';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
   const {
     fileId, versionId, filename, storageKey, fileSize, fileType, folderPath,
-    convertedStorageKey,
+    hasOptimizedVariant,
   } = await request.json();
+
+  // Derived, never accepted from the caller — see the security note in this task.
+  const convertedStorageKey = hasOptimizedVariant ? optimizedVariantKey(storageKey) : null;
 
   // conversion_status stays NULL here on purpose. 'completed' means a CloudConvert job
   // finished, and the STEP flow reads it that way; a client-optimized GLB is not that.
   // converted_storage_key is populated independently of the status column.
   const rows = await sql`
     INSERT INTO files (id, version_id, filename, storage_key, file_size, file_type, folder_path, converted_storage_key)
-    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${fileSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey || null})
+    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${fileSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey})
     RETURNING id, version_id AS "versionId", filename, storage_key AS "storageKey",
               file_size AS "fileSize", file_type AS "fileType",
               conversion_status AS "conversionStatus",
@@ -939,7 +954,7 @@ In `uploadOne`, immediately after the original upload's `await new Promise<void>
         // Optimization happens AFTER the original is safely in S3, so a failure here can
         // never cost the upload. The original is what the uploader downloads; the
         // optimized copy is only ever what the viewer loads.
-        let convertedStorageKey: string | null = null;
+        let hasOptimizedVariant = false;
         if (shouldOptimize(entry.file.name, entry.file.size)) {
           patch(entry.path, { state: 'optimizing' });
           const optimized = await runOptimize(entry.file);
@@ -955,7 +970,7 @@ In `uploadOne`, immediately after the original upload's `await new Promise<void>
                   portalId: ctx.portalId,
                   filename: entry.file.name,
                   contentType: 'model/gltf-binary',
-                  variantOfFileId: fileId,
+                  variantOfStorageKey: storageKey,
                 }),
               });
               if (!variantRes.ok) throw new Error('Could not get a variant upload URL');
@@ -968,7 +983,7 @@ In `uploadOne`, immediately after the original upload's `await new Promise<void>
               });
               if (!put.ok) throw new Error(`Variant upload failed (${put.status})`);
 
-              convertedStorageKey = variant.storageKey;
+              hasOptimizedVariant = true;
               const { before, after } = optimized.stats;
               console.info(
                 `Optimised ${entry.file.name}: ${before.primitives} → ${after.primitives} draw calls, ` +
@@ -979,7 +994,7 @@ In `uploadOne`, immediately after the original upload's `await new Promise<void>
               // Same policy as everywhere else here: the original is already uploaded and
               // the viewer falls back to it, so this is a downgrade, not a failure.
               console.warn(`Could not store optimised copy of ${entry.file.name}`, err);
-              convertedStorageKey = null;
+              hasOptimizedVariant = false;
             }
           }
 
@@ -989,11 +1004,11 @@ In `uploadOne`, immediately after the original upload's `await new Promise<void>
 
 - [ ] **Step 4: Send the key when registering the file**
 
-In the same function, add one line to the `/api/files/complete` request body, after `folderPath`:
+In the same function, add one line to the `/api/files/complete` request body, after `folderPath`. The client reports only *that* a variant exists; the server derives *where* it is:
 
 ```ts
             folderPath,
-            convertedStorageKey,
+            hasOptimizedVariant,
 ```
 
 - [ ] **Step 5: Typecheck and build**
