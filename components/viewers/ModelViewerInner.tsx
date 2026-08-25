@@ -12,6 +12,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided, setClippingPlanes } from '@/lib/threeMaterials';
+import { repairExporterDefaults } from '@/lib/model/repairMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
@@ -139,10 +140,16 @@ function Model({ url }: { url: string }) {
   // Materials that ship inside the file (OBJ / 3DS / DAE / STEP / glTF) are single-sided
   // by default, which hides the far inner wall of thin or perforated parts when you look
   // through an opening. STL and PLY use the shared materials above, already double-sided.
+  //
+  // Repair runs first: it only ever touches materials the exporter left at glTF's
+  // metal=1/rough=1 defaults, and doing it before the side change keeps both passes over
+  // the same freshly-loaded tree.
   useMemo(() => {
     const root: THREE.Object3D | undefined =
       data instanceof THREE.Object3D ? data : (data as GLTF | Collada | undefined)?.scene;
-    if (root) makeDoubleSided(root);
+    if (!root) return;
+    repairExporterDefaults(root);
+    makeDoubleSided(root);
   }, [data]);
 
   if (ext === '.obj') {
