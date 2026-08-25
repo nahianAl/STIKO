@@ -791,33 +791,147 @@ git commit -m "build: let @gltf-transform reach the browser worker bundle"
 
 ## Task 5: API support for the optimized variant
 
-Two additive changes. Both keep working unchanged when the new fields are absent.
+Both S3 keys are presigned in ONE call. The server mints the file id and derives both keys itself, so the client never names an object and there is no ordering problem to solve.
 
 **Files:**
 - Create: `lib/storageKeys.ts`
 - Test: `scripts/tests/storageKeys.test.mjs`
 - Modify: `app/api/files/upload/route.ts`
 - Modify: `app/api/files/complete/route.ts`
+- Modify: `lib/model/runOptimize.ts` (import the shared extension set instead of redeclaring it)
 
 **Interfaces:**
 - Produces:
-  - `optimizedVariantKey(originalStorageKey: string): string` in `lib/storageKeys.ts` (new, pure).
-  - `POST /api/files/upload` accepts optional `variantOfFileId: string`. When present it looks up the file's `storage_key` in the DB and returns `{ presignedUrl, storageKey }` for `optimizedVariantKey(rows[0].storageKey)`, and mints no id — the variant belongs to a file that already has one.
-  - `POST /api/files/complete` accepts optional `hasOptimizedVariant: boolean`, defaulting to `false`.
+  - `optimizedVariantKey(originalStorageKey: string): string` — pure, in `lib/storageKeys.ts`
+  - `OPTIMIZABLE_EXTENSIONS: ReadonlySet<string>` and `isOptimizableFilename(filename: string): boolean` — same module
+  - `POST /api/files/upload` additionally returns `variantPresignedUrl` and `variantStorageKey` when the filename is optimizable, and `null` for both otherwise
+  - `POST /api/files/complete` accepts optional `hasOptimizedVariant: boolean`, defaulting to `false`
 
-### Security note — why the client does NOT send the converted key
+### Why one call, and why the client never names the key
 
-Three drafts, two rounds of review:
+Two earlier drafts were rejected on security grounds, both flagged by automated review and by the task review:
 
-1. **Draft 1** had the client send `convertedStorageKey` as a string, and `/api/files/upload` build the variant key by string-concatenating a client-supplied `variantOfFileId` directly into the path — no DB involved at all. Flagged: the client names the object outright.
-2. **Draft 2** (this task as originally written) derived the key server-side via `optimizedVariantKey()`, but still took the *original* key itself — `variantOfStorageKey` — verbatim from the client. That closed the naming hole but not the access hole: nothing checked that the caller actually owned the key it supplied, so any caller who could guess or observe another package's original key could request a presigned PUT for *that* package's `.optimized.glb`, which the viewer loads unconditionally. A second security review (during Task 6's build-out) caught this.
-3. **Draft 3 (current)** takes only a `variantOfFileId` again, but unlike Draft 1 it is never used directly — it is a lookup key: `SELECT storage_key FROM files WHERE id = ${variantOfFileId}`. The object key returned to the client always comes from the row the server just read, never from anything the client typed. A 404 is returned when the id doesn't resolve to a row.
+1. The client sending `convertedStorageKey` as a string — that makes a **client-controlled value the authoritative pointer the 3D viewer loads**.
+2. The client sending `variantOfStorageKey` — that hands out a presigned PUT for an arbitrary `uploads/**` key, letting anyone overwrite another package's variant.
 
-`lib/storageKeys.ts` still owns the pure derivation (`optimizedVariantKey`) and both routes still use it, so the two can never disagree.
+A third shape (look the key up by `variantOfFileId`) removed the arbitrary-write primitive but needed the file row to exist before the variant was presigned, and `/api/files/complete` does an `INSERT`. Making it an upsert was rejected: that removes the primary-key collision protection and widens the IDOR.
 
-Note the separate, **pre-existing** problem this does NOT fix: `/api/files/upload` and `/api/files/complete` have no authentication at all, while `/api/files` and `/api/files/url` do. A caller can already supply arbitrary `projectId`/`portalId`/`versionId`/`storageKey`, and — with Draft 3 — any `variantOfFileId`, including one belonging to a package they cannot otherwise see. That is out of scope here — this change simply declines to add a new client-*named* pointer on top of the existing lack of auth; it does not add access control. See `.superpowers/sdd/task-5-report.md`, section "Security fix — variant key looked up, not supplied", for the full writeup.
+Presigning both keys in the same call dissolves all of it. The server already mints `fileId` and builds `storageKey` there, so it can derive the variant key in the same breath. **Zero new client-controlled input** — the only thing the client later asserts is a boolean.
 
-- [ ] **Step 1: Add the variant branch to the presign route**
+**This does NOT fix the pre-existing gap** that `/api/files/upload` and `/api/files/complete` have no authentication while `/api/files` and `/api/files/url` do. That is tracked separately. This design simply needs no authentication to be safe, because it adds no new trust surface.
+
+- [ ] **Step 1: Write the failing test for the key helpers**
+
+Create `scripts/tests/storageKeys.test.mjs`:
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  optimizedVariantKey,
+  isOptimizableFilename,
+} from '../../lib/storageKeys.ts';
+
+test('the variant key replaces the extension of the last segment', () => {
+  assert.equal(
+    optimizedVariantKey('uploads/p/po/v/abc-123.glb'),
+    'uploads/p/po/v/abc-123.optimized.glb'
+  );
+});
+
+test('a .gltf original still yields a .glb variant', () => {
+  // The optimizer always writes binary GLB, whatever the input was.
+  assert.equal(
+    optimizedVariantKey('uploads/p/po/v/abc-123.gltf'),
+    'uploads/p/po/v/abc-123.optimized.glb'
+  );
+});
+
+test('an original with no extension still gets one', () => {
+  assert.equal(
+    optimizedVariantKey('uploads/p/po/v/abc-123'),
+    'uploads/p/po/v/abc-123.optimized.glb'
+  );
+});
+
+test('a dot in the directory prefix is not mistaken for the extension', () => {
+  assert.equal(
+    optimizedVariantKey('uploads/my.project/po.1/v/abc-123.glb'),
+    'uploads/my.project/po.1/v/abc-123.optimized.glb'
+  );
+});
+
+test('deriving from an already-optimized key is idempotent', () => {
+  // Guards against `.optimized.optimized.glb` if the helper is ever applied twice.
+  const once = optimizedVariantKey('uploads/p/po/v/abc-123.glb');
+  assert.equal(optimizedVariantKey(once), once);
+});
+
+test('only glb and gltf are optimizable', () => {
+  for (const name of ['m.glb', 'm.gltf', 'M.GLB', 'a.b.glb']) {
+    assert.equal(isOptimizableFilename(name), true, name);
+  }
+  for (const name of ['m.step', 'm.obj', 'm.stl', 'm.pdf', 'noext', '.glb']) {
+    assert.equal(isOptimizableFilename(name), false, name);
+  }
+});
+```
+
+Note `'.glb'` is expected `false`: a leading dot is a hidden file with no extension, not a GLB.
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `node --test scripts/tests/storageKeys.test.mjs`
+Expected: FAIL — `Cannot find module .../lib/storageKeys.ts`
+
+- [ ] **Step 3: Write `lib/storageKeys.ts`**
+
+```ts
+/**
+ * S3 key derivation, kept pure and free of environment access.
+ *
+ * Deliberately NOT in lib/s3.ts: that module throws at import time when the R2 env vars
+ * are absent, so nothing there can be unit tested.
+ *
+ * The variant key is always DERIVED, never accepted from a caller. An earlier draft let
+ * the client name it, which hands out a presigned PUT for an arbitrary key — and that
+ * object is exactly what the 3D viewer loads.
+ */
+
+/** gltf-transform operates on glTF documents; no other format Stiko accepts is one. */
+export const OPTIMIZABLE_EXTENSIONS: ReadonlySet<string> = new Set(['glb', 'gltf']);
+
+const OPTIMIZED_SUFFIX = '.optimized.glb';
+
+export function isOptimizableFilename(filename: string): boolean {
+  const base = filename.slice(filename.lastIndexOf('/') + 1);
+  const dot = base.lastIndexOf('.');
+  // dot === 0 is a hidden file ('.glb'), which has no extension at all.
+  if (dot <= 0) return false;
+  return OPTIMIZABLE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+}
+
+export function optimizedVariantKey(originalStorageKey: string): string {
+  if (originalStorageKey.endsWith(OPTIMIZED_SUFFIX)) return originalStorageKey;
+
+  const slash = originalStorageKey.lastIndexOf('/');
+  const directory = originalStorageKey.slice(0, slash + 1);
+  const base = originalStorageKey.slice(slash + 1);
+
+  // Only the last segment is examined, so a dot in a project or portal name is safe.
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+
+  return `${directory}${stem}${OPTIMIZED_SUFFIX}`;
+}
+```
+
+- [ ] **Step 4: Run it and watch it pass**
+
+Run: `node --test scripts/tests/storageKeys.test.mjs`
+Expected: PASS — 6 tests
+
+- [ ] **Step 5: Presign both keys in the upload route**
 
 Replace the body of `POST` in `app/api/files/upload/route.ts`:
 
@@ -825,32 +939,11 @@ Replace the body of `POST` in `app/api/files/upload/route.ts`:
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
-import { sql } from '@/lib/db';
-import { optimizedVariantKey } from '@/lib/storageKeys';
+import { isOptimizableFilename, optimizedVariantKey } from '@/lib/storageKeys';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
-  const { versionId, projectId, portalId, filename, contentType, variantOfFileId } =
-    await request.json();
-
-  // An optimized variant is a second object for a file that already exists, so it mints no
-  // id. The key is looked up, never accepted from the caller: handing out a presigned PUT
-  // for a client-named key would let anyone overwrite another package's optimized variant —
-  // and that variant is exactly what the 3D viewer loads.
-  if (variantOfFileId) {
-    const rows = await sql`
-      SELECT storage_key AS "storageKey" FROM files WHERE id = ${variantOfFileId}
-    `;
-    if (!rows[0]) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
-
-    const storageKey = optimizedVariantKey(rows[0].storageKey);
-    return NextResponse.json({
-      presignedUrl: await getUploadPresignedUrl(storageKey, 'model/gltf-binary'),
-      storageKey,
-    });
-  }
+  const { versionId, projectId, portalId, filename, contentType } = await request.json();
 
   const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
   const fileId = uuidv4();
@@ -858,25 +951,32 @@ export async function POST(request: NextRequest) {
 
   const presignedUrl = await getUploadPresignedUrl(storageKey, contentType);
 
+  // The optimized variant is presigned HERE, in the same call, rather than in a later
+  // round trip. The server has just minted the id and built the original key, so it can
+  // derive the variant key itself — the client never names an object it will later read
+  // back, and there is no window in which the file row must already exist.
+  //
+  // Presigning a variant the client may never use costs nothing: the URL simply expires.
+  const variantStorageKey = isOptimizableFilename(filename)
+    ? optimizedVariantKey(storageKey)
+    : null;
+
   return NextResponse.json({
     fileId,
     presignedUrl,
     storageKey,
     publicUrl: getPublicUrl(storageKey),
+    variantStorageKey,
+    variantPresignedUrl: variantStorageKey
+      ? await getUploadPresignedUrl(variantStorageKey, 'model/gltf-binary')
+      : null,
   });
 }
 ```
 
-**Ordering consequence for Task 6:** `variantOfFileId` only resolves once a row exists in
-`files` — which only `/api/files/complete` creates. So by the time the client asks for a
-variant presign, `/api/files/complete` must already have run for the original. Task 6
-restructures the upload sequence around that requirement; see its "Call order" note.
+- [ ] **Step 6: Record the variant when registering the file**
 
-- [ ] **Step 2: Accept the converted key when registering the file**
-
-Replace the body of `POST` in `app/api/files/complete/route.ts`. This is the INSERT-only
-shape for *this* task — Task 6 calls this route a second time, per file, to attach the
-variant once it exists, and changes this INSERT into an upsert to support that; see Task 6.
+Replace the body of `POST` in `app/api/files/complete/route.ts`:
 
 ```ts
 import { NextRequest, NextResponse } from 'next/server';
@@ -890,7 +990,8 @@ export async function POST(request: NextRequest) {
     hasOptimizedVariant,
   } = await request.json();
 
-  // Derived, never accepted from the caller — see the security note in this task.
+  // Derived from the original key, never accepted from the caller. The client asserts only
+  // THAT a variant exists; the server decides where it is.
   const convertedStorageKey = hasOptimizedVariant ? optimizedVariantKey(storageKey) : null;
 
   // conversion_status stays NULL here on purpose. 'completed' means a CloudConvert job
@@ -911,16 +1012,33 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-- [ ] **Step 3: Typecheck**
+- [ ] **Step 7: Point `runOptimize` at the shared extension set**
 
-Run: `npx tsc --noEmit`
-Expected: no errors in either route
+In `lib/model/runOptimize.ts`, delete its local `OPTIMIZABLE_EXTENSIONS` declaration and re-export the shared one so there is exactly one definition:
 
-- [ ] **Step 4: Commit**
+```ts
+import { isOptimizableFilename } from '@/lib/storageKeys';
+export { OPTIMIZABLE_EXTENSIONS } from '@/lib/storageKeys';
+```
+
+Then `shouldOptimize` becomes:
+
+```ts
+export function shouldOptimize(filename: string, bytes: number): boolean {
+  return isOptimizableFilename(filename) && bytes <= MAX_OPTIMIZE_BYTES;
+}
+```
+
+- [ ] **Step 8: Typecheck, test and commit**
+
+Run: `npx tsc --noEmit` → clean
+Run: `npm test` → 175 passing, 0 failing (169 + 6 new)
+
+Do NOT run `npm run build`: this workspace has no `DATABASE_URL`, so it always fails at page-data collection for unrelated reasons.
 
 ```bash
-git add app/api/files/upload/route.ts app/api/files/complete/route.ts
-git commit -m "feat(files): accept an optimized GLB variant alongside the original"
+git add lib/storageKeys.ts scripts/tests/storageKeys.test.mjs app/api/files/upload/route.ts app/api/files/complete/route.ts lib/model/runOptimize.ts
+git commit -m "feat(files): presign the optimized variant alongside the original"
 ```
 
 ---
