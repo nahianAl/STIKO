@@ -1,25 +1,28 @@
+import { extensionOf } from './fileFormats.ts';
+
 /**
  * S3 key derivation, kept pure and free of environment access.
  *
  * Deliberately NOT in lib/s3.ts: that module throws at import time when the R2 env vars
- * are absent, so nothing there can be unit tested.
+ * are absent, so nothing there can be unit tested. fileFormats.ts has the same property, so
+ * it's safe to import extensionOf from there instead of re-deriving it here.
  *
  * The variant key is always DERIVED, never accepted from a caller. An earlier draft let
  * the client name it, which hands out a presigned PUT for an arbitrary key — and that
  * object is exactly what the 3D viewer loads.
  */
 
-/** gltf-transform operates on glTF documents; no other format Stiko accepts is one. */
-export const OPTIMIZABLE_EXTENSIONS: ReadonlySet<string> = new Set(['glb', 'gltf']);
+/**
+ * Only 'glb', not 'gltf': optimizeGlb uses WebIO.readBinary, which parses binary GLB only.
+ * A JSON .gltf throws "Invalid glTF 2.0 binary." there every time, so advertising it as
+ * optimizable just wastes a presign, a full read and a worker spawn before falling back.
+ */
+export const OPTIMIZABLE_EXTENSIONS: ReadonlySet<string> = new Set(['glb']);
 
 const OPTIMIZED_SUFFIX = '.optimized.glb';
 
 export function isOptimizableFilename(filename: string): boolean {
-  const base = filename.slice(filename.lastIndexOf('/') + 1);
-  const dot = base.lastIndexOf('.');
-  // dot === 0 is a hidden file ('.glb'), which has no extension at all.
-  if (dot <= 0) return false;
-  return OPTIMIZABLE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+  return OPTIMIZABLE_EXTENSIONS.has(extensionOf(filename));
 }
 
 export function optimizedVariantKey(originalStorageKey: string): string {

@@ -28,8 +28,13 @@ test('an original with no extension still gets one', () => {
 });
 
 test('a dot in the directory prefix is not mistaken for the extension', () => {
+  // The basename here is deliberately extensionless. A naive whole-string
+  // lastIndexOf('.') implementation would find the dot in "my.project" or "po.1" and treat
+  // everything after it as the "extension" to strip — with an extension of its own on the
+  // basename, that bug would produce the same output as the correct last-segment-only
+  // implementation and this test would pass either way.
   assert.equal(
-    optimizedVariantKey('uploads/my.project/po.1/v/abc-123.glb'),
+    optimizedVariantKey('uploads/my.project/po.1/v/abc-123'),
     'uploads/my.project/po.1/v/abc-123.optimized.glb'
   );
 });
@@ -40,11 +45,15 @@ test('deriving from an already-optimized key is idempotent', () => {
   assert.equal(optimizedVariantKey(once), once);
 });
 
-test('only glb and gltf are optimizable', () => {
-  for (const name of ['m.glb', 'm.gltf', 'M.GLB', 'a.b.glb']) {
+test('only glb is optimizable', () => {
+  // .gltf is deliberately excluded: optimizeGlb uses WebIO.readBinary, which only parses
+  // binary GLB. A JSON .gltf throws "Invalid glTF 2.0 binary." there every time, so
+  // advertising it as optimizable would only waste a presign, a full read and a worker spawn
+  // before falling back to the original.
+  for (const name of ['m.glb', 'M.GLB', 'a.b.glb']) {
     assert.equal(isOptimizableFilename(name), true, name);
   }
-  for (const name of ['m.step', 'm.obj', 'm.stl', 'm.pdf', 'noext', '.glb']) {
+  for (const name of ['m.gltf', 'm.step', 'm.obj', 'm.stl', 'm.pdf', 'noext', '.glb']) {
     assert.equal(isOptimizableFilename(name), false, name);
   }
 });

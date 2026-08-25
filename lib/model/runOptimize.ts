@@ -6,8 +6,6 @@ import { isOptimizableFilename } from '@/lib/storageKeys';
  * caller reads as "upload the original" — optimization is an improvement, never a gate.
  */
 
-export { OPTIMIZABLE_EXTENSIONS } from '@/lib/storageKeys';
-
 /**
  * Measured peak memory ran ~24x the input size, so this projects to roughly 2.4 GB — near
  * the ceiling of what a browser tab will hand a worker before the allocation simply fails.
@@ -22,7 +20,31 @@ export function shouldOptimize(filename: string, bytes: number): boolean {
   return isOptimizableFilename(filename) && bytes <= MAX_OPTIMIZE_BYTES;
 }
 
+/**
+ * useUpload.ts runs a 4-wide upload pool (CONCURRENCY in lib/useUpload.ts), so up to four
+ * callers can reach runOptimize at the same time. MAX_OPTIMIZE_BYTES above is sized for a
+ * SINGLE optimization's ~24x peak memory (~2.4 GB); four of those running concurrently near
+ * the limit projects to ~9.6 GB, which a browser tab does not have to give.
+ *
+ * This module-level promise is a single-slot queue: each call chains onto it, so only one
+ * optimization ever runs at a time regardless of how many uploads are in flight. The other
+ * callers simply wait their turn — the upload pool itself stays 4-wide, only the optimization
+ * step inside it is serialized. Every existing failure path below still resolves `null`; the
+ * `.then(..., ...)` here exists only so a rejection (there shouldn't be one) can never wedge
+ * the queue for callers still waiting behind it.
+ */
+let optimizeQueue: Promise<void> = Promise.resolve();
+
 export function runOptimize(file: File): Promise<OptimizeResult | null> {
+  const result = optimizeQueue.then(() => runOptimizeNow(file));
+  optimizeQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+function runOptimizeNow(file: File): Promise<OptimizeResult | null> {
   return new Promise((resolve) => {
     let worker: Worker;
     try {

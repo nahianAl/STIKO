@@ -28,9 +28,14 @@ export async function POST(request: NextRequest) {
     presignedUrl,
     storageKey,
     publicUrl: getPublicUrl(storageKey),
-    variantStorageKey,
     variantPresignedUrl: variantStorageKey
-      ? await getUploadPresignedUrl(variantStorageKey, 'model/gltf-binary')
+      ? // Longer than the original's default 5-minute expiry: the variant PUT only happens
+        // after the original PUT completes AND optimization finishes (up to 120s — see
+        // TIMEOUT_MS in lib/model/runOptimize.ts), so a large original upload alone can eat
+        // most of a 5-minute window before the variant URL is ever used. A short expiry here
+        // would 403 the variant PUT for exactly the biggest files, and useUpload.ts swallows
+        // that failure as a silent downgrade.
+        await getUploadPresignedUrl(variantStorageKey, 'model/gltf-binary', 3600)
       : null,
   });
 }
