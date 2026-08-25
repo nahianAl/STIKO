@@ -1048,41 +1048,21 @@ git commit -m "feat(files): presign the optimized variant alongside the original
 **Files:**
 - Modify: `lib/useUpload.ts`
 - Modify: `components/ui/UploadProgress.tsx` (the `UploadState` union and the progress label)
-- Modify: `app/api/files/complete/route.ts` (INSERT becomes an upsert — see "Call order" below)
 
 **Interfaces:**
-- Consumes: `runOptimize`, `shouldOptimize` from Task 4; the `variantOfFileId` contract from Task 5's revised `/api/files/upload`.
+- Consumes: `runOptimize`, `shouldOptimize` from Task 4; `variantPresignedUrl` from Task 5's `/api/files/upload`; `hasOptimizedVariant` on `/api/files/complete`.
 - Produces: `UploadState` gains `'optimizing'`.
 
 ### Call order
 
-Task 5's `variantOfFileId` fix (see its "Security note") requires the `files` row to already
-exist before a variant can be presigned, because the route looks the original's `storage_key`
-up by id rather than trusting a client-supplied key. `/api/files/complete` is the only thing
-that creates that row. That forces a specific sequence, and it is a genuine change from the
-single-`complete`-call shape this task originally had:
+Because Task 5 presigns both keys in one call, the sequence stays as simple as it was before any of the variant work — a single `/api/files/complete` at the end, no upsert, no second round trip:
 
-1. Presign the original (`POST /api/files/upload`, no variant fields) → PUT the original to S3.
-2. `POST /api/files/complete` — registers the row with `hasOptimizedVariant: false`. The row
-   now exists, so the file is usable (uploader can see it, viewer can load the original) even
-   if everything from here on fails or is still running.
-3. Optimize locally (`shouldOptimize` / `runOptimize`, unchanged from Task 4). If it produces a
-   result: `POST /api/files/upload` with `variantOfFileId: fileId` → PUT the optimized bytes
-   to the returned presigned URL.
-4. Only once that PUT has actually succeeded: `POST /api/files/complete` **again**, same
-   `fileId`, `hasOptimizedVariant: true`. This is the "mark the variant present" step — it
-   reuses the existing route rather than adding a new one. Its INSERT becomes
-   `INSERT ... ON CONFLICT (id) DO UPDATE SET converted_storage_key = EXCLUDED.converted_storage_key`
-   so the second call updates the row Step 2 already created instead of colliding with it. No
-   new endpoint and no schema change: `files.id` is already the primary key, which is exactly
-   what `ON CONFLICT (id)` needs, and every other column keeps its Step-2 value because the
-   `DO UPDATE SET` touches only `converted_storage_key`.
+1. `POST /api/files/upload` → returns `presignedUrl` **and** `variantPresignedUrl`.
+2. PUT the original to `presignedUrl`.
+3. If `variantPresignedUrl` exists and the file is worth optimizing: optimize locally, and on success PUT the optimized bytes to `variantPresignedUrl`.
+4. `POST /api/files/complete` once, with `hasOptimizedVariant` reflecting whether step 3 actually succeeded.
 
-Step 4 is skipped whenever optimization is skipped or fails — Step 2's row (`hasOptimizedVariant:
-false`) already correctly describes that outcome, so there is nothing to attach. `state: 'done'`
-in the upload hook must not be set until this whole sequence (Steps 1–4, with 3–4 conditional)
-finishes — setting it after Step 2 alone would tell the UI the file is fully done while a
-variant might still be mid-flight.
+`state: 'done'` is set only after step 4, exactly as it is today.
 
 - [ ] **Step 1: Add the `optimizing` state to the UI type**
 
@@ -1107,7 +1087,7 @@ Then replace the progress-label block (currently line 77):
 
 The existing `track` fallback already covers the new state — anything that is not `done` or `failed` uses `#F1F3FF`.
 
-- [ ] **Step 2: Add the imports to the upload hook**
+- [ ] **Step 2: Add the import and widen the presign destructure**
 
 In `lib/useUpload.ts`:
 
@@ -1115,72 +1095,38 @@ In `lib/useUpload.ts`:
 import { runOptimize, shouldOptimize } from '@/lib/model/runOptimize';
 ```
 
-- [ ] **Step 3: Register the file immediately, then optimize and attach the variant after**
-
-Per the "Call order" note above, `/api/files/complete` must run — registering the row — before
-a variant can be presigned. In `uploadOne`, replace the block from `const folderPath = ...`
-through the existing single `completeRes` call with:
+Then widen the existing destructure of the presign response to pick up the variant URL:
 
 ```ts
-        const folderPath = entry.path.includes('/')
-          ? entry.path.slice(0, entry.path.lastIndexOf('/'))
-          : null;
+const { fileId, presignedUrl, storageKey, variantPresignedUrl } = await presignRes.json();
+```
 
-        const completeBody = {
-          fileId,
-          versionId: ctx.versionId,
-          filename: entry.file.name,
-          storageKey,
-          fileSize: entry.file.size,
-          fileType: entry.file.type || 'application/octet-stream',
-          folderPath,
-        };
+- [ ] **Step 3: Optimize between the original PUT and the complete call**
 
-        // Register the original FIRST. Until a row exists, a variant can't be presigned —
-        // /api/files/upload looks the original's storage_key up by fileId rather than
-        // trusting a client-supplied key (see Task 5's security note) — and registering
-        // early also means the file is usable even if everything below fails.
-        const completeRes = await fetch('/api/files/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...completeBody, hasOptimizedVariant: false }),
-        });
-        if (!completeRes.ok) throw new Error('Could not register the file');
+In `uploadOne`, immediately after the original upload's `await new Promise<void>(...)` block and before the `const folderPath = ...` line, insert:
 
-        // Optimization happens AFTER the original is registered, so a failure here can
+```ts
+        // Optimization happens AFTER the original is safely in S3, so a failure here can
         // never cost the upload. The original is what the uploader downloads; the
         // optimized copy is only ever what the viewer loads.
-        if (shouldOptimize(entry.file.name, entry.file.size)) {
+        //
+        // The variant URL was presigned in the SAME call that presigned the original, so
+        // there is no second round trip and the client never names the object it uploads.
+        let hasOptimizedVariant = false;
+        if (variantPresignedUrl && shouldOptimize(entry.file.name, entry.file.size)) {
           patch(entry.path, { state: 'optimizing' });
           const optimized = await runOptimize(entry.file);
 
           if (optimized) {
             try {
-              const variantRes = await fetch('/api/files/upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ variantOfFileId: fileId }),
-              });
-              if (!variantRes.ok) throw new Error('Could not get a variant upload URL');
-              const variant = await variantRes.json();
-
-              const put = await fetch(variant.presignedUrl, {
+              const put = await fetch(variantPresignedUrl, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'model/gltf-binary' },
                 body: optimized.buffer,
               });
               if (!put.ok) throw new Error(`Variant upload failed (${put.status})`);
 
-              // Only now, with the variant's bytes actually in S3, mark it present. A
-              // second /api/files/complete call — not a new endpoint — attaches it to the
-              // row Step 2 already created (see the upsert in the next step).
-              const attachRes = await fetch('/api/files/complete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...completeBody, hasOptimizedVariant: true }),
-              });
-              if (!attachRes.ok) throw new Error('Could not register the optimized variant');
-
+              hasOptimizedVariant = true;
               const { before, after } = optimized.stats;
               console.info(
                 `Optimised ${entry.file.name}: ${before.primitives} → ${after.primitives} draw calls, ` +
@@ -1188,11 +1134,10 @@ through the existing single `completeRes` call with:
                   `${Math.round(before.bytes / 1024)}KB → ${Math.round(after.bytes / 1024)}KB`
               );
             } catch (err) {
-              // Same policy as everywhere else here: the original is already registered and
-              // the viewer falls back to it, so this is a downgrade, not a failure. The row
-              // from Step 2 is left exactly as it is — hasOptimizedVariant: false — so no
-              // cleanup call is needed.
+              // Same policy as everywhere else here: the original is already uploaded and
+              // the viewer falls back to it, so this is a downgrade, not a failure.
               console.warn(`Could not store optimised copy of ${entry.file.name}`, err);
+              hasOptimizedVariant = false;
             }
           }
 
@@ -1200,41 +1145,21 @@ through the existing single `completeRes` call with:
         }
 ```
 
-Note `variantOfFileId` is now the *only* field the variant presign request needs —
-`versionId`/`projectId`/`portalId`/`filename`/`contentType` are no longer sent on that call,
-because the server derives everything about the variant (its key and content type) from the
-row it looks up, not from anything the client states about it.
+- [ ] **Step 4: Report the variant when registering the file**
 
-- [ ] **Step 4: Make `/api/files/complete` an upsert**
-
-It is now called twice per file when a variant exists: once to register, once to attach the
-variant. The second call must update the row the first call created, not collide with it. In
-`app/api/files/complete/route.ts`, change the `INSERT` to:
+Add one line to the `/api/files/complete` request body, after `folderPath`. The client reports only *that* a variant exists; the server derives *where* it is:
 
 ```ts
-  const rows = await sql`
-    INSERT INTO files (id, version_id, filename, storage_key, file_size, file_type, folder_path, converted_storage_key)
-    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${fileSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey})
-    ON CONFLICT (id) DO UPDATE SET converted_storage_key = EXCLUDED.converted_storage_key
-    RETURNING id, version_id AS "versionId", filename, storage_key AS "storageKey",
-              file_size AS "fileSize", file_type AS "fileType",
-              conversion_status AS "conversionStatus",
-              converted_storage_key AS "convertedStorageKey",
-              folder_path AS "folderPath",
-              created_at AS "createdAt"
-  `;
+            folderPath,
+            hasOptimizedVariant,
 ```
 
-`ON CONFLICT (id)` needs no schema change — `id` is already the primary key. The `DO UPDATE
-SET` touches only `converted_storage_key`, so the first call's `created_at` and every other
-column survive the second call untouched; the second call's `convertedStorageKey` is `null`
-whenever `hasOptimizedVariant` is falsy, so it must never be sent unless the caller actually
-means to (re-)assert the variant's presence.
+- [ ] **Step 5: Typecheck and test**
 
-- [ ] **Step 5: Typecheck and build**
+Run: `npx tsc --noEmit` → clean
+Run: `npm test` → 175 passing, 0 failing (unchanged by this task)
 
-Run: `npx tsc --noEmit && npm run build`
-Expected: both succeed
+Do NOT run `npm run build`: this workspace has no `DATABASE_URL`, so it always fails at page-data collection for unrelated reasons.
 
 - [ ] **Step 6: Verify end to end**
 
@@ -1244,15 +1169,12 @@ Upload `Rohit Resort Villas.glb` through the submit flow and confirm in the brow
 Optimised Rohit Resort Villas.glb: 7995 → 26 draw calls, 227463 triangles preserved, 22191KB → 9575KB
 ```
 
-Then confirm in S3 that both objects exist — `{fileId}.glb` and `{fileId}.optimized.glb` —
-and that the `files` row has `converted_storage_key` set with `conversion_status` still
-`NULL`. Also confirm, by watching the network tab, that `/api/files/complete` is called twice
-for that file and `/api/files/upload`'s second call carries only `variantOfFileId`.
+Then confirm in S3 that both objects exist — `{fileId}.glb` and `{fileId}.optimized.glb` — and that the `files` row has `converted_storage_key` set with `conversion_status` still `NULL`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/useUpload.ts components/ui/UploadProgress.tsx app/api/files/complete/route.ts
+git add lib/useUpload.ts components/ui/UploadProgress.tsx
 git commit -m "feat(upload): optimize GLB uploads in the browser before registering them"
 ```
 
