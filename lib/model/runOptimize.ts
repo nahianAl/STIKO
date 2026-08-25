@@ -1,12 +1,12 @@
 import type { OptimizeResult } from './optimizeGlb';
+import { isOptimizableFilename } from '@/lib/storageKeys';
 
 /**
  * Browser-side front door to the optimizer. Every failure path resolves `null`, which the
  * caller reads as "upload the original" — optimization is an improvement, never a gate.
  */
 
-/** gltf-transform operates on glTF documents; nothing else in Stiko's format list is one. */
-export const OPTIMIZABLE_EXTENSIONS: ReadonlySet<string> = new Set(['glb', 'gltf']);
+export { OPTIMIZABLE_EXTENSIONS } from '@/lib/storageKeys';
 
 /**
  * Measured peak memory ran ~24x the input size, so this projects to roughly 2.4 GB — near
@@ -19,10 +19,7 @@ export const MAX_OPTIMIZE_BYTES = 100 * 1024 * 1024;
 const TIMEOUT_MS = 120_000;
 
 export function shouldOptimize(filename: string, bytes: number): boolean {
-  const dot = filename.lastIndexOf('.');
-  if (dot <= 0) return false;
-  const ext = filename.slice(dot + 1).toLowerCase();
-  return OPTIMIZABLE_EXTENSIONS.has(ext) && bytes <= MAX_OPTIMIZE_BYTES;
+  return isOptimizableFilename(filename) && bytes <= MAX_OPTIMIZE_BYTES;
 }
 
 export function runOptimize(file: File): Promise<OptimizeResult | null> {
