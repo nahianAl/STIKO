@@ -777,9 +777,14 @@ Note: in a workspace without `DATABASE_URL`, `npm run build` still fails at the 
 
 - [ ] **Step 5: Commit**
 
+Two commits, because the build-config change is infrastructure that stands on its own and should be revertable independently of the worker:
+
 ```bash
 git add lib/model/optimizeWorker.ts lib/model/runOptimize.ts
 git commit -m "feat(viewer): run GLB optimization in an isolated web worker"
+
+git add next.config.mjs
+git commit -m "build: let @gltf-transform reach the browser worker bundle"
 ```
 
 ---
