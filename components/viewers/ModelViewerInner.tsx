@@ -531,6 +531,8 @@ export default function ModelViewerInner({
         // truth and ApplyFocalLength overwrites it anyway once mounted.
         camera={{ position: [3, 3, 3], fov: fovForFocalLength(DEFAULT_FOCAL_LENGTH) }}
         style={{ background: '#f0f0f0' }}
+        // A 3x display renders 9x the fragments of a 1x one for no reviewable detail.
+        dpr={[1, 2]}
         // localClippingEnabled is what makes per-material clippingPlanes take effect at all;
         // without it the cross-section silently does nothing.
         gl={{ preserveDrawingBuffer: true, localClippingEnabled: true }}
