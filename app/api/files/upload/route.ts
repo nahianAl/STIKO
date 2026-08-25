@@ -1,18 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
+import { sql } from '@/lib/db';
 import { optimizedVariantKey } from '@/lib/storageKeys';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
-  const { versionId, projectId, portalId, filename, contentType, variantOfStorageKey } =
+  const { versionId, projectId, portalId, filename, contentType, variantOfFileId } =
     await request.json();
 
   // An optimized variant is a second object for a file that already exists, so it mints no
-  // id. The key is DERIVED from the original rather than accepted from the caller: the
-  // client never gets to name the object the viewer will later load.
-  if (variantOfStorageKey) {
-    const storageKey = optimizedVariantKey(variantOfStorageKey);
+  // id. The key is looked up, never accepted from the caller: handing out a presigned PUT
+  // for a client-named key would let anyone overwrite another package's optimized variant —
+  // and that variant is exactly what the 3D viewer loads.
+  if (variantOfFileId) {
+    const rows = await sql`
+      SELECT storage_key AS "storageKey" FROM files WHERE id = ${variantOfFileId}
+    `;
+    if (!rows[0]) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    const storageKey = optimizedVariantKey(rows[0].storageKey);
     return NextResponse.json({
       presignedUrl: await getUploadPresignedUrl(storageKey, 'model/gltf-binary'),
       storageKey,
