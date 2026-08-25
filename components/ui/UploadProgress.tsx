@@ -3,7 +3,7 @@
 import React from 'react';
 import { FileChip } from './Primitives';
 
-export type UploadState = 'pending' | 'uploading' | 'done' | 'failed';
+export type UploadState = 'pending' | 'uploading' | 'optimizing' | 'done' | 'failed';
 
 export interface UploadItem {
   path: string;
@@ -73,6 +73,9 @@ export function UploadProgressRow({
                 </button>
               )}
             </span>
+          )}
+          {item.state === 'optimizing' && (
+            <span className="text-stiko-muted">Optimising…</span>
           )}
           {(item.state === 'uploading' || item.state === 'pending') && (
             <span className="text-stiko-muted">
