@@ -724,7 +724,37 @@ export function runOptimize(file: File): Promise<OptimizeResult | null> {
 }
 ```
 
-- [ ] **Step 3: Verify the worker chunk builds**
+- [ ] **Step 3: Make `@gltf-transform` bundleable for the browser**
+
+`@gltf-transform/core` ships `NodeIO` and `WebIO` in one bundle, and `NodeIO` does `import("node:fs")`. Webpack parses that whether or not `NodeIO` is reachable, so a browser-targeted build fails with `UnhandledSchemeError` the moment anything on the client imports the optimizer. The package's `browser` field maps bare `fs`/`path` to `false` but does not cover the `node:`-prefixed form.
+
+In `next.config.mjs`, take webpack from the options argument (the app has no direct `webpack` dependency — importing it fails with `ERR_MODULE_NOT_FOUND`):
+
+```js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  webpack: (config, { isServer, webpack }) => {
+    config.resolve.alias.canvas = false;
+
+    // Scoped to exactly `node:fs` and `node:path`. A blanket /^node:/ rule would also
+    // rewrite any OTHER Node built-in a dependency drags in, turning a loud build failure
+    // into a silent empty module — which is how a server-only import ends up shipped.
+    if (!isServer) {
+      config.plugins.push(
+        new webpack.NormalModuleReplacementPlugin(/^node:(fs|path)$/, (resource) => {
+          resource.request = resource.request.slice('node:'.length);
+        })
+      );
+    }
+
+    return config;
+  },
+};
+
+export default nextConfig;
+```
+
+- [ ] **Step 4: Verify the worker chunk builds**
 
 Run: `npm run build`
 Expected: build succeeds. Confirm a separate worker chunk was emitted and that `@gltf-transform` is **not** in the main app chunks:
@@ -733,9 +763,19 @@ Expected: build succeeds. Confirm a separate worker chunk was emitted and that `
 grep -rl "gltf-transform" .next/static/chunks/ | head
 ```
 
-Expected: matches only a standalone worker chunk (a bare numeric/hashed filename), never `main-*.js`, `framework-*.js`, or a `pages/`/`app/` chunk. If it appears in an app chunk, something on the main path is importing `optimizeGlb` or `optimizeWorker` directly — find it and route it through `runOptimize` instead.
+A plain `grep` proves little on its own, because a chunk being *emitted* does not tell you whether a page loads it. The decisive check is whether any page manifest references it:
 
-- [ ] **Step 4: Commit**
+```bash
+for c in $(grep -rl "KHR_materials_transmission" .next/static/chunks/ | xargs -n1 basename | sed 's/\.js$//'); do
+  echo "$c -> $(grep -o "$c" .next/build-manifest.json .next/app-build-manifest.json | wc -l) page refs"
+done
+```
+
+Expected: **0 page refs** for every chunk carrying `@gltf-transform` — they load only via the worker. Also confirm `sharp` is absent: `grep -rl sharp .next/static/chunks/` should return nothing.
+
+Note: in a workspace without `DATABASE_URL`, `npm run build` still fails at the *page-data collection* stage, which runs after client compilation. Client chunks are emitted regardless, so the checks above remain valid. Only a bundling error invalidates them.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add lib/model/optimizeWorker.ts lib/model/runOptimize.ts
