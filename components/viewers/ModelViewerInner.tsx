@@ -480,6 +480,20 @@ function FitCameraToModel({ bounds }: { bounds: ModelBounds }) {
     cc.minDistance = framing.minDistance;
     cc.maxDistance = framing.maxDistance;
 
+    // setOrbitPoint — how ViewerNavigation anchors the pivot under the cursor — does not
+    // merely move the target: it holds the camera still by adding a compensating focal
+    // offset, and that offset persists on the controls afterwards. setLookAt below does not
+    // clear it (only fitToBox, fitToSphere, reset and fromJSON do), and the controls outlive
+    // a model switch because ViewerContainer renders <ModelViewer> without a key, so the
+    // Canvas, camera and controls are all reused. Without this line the previous model's
+    // orbit anchor displaces the next model's framing by the whole offset: measured at the
+    // default 35mm lens, one ordinary orbit of a 5,000-radius model then leaves a 1-radius
+    // model framed 5,339 units away behind a far plane of 42 — a blank viewport, with no
+    // control on screen that can recover it. Zeroing is idempotent, which is what makes it
+    // safe for an effect that re-runs whenever `controls` changes identity. It is NOT
+    // redundant with the setLookAt that follows; do not delete it.
+    cc.setFocalOffset(0, 0, 0, false);
+
     // false: no transition. This is the opening view of a freshly loaded model, so there is
     // nothing to animate from.
     cc.setLookAt(

@@ -17,7 +17,18 @@ export interface CameraFraming {
   distance: number;
   near: number;
   far: number;
-  /** Dolly limits for OrbitControls, so the user cannot zoom through a clipping plane. */
+  /**
+   * The dolly range. FitCameraToModel assigns both onto the CameraControls instance, where
+   * camera-controls clamps its orbit radius to them and ViewerNavigation reads them back as
+   * the bounds it clamps a pointer-anchored orbit pivot into.
+   *
+   * `maxDistance` is a hard stop — it is what keeps the model from being dollied out past
+   * the far plane, and ViewerNavigation only ever enables `infinityDolly` for a wheel event
+   * that zooms IN, so nothing lifts it. `minDistance` is deliberately not a wall: that same
+   * `infinityDolly` holds the radius here and pushes the pivot ahead of the camera rather
+   * than stopping, so the camera can fly through geometry and this doubles as the step it
+   * travels by (see MIN_DISTANCE_FACTOR).
+   */
   minDistance: number;
   maxDistance: number;
 }
@@ -67,7 +78,11 @@ export function framingForRadius(
 
   // near is pinned to the depth-buffer ratio rather than to the model, so precision stays
   // constant across scales. minDistance is independent of it (see MIN_DISTANCE_FACTOR) but
-  // stays comfortably clear: near lands around 4.2e-4 * radius against minDistance's 1e-2.
+  // stays clear of it: at the app's default 35mm lens — 37.849 degrees vertical — near lands
+  // at 4.21e-4 * radius against minDistance's 1e-2, a 23.8x margin. That ratio is a function
+  // of the field of view, so it is quoted for that lens alone and no other: the unit tests'
+  // 50 degrees gives 3.28e-4 and a 30.5x margin, and the margin closes as the lens lengthens,
+  // down to 3.1x at the 300mm ceiling — narrow, but never crossed.
   const near = far / 1e5;
 
   return { distance, near, far, minDistance: r * MIN_DISTANCE_FACTOR, maxDistance };

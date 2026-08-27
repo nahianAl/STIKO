@@ -107,6 +107,12 @@ export default function ViewerNavigation({ modelRef, center, clipPlaneRef }: Vie
       // than an offset, which is what setOrbitPoint takes.
       const anchor = toPivot.multiplyScalar(clamped / distance).add(camera.position);
 
+      // setOrbitPoint moves the target without moving the camera, and the way it achieves
+      // that is a compensating focal offset which it leaves set. Nothing in the normal
+      // gesture path clears it, and setLookAt does not either — so both of the places that
+      // re-frame the camera from scratch have to zero it by hand first: FitCameraToModel
+      // when a new model loads, and ViewGizmo when a cube face is clicked. Anything else
+      // added later that positions the camera absolutely needs the same treatment.
       cc.setOrbitPoint(anchor.x, anchor.y, anchor.z);
     },
     [camera, controls, hitUnderPointer],

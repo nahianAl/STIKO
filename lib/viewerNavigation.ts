@@ -53,9 +53,13 @@ export function clampAnchorDistance(
  * Whether a wheel event dollies in.
  *
  * camera-controls turns the event into `delta = deltaY / (deltaYFactor * 10)` with
- * `deltaYFactor` negative, then dollies by `0.95 ** -delta` — so a negative deltaY (wheel up)
- * shrinks the radius. The caller needs this because `infinityDolly` has to be enabled in one
- * direction only; see ViewerNavigation for why.
+ * `deltaYFactor` negative, then dollies by `0.95 ** delta` — the wheel handler calls
+ * `_dollyInternal(-delta)` and `_dollyInternal` scales the radius by `0.95 ** -param`, so the
+ * two negations cancel. A negative deltaY (wheel up) therefore shrinks the radius. Getting
+ * that derivation right is the entire purpose of this comment: it exists so that nobody
+ * re-derives the sign from the library and inverts the wheel. The caller needs the answer
+ * because `infinityDolly` has to be enabled in one direction only; see ViewerNavigation for
+ * why.
  */
 export function isZoomingIn(deltaY: number): boolean {
   return deltaY < 0;

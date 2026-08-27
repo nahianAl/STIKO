@@ -39,7 +39,8 @@ test('a degenerate anchor distance falls back to the floor', () => {
 test('wheel-up zooms in', () => {
   // Verified against camera-controls 2.10.1: the wheel handler computes
   // delta = deltaY / (deltaYFactor * 10) with deltaYFactor negative, then calls
-  // _dollyInternal(-delta), whose scale is 0.95^(-delta). A negative deltaY therefore
+  // _dollyInternal(-delta); _dollyInternal scales the radius by 0.95^(-param), so the two
+  // negations cancel and the wheel dollies by 0.95^delta. A negative deltaY therefore
   // shrinks the radius. Pinned by a test because an inverted sign is invisible in review
   // and infuriating in use.
   assert.equal(isZoomingIn(-100), true);
