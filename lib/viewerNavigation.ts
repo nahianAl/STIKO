@@ -9,24 +9,25 @@
  * set once at load. Dolly and pan steps are a percentage of the pivot distance, so inspecting
  * detail meant travelling deep inside the bounding sphere until every gesture moved almost
  * nothing — worse the larger the model, because the geometry you wanted stayed hundreds of
- * units away while the steps shrank. Anchoring the pivot to the surface under the cursor
- * makes both operations scale-free by construction.
+ * units away while the steps shrank. Anchoring the pivot to the surface under the cursor when
+ * a rotate drag starts makes rotation and the pan steps that follow it scale-free.
+ *
+ * Zoom is deliberately not covered here: camera-controls' own dollyToCursor migrates the target
+ * as the radius shrinks, which fixes the same crawl natively, and re-anchoring on top of it
+ * actively drags the cursor point off the cursor. ViewerNavigation's docblock has the mechanism.
  */
 
 export type Vec3 = readonly [number, number, number];
 
 /**
- * Which point the pivot should move to, or null to leave it where it is.
+ * Which point a rotate drag should pivot about.
  *
- * The two callers differ only in what they pass as `fallback`, and that difference is the
- * whole of the product behaviour:
- *
- * - **Orbit** passes the model's centre. A rotate drag started over empty background then
- *   swings the camera around the object, which is what keeps the model in the field of view.
- * - **Dolly** passes null. Scrolling over background leaves the pivot untouched, rather than
- *   yanking it back to the centre and undoing the approach the user just made.
+ * The sole caller is the pointerdown handler, and the fallback is the whole of the product
+ * behaviour: with nothing under the cursor it passes the model's centre, so a drag started over
+ * empty background swings the camera around the object and keeps it in the field of view rather
+ * than orbiting whatever point the previous gesture happened to leave behind.
  */
-export function pivotForPointer(hit: Vec3 | null, fallback: Vec3 | null): Vec3 | null {
+export function pivotForPointer(hit: Vec3 | null, fallback: Vec3): Vec3 {
   return hit ?? fallback;
 }
 

@@ -513,7 +513,9 @@ export default function ModelViewerInner({
 
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
-  // Written by ApplyCrossSection, read by SceneInteraction's raycast guard.
+  // Written by ApplyCrossSection, read by the raycast guards in SceneInteraction (pin drops)
+  // and ViewerNavigation (orbit anchoring). three's raycaster ignores clipping planes, so both
+  // have to reject hits on the hidden half by hand.
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
   const [bounds, setBounds] = useState<ModelBounds | null>(null);
 
@@ -580,7 +582,13 @@ export default function ModelViewerInner({
           <ApplyFocalLength focalLength={focalLength} />
           <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
-          {bounds && <ViewerNavigation modelRef={modelRef} center={bounds.center} />}
+          {bounds && (
+            <ViewerNavigation
+              modelRef={modelRef}
+              center={bounds.center}
+              clipPlaneRef={clipPlaneRef}
+            />
+          )}
           {bounds && (
             // key={url}: ApplyCrossSection's cleanup clears clippingPlanes from the materials
             // under modelRef, but nothing in the effect tracks which model modelRef points at.
@@ -615,13 +623,16 @@ export default function ModelViewerInner({
         </Suspense>
         {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls
             lookAt(target) on every update, pinning the pivot to the centre of the screen.
-            ViewerNavigation re-anchors this one to whatever is under the cursor.
+            ViewerNavigation re-anchors this one to whatever is under the cursor when a rotate
+            drag starts. Zoom is left to dollyToCursor below, which migrates the target itself.
 
             The default input mapping already matches what the viewer has always had —
             left rotate, middle dolly, right pan, wheel dolly — so it is left alone.
 
-            infinityDolly is deliberately NOT set here. ViewerNavigation toggles it per wheel
-            event, and a prop would fight that on re-render. */}
+            infinityDolly is deliberately NOT set here. ViewerNavigation enables it per wheel
+            event by direction and clears it again on pointerdown and on unmount, so that the
+            limitless dolly never leaks into the drag or pinch paths; a prop would fight that
+            on re-render. */}
         <CameraControls
           makeDefault
           dollyToCursor

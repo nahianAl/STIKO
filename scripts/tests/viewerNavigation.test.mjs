@@ -15,12 +15,6 @@ test('orbiting from empty background falls back to the model centre', () => {
   assert.deepEqual(pivotForPointer(null, CENTRE), CENTRE);
 });
 
-test('dollying over empty background leaves the pivot alone', () => {
-  // The wheel passes no fallback. Re-anchoring to the model centre on every background
-  // scroll would drag the pivot back off whatever the user had just zoomed toward.
-  assert.equal(pivotForPointer(null, null), null);
-});
-
 test('an anchor distance inside the dolly range is used as-is', () => {
   assert.equal(clampAnchorDistance(50, 5, 500), 50);
 });
