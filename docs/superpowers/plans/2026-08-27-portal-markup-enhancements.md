@@ -16,7 +16,8 @@
 - **`lib/markup/*.ts` must have zero imports.** Pure arithmetic only. No React, no Konva, no `three`.
 - **Design tokens only.** Colours come from `tailwind.config.ts` (`stiko-*`, `note-*`) or `lib/commentColors.ts`. Never introduce a raw Tailwind palette colour (`bg-amber-50`, `bg-gray-900`) in markup UI.
 - **The snapshot reads the canvas, never the DOM.** Any control rendered as sibling DOM inside the viewer area is invisible to `captureSnapshot`. This is load-bearing for the floating banner.
-- **`npx tsc --noEmit` must pass at the end of every task.** `strict` is on.
+- **`npx tsc --noEmit` must pass at the end of every task — except Tasks 7, 8, 9 and 10.** `strict` is on. Task 7 changes `addText`'s signature, which breaks its two call sites until Task 11 rewrites the second one. Those four tasks each state the exact errors to expect and must show *only* those. A reviewer gating on "does it compile" should gate at Task 11.
+- **Tasks 3 through 13 carry a throwaway route** at `app/portal/markup-harness/page.tsx`. It is plan-mandated scaffolding — the markup UI cannot otherwise be seen without a database, an S3 bucket and an uploaded file. Task 14 deletes it. It must never be referenced by production code.
 - **The full test suite must stay green:** `npm test` — baseline is **193 passing**.
 - **`main` deploys straight to production** (there is no staging). The final task runs a real production build before the work is considered done.
 - **Font family is pinned to `Arial` for markup text, explicitly, in both the Konva node and the editor.** This is today's implicit Konva default. Do not switch markup text to Manrope in this plan — `next/font` exposes a hashed family name via a CSS variable, and Konva measures text with `canvas.measureText`, so a mismatch between the two would silently break wrap alignment. Out of scope.
@@ -741,7 +742,7 @@ Fixes cause A of the black border — the banner is a flex row that shrinks the 
 - Modify: `app/portal/markup-harness/page.tsx` — mount the pill so it can be seen
 
 **Interfaces:**
-- Consumes: `BAR`, `slot`, `LABEL_ABOVE` from Task 5.
+- Consumes: `BAR`, `SLOT_BASE`, `LABEL_ABOVE` from Task 5.
 - Produces: `AnnotationBanner` — default export, props `{ annotatingFileName: string | null; onDiscard: () => void; onApply: () => void }`.
 
 - [ ] **Step 1: Create the pill**
@@ -751,7 +752,7 @@ Create `components/markup/AnnotationBanner.tsx`:
 ```tsx
 'use client';
 
-import { BAR, slot, LABEL_ABOVE } from './toolbarStyles';
+import { BAR, SLOT_BASE, LABEL_ABOVE } from './toolbarStyles';
 
 const CrossIcon = (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -766,24 +767,27 @@ const TickIcon = (
 );
 
 /**
- * A tinted action chip. Same 34x34 geometry and hover lift as a toolbar slot, but with its own
- * pastel rather than the toolbar's shared lilac — these two commit and discard work, so they
+ * The two action chips. Same 34x34 geometry and hover lift as a toolbar slot, but each with its
+ * own pastel rather than the toolbar's shared lilac — these commit and discard work, so they
  * should not read as another pair of tools.
+ *
+ * Tints are Tailwind arbitrary values rather than inline styles so hover stays in CSS. The
+ * pastels are note-red and note-green from tailwind.config.ts, and the borders are the matching
+ * status-chip tokens.
  */
+const ACTION_TINTS = {
+  discard: 'bg-[#FFE2E2]/60 hover:bg-[#FFE2E2] border-stiko-chip-red text-[#B23A52]',
+  apply: 'bg-[#EDFFDA]/60 hover:bg-[#EDFFDA] border-stiko-chip-green text-[#4B7A28]',
+} as const;
+
 function ActionButton({
   label,
   tint,
-  tintHover,
-  border,
-  glyph,
   onClick,
   children,
 }: {
   label: string;
   tint: string;
-  tintHover: string;
-  border: string;
-  glyph: string;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -792,12 +796,9 @@ function ActionButton({
       <button
         aria-label={label}
         onClick={onClick}
-        // slot(false) carries the geometry and the hover lift; the colours below replace the
-        // lilac tint it would otherwise apply.
-        className={`${slot(false)} !border-transparent`}
-        style={{ background: tint, borderColor: border, color: glyph }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = tintHover)}
-        onMouseLeave={(e) => (e.currentTarget.style.background = tint)}
+        // SLOT_BASE carries the geometry and the hover lift; the tint supplies the colours that
+        // slot() would otherwise apply as lilac.
+        className={`${SLOT_BASE} ${tint}`}
       >
         {children}
       </button>
@@ -842,24 +843,10 @@ export default function AnnotationBanner({
 
         <div className="mr-[6px] h-[24px] w-px bg-stiko-divider" />
 
-        <ActionButton
-          label="Discard"
-          tint="rgba(255,226,226,0.6)"
-          tintHover="#FFE2E2"
-          border="#F6B8C2"
-          glyph="#B23A52"
-          onClick={onDiscard}
-        >
+        <ActionButton label="Discard" tint={ACTION_TINTS.discard} onClick={onDiscard}>
           {CrossIcon}
         </ActionButton>
-        <ActionButton
-          label="Apply"
-          tint="rgba(237,255,218,0.6)"
-          tintHover="#EDFFDA"
-          border="#B9DC96"
-          glyph="#4B7A28"
-          onClick={onApply}
-        >
+        <ActionButton label="Apply" tint={ACTION_TINTS.apply} onClick={onApply}>
           {TickIcon}
         </ActionButton>
       </div>
