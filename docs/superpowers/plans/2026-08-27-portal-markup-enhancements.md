@@ -79,15 +79,18 @@ test('the presets are the documented 2/4/6 -> 16/24/34 ladder', () => {
 });
 
 test('an unmapped stroke width clamps to the nearest preset', () => {
-  assert.equal(fontSizeForStrokeWidth(1), 16);   // below the ladder
-  assert.equal(fontSizeForStrokeWidth(99), 34);  // above the ladder
-  assert.equal(fontSizeForStrokeWidth(5), 34);   // 5 is nearer 6 than 4
+  assert.equal(fontSizeForStrokeWidth(1), 16);    // below the ladder
+  assert.equal(fontSizeForStrokeWidth(99), 34);   // above the ladder
+  assert.equal(fontSizeForStrokeWidth(4.6), 34);  // strictly nearer 6 than 4
+  assert.equal(fontSizeForStrokeWidth(2.9), 24);  // strictly nearer 4 than 2
 });
 
 test('a tie between two presets resolves to the thinner one, deterministically', () => {
-  // 3 is exactly between 2 and 4. Which way it goes matters less than that it never varies,
-  // because a scaled text object feeds an arbitrary size back through strokeWidthForFontSize.
+  // The presets are evenly spaced, so 3 and 5 are each exactly between two of them. Which way
+  // a tie goes matters less than that it never varies, because a scaled text object feeds an
+  // arbitrary size back through strokeWidthForFontSize.
   assert.equal(fontSizeForStrokeWidth(3), 16);
+  assert.equal(fontSizeForStrokeWidth(5), 24);
   assert.equal(fontSizeForStrokeWidth(3), 16);
 });
 
@@ -105,11 +108,17 @@ test('wrap width is 40% of the content', () => {
 });
 
 test('wrap width never falls below the floor, so a narrow page is still typable', () => {
-  assert.equal(wrapWidthForContent(100), MIN_WRAP_WIDTH);
+  // 40% of 200 is 80, under the floor — but 200 itself is over it, so the floor is what wins.
+  // Content must be wider than MIN_WRAP_WIDTH here, or the clamp below takes precedence and
+  // this asserts nothing about the floor.
+  const content = MIN_WRAP_WIDTH * 2;
+  assert.ok(content * 0.4 < MIN_WRAP_WIDTH, 'test setup: 40% must fall under the floor');
+  assert.equal(wrapWidthForContent(content), MIN_WRAP_WIDTH);
 });
 
-test('wrap width never exceeds the content itself', () => {
-  // The floor must not push the box wider than the page it sits on.
+test('the clamp to content beats the floor, so the box never exceeds the page', () => {
+  // Content narrower than the floor. The floor must not push the box wider than the page it
+  // sits on, so this returns the content width rather than MIN_WRAP_WIDTH.
   const narrow = MIN_WRAP_WIDTH - 20;
   assert.equal(wrapWidthForContent(narrow), narrow);
 });
