@@ -23,6 +23,7 @@
     "@react-three/fiber": "^8.18.0",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
+    "camera-controls": "^2.10.1",
     "konva": "^10.2.3",
     "next": "14.2.35",
     "next-auth": "^5.0.0-beta.30",

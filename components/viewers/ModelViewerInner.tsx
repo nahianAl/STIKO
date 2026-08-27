@@ -1,7 +1,7 @@
 'use client';
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
-import { OrbitControls, Center } from '@react-three/drei';
+import { CameraControls, Center } from '@react-three/drei';
 import { Suspense, useRef, useCallback, useEffect, useMemo, useState, useImperativeHandle, type Ref } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -25,6 +25,7 @@ import SceneAxes from './SceneAxes';
 import SceneLighting from './SceneLighting';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
+import type CameraControlsImpl from 'camera-controls';
 
 export interface WorldPin {
   id: string;
@@ -457,25 +458,34 @@ function FitCameraToModel({ bounds }: { bounds: ModelBounds }) {
     const cam = camera as THREE.PerspectiveCamera;
     const framing = framingForRadius(bounds.radius, cam.fov, size.width / size.height);
 
-    cam.position.copy(bounds.center).addScaledVector(VIEW_DIRECTION, framing.distance);
     cam.near = framing.near;
     cam.far = framing.far;
     cam.updateProjectionMatrix();
 
-    // OrbitControls orbits its target, so it has to move to the model's centre too —
-    // otherwise a model centred away from the origin swings around empty space.
-    const orbit = controls as unknown as {
-      target: THREE.Vector3;
-      minDistance: number;
-      maxDistance: number;
-      update: () => void;
-    } | null;
-    if (orbit?.target) {
-      orbit.target.copy(bounds.center);
-      orbit.minDistance = framing.minDistance;
-      orbit.maxDistance = framing.maxDistance;
-      orbit.update();
+    const position = bounds.center.clone().addScaledVector(VIEW_DIRECTION, framing.distance);
+
+    const cc = controls as unknown as CameraControlsImpl | null;
+    if (!cc?.setLookAt) {
+      // Controls have not mounted yet. Frame the model directly rather than leaving the
+      // camera at the placeholder position, which sits inside anything bigger than a few units.
+      cam.position.copy(position);
+      cam.lookAt(bounds.center);
+      return;
     }
+
+    // Assigned before setLookAt: these are the single source of truth for the dolly range,
+    // and ViewerNavigation reads them straight off the controls when it clamps an anchor.
+    // camera-controls defaults are Number.EPSILON and Infinity, which clamp nothing.
+    cc.minDistance = framing.minDistance;
+    cc.maxDistance = framing.maxDistance;
+
+    // false: no transition. This is the opening view of a freshly loaded model, so there is
+    // nothing to animate from.
+    cc.setLookAt(
+      position.x, position.y, position.z,
+      bounds.center.x, bounds.center.y, bounds.center.z,
+      false,
+    );
     // One-shot per model: see the note above about resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, camera, controls]);
@@ -601,7 +611,21 @@ export default function ModelViewerInner({
             clipPlaneRef={clipPlaneRef}
           />
         </Suspense>
-        <OrbitControls makeDefault />
+        {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls
+            lookAt(target) on every update, pinning the pivot to the centre of the screen.
+            ViewerNavigation re-anchors this one to whatever is under the cursor.
+
+            The default input mapping already matches what the viewer has always had —
+            left rotate, middle dolly, right pan, wheel dolly — so it is left alone.
+
+            infinityDolly is deliberately NOT set here. ViewerNavigation toggles it per wheel
+            event, and a prop would fight that on re-render. */}
+        <CameraControls
+          makeDefault
+          dollyToCursor
+          smoothTime={0.15}
+          draggingSmoothTime={0.08}
+        />
         {transformMode && onTransformCommit && bounds && (
           <TransformGizmo
             targetRef={transformRef}
