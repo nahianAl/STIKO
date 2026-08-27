@@ -8,6 +8,8 @@ import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
+import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
+import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
@@ -65,6 +67,9 @@ function PDFKonvaViewer(
 
     // Shared Konva annotation object model (select/move/scale/rotate/erase)
     const ann = useAnnotationObjects();
+    // The text object currently open for editing. The object itself already exists in `ann` —
+    // this is only which one the editor is bound to.
+    const [editingId, setEditingId] = useState<string | null>(null);
 
     // Selection-vs-tool contract: clear the selection when the active tool changes to a
     // non-pointer tool, so Transformer handles don't linger over a previously selected object
@@ -93,6 +98,10 @@ function PDFKonvaViewer(
       captureSnapshot: () => {
         const stage = stageRef.current;
         if (!stage) return null;
+        // See Task 10 Step 5: the edited object's node is hidden, and setEditingId is a state
+        // update that will not have applied by the time toDataURL runs below.
+        if (editingId) (stage.findOne(`#${editingId}`) as Konva.Node | undefined)?.visible(true);
+        setEditingId(null);
         stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
         stage.draw();
         const url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
@@ -100,7 +109,7 @@ function PDFKonvaViewer(
         return url;
       },
       getCurrentPage: () => currentPage,
-      clearDrawings: () => ann.clear(),
+      clearDrawings: () => { setEditingId(null); ann.clear(); },
       hasObjects: () => ann.hasObjects(),
       insertImage: (file: File) => {
         const reader = new FileReader();
@@ -222,10 +231,6 @@ function PDFKonvaViewer(
       y: (yPct / 100) * pageSize.height,
     }), [pageSize]);
 
-    // Text tool popup (page-space point for the object + raw screen point for positioning the input)
-    const [textPopup, setTextPopup] = useState<{ px: number; py: number; sx: number; sy: number } | null>(null);
-    const [textInput, setTextInput] = useState('');
-
     const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       const stage = e.target.getStage();
       if (!stage) return;
@@ -237,15 +242,22 @@ function PDFKonvaViewer(
       if (!annotating) return; // live view: pointer pans (handled by Stage draggable)
 
       if (activeTool === 'text') {
-        const ptr = stage.getPointerPosition();
-        setTextPopup({ px: coords.x, py: coords.y, sx: ptr?.x ?? 0, sy: ptr?.y ?? 0 });
-        setTextInput('');
+        const id = ann.addText(coords, {
+          text: '',
+          color,
+          fontSize: fontSizeForStrokeWidth(strokeWidth),
+          // The page's own width, not the stage's: the stage width changes with the zoom, and a
+          // zoom-dependent wrap would reflow committed text on every scroll.
+          width: wrapWidthForContent(pageSize.width),
+        });
+        setEditingId(id);
+        onObjectCreated?.();
         return;
       }
       if (activeTool === 'pointer') { if (e.target === stage) ann.setSelectedId(null); return; }
       if (activeTool === 'eraser') return;
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
@@ -255,13 +267,13 @@ function PDFKonvaViewer(
       if (coords) ann.moveDraw(activeTool as AnnTool, coords);
     }, [annotating, activeTool, getPageCoords, ann]);
 
-    const submitText = useCallback(() => {
-      if (textPopup && textInput.trim()) {
-        const id = ann.addText({ x: textPopup.px, y: textPopup.py }, textInput, color, strokeWidth);
-        if (id) onObjectCreated?.();
-      }
-      setTextPopup(null); setTextInput('');
-    }, [textPopup, textInput, color, strokeWidth, ann, onObjectCreated]);
+    const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
+
+    const commitText = useCallback(() => {
+      const obj = editingId ? ann.objects.find((o) => o.id === editingId) : null;
+      if (obj && isBlank(obj.text)) ann.deleteObject(obj.id);
+      setEditingId(null);
+    }, [editingId, ann]);
 
     // Wheel zoom
     const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -429,6 +441,9 @@ function PDFKonvaViewer(
                   onSelect={ann.setSelectedId}
                   onErase={ann.deleteObject}
                   onChange={ann.updateObject}
+                  editingId={editingId}
+                  onEditText={setEditingId}
+                  onBakeText={ann.bakeTextTransform}
                 />
               </Layer>
 
@@ -494,31 +509,20 @@ function PDFKonvaViewer(
             </Stage>
           )}
 
-          {/* Text tool input popup */}
-          {textPopup && (
-            <div
-              className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-2"
-              style={{ left: Math.min(textPopup.sx, containerSize.width - 200), top: Math.min(textPopup.sy, containerSize.height - 80) }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <input
-                type="text"
-                autoFocus
-                value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
-                placeholder="Type text..."
-                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-500"
-                style={{ minWidth: 150 }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); submitText(); }
-                  if (e.key === 'Escape') { setTextPopup(null); setTextInput(''); }
-                }}
-              />
-              <div className="flex justify-end gap-1.5 mt-1.5">
-                <button onClick={() => { setTextPopup(null); setTextInput(''); }} className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-                <button onClick={submitText} disabled={!textInput.trim()} className="px-2.5 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">Add</button>
-              </div>
-            </div>
+          {editingObj && (
+            <CanvasTextEditor
+              // Page space -> screen space. The Stage carries the zoom and the pan, so the
+              // overlay has to apply them by hand to sit on top of the node it stands in for.
+              x={editingObj.x * stageScale + stagePos.x}
+              y={editingObj.y * stageScale + stagePos.y}
+              scale={stageScale}
+              color={editingObj.color}
+              fontSize={editingObj.fontSize}
+              wrapWidth={editingObj.width}
+              value={editingObj.text}
+              onChange={(t) => ann.updateText(editingObj.id, t)}
+              onCommit={commitText}
+            />
           )}
         </div>
       </div>
