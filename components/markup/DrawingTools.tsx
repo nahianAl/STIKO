@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { PALETTE } from '@/lib/commentColors';
+import { BAR, SUB_BAR, slot, LABEL } from './toolbarStyles';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -115,31 +116,6 @@ const STROKE_PRESETS = [
   { value: 4, label: 'Medium' },
   { value: 6, label: 'Thick' },
 ];
-
-/** Bar and sub-bar share these, so a sub-toolbar is visually the main toolbar cut short. */
-const BAR =
-  'flex items-center gap-[4px] h-[46px] px-[6px] rounded-sheet bg-white border border-stiko-border shadow-stiko-panel';
-
-/** Hung off the button that opened it, clear of the bar's bottom edge. */
-const SUB_BAR = 'absolute top-full mt-[13px] left-1/2 -translate-x-1/2';
-
-/**
- * Every slot in the bar: a tinted chip with a light grey edge that lifts off the bar on
- * hover. The scale is on the button and the label on the wrapper, so growing the chip never
- * drags the tooltip with it.
- */
-const SLOT_BASE =
-  'relative flex h-[34px] w-[34px] items-center justify-center rounded-[11px] border transition-all duration-150 hover:scale-[1.12] hover:z-10 hover:shadow-[0_5px_12px_-3px_rgba(28,32,48,0.22)]';
-
-const slot = (active: boolean) =>
-  `${SLOT_BASE} ${
-    active
-      ? 'border-stiko-primary-light bg-stiko-tint text-stiko-primary'
-      : 'border-stiko-divider bg-[#F8EDFC]/60 text-stiko-secondary hover:bg-[#F8EDFC] hover:border-stiko-border-strong'
-  }`;
-
-const LABEL =
-  'pointer-events-none absolute left-1/2 top-full z-50 mt-[9px] -translate-x-1/2 whitespace-nowrap rounded-[7px] bg-stiko-ink px-2 py-[3px] text-[11px] font-medium leading-none tracking-heading text-white opacity-0 shadow-stiko-sheet transition-opacity duration-100 group-hover:opacity-100';
 
 /**
  * A single slot plus its hover label. Labels hang below the slot, which is the only side
