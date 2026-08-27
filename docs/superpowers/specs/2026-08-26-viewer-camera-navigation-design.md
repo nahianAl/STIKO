@@ -1,7 +1,7 @@
 # 3D Viewer Camera Navigation — Design
 
 **Date:** 2026-08-26
-**Status:** Approved (design), pending implementation plan
+**Status:** Approved. Implementation plan: `docs/superpowers/plans/2026-08-26-viewer-camera-navigation.md`
 **Scope:** Replace the viewer's stock `OrbitControls` with drei's `CameraControls`, anchor the orbit pivot and the dolly step to the surface under the cursor, and remove the hard stop that makes pan and zoom crawl close to large models.
 
 ---
@@ -39,7 +39,7 @@ The target is set once at load and thereafter **dragged around by panning**. Aft
 | 1 | Control library | **Replace `OrbitControls` with drei `CameraControls`** (camera-controls 2.10.1). |
 | 2 | Orbit pivot | **The surface point under the cursor** at the start of a rotate drag; **model centre** when the cursor is over empty background. |
 | 3 | Dolly anchor | Pivot is **re-anchored to the surface under the cursor before dollying** (coalesced to once per frame), making the step scale-free. |
-| 4 | Dolly floor | **`infinityDolly`** — push the pivot forward rather than stopping at `minDistance`. |
+| 4 | Dolly floor | **`infinityDolly`, enabled when zooming in only** — push the pivot forward rather than stopping at `minDistance`, while keeping the existing stop at `maxDistance`. |
 | 5 | `minDistance` | **`radius * 0.01`**, replacing today's `near * 10`. |
 | 6 | Damping | Enabled via `smoothTime` / `draggingSmoothTime`. |
 | 7 | Input mapping | **Unchanged** — left rotate, middle dolly, right pan, wheel dolly. |
@@ -68,6 +68,22 @@ Three settings working together:
 - **`dollyToCursor`** — the dolly runs along the cursor ray instead of toward the pivot.
 - **Re-anchoring the pivot to the surface under the cursor before each dolly.** This is the substantive fix. Every orbit library sizes the dolly step as a percentage of the pivot distance; today that distance means "how far to the model's abstract centre", and it collapses. Raycast under the cursor and `setOrbitPoint` on the hit, and the step becomes a percentage of *distance to the surface being pointed at* — identical feel on a 1-unit chair and a 5,000-unit building, at every zoom level. Scale-free by construction rather than by tuning.
 - **`infinityDolly`** — when the distance would fall below `minDistance`, hold the distance and push the pivot forward instead. This removes the hard stop: the camera can approach a surface and keep going rather than freezing asymptotically.
+
+#### `infinityDolly` must be directional
+
+Reading the implementation revealed that the flag removes **both** stops, not just the near one. `camera-controls.module.js:2154-2155` computes an `isMax` case alongside `isMin` and pushes the pivot on either:
+
+```js
+const isMin = this._lastDollyDirection === DOLLY_DIRECTION.IN  && this._spherical.radius <= this.minDistance;
+const isMax = this._lastDollyDirection === DOLLY_DIRECTION.OUT && this.maxDistance <= this._spherical.radius;
+if (this.infinityDolly && (isMin || isMax)) { /* push the pivot */ }
+```
+
+Left enabled permanently, zooming out would push the pivot away from the model without limit: the model shrinks to nothing and eventually clips through the far plane, which is sized as `maxDistance + 2r`. With no reset control (decision 8) there would be no way back.
+
+The flag is therefore **set per wheel event from the scroll direction** — on when zooming in, off when zooming out. Zoom-out keeps exactly today's hard stop at `maxDistance`, and the far-plane guarantee in `framingForRadius` continues to hold.
+
+The direction test is a named, tested function rather than an inline `deltaY < 0`. camera-controls derives its dolly direction through `delta = deltaY / (deltaYFactor * 10)` with `deltaYFactor` negative, then `_dollyInternal(-delta)` scaling by `0.95 ** -delta` — a sign convention that is invisible in review and infuriating when inverted.
 
 **Pan requires no custom code.** Truck speed is already proportional to pivot distance, so once the pivot rides the surface under the cursor, pan is correctly scaled as a consequence.
 
@@ -101,10 +117,12 @@ The raycast is scoped to the model alone, not the scene, for the same reason `Sc
 
 Pure decision arithmetic, no THREE scene access, unit-testable under node:
 
-- `pivotForPointer(hit, modelCentre)` — decision 2's hit/miss rule.
-- `clampAnchorDistance(hitDistance, { minDistance, maxDistance })` — guards the degenerate case. A grazing hit reported a hair in front of the camera would anchor the pivot almost at the eye, and every subsequent dolly step (a percentage of that distance) would be effectively zero — reintroducing the original defect at a new location. Clamping the anchor distance into the framing limits keeps the step usable no matter what the raycast returns.
+- `pivotForPointer(hit, fallback)` — decision 2's hit/miss rule. Orbit passes the model centre as the fallback; the wheel passes `null`, meaning "leave the pivot where it is", so a background scroll does not undo the approach the user just made.
+- `clampAnchorDistance(hitDistance, minDistance, maxDistance)` — guards the degenerate case. A grazing hit reported a hair in front of the camera would anchor the pivot almost at the eye, and every subsequent dolly step (a percentage of that distance) would be effectively zero — reintroducing the original defect at a new location. Clamping the anchor distance into the framing limits keeps the step usable no matter what the raycast returns.
 
-Distance limits are **not** duplicated here; they stay in `cameraFraming.ts`, which already owns them.
+- `isZoomingIn(deltaY)` — the scroll-direction test behind directional `infinityDolly`.
+
+Distance limits are **not** duplicated here; they stay in `cameraFraming.ts`, which already owns them. `ViewerNavigation` reads the live values off the controls object, which `FitCameraToModel` has already assigned, so there is a single source of truth and no props to keep in sync.
 
 ### `components/viewers/ViewerNavigation.tsx` (new)
 
@@ -141,16 +159,17 @@ A pre-existing drei quirk is worth recording but **not fixing here**: `GizmoHelp
 
 ## Testing
 
-**Node tests** in `scripts/tests/viewerNavigation.test.mjs`, following the existing `cameraFraming.test.mjs` pattern, covering `pivotForPointer` (hit and miss) and `clampAnchorDistance` (below-floor, above-ceiling, and in-range hits). `cameraFraming.test.mjs` gains a case asserting `minDistance` stays proportionate across the 1-to-10,000 radius range the viewer must support, and its existing `near < minDistance` assertion is re-run against the new value.
+**Node tests** in `scripts/tests/viewerNavigation.test.mjs`, following the existing `cameraFraming.test.mjs` pattern, covering `pivotForPointer` (hit, miss-with-fallback, miss-without-fallback), `clampAnchorDistance` (below-floor, above-ceiling, in-range, and degenerate) and `isZoomingIn` (both directions). `cameraFraming.test.mjs` gains a case asserting `minDistance` stays proportionate across the 1-to-10,000 radius range the viewer must support, and its existing `near < minDistance` assertion is re-run against the new value.
 
 **Browser verification** is required — the camera behaviour itself cannot be asserted in node. Per the project's local-verification notes, against both a large model and a small one:
 
 1. Zoom in close on a large model; confirm scroll and pan keep a usable step size all the way in, and that approaching a surface does not stall.
 2. Confirm zoom feels equivalent on a small model.
-3. Orbit with the cursor on a detail; confirm the detail stays put.
-4. Orbit with the cursor over empty background; confirm the whole model stays in frame.
-5. Pan away, then orbit; confirm the pivot re-derives rather than swinging around empty space.
-6. Confirm the view cube, transform gizmo, comment pins and snapshot capture still work.
+3. Scroll out continuously; confirm the camera still stops at the framing limit rather than pushing the model past the far plane — the directional `infinityDolly` check.
+4. Orbit with the cursor on a detail; confirm the detail stays put.
+5. Orbit with the cursor over empty background; confirm the whole model stays in frame.
+6. Pan away, then orbit; confirm the pivot re-derives rather than swinging around empty space.
+7. Confirm the view cube, transform gizmo, comment pins and snapshot capture still work.
 
 ---
 
