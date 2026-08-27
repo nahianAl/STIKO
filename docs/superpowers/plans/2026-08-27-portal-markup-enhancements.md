@@ -1490,6 +1490,11 @@ Then delete the entire `{textPopup && ( … )}` JSX block and put in its place:
 ```tsx
       {editingObj && (
         <CanvasTextEditor
+          // Keyed by the object so a different text block gets a FRESH editor. The mount
+          // effect that focuses and puts the caret at the end runs once per mount; without
+          // this, an edit that began while another was open would reuse the instance and
+          // open unfocused — which is exactly the re-edit path.
+          key={editingObj.id}
           // The stage is untransformed here, so object space is screen space.
           x={editingObj.x}
           y={editingObj.y}
@@ -1643,6 +1648,8 @@ Delete the `{textPopup && ( … )}` JSX block. Mount the editor **inside the can
 ```tsx
           {editingObj && (
             <CanvasTextEditor
+              // Keyed by the object — see the note on the same line in Task 10 Step 6.
+              key={editingObj.id}
               // Page space -> screen space. The Stage carries the zoom and the pan, so the
               // overlay has to apply them by hand to sit on top of the node it stands in for.
               x={editingObj.x * stageScale + stagePos.x}
