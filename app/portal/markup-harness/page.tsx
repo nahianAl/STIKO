@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import AnnotationCanvas, { type AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
+import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import DrawingTools from '@/components/markup/DrawingTools';
 import type { AnnTool } from '@/components/markup/useAnnotationObjects';
 
@@ -79,6 +80,11 @@ export default function MarkupHarnessPage() {
           tagging={false}
           onToggleTagging={() => {}}
           onInsertImage={() => fileInput.current?.click()}
+        />
+        <AnnotationBanner
+          annotatingFileName={null}
+          onDiscard={() => { surface.current?.clear(); setCaptured(null); }}
+          onApply={() => setCaptured(surface.current?.captureSnapshot() ?? null)}
         />
       </div>
 

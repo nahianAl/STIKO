@@ -17,6 +17,7 @@ import CrossSectionControl from '@/components/viewers/CrossSectionControl';
 import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
+import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import type { Comment, FileRecord } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { DEFAULT_CROSS_SECTION, type CrossSection } from '@/lib/crossSection';
@@ -883,32 +884,6 @@ export default function PortalPage() {
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
         <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
-          {/* Annotation mode banner */}
-          {annotating && (
-            <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2 text-xs text-amber-700 flex-shrink-0">
-              <span className="flex items-center gap-2">
-                <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-                {annotatingFile !== null
-                  ? `Marking up ${annotatingFile.name} — Done replaces the attachment`
-                  : 'Annotating — draw on the file, then attach it to a comment'}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <button
-                  onClick={handleAnnotationDiscard}
-                  className="px-2 py-1 rounded text-amber-700 hover:bg-amber-100 transition-colors"
-                >
-                  Discard
-                </button>
-                <button
-                  onClick={handleAnnotationDone}
-                  className="px-3 py-1 rounded bg-amber-600 text-white hover:bg-amber-700 transition-colors font-medium"
-                >
-                  Done
-                </button>
-              </span>
-            </div>
-          )}
-
           <div ref={viewerAreaRef} className="relative flex-1 overflow-hidden bg-white rounded-panel shadow-stiko-panel">
             <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, #F6F8FE 0 16px, #FBFCFF 16px 32px)' }} />
             {renderFileViewer()}
@@ -985,6 +960,18 @@ export default function PortalPage() {
                 strokeWidth={drawingStrokeWidth}
                 handleRef={annotationCanvasRef}
                 onObjectCreated={() => setActiveTool('pointer')}
+              />
+            )}
+
+            {/* Floats rather than taking a row: a row would shrink the viewer after the
+                snapshot behind this session was already captured at the taller size, and the
+                resulting letterbox is the black border in the saved JPEG. Being DOM, it is
+                invisible to the capture. */}
+            {annotating && (
+              <AnnotationBanner
+                annotatingFileName={annotatingFile?.name ?? null}
+                onDiscard={handleAnnotationDiscard}
+                onApply={handleAnnotationDone}
               />
             )}
 
