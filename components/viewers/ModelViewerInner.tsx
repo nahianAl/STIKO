@@ -18,6 +18,7 @@ import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import { planeForSection, type CrossSection, type ModelBox } from '@/lib/crossSection';
+import { boundsForUrl, type MeasuredModel } from '@/lib/modelMeasurement';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
@@ -319,6 +320,12 @@ const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
  * model: React commits the whole boundary together, meaning the geometry is already in the
  * scene graph when this effect fires. Runs as an effect rather than a layout effect so that
  * <Center>'s own layout effect has already positioned the model.
+ *
+ * `onMeasured` is read once, on mount, and never again — so the caller's callback has to
+ * already know which model it is reporting for. The url-derived key is what makes that safe:
+ * a url change remounts this component, and the callback it captures was created in the same
+ * parent render as the <Model> whose geometry it is about to measure. See the note on
+ * `handleMeasured` in ModelViewerInner for why the pairing matters.
  */
 function MeasureModel({
   targetRef,
@@ -377,8 +384,10 @@ function MeasureModel({
  *
  * FitCameraToModel reads cam.fov when it works out how far back to sit, so it must never run
  * before this has set it. What guarantees that is not the sibling order below but the fact
- * that FitCameraToModel is gated on `bounds`, which starts null and is reset to null on every
- * url change — so the two can never mount in the same commit. Keep that gate.
+ * that FitCameraToModel is gated on `bounds`, which is null until MeasureModel has published
+ * a measurement for the url now on screen. This mounts with the Canvas and never remounts, so
+ * that publication can only land in a commit after this one has already set the fov, for the
+ * first model and every model after it. Keep that gate.
  */
 function ApplyFocalLength({ focalLength }: { focalLength: number }) {
   const { camera } = useThree();
@@ -483,15 +492,20 @@ function FitCameraToModel({ bounds }: { bounds: ModelBounds }) {
     // setOrbitPoint — how ViewerNavigation anchors the pivot under the cursor — does not
     // merely move the target: it holds the camera still by adding a compensating focal
     // offset, and that offset persists on the controls afterwards. setLookAt below does not
-    // clear it (only fitToBox, fitToSphere, reset and fromJSON do), and the controls outlive
-    // a model switch because ViewerContainer renders <ModelViewer> without a key, so the
-    // Canvas, camera and controls are all reused. Without this line the previous model's
-    // orbit anchor displaces the next model's framing by the whole offset: measured at the
-    // default 35mm lens, one ordinary orbit of a 5,000-radius model then leaves a 1-radius
-    // model framed 5,339 units away behind a far plane of 42 — a blank viewport, with no
-    // control on screen that can recover it. Zeroing is idempotent, which is what makes it
-    // safe for an effect that re-runs whenever `controls` changes identity. It is NOT
-    // redundant with the setLookAt that follows; do not delete it.
+    // clear it (only fitToBox, fitToSphere, reset and fromJSON do). This effect does not own
+    // the controls: they belong to the <Canvas> and outlive every run of it, and it re-runs on
+    // each change of `bounds`, `camera` or `controls` — so it has no basis for assuming the
+    // offset is still zero, whichever way the viewer is hosted. Both ways exist here, and the
+    // difference is only in how much is at stake. ViewerContainer drops <ModelViewer> for a
+    // loading state while it fetches the next presigned url, so a file switch THERE builds a
+    // fresh Canvas and fresh controls; a host that swaps the `url` prop on a mounted viewer
+    // keeps one Canvas, and with it one controls instance carrying whatever the last orbit
+    // left on it, across every model. That second case is where the cost shows: measured at
+    // the default 35mm lens, one ordinary orbit of a 5,000-radius model then leaves a
+    // 1-radius model framed 5,339 units away behind a far plane of 42 — a blank viewport,
+    // with no control on screen that can recover it. Zeroing is idempotent, which is what
+    // makes it safe to do unconditionally on every run. It is NOT redundant with the
+    // setLookAt that follows; do not delete it.
     cc.setFocalOffset(0, 0, 0, false);
 
     // false: no transition. This is the opening view of a freshly loaded model, so there is
@@ -531,11 +545,42 @@ export default function ModelViewerInner({
   // and ViewerNavigation (orbit anchoring). three's raycaster ignores clipping planes, so both
   // have to reject hits on the hidden half by hand.
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
-  const [bounds, setBounds] = useState<ModelBounds | null>(null);
+  // The measurement is stored WITH the url it was taken from, and `bounds` is derived by
+  // matching that url against the current one. Nothing clears it. Everything below that sizes
+  // itself off `bounds` — the framing, the dolly range, the ground and axes, the cross-section
+  // box — therefore falls back to null the moment a different model is selected, by
+  // derivation, in the same render rather than in a later commit.
+  //
+  // Do NOT "tidy this up" back into a `useEffect(() => setBounds(null), [url])` reset. That
+  // is what it used to be, and it was a bug. It made `bounds` a piece of state with two
+  // writers in two DIFFERENT React roots: the reset lived out here in the DOM tree, while
+  // MeasureModel — which lives inside <Canvas>, i.e. inside React Three Fiber's own separate
+  // reconciler — wrote the new measurement from its mount effect. React orders passive
+  // effects within a root, not between two roots that schedule independently. The loading
+  // model normally suspends, which pushes the measurement into a commit after the reset and
+  // hides the problem; a url already in useLoader's cache does not suspend, so MeasureModel
+  // remounts in the very first commit the new url produces and the two writes race. When the
+  // measurement lands first the reset wipes it and nothing measures again — MeasureModel's
+  // effect has [] deps and is only remounted by a url change that has already happened.
+  // Observed on 4 of 668 scripted model switches and still stuck 400 frames later: every
+  // `bounds &&` gate below stays closed, so the ground, axes and contact shadow never mount,
+  // ViewerNavigation never mounts, and the controls keep the PREVIOUS model's
+  // minDistance/maxDistance and near/far. Deriving removes the race rather than shortening
+  // it: one writer, and the question "does this measurement belong to the model on screen?"
+  // becomes a comparison instead of an ordering.
+  const [measured, setMeasured] = useState<MeasuredModel<ModelBounds> | null>(null);
+  const bounds = boundsForUrl(measured, url);
 
-  // Drop stale sizing the moment a different model is selected, so the ground and axes are
-  // never drawn at the previous model's scale.
-  useEffect(() => setBounds(null), [url]);
+  // Stamps the measurement with the url of the render that produced it. MeasureModel captures
+  // this once, in its mount effect, and is remounted by key on every url change — so the
+  // callback it holds and the <Model> it measures were created in the same render and can
+  // never disagree about which model this is. A measurement that arrives late, after the url
+  // has moved on again, is then simply ignored by the line above instead of being adopted as
+  // the current model's size.
+  const handleMeasured = useCallback(
+    (next: ModelBounds) => setMeasured({ url, bounds: next }),
+    [url],
+  );
 
   // TransformControls mutates this group directly while dragging, and R3F will not put it back
   // — its prop diffing compares against the previous prop, not the object's real state. So when
@@ -594,7 +639,7 @@ export default function ModelViewerInner({
             </Center>
           </group>
           <ApplyFocalLength focalLength={focalLength} />
-          <MeasureModel key={`measure-${url}`} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
+          <MeasureModel key={`measure-${url}`} targetRef={modelRef} transformRef={transformRef} onMeasured={handleMeasured} />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (
             <ViewerNavigation

@@ -63,6 +63,17 @@ export default function ViewerNavigation({ modelRef, center, clipPlaneRef }: Vie
       // The view gizmo is a HUD layer, not scene geometry, and its React Three Fiber
       // stopPropagation does not reach these native listeners — so exclude its rect by hand,
       // as SceneInteraction does.
+      //
+      // This guard is also what makes the view cube re-centre, which is not obvious and is
+      // easy to break. A cube face click starts with a pointerdown on the canvas, so the
+      // capture-phase handler below runs first; returning null here sends it down the
+      // fallback branch, which re-anchors the pivot to the model's centre — clamped into the
+      // dolly range, like any other anchor. drei then fires its onClick on pointerup and
+      // reads controls.getTarget() to pick the point it tweens around, which is by then that
+      // anchor rather than wherever the previous gesture left the pivot. Drop this guard and
+      // the raycast reports whatever model geometry happens to lie behind the cube in the
+      // top-right corner, the pivot anchors there, and a face click orbits about that point
+      // instead of framing the model. ViewGizmo's resolveFocus is the other half of this.
       if (isPointerOverGizmo(x, y, rect.width)) return null;
 
       ndc.current.set((x / rect.width) * 2 - 1, -(y / rect.height) * 2 + 1);
