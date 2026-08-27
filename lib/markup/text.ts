@@ -17,7 +17,7 @@ export const STROKE_PRESETS: readonly number[] = [2, 4, 6];
 export const FONT_SIZES: readonly number[] = [16, 24, 34];
 
 /** A text box narrower than this is not worth typing in, whatever the content width says. */
-export const MIN_WRAP_WIDTH = 80;
+export const MIN_WRAP_WIDTH = 120;
 
 /** A resize handle dragged to nothing must still leave something selectable. */
 export const MIN_FONT_SIZE = 6;
