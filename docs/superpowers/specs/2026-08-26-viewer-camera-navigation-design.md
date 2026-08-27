@@ -37,9 +37,9 @@ The target is set once at load and thereafter **dragged around by panning**. Aft
 | # | Decision | Choice |
 |---|----------|--------|
 | 1 | Control library | **Replace `OrbitControls` with drei `CameraControls`** (camera-controls 2.10.1). |
-| 2 | Orbit pivot | **The surface point under the cursor** at the start of a rotate drag; **model centre** when the cursor is over empty background. |
-| 3 | Dolly anchor | Pivot is **re-anchored to the surface under the cursor before dollying** (coalesced to once per frame), making the step scale-free. |
-| 4 | Dolly floor | **`infinityDolly`, enabled when zooming in only** — push the pivot forward rather than stopping at `minDistance`, while keeping the existing stop at `maxDistance`. |
+| 2 | Orbit pivot | **The surface point under the cursor** on left pointer-down; **model centre** when the cursor is over empty background. |
+| 3 | Dolly anchor | **`dollyToCursor` alone.** The wheel does **not** re-anchor the pivot — see "Why the wheel must not re-anchor". *(Revised during implementation; the original decision was wrong.)* |
+| 4 | Dolly floor | **`infinityDolly`, enabled when zooming in only** — push the pivot forward rather than stopping at `minDistance`, while keeping the existing stop at `maxDistance`. Also cleared on pointer-down and on unmount. |
 | 5 | `minDistance` | **`radius * 0.01`**, replacing today's `near * 10`. |
 | 6 | Damping | Enabled via `smoothTime` / `draggingSmoothTime`. |
 | 7 | Input mapping | **Unchanged** — left rotate, middle dolly, right pan, wheel dolly. |
@@ -66,7 +66,7 @@ A double-click-to-re-frame escape hatch was proposed and **declined by the user*
 Three settings working together:
 
 - **`dollyToCursor`** — the dolly runs along the cursor ray instead of toward the pivot.
-- **Re-anchoring the pivot to the surface under the cursor before each dolly.** This is the substantive fix. Every orbit library sizes the dolly step as a percentage of the pivot distance; today that distance means "how far to the model's abstract centre", and it collapses. Raycast under the cursor and `setOrbitPoint` on the hit, and the step becomes a percentage of *distance to the surface being pointed at* — identical feel on a 1-unit chair and a 5,000-unit building, at every zoom level. Scale-free by construction rather than by tuning.
+- **Letting `dollyToCursor` migrate the target on its own.** Every orbit library sizes the dolly step as a percentage of the pivot distance; before this change that distance meant "how far to the model's abstract centre", and it collapsed. `dollyToCursor` slides the target along the cursor ray as the camera advances, so the distance instead tracks what the user is pointing at. Measured in the browser: the step ratio is a constant **0.598737**, and **identical to six decimal places** on a model 500x smaller. Scale-free by construction rather than by tuning.
 - **`infinityDolly`** — when the distance would fall below `minDistance`, hold the distance and push the pivot forward instead. This removes the hard stop: the camera can approach a surface and keep going rather than freezing asymptotically.
 
 #### `infinityDolly` must be directional
@@ -83,7 +83,27 @@ Left enabled permanently, zooming out would push the pivot away from the model w
 
 The flag is therefore **set per wheel event from the scroll direction** — on when zooming in, off when zooming out. Zoom-out keeps exactly today's hard stop at `maxDistance`, and the far-plane guarantee in `framingForRadius` continues to hold.
 
-The direction test is a named, tested function rather than an inline `deltaY < 0`. camera-controls derives its dolly direction through `delta = deltaY / (deltaYFactor * 10)` with `deltaYFactor` negative, then `_dollyInternal(-delta)` scaling by `0.95 ** -delta` — a sign convention that is invisible in review and infuriating when inverted.
+The direction test is a named, tested function rather than an inline `deltaY < 0`. camera-controls derives its dolly direction through `delta = deltaY / (deltaYFactor * 10)` with `deltaYFactor` negative, then `_dollyInternal(-delta)`, which scales by `0.95 ** -param` and so, in terms of the `delta` defined above, by `0.95 ** delta` — a sign convention that is invisible in review and infuriating when inverted.
+
+#### Why the wheel must not re-anchor
+
+The original design had the wheel raycast and `setOrbitPoint` on the hit before each dolly, so the step would scale to the real surface rather than to the cursor plane. **Implementation proved that wrong**, and it is the most important finding of this work.
+
+`setOrbitPoint` mutates `_spherical.radius` but never updates camera-controls' private `_lastDistance`, which is written only at `camera-controls.module.js:638` and `:2257` — the very end of `update()`. The next frame's `dollyToCursor` correction computes `dollyControlAmount = _spherical.radius - _lastDistance` (`:2139`) and therefore attributes the entire anchor snap to the dolly, dragging `_targetEnd` — and the camera — toward the cursor plane.
+
+Measured against the installed library, tracking the world point that started under the cursor: it should stay pinned at NDC 0.500, and instead went 0.500 → 0.161 on the first frame and → −0.282 by frame 40. On screen, the thing you point at pops toward screen centre and then slides out the far side — the exact inverse of the feature.
+
+The trigger is not damping, as the method's "SHOULD NOT RUN DURING ANIMATIONS" docblock suggests; it is `dollyToCursor`'s `_changedDolly` deferred-correction state, which persists for the whole scroll.
+
+So the wheel leaves the pivot alone and `dollyToCursor` migrates the target natively, which the browser pass confirmed pins the cursor point exactly. `setOrbitPoint` is kept only for orbit, where no dolly correction is pending.
+
+#### `setOrbitPoint` leaves a focal offset that must be cleared
+
+A second trap in the same method, and one that only shows on the **second** model loaded into a canvas. `setOrbitPoint` keeps the camera still by setting a persistent focal offset (`camera-controls.module.js:1873`) — and `setLookAt`, which `FitCameraToModel` uses to frame each model, does **not** clear it. Only `fitToBox`, `fitToSphere` and `reset` do.
+
+`ViewerContainer` puts no `key` on `<ModelViewer>`, so the Canvas, camera and controls survive a model switch and the stale offset survives with them. Measured: orbit a 5,000-radius model once, then open a 1-radius model, and the camera lands 5,339 units from a model whose far plane is 42.08 — a blank viewport, unrecoverable without a page reload, because the background-drag fallback recomputes the offset to keep the camera exactly where it is.
+
+`FitCameraToModel` therefore zeroes the focal offset before every `setLookAt`.
 
 **Pan requires no custom code.** Truck speed is already proportional to pivot distance, so once the pivot rides the surface under the cursor, pan is correctly scaled as a consequence.
 
@@ -98,16 +118,15 @@ On the pointer-down that begins a rotate drag, raycast under the cursor:
 
 Panning can no longer strand the pivot, because it is re-derived at the start of every orbit rather than inherited from wherever pan left it.
 
-### Raycast throttling
+### Raycast scoping
 
-A raycast per wheel event, at trackpad event rates, against a multi-hundred-thousand-triangle model would reintroduce exactly the stutter this work removes. Therefore:
-
-- **Orbit** raycasts **once per drag**, on pointer-down.
-- **Dolly** raycasts **at most once per animation frame**, coalescing bursts of wheel events.
+There is exactly one raycast, on **orbit**, once per drag at pointer-down. The wheel does not raycast at all — see below — so the per-frame throttle the original design called for was removed along with it.
 
 The raycast is scoped to the model alone, not the scene, for the same reason `SceneInteraction` scopes its own (`ModelViewerInner.tsx:222-225`): the ground disc, contact shadow and axis lines are all `Mesh`-derived and large enough to fill the viewport, so an unscoped raycast would treat empty background as a hit and defeat the fallback in decision 2.
 
-`three-mesh-bvh` is available (a drei dependency) and would accelerate these raycasts, but it is **out of scope** — frame-throttling is sufficient, and adopting BVH would also change the existing comment-pin raycast path.
+The raycast also skips hits the active cross-section has clipped away, mirroring the guard `SceneInteraction` already applies for comment pins. Without it, orbiting into an opened cavity anchors the pivot on the invisible near shell.
+
+`three-mesh-bvh` is available (a drei dependency) and would accelerate this raycast, but it is **out of scope** — one raycast per drag is cheap, and adopting BVH would also change the existing comment-pin raycast path.
 
 ---
 
@@ -117,7 +136,7 @@ The raycast is scoped to the model alone, not the scene, for the same reason `Sc
 
 Pure decision arithmetic, no THREE scene access, unit-testable under node:
 
-- `pivotForPointer(hit, fallback)` — decision 2's hit/miss rule. Orbit passes the model centre as the fallback; the wheel passes `null`, meaning "leave the pivot where it is", so a background scroll does not undo the approach the user just made.
+- `pivotForPointer(hit: Vec3 | null, fallback: Vec3): Vec3` — decision 2's hit/miss rule. Orbit, the only caller, passes the model centre as the fallback.
 - `clampAnchorDistance(hitDistance, minDistance, maxDistance)` — guards the degenerate case. A grazing hit reported a hair in front of the camera would anchor the pivot almost at the eye, and every subsequent dolly step (a percentage of that distance) would be effectively zero — reintroducing the original defect at a new location. Clamping the anchor distance into the framing limits keeps the step usable no matter what the raycast returns.
 
 - `isZoomingIn(deltaY)` — the scroll-direction test behind directional `infinityDolly`.
@@ -148,7 +167,7 @@ The existing invariant `near < minDistance` (`cameraFraming.test.mjs:52`) still 
 
 | Consumer | Interaction | Status |
 |----------|-------------|--------|
-| `ViewGizmo` (drei `GizmoHelper`) | Reads default controls to tween the camera | **Supported.** `GizmoHelper.js:20` branches on `getTarget`, the CameraControls path. |
+| `ViewGizmo` (drei `GizmoHelper`) | Reads default controls to tween the camera | **Supported**, with a caveat. `GizmoHelper.js:20` branches on `getTarget`, the CameraControls path. But its per-frame `setPosition` is `setLookAt` underneath, so a stale focal offset from a previous orbit displaces the snap — measured at ~one model diameter on a radius-100 model. The cube must clear the offset when it tweens. |
 | `TransformGizmo` | Sets `defaultControls.enabled` during a drag | **Supported.** camera-controls exposes `.enabled`. |
 | `CleanFrameRenderer` (snapshots) | Renders scene + camera directly | Unaffected. |
 | `SceneInteraction` (comment pins) | Own raycast on `pointerdown` | Unaffected; new listener is additive and does not consume the event. |
@@ -159,7 +178,7 @@ A pre-existing drei quirk is worth recording but **not fixing here**: `GizmoHelp
 
 ## Testing
 
-**Node tests** in `scripts/tests/viewerNavigation.test.mjs`, following the existing `cameraFraming.test.mjs` pattern, covering `pivotForPointer` (hit, miss-with-fallback, miss-without-fallback), `clampAnchorDistance` (below-floor, above-ceiling, in-range, and degenerate) and `isZoomingIn` (both directions). `cameraFraming.test.mjs` gains a case asserting `minDistance` stays proportionate across the 1-to-10,000 radius range the viewer must support, and its existing `near < minDistance` assertion is re-run against the new value.
+**Node tests** in `scripts/tests/viewerNavigation.test.mjs`, following the existing `cameraFraming.test.mjs` pattern, covering `pivotForPointer` (hit, and miss falling back to the centre), `clampAnchorDistance` (below-floor, above-ceiling, in-range, and degenerate) and `isZoomingIn` (both directions). `cameraFraming.test.mjs` gains a case asserting `minDistance` stays proportionate across the 1-to-10,000 radius range the viewer must support, and its existing `near < minDistance` assertion is re-run against the new value.
 
 **Browser verification** is required — the camera behaviour itself cannot be asserted in node. Per the project's local-verification notes, against both a large model and a small one:
 
@@ -169,10 +188,12 @@ A pre-existing drei quirk is worth recording but **not fixing here**: `GizmoHelp
 4. Orbit with the cursor on a detail; confirm the detail stays put.
 5. Orbit with the cursor over empty background; confirm the whole model stays in frame.
 6. Pan away, then orbit; confirm the pivot re-derives rather than swinging around empty space.
-7. Confirm the view cube, transform gizmo, comment pins and snapshot capture still work.
+7. **Open a large model, orbit once, then open a small one.** The small model must be framed normally. This is the focal-offset regression above, and no other check catches it — it needs two models in one canvas.
+8. Click each view-cube face after orbiting off-centre; confirm the camera re-centres on the model rather than keeping the previous anchor's offset.
+9. Confirm the transform gizmo, comment pins, cross-section and snapshot capture still work.
 
 ---
 
 ## Rollback
 
-The change is confined to two new source files, two modified ones, `package.json` and the tests — no schema, no migration, no API surface. Production is the only environment, so rollback is `git revert` of the single commit — no migration ordering or data concerns.
+The change is confined to two new source files, two modified ones, `package.json` and the tests — no schema, no migration, no API surface. `camera-controls` is a type-only import, so removing it from `package.json` has no runtime consequence. Production is the only environment, so rollback is a revert of the whole branch (several commits, not one) — no migration ordering or data concerns.

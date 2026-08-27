@@ -1,7 +1,7 @@
 'use client';
 
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
-import { OrbitControls, Center } from '@react-three/drei';
+import { CameraControls, Center } from '@react-three/drei';
 import { Suspense, useRef, useCallback, useEffect, useMemo, useState, useImperativeHandle, type Ref } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -18,13 +18,16 @@ import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import { planeForSection, type CrossSection, type ModelBox } from '@/lib/crossSection';
+import { boundsForUrl, type MeasuredModel } from '@/lib/modelMeasurement';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
 import SceneLighting from './SceneLighting';
+import ViewerNavigation from './ViewerNavigation';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
+import type CameraControlsImpl from 'camera-controls';
 
 export interface WorldPin {
   id: string;
@@ -313,10 +316,16 @@ const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
 /**
  * Measures the loaded model once and publishes its bounds.
  *
- * Mounted with `key={url}` inside <Suspense>, so it runs exactly once per loaded model:
- * React commits the whole boundary together, meaning the geometry is already in the scene
- * graph when this effect fires. Runs as an effect rather than a layout effect so that
+ * Mounted inside <Suspense> under a url-derived key, so it runs exactly once per loaded
+ * model: React commits the whole boundary together, meaning the geometry is already in the
+ * scene graph when this effect fires. Runs as an effect rather than a layout effect so that
  * <Center>'s own layout effect has already positioned the model.
+ *
+ * `onMeasured` is read once, on mount, and never again — so the caller's callback has to
+ * already know which model it is reporting for. The url-derived key is what makes that safe:
+ * a url change remounts this component, and the callback it captures was created in the same
+ * parent render as the <Model> whose geometry it is about to measure. See the note on
+ * `handleMeasured` in ModelViewerInner for why the pairing matters.
  */
 function MeasureModel({
   targetRef,
@@ -375,8 +384,10 @@ function MeasureModel({
  *
  * FitCameraToModel reads cam.fov when it works out how far back to sit, so it must never run
  * before this has set it. What guarantees that is not the sibling order below but the fact
- * that FitCameraToModel is gated on `bounds`, which starts null and is reset to null on every
- * url change — so the two can never mount in the same commit. Keep that gate.
+ * that FitCameraToModel is gated on `bounds`, which is null until MeasureModel has published
+ * a measurement for the url now on screen. This mounts with the Canvas and never remounts, so
+ * that publication can only land in a commit after this one has already set the fov, for the
+ * first model and every model after it. Keep that gate.
  */
 function ApplyFocalLength({ focalLength }: { focalLength: number }) {
   const { camera } = useThree();
@@ -457,25 +468,53 @@ function FitCameraToModel({ bounds }: { bounds: ModelBounds }) {
     const cam = camera as THREE.PerspectiveCamera;
     const framing = framingForRadius(bounds.radius, cam.fov, size.width / size.height);
 
-    cam.position.copy(bounds.center).addScaledVector(VIEW_DIRECTION, framing.distance);
     cam.near = framing.near;
     cam.far = framing.far;
     cam.updateProjectionMatrix();
 
-    // OrbitControls orbits its target, so it has to move to the model's centre too —
-    // otherwise a model centred away from the origin swings around empty space.
-    const orbit = controls as unknown as {
-      target: THREE.Vector3;
-      minDistance: number;
-      maxDistance: number;
-      update: () => void;
-    } | null;
-    if (orbit?.target) {
-      orbit.target.copy(bounds.center);
-      orbit.minDistance = framing.minDistance;
-      orbit.maxDistance = framing.maxDistance;
-      orbit.update();
+    const position = bounds.center.clone().addScaledVector(VIEW_DIRECTION, framing.distance);
+
+    const cc = controls as unknown as CameraControlsImpl | null;
+    if (!cc?.setLookAt) {
+      // Controls have not mounted yet. Frame the model directly rather than leaving the
+      // camera at the placeholder position, which sits inside anything bigger than a few units.
+      cam.position.copy(position);
+      cam.lookAt(bounds.center);
+      return;
     }
+
+    // Assigned before setLookAt: these are the single source of truth for the dolly range,
+    // and ViewerNavigation reads them straight off the controls when it clamps an anchor.
+    // camera-controls defaults are Number.EPSILON and Infinity, which clamp nothing.
+    cc.minDistance = framing.minDistance;
+    cc.maxDistance = framing.maxDistance;
+
+    // setOrbitPoint — how ViewerNavigation anchors the pivot under the cursor — does not
+    // merely move the target: it holds the camera still by adding a compensating focal
+    // offset, and that offset persists on the controls afterwards. setLookAt below does not
+    // clear it (only fitToBox, fitToSphere, reset and fromJSON do). This effect does not own
+    // the controls: they belong to the <Canvas> and outlive every run of it, and it re-runs on
+    // each change of `bounds`, `camera` or `controls` — so it has no basis for assuming the
+    // offset is still zero, whichever way the viewer is hosted. Both ways exist here, and the
+    // difference is only in how much is at stake. ViewerContainer drops <ModelViewer> for a
+    // loading state while it fetches the next presigned url, so a file switch THERE builds a
+    // fresh Canvas and fresh controls; a host that swaps the `url` prop on a mounted viewer
+    // keeps one Canvas, and with it one controls instance carrying whatever the last orbit
+    // left on it, across every model. That second case is where the cost shows: measured at
+    // the default 35mm lens, one ordinary orbit of a 5,000-radius model then leaves a
+    // 1-radius model framed 5,339 units away behind a far plane of 42 — a blank viewport,
+    // with no control on screen that can recover it. Zeroing is idempotent, which is what
+    // makes it safe to do unconditionally on every run. It is NOT redundant with the
+    // setLookAt that follows; do not delete it.
+    cc.setFocalOffset(0, 0, 0, false);
+
+    // false: no transition. This is the opening view of a freshly loaded model, so there is
+    // nothing to animate from.
+    cc.setLookAt(
+      position.x, position.y, position.z,
+      bounds.center.x, bounds.center.y, bounds.center.z,
+      false,
+    );
     // One-shot per model: see the note above about resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, camera, controls]);
@@ -502,13 +541,46 @@ export default function ModelViewerInner({
 
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
-  // Written by ApplyCrossSection, read by SceneInteraction's raycast guard.
+  // Written by ApplyCrossSection, read by the raycast guards in SceneInteraction (pin drops)
+  // and ViewerNavigation (orbit anchoring). three's raycaster ignores clipping planes, so both
+  // have to reject hits on the hidden half by hand.
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
-  const [bounds, setBounds] = useState<ModelBounds | null>(null);
+  // The measurement is stored WITH the url it was taken from, and `bounds` is derived by
+  // matching that url against the current one. Nothing clears it. Everything below that sizes
+  // itself off `bounds` — the framing, the dolly range, the ground and axes, the cross-section
+  // box — therefore falls back to null the moment a different model is selected, by
+  // derivation, in the same render rather than in a later commit.
+  //
+  // Do NOT "tidy this up" back into a `useEffect(() => setBounds(null), [url])` reset. That
+  // is what it used to be, and it was a bug. It made `bounds` a piece of state with two
+  // writers in two DIFFERENT React roots: the reset lived out here in the DOM tree, while
+  // MeasureModel — which lives inside <Canvas>, i.e. inside React Three Fiber's own separate
+  // reconciler — wrote the new measurement from its mount effect. React orders passive
+  // effects within a root, not between two roots that schedule independently. The loading
+  // model normally suspends, which pushes the measurement into a commit after the reset and
+  // hides the problem; a url already in useLoader's cache does not suspend, so MeasureModel
+  // remounts in the very first commit the new url produces and the two writes race. When the
+  // measurement lands first the reset wipes it and nothing measures again — MeasureModel's
+  // effect has [] deps and is only remounted by a url change that has already happened.
+  // Observed on 4 of 668 scripted model switches and still stuck 400 frames later: every
+  // `bounds &&` gate below stays closed, so the ground, axes and contact shadow never mount,
+  // ViewerNavigation never mounts, and the controls keep the PREVIOUS model's
+  // minDistance/maxDistance and near/far. Deriving removes the race rather than shortening
+  // it: one writer, and the question "does this measurement belong to the model on screen?"
+  // becomes a comparison instead of an ordering.
+  const [measured, setMeasured] = useState<MeasuredModel<ModelBounds> | null>(null);
+  const bounds = boundsForUrl(measured, url);
 
-  // Drop stale sizing the moment a different model is selected, so the ground and axes are
-  // never drawn at the previous model's scale.
-  useEffect(() => setBounds(null), [url]);
+  // Stamps the measurement with the url of the render that produced it. MeasureModel captures
+  // this once, in its mount effect, and is remounted by key on every url change — so the
+  // callback it holds and the <Model> it measures were created in the same render and can
+  // never disagree about which model this is. A measurement that arrives late, after the url
+  // has moved on again, is then simply ignored by the line above instead of being adopted as
+  // the current model's size.
+  const handleMeasured = useCallback(
+    (next: ModelBounds) => setMeasured({ url, bounds: next }),
+    [url],
+  );
 
   // TransformControls mutates this group directly while dragging, and R3F will not put it back
   // — its prop diffing compares against the previous prop, not the object's real state. So when
@@ -567,15 +639,28 @@ export default function ModelViewerInner({
             </Center>
           </group>
           <ApplyFocalLength focalLength={focalLength} />
-          <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
+          <MeasureModel key={`measure-${url}`} targetRef={modelRef} transformRef={transformRef} onMeasured={handleMeasured} />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (
-            // key={url}: ApplyCrossSection's cleanup clears clippingPlanes from the materials
-            // under modelRef, but nothing in the effect tracks which model modelRef points at.
-            // Forcing a remount on model change guarantees the cleanup runs against the model
-            // it applied to, before modelRef can be pointing at a different one.
+            <ViewerNavigation
+              modelRef={modelRef}
+              center={bounds.center}
+              clipPlaneRef={clipPlaneRef}
+            />
+          )}
+          {bounds && (
+            // A url-derived key, so a model change forces a remount: ApplyCrossSection's
+            // cleanup clears clippingPlanes from the materials under modelRef, but nothing in
+            // the effect tracks which model modelRef points at, and remounting guarantees the
+            // cleanup runs against the model it applied to before modelRef can be pointing at
+            // a different one. The `section-` prefix is not decoration — MeasureModel is a
+            // sibling in this same children array and keyed off the same url, so a bare
+            // `key={url}` gave the two the same key. React then treats them as one slot: it
+            // warns, and it was seen once in eight model switches to commit the new model's
+            // geometry while leaving minDistance/maxDistance/near/far on the previous model's
+            // values, which ViewerNavigation reads live as its clamp and step size.
             <ApplyCrossSection
-              key={url}
+              key={`section-${url}`}
               section={crossSection}
               box={bounds.box}
               modelRef={modelRef}
@@ -601,7 +686,24 @@ export default function ModelViewerInner({
             clipPlaneRef={clipPlaneRef}
           />
         </Suspense>
-        <OrbitControls makeDefault />
+        {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls
+            lookAt(target) on every update, pinning the pivot to the centre of the screen.
+            ViewerNavigation re-anchors this one to whatever is under the cursor when a rotate
+            drag starts. Zoom is left to dollyToCursor below, which migrates the target itself.
+
+            The default input mapping already matches what the viewer has always had —
+            left rotate, middle dolly, right pan, wheel dolly — so it is left alone.
+
+            infinityDolly is deliberately NOT set here. ViewerNavigation enables it per wheel
+            event by direction and clears it again on pointerdown and on unmount, so that the
+            limitless dolly never leaks into the drag or pinch paths; a prop would fight that
+            on re-render. */}
+        <CameraControls
+          makeDefault
+          dollyToCursor
+          smoothTime={0.15}
+          draggingSmoothTime={0.08}
+        />
         {transformMode && onTransformCommit && bounds && (
           <TransformGizmo
             targetRef={transformRef}

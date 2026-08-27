@@ -69,3 +69,32 @@ test('a degenerate zero-size model does not produce NaN or zero distance', () =>
     assert.ok(Number.isFinite(f.far) && f.far > f.near);
   }
 });
+
+test('minDistance scales with the model, so close inspection works at any size', () => {
+  // The defect: minDistance derived from `near` (far/1e5) worked out to ~0.004 * radius,
+  // effectively zero. Dolly steps are a percentage of the pivot distance, so a pivot free
+  // to collapse to zero made pan and zoom crawl to a halt near large models.
+  for (const radius of [1.73, 100, 1385.64, 8660.25]) {
+    const f = framingForRadius(radius, FOV, LANDSCAPE);
+    assert.ok(
+      Math.abs(f.minDistance / radius - 0.01) < 1e-9,
+      `radius ${radius}: minDistance ${f.minDistance} is not 1% of the radius`,
+    );
+  }
+});
+
+test('minDistance leaves room to inspect detail without hitting the far stop', () => {
+  for (const radius of [1.73, 100, 1385.64, 8660.25]) {
+    const f = framingForRadius(radius, FOV, LANDSCAPE);
+    assert.ok(f.minDistance < f.distance, `radius ${radius}: cannot zoom in past the framing distance`);
+    assert.ok(f.minDistance < f.maxDistance, `radius ${radius}: dolly range is inverted`);
+  }
+});
+
+test('a degenerate model still gets a usable minDistance', () => {
+  for (const bad of [0, -5, Number.NaN]) {
+    const f = framingForRadius(bad, FOV, LANDSCAPE);
+    assert.ok(Number.isFinite(f.minDistance) && f.minDistance > 0, `radius ${bad} produced ${f.minDistance}`);
+    assert.ok(f.near < f.minDistance, `radius ${bad}: near ${f.near} would clip at min zoom-in`);
+  }
+});

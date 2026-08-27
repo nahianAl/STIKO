@@ -10,6 +10,26 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-26-viewer-camera-navigation-design.md`
 
+> ## ⚠️ This plan was executed and is now partly superseded
+>
+> Read the spec, not this plan, for what the code does. Implementation and review disproved
+> two things this plan specified:
+>
+> - **Task 4's `ViewerNavigation` code is wrong.** Re-anchoring the pivot on the wheel
+>   desynchronises a private field in camera-controls and drags the cursor point off the
+>   cursor — the inverse of the intended effect. The shipped code does not re-anchor on the
+>   wheel. See the spec's "Why the wheel must not re-anchor".
+> - **Task 2's `pivotForPointer` signature is wrong.** It shipped as
+>   `(hit: Vec3 | null, fallback: Vec3): Vec3` with a non-nullable fallback and a single
+>   caller, because the wheel case that needed the nullable form no longer exists. The
+>   `pivotForPointer(null, null) === null` test in Step 1 was deleted.
+>
+> A separate defect found only at the final review — `setOrbitPoint` leaving a focal offset
+> that `setLookAt` never clears — is also absent from this plan. The shipped
+> `FitCameraToModel` zeroes it. See the spec.
+>
+> The tasks below are kept as the record of what was attempted, not as instructions.
+
 ## Global Constraints
 
 - Tests run with `npm test` → `node --test scripts/tests/*.mjs`. Node 25 strips TypeScript natively, so `.mjs` tests import `.ts` modules directly (e.g. `from '../../lib/cameraFraming.ts'`) — **keep the `.ts` extension in the import specifier**.
@@ -135,6 +155,10 @@ large models."
 ---
 
 ### Task 2: Pure decision arithmetic for the pivot
+
+> **Partly superseded.** `pivotForPointer` shipped as `(hit: Vec3 | null, fallback: Vec3): Vec3`
+> — non-nullable fallback, non-nullable return — and the third test below was deleted. See the
+> banner at the top.
 
 **Files:**
 - Create: `lib/viewerNavigation.ts`
@@ -462,6 +486,11 @@ a direct one rather than relying on the hoist."
 ---
 
 ### Task 4: Anchor the pivot to the surface under the cursor
+
+> **Superseded — do not implement the code below.** The wheel does not re-anchor the pivot in
+> the shipped code, so the wheel raycast, the `anchoredThisFrame` throttle and its `useFrame`
+> do not exist. `infinityDolly` is additionally cleared on pointer-down and on unmount, and the
+> orbit raycast skips cross-section-clipped hits. See the banner at the top.
 
 **Files:**
 - Create: `components/viewers/ViewerNavigation.tsx`
