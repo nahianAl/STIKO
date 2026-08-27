@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useImperativeHandle, type Ref } from 'react';
-import { Stage, Layer, Image as KonvaImage, Text, Circle, Group } from 'react-konva';
+import { Stage, Layer, Rect, Image as KonvaImage, Text, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
 import type { Comment } from '@/lib/types';
@@ -10,6 +10,7 @@ import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnot
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
+import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -323,6 +324,10 @@ function PDFKonvaViewer(
 
     const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? ERASER_CURSOR : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
 
+    // The zoom and pan live on the Stage, so every layer inherits them — the fill has to be
+    // expressed in page space or it scrolls away from the viewport with the page.
+    const matte = matteRectForStage({ stagePos, stageScale, containerSize });
+
     return (
       <div className="flex h-full w-full flex-col">
         {/* Toolbar */}
@@ -408,6 +413,7 @@ function PDFKonvaViewer(
             >
               {/* PDF Background */}
               <Layer>
+                <Rect x={matte.x} y={matte.y} width={matte.width} height={matte.height} fill={PDF_MATTE} listening={false} />
                 {pageImage && (
                   <KonvaImage image={pageImage} width={pageSize.width} height={pageSize.height} listening={false} />
                 )}

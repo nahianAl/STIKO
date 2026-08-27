@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState, useImperativeHandle, type Ref } from 'react';
-import { Stage, Layer, Image as KonvaImage } from 'react-konva';
+import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
 import { useAnnotationObjects, type AnnTool } from './useAnnotationObjects';
 import AnnotationObjects from './AnnotationObjects';
 import { ERASER_CURSOR } from '@/lib/cursors';
+import { CANVAS_MATTE } from '@/lib/markup/matte';
 
 export interface AnnotationCanvasHandle {
   /**
@@ -164,11 +165,15 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
 
   const cursor = activeTool === 'pointer' ? 'default' : activeTool === 'eraser' ? ERASER_CURSOR : 'crosshair';
 
-  // The dark matte fills the letterbox around the snapshot. With no snapshot it would be
-  // an opaque black viewport, so stay transparent and let the live viewer (which the portal
-  // keeps visible in that case) show through.
+  // What is captured must be what was on screen, so the container matches the in-stage matte
+  // rather than contrasting with it. With no snapshot, stay transparent and let the live
+  // viewer (which the portal keeps visible in that case) show through.
   return (
-    <div ref={containerRef} className={`absolute inset-0 ${backgroundDataUrl ? 'bg-gray-900' : 'bg-transparent'}`} style={{ cursor }}>
+    <div
+      ref={containerRef}
+      className="absolute inset-0"
+      style={{ cursor, background: backgroundDataUrl ? CANVAS_MATTE : 'transparent' }}
+    >
       {size.width > 0 && size.height > 0 && (
         <Stage
           ref={stageRef}
@@ -180,6 +185,9 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
           onMouseLeave={() => { if (ann.endDraw()) onObjectCreated?.(); }}
         >
           <Layer listening={false}>
+            {/* Inside the stage, not on the container: toDataURL reads the stage, and JPEG has no
+                alpha, so any pixel this rect does not cover is encoded black. */}
+            {backgroundDataUrl && <Rect x={0} y={0} width={size.width} height={size.height} fill={CANVAS_MATTE} />}
             {bgImage && bgFit && <KonvaImage image={bgImage} x={bgFit.x} y={bgFit.y} width={bgFit.width} height={bgFit.height} />}
           </Layer>
           <Layer>
