@@ -1455,18 +1455,25 @@ The imperative `clear()` is what `endSession` calls on discard, and a half-typed
     clear: () => { setEditingId(null); ann.clear(); },
 ```
 
-Also close it before a capture, so a marquee outline can never be baked into a snapshot. Replace the first two lines of `captureSnapshot`:
+Also make the edited node visible again before a capture. Replace the first lines of `captureSnapshot`:
 
 ```tsx
     captureSnapshot: (opts) => {
       const stage = stageRef.current;
       if (!stage) return null;
+      // A capture while the editor is open would otherwise lose that object: its Konva node is
+      // hidden (`visible={editingId !== obj.id}`) so the textarea can stand in for it, and
+      // `setEditingId(null)` is a React state update that will not have been applied by the
+      // time toDataURL runs on the next line. Un-hide the node directly instead.
+      if (editingId) (stage.findOne(`#${editingId}`) as Konva.Node | undefined)?.visible(true);
       setEditingId(null);
       stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
       stage.draw();
 ```
 
-> The Konva `Text` node is hidden via `visible={editingId !== obj.id}`, which React applies on the next render — after `toDataURL` has already run. Hiding is therefore not what keeps the text in the capture; the node is *already* hidden at this point and `setEditingId(null)` is what brings it **back**. Konva's `visible` is applied imperatively by react-konva on commit, so call `stage.draw()` after, as the existing code already does. If a captured text object comes out missing, this ordering is the cause.
+> The textarea itself is DOM, so it never reaches a canvas capture — the marquee outline cannot be baked into a snapshot and needs no handling here. The only thing at risk is the Konva node the editor is standing in for.
+>
+> In today's flows a capture cannot actually begin mid-edit: Apply lives on the banner, and pointer-down anywhere outside the textarea commits the editor a full event earlier. This is defence against that coupling quietly changing — a snapshot silently missing the text the user just typed is the kind of failure nobody notices until a comment is already posted.
 
 - [ ] **Step 6: Pass the new props to `AnnotationObjects` and mount the editor**
 
@@ -1607,12 +1614,15 @@ Replace the `clearDrawings` entry of the imperative handle:
       clearDrawings: () => { setEditingId(null); ann.clear(); },
 ```
 
-and add the same line to `captureSnapshot`, right after the null check:
+and do the same in `captureSnapshot`, right after the null check — including un-hiding the node the editor is standing in for, for the reason given in Task 10 Step 5:
 
 ```tsx
       captureSnapshot: () => {
         const stage = stageRef.current;
         if (!stage) return null;
+        // See Task 10 Step 5: the edited object's node is hidden, and setEditingId is a state
+        // update that will not have applied by the time toDataURL runs below.
+        if (editingId) (stage.findOne(`#${editingId}`) as Konva.Node | undefined)?.visible(true);
         setEditingId(null);
         stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
         stage.draw();
