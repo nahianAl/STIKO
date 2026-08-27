@@ -23,6 +23,7 @@ import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
 import SceneLighting from './SceneLighting';
+import ViewerNavigation from './ViewerNavigation';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import type CameraControlsImpl from 'camera-controls';
@@ -579,6 +580,7 @@ export default function ModelViewerInner({
           <ApplyFocalLength focalLength={focalLength} />
           <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
+          {bounds && <ViewerNavigation modelRef={modelRef} center={bounds.center} />}
           {bounds && (
             // key={url}: ApplyCrossSection's cleanup clears clippingPlanes from the materials
             // under modelRef, but nothing in the effect tracks which model modelRef points at.
