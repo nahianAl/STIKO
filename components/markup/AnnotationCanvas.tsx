@@ -5,6 +5,8 @@ import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
 import { useAnnotationObjects, type AnnTool } from './useAnnotationObjects';
 import AnnotationObjects from './AnnotationObjects';
+import CanvasTextEditor from './CanvasTextEditor';
+import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 
@@ -39,8 +41,9 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
   const stageRef = useRef<Konva.Stage>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
-  const [textPopup, setTextPopup] = useState<{ x: number; y: number } | null>(null);
-  const [textInput, setTextInput] = useState('');
+  // The text object currently open for editing. The object itself already exists in `ann` —
+  // this is only which one the editor is bound to.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const ann = useAnnotationObjects();
 
@@ -67,7 +70,7 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool, ann.setSelectedId]);
 
-  // Delete/Backspace removes the selected object (unless typing in the text popup).
+  // Delete/Backspace removes the selected object (unless typing in the text editor).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
@@ -95,6 +98,12 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     captureSnapshot: (opts) => {
       const stage = stageRef.current;
       if (!stage) return null;
+      // A capture while the editor is open would otherwise lose that object: its Konva node is
+      // hidden (`visible={editingId !== obj.id}`) so the textarea can stand in for it, and
+      // `setEditingId(null)` is a React state update that will not have been applied by the
+      // time toDataURL runs on the next line. Un-hide the node directly instead.
+      if (editingId) (stage.findOne(`#${editingId}`) as Konva.Node | undefined)?.visible(true);
+      setEditingId(null);
       stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
       stage.draw();
       let url: string;
@@ -118,7 +127,7 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
       ann.setSelectedId(null);
       return url;
     },
-    clear: () => ann.clear(),
+    clear: () => { setEditingId(null); ann.clear(); },
     hasObjects: () => ann.hasObjects(),
     insertImage: (file: File) => {
       const reader = new FileReader();
@@ -144,7 +153,21 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     if (!stage) return;
     const p = stage.getPointerPosition();
     if (!p) return;
-    if (activeTool === 'text') { setTextPopup({ x: p.x, y: p.y }); setTextInput(''); return; }
+    if (activeTool === 'text') {
+      const id = ann.addText(p, {
+        text: '',
+        color,
+        fontSize: fontSizeForStrokeWidth(strokeWidth),
+        // The fitted background region, not the stage: the wrap width must not depend on how
+        // much matte happens to surround the snapshot.
+        width: wrapWidthForContent(bgFit ? bgFit.width : size.width),
+      });
+      setEditingId(id);
+      // Return to the pointer immediately. Otherwise the click that commits this box would also
+      // start another one, since the text tool would still be armed.
+      onObjectCreated?.();
+      return;
+    }
     if (activeTool === 'pointer') { if (e.target === stage) ann.setSelectedId(null); return; }
     if (activeTool === 'eraser') return;
     ann.startDraw(activeTool, p, color, strokeWidth);
@@ -155,12 +178,14 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     if (p) ann.moveDraw(activeTool, p);
   };
 
-  const submitText = () => {
-    if (textPopup && textInput.trim()) {
-      const id = ann.addText(textPopup, textInput, color, strokeWidth);
-      if (id) onObjectCreated?.();
+  const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
+
+  /** Blank in, nothing out — an empty box is a mis-click, not an object. */
+  const commitText = () => {
+    if (editingObj && isBlank(editingObj.text)) {
+      ann.deleteObject(editingObj.id);
     }
-    setTextPopup(null); setTextInput('');
+    setEditingId(null);
   };
 
   const cursor = activeTool === 'pointer' ? 'default' : activeTool === 'eraser' ? ERASER_CURSOR : 'crosshair';
@@ -199,35 +224,27 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
               onSelect={ann.setSelectedId}
               onErase={ann.deleteObject}
               onChange={ann.updateObject}
+              editingId={editingId}
+              onEditText={setEditingId}
+              onBakeText={ann.bakeTextTransform}
             />
           </Layer>
         </Stage>
       )}
 
-      {textPopup && (
-        <div
-          className="absolute z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-2"
-          style={{ left: Math.min(textPopup.x, size.width - 200), top: Math.min(textPopup.y, size.height - 80) }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <input
-            type="text"
-            autoFocus
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            placeholder="Type text..."
-            className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm outline-none focus:border-blue-500"
-            style={{ minWidth: 150 }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); submitText(); }
-              if (e.key === 'Escape') { setTextPopup(null); setTextInput(''); }
-            }}
-          />
-          <div className="flex justify-end gap-1.5 mt-1.5">
-            <button onClick={() => { setTextPopup(null); setTextInput(''); }} className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-            <button onClick={submitText} disabled={!textInput.trim()} className="px-2.5 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">Add</button>
-          </div>
-        </div>
+      {editingObj && (
+        <CanvasTextEditor
+          // The stage is untransformed here, so object space is screen space.
+          x={editingObj.x}
+          y={editingObj.y}
+          scale={1}
+          color={editingObj.color}
+          fontSize={editingObj.fontSize}
+          wrapWidth={editingObj.width}
+          value={editingObj.text}
+          onChange={(t) => ann.updateText(editingObj.id, t)}
+          onCommit={commitText}
+        />
       )}
     </div>
   );
