@@ -28,6 +28,20 @@ const MARGIN = 1.3;
 /** How far out the user may dolly, as a multiple of the framing distance. */
 const MAX_ZOOM_OUT = 10;
 
+/**
+ * Closest the orbit pivot may sit to the camera, as a fraction of the model's radius.
+ *
+ * Dolly steps are a percentage of the pivot distance in every orbit library, so a pivot free
+ * to collapse toward zero takes pan and zoom down with it — the reported "everything goes
+ * slow when I get close" defect. This was previously derived from `near`, which worked out to
+ * ~0.4% of the radius: technically non-zero, practically a black hole.
+ *
+ * Under camera-controls' `infinityDolly` this doubles as the distance held in front of the
+ * camera while pushing through geometry, so it is also the fly-through step size. At 1% that
+ * is 50 units on a 5,000-unit building and 0.01 on a 1-unit part — proportionate at both ends.
+ */
+const MIN_DISTANCE_FACTOR = 0.01;
+
 export function framingForRadius(
   radius: number,
   fovDegrees: number,
@@ -52,8 +66,9 @@ export function framingForRadius(
   const far = maxDistance + r * 2;
 
   // near is pinned to the depth-buffer ratio rather than to the model, so precision stays
-  // constant across scales; minDistance then keeps the camera in front of it.
+  // constant across scales. minDistance is independent of it (see MIN_DISTANCE_FACTOR) but
+  // stays comfortably clear: near lands around 4.2e-4 * radius against minDistance's 1e-2.
   const near = far / 1e5;
 
-  return { distance, near, far, minDistance: near * 10, maxDistance };
+  return { distance, near, far, minDistance: r * MIN_DISTANCE_FACTOR, maxDistance };
 }
