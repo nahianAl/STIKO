@@ -315,9 +315,9 @@ const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
 /**
  * Measures the loaded model once and publishes its bounds.
  *
- * Mounted with `key={url}` inside <Suspense>, so it runs exactly once per loaded model:
- * React commits the whole boundary together, meaning the geometry is already in the scene
- * graph when this effect fires. Runs as an effect rather than a layout effect so that
+ * Mounted inside <Suspense> under a url-derived key, so it runs exactly once per loaded
+ * model: React commits the whole boundary together, meaning the geometry is already in the
+ * scene graph when this effect fires. Runs as an effect rather than a layout effect so that
  * <Center>'s own layout effect has already positioned the model.
  */
 function MeasureModel({
@@ -594,7 +594,7 @@ export default function ModelViewerInner({
             </Center>
           </group>
           <ApplyFocalLength focalLength={focalLength} />
-          <MeasureModel key={url} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
+          <MeasureModel key={`measure-${url}`} targetRef={modelRef} transformRef={transformRef} onMeasured={setBounds} />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (
             <ViewerNavigation
@@ -604,12 +604,18 @@ export default function ModelViewerInner({
             />
           )}
           {bounds && (
-            // key={url}: ApplyCrossSection's cleanup clears clippingPlanes from the materials
-            // under modelRef, but nothing in the effect tracks which model modelRef points at.
-            // Forcing a remount on model change guarantees the cleanup runs against the model
-            // it applied to, before modelRef can be pointing at a different one.
+            // A url-derived key, so a model change forces a remount: ApplyCrossSection's
+            // cleanup clears clippingPlanes from the materials under modelRef, but nothing in
+            // the effect tracks which model modelRef points at, and remounting guarantees the
+            // cleanup runs against the model it applied to before modelRef can be pointing at
+            // a different one. The `section-` prefix is not decoration — MeasureModel is a
+            // sibling in this same children array and keyed off the same url, so a bare
+            // `key={url}` gave the two the same key. React then treats them as one slot: it
+            // warns, and it was seen once in eight model switches to commit the new model's
+            // geometry while leaving minDistance/maxDistance/near/far on the previous model's
+            // values, which ViewerNavigation reads live as its clamp and step size.
             <ApplyCrossSection
-              key={url}
+              key={`section-${url}`}
               section={crossSection}
               box={bounds.box}
               modelRef={modelRef}
