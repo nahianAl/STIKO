@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Line, Arrow, Rect, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
+import { TEXT_FONT_FAMILY } from '@/lib/markup/text';
 
 function ImageObj({ obj, common, onLoaded }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'>; onLoaded?: () => void }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -28,23 +29,32 @@ interface AnnotationObjectsProps {
   onSelect: (id: string) => void;
   onErase: (id: string) => void;
   onChange: (id: string, patch: Partial<AnnotationObject>) => void;
+  /** The text object currently open in the editor. Its Konva node is hidden so the glyphs are
+   *  not drawn twice at slightly different rasterisations. */
+  editingId?: string | null;
+  /** Double-click on a committed text object, with the pointer tool active. */
+  onEditText?: (id: string) => void;
+  /** Text transforms bake their scale instead of storing it — see bakeTextTransform. */
+  onBakeText?: (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => void;
 }
 
-export default function AnnotationObjects({ objects, draft, selectedId, activeTool, onSelect, onErase, onChange }: AnnotationObjectsProps) {
+export default function AnnotationObjects({ objects, draft, selectedId, activeTool, onSelect, onErase, onChange, editingId = null, onEditText, onBakeText }: AnnotationObjectsProps) {
   const trRef = useRef<Konva.Transformer>(null);
   // Bumped when an ImageObj finishes decoding, so the Transformer rebinds once the
   // (initially null) image node actually exists in the stage.
   const [imgLoadTick, setImgLoadTick] = useState(0);
 
-  // Bind the Transformer to the selected node
+  // Bind the Transformer to the selected node — unless that node is open in the text editor,
+  // where resize handles would fight the caret and sit over the textarea.
   useEffect(() => {
     const tr = trRef.current;
     if (!tr) return;
     const stage = tr.getStage();
-    const node = selectedId && stage ? stage.findOne(`#${selectedId}`) : null;
+    const editing = selectedId !== null && selectedId === editingId;
+    const node = selectedId && stage && !editing ? stage.findOne(`#${selectedId}`) : null;
     tr.nodes(node ? [node as Konva.Node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, objects, activeTool, imgLoadTick]);
+  }, [selectedId, objects, activeTool, imgLoadTick, editingId]);
 
   // Object click: select (pointer) or erase; ignored for draw tools so you can draw over objects
   const handleObj = (e: Konva.KonvaEventObject<MouseEvent>, id: string) => {
@@ -66,7 +76,16 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
       onDragEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<DragEvent>) => onChange(obj.id, { x: e.target.x(), y: e.target.y() }),
       onTransformEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<Event>) => {
         const n = e.target;
-        onChange(obj.id, { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() });
+        const t = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
+        if (obj.type === 'text' && onBakeText) {
+          // Reset on the node as well as in state: React re-renders a frame later, and without
+          // this the text visibly springs to double size and back.
+          n.scaleX(1);
+          n.scaleY(1);
+          onBakeText(obj.id, t);
+        } else {
+          onChange(obj.id, t);
+        }
       },
     };
     const hit = Math.max(obj.strokeWidth, 12);
@@ -80,7 +99,31 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
       case 'rect':
         return <Rect key={obj.id} {...common} width={obj.width} height={obj.height} stroke={obj.color} strokeWidth={obj.strokeWidth} />;
       case 'text':
-        return <Text key={obj.id} {...common} text={obj.text} fontSize={obj.fontSize} fill={obj.color} fontStyle="bold" />;
+        return (
+          <Text
+            key={obj.id}
+            {...common}
+            text={obj.text}
+            fontSize={obj.fontSize}
+            fontFamily={TEXT_FONT_FAMILY}
+            fill={obj.color}
+            fontStyle="bold"
+            // The same number the editor wrapped at, so committing does not reflow the text.
+            width={obj.width > 0 ? obj.width : undefined}
+            wrap="word"
+            visible={editingId !== obj.id}
+            onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
+              if (isDraft || activeTool !== 'pointer' || !onEditText) return;
+              e.cancelBubble = true;
+              onEditText(obj.id);
+            }}
+            onDblTap={(e: Konva.KonvaEventObject<Event>) => {
+              if (isDraft || activeTool !== 'pointer' || !onEditText) return;
+              e.cancelBubble = true;
+              onEditText(obj.id);
+            }}
+          />
+        );
       case 'image':
         return <ImageObj key={obj.id} obj={obj} common={common} onLoaded={() => setImgLoadTick((t) => t + 1)} />;
       default:
