@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { fontSizeForStrokeWidth, strokeWidthForFontSize, MIN_FONT_SIZE } from '@/lib/markup/text';
 
 export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'image';
 export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
@@ -72,14 +73,26 @@ export function useAnnotationObjects() {
     return obj.id;
   }, []);
 
-  const addText = useCallback((p: { x: number; y: number }, text: string, color: string, strokeWidth: number, fontSize = 16): string | null => {
-    if (!text.trim()) return null;
-    const o = base('text', color, strokeWidth);
-    o.x = p.x; o.y = p.y; o.text = text.trim(); o.fontSize = fontSize;
-    setObjects((prev) => [...prev, o]);
-    setSelectedId(o.id);
-    return o.id;
-  }, []);
+  /**
+   * Creates the text object *before* anything is typed, so the editor can be bound to a real
+   * object and every keystroke can write through to it. That is what puts the text where it
+   * will land rather than in a popup somewhere else — and it is why this no longer rejects
+   * empty text. Discarding a blank box is the caller's job, on commit.
+   */
+  const addText = useCallback(
+    (p: { x: number; y: number }, opts: { text?: string; color: string; fontSize: number; width: number }): string => {
+      const o = base('text', opts.color, strokeWidthForFontSize(opts.fontSize));
+      o.x = p.x;
+      o.y = p.y;
+      o.text = opts.text ?? '';
+      o.fontSize = opts.fontSize;
+      o.width = opts.width;
+      setObjects((prev) => [...prev, o]);
+      setSelectedId(o.id);
+      return o.id;
+    },
+    []
+  );
 
   const addImage = useCallback((p: { x: number; y: number }, src: string, width: number, height: number) => {
     const o = base('image', '#000000', 0);
@@ -93,6 +106,63 @@ export function useAnnotationObjects() {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   }, []);
 
+  /** Write-through from the text editor. Separate from updateObject so the editor cannot
+   *  accidentally clobber geometry it does not own. */
+  const updateText = useCallback((id: string, text: string) => {
+    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, text } : o)));
+  }, []);
+
+  /**
+   * Restyle an existing object. The type decides what a stroke width means: on text it is a
+   * font size, on an image it means nothing at all.
+   */
+  const applyStyle = useCallback((id: string, patch: { color?: string; strokeWidth?: number }) => {
+    setObjects((prev) =>
+      prev.map((o) => {
+        if (o.id !== id || o.type === 'image') return o;
+        const next = { ...o };
+        if (patch.color !== undefined) next.color = patch.color;
+        if (patch.strokeWidth !== undefined) {
+          next.strokeWidth = patch.strokeWidth;
+          if (o.type === 'text') next.fontSize = fontSizeForStrokeWidth(patch.strokeWidth);
+        }
+        return next;
+      })
+    );
+  }, []);
+
+  /**
+   * Folds a text object's transform scale into its font size and wrap width, resetting the
+   * scale to 1.
+   *
+   * Without this the Transformer's scaleX/scaleY would multiply against the font-size presets:
+   * a box dragged to 2x and then set to "Thick" would render at 68px rather than 34px. Baking
+   * keeps the presets absolute. strokeWidth follows the new size so the toolbar highlights the
+   * right chip after a manual resize.
+   */
+  const bakeTextTransform = useCallback(
+    (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => {
+      setObjects((prev) =>
+        prev.map((o) => {
+          if (o.id !== id) return o;
+          const fontSize = Math.max(MIN_FONT_SIZE, o.fontSize * t.scaleY);
+          return {
+            ...o,
+            x: t.x,
+            y: t.y,
+            rotation: t.rotation,
+            scaleX: 1,
+            scaleY: 1,
+            fontSize,
+            width: Math.max(1, o.width * t.scaleX),
+            strokeWidth: strokeWidthForFontSize(fontSize),
+          };
+        })
+      );
+    },
+    []
+  );
+
   const deleteObject = useCallback((id: string) => {
     setObjects((prev) => prev.filter((o) => o.id !== id));
     setSelectedId((s) => (s === id ? null : s));
@@ -104,5 +174,14 @@ export function useAnnotationObjects() {
 
   const hasObjects = useCallback(() => objects.length > 0, [objects]);
 
-  return { objects, draft, selectedId, setSelectedId, startDraw, moveDraw, endDraw, addText, addImage, updateObject, deleteObject, clear, hasObjects };
+  // Derived rather than stored, so it can never disagree with `objects`. Consumers must depend
+  // on its FIELDS, not its identity — `find` returns a fresh reference on every render.
+  const selectedObject = objects.find((o) => o.id === selectedId) ?? null;
+
+  return {
+    objects, draft, selectedId, setSelectedId, selectedObject,
+    startDraw, moveDraw, endDraw, addText, addImage,
+    updateObject, updateText, applyStyle, bakeTextTransform,
+    deleteObject, clear, hasObjects,
+  };
 }
