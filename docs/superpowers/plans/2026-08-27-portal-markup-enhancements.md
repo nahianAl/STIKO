@@ -81,8 +81,8 @@ test('the presets are the documented 2/4/6 -> 16/24/34 ladder', () => {
 test('an unmapped stroke width clamps to the nearest preset', () => {
   assert.equal(fontSizeForStrokeWidth(1), 16);    // below the ladder
   assert.equal(fontSizeForStrokeWidth(99), 34);   // above the ladder
-  assert.equal(fontSizeForStrokeWidth(4.6), 34);  // strictly nearer 6 than 4
-  assert.equal(fontSizeForStrokeWidth(2.9), 24);  // strictly nearer 4 than 2
+  assert.equal(fontSizeForStrokeWidth(4.6), 24);  // strictly nearer 4 than 6
+  assert.equal(fontSizeForStrokeWidth(2.9), 16);  // strictly nearer 2 than 4
 });
 
 test('a tie between two presets resolves to the thinner one, deterministically', () => {
