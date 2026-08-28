@@ -87,15 +87,16 @@ export default function SectionPlaneWidget({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A hidden plane cannot be hovered — same gate as the click handler and the raycast override
-  // above. This also drops any hover state a pointer-out never got the chance to clear (e.g.
-  // the plane was toggled off mid-hover), so re-showing the widget never starts it looking
-  // hovered from a stale state.
+  // A hidden plane or an unselectable plane (when the comment tool is armed) cannot be hovered
+  // — same gate as the click handler and the raycast override above. If either condition makes
+  // the widget non-interactive, hover handlers are detached before onPointerOut fires, stranding
+  // any hover state that was already set. This effect clears it for both cases, so re-showing
+  // or re-selecting the widget never starts it looking hovered from a stale state.
   useEffect(() => {
-    if (!visible) setHovered(false);
-  }, [visible]);
+    if (!visible || !selectable) setHovered(false);
+  }, [visible, selectable]);
 
-  const isHovered = visible && hovered;
+  const isHovered = visible && selectable && hovered;
 
   const colour = selected ? SELECTED_COLOUR : IDLE_COLOUR;
   const quadOpacity = selected ? 0.16 : isHovered ? 0.12 : 0.09;
