@@ -5,6 +5,7 @@ import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { CrossSection } from '@/lib/crossSection';
+import type { MarkupSelection } from '@/components/markup/useAnnotationObjects';
 import LoadingCube from '@/components/ui/LoadingCube';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
@@ -50,6 +51,7 @@ interface ViewerContainerProps {
   modelViewerRef?: React.Ref<ModelViewerHandle>;
   pendingCommentId?: string | null;
   onObjectCreated?: () => void;
+  onSelectionChange?: (selection: MarkupSelection | null) => void;
 }
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
@@ -65,7 +67,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, transform, transformMode, onTransformCommit, focalLength, crossSection,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, crossSection,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -128,6 +130,7 @@ export default function ViewerContainer({
         onCommentPinClick={onCommentPinClick ?? (() => {})}
         pendingCommentId={pendingCommentId}
         onObjectCreated={onObjectCreated}
+        onSelectionChange={onSelectionChange}
       />
     );
   }

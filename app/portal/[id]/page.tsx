@@ -26,7 +26,7 @@ import { DEFAULT_CROSS_SECTION, type CrossSection } from '@/lib/crossSection';
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
 const AnnotationCanvas = dynamic(() => import('@/components/markup/AnnotationCanvas'), { ssr: false });
 import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
-import type { AnnTool } from '@/components/markup/useAnnotationObjects';
+import type { AnnTool, AnnotationObjectType, MarkupSelection } from '@/components/markup/useAnnotationObjects';
 
 interface Project {
   id: string;
@@ -170,6 +170,7 @@ export default function PortalPage() {
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
   const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(4);
+  const [selectionType, setSelectionType] = useState<AnnotationObjectType | null>(null);
 
   // Comment linking state
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
@@ -250,6 +251,40 @@ export default function PortalPage() {
   const drawsOnCanvas = !isPDFFile || annotatingFile !== null;
 
   const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
+
+  /**
+   * Colour and stroke width now do two things: set the default for the next object, and
+   * restyle whatever is selected. With nothing selected the second half is a no-op, which is
+   * exactly the behaviour these controls had before.
+   */
+  const activeSurface = useCallback(
+    () => (drawsOnCanvas ? annotationCanvasRef.current : pdfKonvaRef.current),
+    [drawsOnCanvas]
+  );
+
+  const handleColorChange = useCallback((c: string) => {
+    setDrawingColor(c);
+    activeSurface()?.applyStyleToSelection({ color: c });
+  }, [activeSurface]);
+
+  const handleStrokeWidthChange = useCallback((w: number) => {
+    setDrawingStrokeWidth(w);
+    activeSurface()?.applyStyleToSelection({ strokeWidth: w });
+  }, [activeSurface]);
+
+  /**
+   * Selecting an object pulls its style into the toolbar, so the swatch and the preset on show
+   * are the selected object's. That also makes it the style of the *next* object — the ordinary
+   * design-tool convention, and it keeps one piece of state driving both rather than two that
+   * can disagree. Images carry no style, so they only clear the type.
+   */
+  const handleSelectionChange = useCallback((s: MarkupSelection | null) => {
+    setSelectionType(s?.type ?? null);
+    if (s && s.type !== 'image') {
+      setDrawingColor(s.color);
+      setDrawingStrokeWidth(s.strokeWidth);
+    }
+  }, []);
 
   // Live preview: include the not-yet-posted tag among the pins so the user sees exactly where it lands.
   const pinComments: Comment[] = useMemo(() => {
@@ -669,6 +704,7 @@ export default function PortalPage() {
     annotationCanvasRef.current?.clear();
     pdfKonvaRef.current?.clearDrawings();
     setActiveTool('pointer');
+    setSelectionType(null);
   };
 
   /** "sketch.png" → "sketch-markup.jpg". The capture is always a JPEG, so
@@ -845,6 +881,7 @@ export default function PortalPage() {
             modelViewerRef={modelViewerRef}
             pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
             onObjectCreated={() => setActiveTool('pointer')}
+            onSelectionChange={handleSelectionChange}
           />
         </div>
       </>
@@ -895,13 +932,14 @@ export default function PortalPage() {
                 activeTool={activeTool}
                 onToolChange={setActiveTool}
                 color={drawingColor}
-                onColorChange={setDrawingColor}
+                onColorChange={handleColorChange}
                 strokeWidth={drawingStrokeWidth}
-                onStrokeWidthChange={setDrawingStrokeWidth}
+                onStrokeWidthChange={handleStrokeWidthChange}
                 tagging={tagging}
                 onToggleTagging={() => setTagging((t) => !t)}
                 onInsertImage={handleInsertImage}
                 offsetTop={isPDFFile ? 45 : 12}
+                selectionType={selectionType}
               />
             )}
             {selectedFileId && !isPDFFile && !annotating && (
@@ -960,6 +998,7 @@ export default function PortalPage() {
                 strokeWidth={drawingStrokeWidth}
                 handleRef={annotationCanvasRef}
                 onObjectCreated={() => setActiveTool('pointer')}
+                onSelectionChange={handleSelectionChange}
               />
             )}
 

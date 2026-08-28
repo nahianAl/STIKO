@@ -4,11 +4,11 @@
 // Mounts the markup surface with a synthetic background so the annotation session can be driven
 // without a database, an S3 bucket or an uploaded file.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AnnotationCanvas, { type AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import DrawingTools from '@/components/markup/DrawingTools';
-import type { AnnTool } from '@/components/markup/useAnnotationObjects';
+import type { AnnTool, AnnotationObjectType, MarkupSelection } from '@/components/markup/useAnnotationObjects';
 
 type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
@@ -40,8 +40,24 @@ export default function MarkupHarnessPage() {
   const [color, setColor] = useState('#FF6B6B');
   const [strokeWidth, setStrokeWidth] = useState(4);
   const [captured, setCaptured] = useState<string | null>(null);
+  const [selectionType, setSelectionType] = useState<AnnotationObjectType | null>(null);
   const surface = useRef<AnnotationCanvasHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const onSelectionChange = useCallback((s: MarkupSelection | null) => {
+    setSelectionType(s?.type ?? null);
+    if (s && s.type !== 'image') { setColor(s.color); setStrokeWidth(s.strokeWidth); }
+  }, []);
+
+  const onColorChange = useCallback((c: string) => {
+    setColor(c);
+    surface.current?.applyStyleToSelection({ color: c });
+  }, []);
+
+  const onStrokeWidthChange = useCallback((w: number) => {
+    setStrokeWidth(w);
+    surface.current?.applyStyleToSelection({ strokeWidth: w });
+  }, []);
 
   // 1200x700 is a different aspect ratio from the viewport below, which forces a letterbox on
   // purpose — that is the band that has to come out light grey instead of black.
@@ -69,17 +85,19 @@ export default function MarkupHarnessPage() {
           strokeWidth={strokeWidth}
           handleRef={surface}
           onObjectCreated={() => setActiveTool('pointer')}
+          onSelectionChange={onSelectionChange}
         />
         <DrawingTools
           activeTool={activeTool}
           onToolChange={setActiveTool}
           color={color}
-          onColorChange={setColor}
+          onColorChange={onColorChange}
           strokeWidth={strokeWidth}
-          onStrokeWidthChange={setStrokeWidth}
+          onStrokeWidthChange={onStrokeWidthChange}
           tagging={false}
           onToggleTagging={() => {}}
           onInsertImage={() => fileInput.current?.click()}
+          selectionType={selectionType}
         />
         <AnnotationBanner
           annotatingFileName={null}
