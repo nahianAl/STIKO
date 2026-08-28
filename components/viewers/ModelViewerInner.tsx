@@ -27,6 +27,7 @@ import SceneLighting from './SceneLighting';
 import ViewerNavigation from './ViewerNavigation';
 import ApplyCrossSection from './section/ApplyCrossSection';
 import SectionPlaneWidget from './section/SectionPlaneWidget';
+import SectionCaps from './section/SectionCaps';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import type CameraControlsImpl from 'camera-controls';
@@ -578,8 +579,10 @@ export default function ModelViewerInner({
         // A 3x display renders 9x the fragments of a 1x one for no reviewable detail.
         dpr={[1, 2]}
         // localClippingEnabled is what makes per-material clippingPlanes take effect at all;
-        // without it the cross-section silently does nothing.
-        gl={{ preserveDrawingBuffer: true, localClippingEnabled: true }}
+        // without it the cross-section silently does nothing. `stencil` is what makes the cut
+        // faces in SectionCaps work — WebGL2 contexts do not allocate a stencil buffer unless
+        // asked, and without one every cap quad draws unmasked over the whole model.
+        gl={{ preserveDrawingBuffer: true, localClippingEnabled: true, stencil: true }}
         onPointerMissed={(e) => {
           if (gizmoDraggingRef.current) return;
           // Nothing selected, nothing to deselect — avoid disarming an unrelated
@@ -685,6 +688,16 @@ export default function ModelViewerInner({
               modelRef={modelRef}
               planeObjects={planeObjects}
               planesRef={clipPlanesRef}
+            />
+          )}
+          {bounds && (
+            <SectionCaps
+              key={`caps-${url}`}
+              slots={slots}
+              modelRef={modelRef}
+              planeObjects={planeObjects}
+              planesRef={clipPlanesRef}
+              size={bounds.radius * 2.6}
             />
           )}
           {bounds && (
