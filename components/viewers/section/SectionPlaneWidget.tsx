@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { PlaneId, PlanePose } from '@/lib/crossSection';
 
@@ -8,6 +8,15 @@ import type { PlaneId, PlanePose } from '@/lib/crossSection';
 // cannot read Tailwind tokens. Keep in step with tailwind.config.ts.
 const SELECTED_COLOUR = '#5B60FF';
 const IDLE_COLOUR = '#8A90A6';
+
+// three.js's raycaster never checks `object.visible`: `Raycaster.intersect()` only tests
+// `object.layers`, and `Mesh.raycast` has no visibility guard of its own — @react-three/fiber's
+// event pipeline adds no filter on top of that either. So a mesh left with its default
+// `raycast` implementation keeps catching pointer hits even while its whole group is set
+// `visible={false}`. Swapping this no-op in while hidden is what actually removes the mesh
+// from hit-testing; do not "simplify" it away as redundant with the handler gate below — it is
+// the guarantee, the handler gate is only the behaviour.
+const DISABLE_RAYCAST = () => {};
 
 /**
  * One cross-section plane, as an object in the scene.
@@ -41,6 +50,7 @@ export default function SectionPlaneWidget({
   onSelect: (id: PlaneId) => void;
 }) {
   const group = useRef<THREE.Group>(null);
+  const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
     const object = group.current;
@@ -53,7 +63,24 @@ export default function SectionPlaneWidget({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A hidden plane cannot be hovered — same gate as the click handler and the raycast override
+  // above. This also drops any hover state a pointer-out never got the chance to clear (e.g.
+  // the plane was toggled off mid-hover), so re-showing the widget never starts it looking
+  // hovered from a stale state.
+  useEffect(() => {
+    if (!visible) setHovered(false);
+  }, [visible]);
+
+  const isHovered = visible && hovered;
+
   const colour = selected ? SELECTED_COLOUR : IDLE_COLOUR;
+  const quadOpacity = selected ? 0.16 : isHovered ? 0.12 : 0.09;
+  const borderOpacity = selected ? 0.9 : isHovered ? 0.7 : 0.5;
+
+  // The border is an edgesGeometry built from a plain PlaneGeometry of the same size. Hoist
+  // that source geometry behind a memo keyed on `size` so it is rebuilt only when the quad's
+  // size actually changes, not on every selected/hover/visible re-render.
+  const borderGeometry = useMemo(() => new THREE.PlaneGeometry(size, size), [size]);
 
   return (
     <group
@@ -63,21 +90,46 @@ export default function SectionPlaneWidget({
       // everything carrying this flag before capturing an annotation snapshot. Same marker
       // TransformGizmo sets on its handles.
       userData={{ excludeFromSnapshot: true }}
-      onClick={(e) => {
-        // Without this, the click continues to the model's own deselect handler underneath
-        // and the plane is selected and deselected in the same event.
-        e.stopPropagation();
-        onSelect(id);
-      }}
+      // Attached only while visible: a hidden plane must stay completely inert to pointer
+      // input so a click near the model reaches the model, not this invisible quad. See
+      // DISABLE_RAYCAST above for why the mesh also needs its own guard, not just this gate.
+      onClick={
+        visible
+          ? (e) => {
+              // Without this, the click continues to the model's own deselect handler underneath
+              // and the plane is selected and deselected in the same event.
+              e.stopPropagation();
+              onSelect(id);
+            }
+          : undefined
+      }
+      // onPointerOver/onPointerOut are R3F's hover events; gated the same way as onClick so a
+      // hidden plane cannot be hovered either.
+      onPointerOver={
+        visible
+          ? (e) => {
+              e.stopPropagation();
+              setHovered(true);
+            }
+          : undefined
+      }
+      onPointerOut={
+        visible
+          ? (e) => {
+              e.stopPropagation();
+              setHovered(false);
+            }
+          : undefined
+      }
     >
-      <mesh>
+      <mesh raycast={visible ? THREE.Mesh.prototype.raycast : DISABLE_RAYCAST}>
         <planeGeometry args={[size, size]} />
         {/* DoubleSide because you will orbit past it; depthWrite off so the translucent
             quad does not punch a hole in the model behind it. */}
         <meshBasicMaterial
           color={colour}
           transparent
-          opacity={selected ? 0.16 : 0.09}
+          opacity={quadOpacity}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -85,8 +137,8 @@ export default function SectionPlaneWidget({
 
       {/* A border, so an edge-on plane is still findable and clickable. */}
       <lineSegments>
-        <edgesGeometry args={[new THREE.PlaneGeometry(size, size)]} />
-        <lineBasicMaterial color={colour} transparent opacity={selected ? 0.9 : 0.5} />
+        <edgesGeometry args={[borderGeometry]} />
+        <lineBasicMaterial color={colour} transparent opacity={borderOpacity} />
       </lineSegments>
     </group>
   );
