@@ -343,6 +343,12 @@ export default function PortalPage() {
   const handleSectionToggle = useCallback(() => {
     if (!sectionActive) {
       setSectionActive(true);
+      // Object placement is only ever editable with the tool off (see the mount condition
+      // in ModelViewerInner). Without this, arming Move on the object and then opening the
+      // tool left transformMode stranded non-null with no plane selected yet — the object
+      // gizmo stayed live for the whole session, and the Move button rendered simultaneously
+      // active and disabled.
+      setTransformMode(null);
       return;
     }
     setSectionActive(false);
@@ -357,7 +363,15 @@ export default function PortalPage() {
     // otherwise the gizmo hangs in mid-air over an invisible target. Read the CURRENT
     // visibility to know which way the toggle is going; deciding this inside the updater
     // would mean calling setState from a function React may invoke twice.
-    if (sectionSlots[id].visible && selectedPlane === id) setSelectedPlane(null);
+    if (sectionSlots[id].visible && selectedPlane === id) {
+      setSelectedPlane(null);
+      // Clearing selection alone left transformMode stranded at 'translate' with
+      // selectedPlane null and the tool still open — exactly the condition
+      // ModelViewerInner mounts the OBJECT gizmo on, so it jumped onto the model and a
+      // drag from there rewrote and saved the design's placement, with Move/Rotate
+      // disabled so the user had no UI path to disarm it.
+      setTransformMode(null);
+    }
   }, [sectionSlots, selectedPlane]);
 
   const handlePlaneFlip = useCallback((id: PlaneId) => {
@@ -646,7 +660,16 @@ export default function PortalPage() {
   }, [transformMode]);
 
   useEffect(() => {
-    if (tagging || DRAW_TOOLS.includes(activeTool)) setTransformMode(null);
+    // Clear the plane selection along with the mode: leaving it set stranded a selected
+    // plane with no gizmo on screen — still highlighted, its flip button still showing,
+    // Move/Rotate still enabled — because nothing was driving TransformGizmo anymore. The
+    // other direction (selecting a plane disarms tagging) already goes through
+    // handleSelectPlane; match it here so arming a comment/draw tool fully releases a
+    // plane selection too.
+    if (tagging || DRAW_TOOLS.includes(activeTool)) {
+      setTransformMode(null);
+      setSelectedPlane(null);
+    }
   }, [tagging, activeTool]);
 
   // Discard snapshots and reset transform when the selected file changes

@@ -54,9 +54,13 @@ export interface ModelBounds {
   /**
    * Axis-aligned bounds in the model's own frame, before the placement transform.
    *
-   * The cross-section slider needs this rather than `radius`: driven off the bounding
-   * SPHERE, a slider on a wide flat model — a tabletop, a panel — would spend most of its
-   * travel outside the geometry doing nothing visible.
+   * `defaultPoseFor` needs this rather than `radius` to place each cutting plane at the
+   * model's centre: it averages `box.min`/`box.max` per axis to find that point. A bounding
+   * SPHERE only carries a single centre and radius, and that centre happens to equal the
+   * box's only because `getBoundingSphere` derives it from the same box internally — an
+   * implementation detail of a type meant for framing and sizing, not a guarantee to place
+   * geometry against. Deriving the plane's centre from the box directly keeps it exact
+   * regardless of that detail.
    */
   box: ModelBox;
 }
@@ -576,8 +580,15 @@ export default function ModelViewerInner({
         // localClippingEnabled is what makes per-material clippingPlanes take effect at all;
         // without it the cross-section silently does nothing.
         gl={{ preserveDrawingBuffer: true, localClippingEnabled: true }}
-        onPointerMissed={() => {
+        onPointerMissed={(e) => {
           if (gizmoDraggingRef.current) return;
+          // Nothing selected, nothing to deselect — avoid disarming an unrelated
+          // object-gizmo session (see onSelectPlane in page.tsx).
+          if (selectedPlane === null) return;
+          // R3F fires this for a stationary 'contextmenu' as well as 'click' (both are
+          // click-type DOM events it applies the same delta<=2 check to). Right-click is the
+          // pan gesture, not a deselect gesture, so only a primary-button click should count.
+          if (e.button !== 0) return;
           onSelectPlane?.(null);
         }}
       >
@@ -607,11 +618,23 @@ export default function ModelViewerInner({
             <Center>
               <group
                 ref={modelRef}
-                onClick={() => {
+                onClick={(e) => {
                   // A gizmo drag reaches R3F as a click on nothing in particular — drei's
                   // TransformControls does not stop propagation — so a drag that happens to
                   // finish over the model would otherwise deselect the plane being dragged.
                   if (gizmoDraggingRef.current) return;
+                  // R3F's own delta<=2 drag-vs-click check (see events-*.esm.js) is applied
+                  // ONLY on the onPointerMissed path below; an object's onClick, this one, gets
+                  // no such check and fires on every genuine DOM 'click' — including one a
+                  // left-drag orbit produces, since camera-controls deliberately never calls
+                  // preventDefault() on pointerdown. Without this guard, any orbit that starts
+                  // and ends over the model deselects the plane, which is the primary viewer
+                  // gesture misfiring constantly. `e.delta` is R3F's accumulated pointer-move
+                  // distance for the click; 2 is the same threshold R3F applies itself.
+                  if (e.delta > 2) return;
+                  // Nothing selected, nothing to deselect — avoid disarming an unrelated
+                  // object-gizmo session (see onSelectPlane in page.tsx).
+                  if (selectedPlane === null) return;
                   onSelectPlane?.(null);
                 }}
               >

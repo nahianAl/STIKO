@@ -70,7 +70,12 @@ export default function TransformGizmo({
       ref={controlsRef}
       object={target}
       mode={mode}
-      onObjectChange={() => {
+      // Fires on pointerdown over a handle — i.e. when the drag actually STARTS — unlike
+      // onObjectChange, which fires only once the object has actually moved. A
+      // pointerdown-and-release on a handle with no movement in between (a stationary click)
+      // used to leave the flag false the whole time, so the click that followed deselected
+      // the plane and dismissed the gizmo mid-interaction.
+      onMouseDown={() => {
         if (draggingRef) draggingRef.current = true;
       }}
       // Auto-save on release. drei suspends the default OrbitControls for the duration
