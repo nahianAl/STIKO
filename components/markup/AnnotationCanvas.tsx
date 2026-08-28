@@ -89,6 +89,10 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
   // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
   // is a fresh object every render. Depending on its identity would fire this effect on every
   // render, push state up to the portal page, and re-render forever.
+  //
+  // The same loop exists from the other end: `onSelectionChange` is in this dependency array,
+  // so the caller MUST pass a `useCallback`-stable reference. An inline arrow function there
+  // re-subscribes this effect on every render and reintroduces exactly the same cycle.
   const sel = ann.selectedObject;
   const selType = sel?.type ?? null;
   const selColor = sel?.color ?? null;
@@ -256,9 +260,14 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
       {editingObj && (
         <CanvasTextEditor
           // Keyed by the object so a different text block gets a FRESH editor. The mount
-          // effect that focuses and puts the caret at the end runs once per mount; without
-          // this, an edit that began while another was open would reuse the instance and
-          // open unfocused — which is exactly the re-edit path.
+          // effect that focuses and puts the caret at the end runs once per mount.
+          //
+          // The path this guards is CREATE, not re-edit: clicking to start a new box while an
+          // editor is already open fires the document pointerdown that commits the old one and
+          // the Konva mousedown that creates the new one in the same task, so React 18 batches
+          // them and `editingId` can go straight from one id to another with no null render in
+          // between. (A real double-click re-edit already passes through null, a full event
+          // earlier.) Without the key the instance would be reused and open unfocused.
           key={editingObj.id}
           // The stage is untransformed here, so object space is screen space.
           x={editingObj.x}

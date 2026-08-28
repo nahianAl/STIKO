@@ -98,6 +98,10 @@ function PDFKonvaViewer(
     // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
     // is a fresh object every render. Depending on its identity would fire this effect on every
     // render, push state up to the portal page, and re-render forever.
+    //
+    // The same loop exists from the other end: `onSelectionChange` is in this dependency array,
+    // so the caller MUST pass a `useCallback`-stable reference. An inline arrow function there
+    // re-subscribes this effect on every render and reintroduces exactly the same cycle.
     const sel = ann.selectedObject;
     const selType = sel?.type ?? null;
     const selColor = sel?.color ?? null;
@@ -531,7 +535,10 @@ function PDFKonvaViewer(
 
           {editingObj && (
             <CanvasTextEditor
-              // Keyed by the object — see the note on the same line in AnnotationCanvas.
+              // Keyed by the object — see the note on the same line in AnnotationCanvas. The
+              // exposed path is CREATE, not re-edit: React 18 batches the commit of the open
+              // editor and the creation of the new object into one task, so `editingId` can
+              // jump between ids with no null render in between.
               key={editingObj.id}
               // Page space -> screen space. The Stage carries the zoom and the pan, so the
               // overlay has to apply them by hand to sit on top of the node it stands in for.
