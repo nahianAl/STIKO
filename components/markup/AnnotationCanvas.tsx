@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useImperativeHandle, type Ref } from 'react';
 import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
-import { useAnnotationObjects, type AnnTool } from './useAnnotationObjects';
+import { useAnnotationObjects, type AnnTool, type MarkupSelection } from './useAnnotationObjects';
 import AnnotationObjects from './AnnotationObjects';
 import CanvasTextEditor from './CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
@@ -25,6 +25,8 @@ export interface AnnotationCanvasHandle {
   clear: () => void;
   hasObjects: () => boolean;
   insertImage: (file: File) => void;
+  /** Restyle whatever is selected. A no-op with nothing selected. */
+  applyStyleToSelection: (patch: { color?: string; strokeWidth?: number }) => void;
 }
 
 interface AnnotationCanvasProps {
@@ -34,9 +36,10 @@ interface AnnotationCanvasProps {
   strokeWidth: number;
   handleRef?: Ref<AnnotationCanvasHandle>;
   onObjectCreated?: () => void;
+  onSelectionChange?: (selection: MarkupSelection | null) => void;
 }
 
-export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color, strokeWidth, handleRef, onObjectCreated }: AnnotationCanvasProps) {
+export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color, strokeWidth, handleRef, onObjectCreated, onSelectionChange }: AnnotationCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -82,6 +85,21 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ann.selectedId, ann.deleteObject]);
+
+  // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
+  // is a fresh object every render. Depending on its identity would fire this effect on every
+  // render, push state up to the portal page, and re-render forever.
+  const sel = ann.selectedObject;
+  const selType = sel?.type ?? null;
+  const selColor = sel?.color ?? null;
+  const selStroke = sel?.strokeWidth ?? null;
+  useEffect(() => {
+    onSelectionChange?.(
+      selType !== null && selColor !== null && selStroke !== null
+        ? { type: selType, color: selColor, strokeWidth: selStroke }
+        : null
+    );
+  }, [selType, selColor, selStroke, onSelectionChange]);
 
   // Fit the background image within the stage, centered (letterbox), so the drawn snapshot
   // matches what was on screen. Computed once here (rather than separately in the render body
@@ -145,6 +163,9 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
         im.src = src;
       };
       reader.readAsDataURL(file);
+    },
+    applyStyleToSelection: (patch) => {
+      if (ann.selectedId) ann.applyStyle(ann.selectedId, patch);
     },
   }));
 

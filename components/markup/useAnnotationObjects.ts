@@ -18,6 +18,13 @@ export interface AnnotationObject {
   color: string; strokeWidth: number;
 }
 
+/** What a surface reports upward about its selection, so the toolbar can reflect it. */
+export interface MarkupSelection {
+  type: AnnotationObjectType;
+  color: string;
+  strokeWidth: number;
+}
+
 const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'line', 'arrow', 'rect']);
 
 export function useAnnotationObjects() {

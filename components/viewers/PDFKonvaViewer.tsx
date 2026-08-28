@@ -6,7 +6,7 @@ import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
 import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
-import { useAnnotationObjects, type AnnTool } from '@/components/markup/useAnnotationObjects';
+import { useAnnotationObjects, type AnnTool, type MarkupSelection } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
@@ -24,6 +24,7 @@ export interface PDFKonvaViewerHandle {
   clearDrawings: () => void;
   hasObjects: () => boolean;
   insertImage: (file: File) => void;
+  applyStyleToSelection: (patch: { color?: string; strokeWidth?: number }) => void;
 }
 
 interface PDFKonvaViewerProps {
@@ -43,10 +44,11 @@ interface PDFKonvaViewerProps {
   // Id of the not-yet-posted tag being placed, rendered as a distinct preview pin
   pendingCommentId?: string | null;
   onObjectCreated?: () => void;
+  onSelectionChange?: (selection: MarkupSelection | null) => void;
 }
 
 function PDFKonvaViewer(
-    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated }: PDFKonvaViewerProps
+    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -93,6 +95,21 @@ function PDFKonvaViewer(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [annotating, ann.selectedId, ann.deleteObject]);
 
+    // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
+    // is a fresh object every render. Depending on its identity would fire this effect on every
+    // render, push state up to the portal page, and re-render forever.
+    const sel = ann.selectedObject;
+    const selType = sel?.type ?? null;
+    const selColor = sel?.color ?? null;
+    const selStroke = sel?.strokeWidth ?? null;
+    useEffect(() => {
+      onSelectionChange?.(
+        selType !== null && selColor !== null && selStroke !== null
+          ? { type: selType, color: selColor, strokeWidth: selStroke }
+          : null
+      );
+    }, [selType, selColor, selStroke, onSelectionChange]);
+
     // Ref handle (attached to the `handleRef` prop, not React `ref` — see note on props)
     useImperativeHandle(handleRef, () => ({
       captureSnapshot: () => {
@@ -127,6 +144,9 @@ function PDFKonvaViewer(
           im.src = src;
         };
         reader.readAsDataURL(file);
+      },
+      applyStyleToSelection: (patch) => {
+        if (ann.selectedId) ann.applyStyle(ann.selectedId, patch);
       },
     }));
 
