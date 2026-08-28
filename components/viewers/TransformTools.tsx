@@ -12,8 +12,11 @@ export type TransformMode = 'translate' | 'rotate' | null;
  * renders them owns the spacing so they sit at the same interval as the cross-section button
  * beside them.
  *
- * The caller decides whether these may be shown at all — they render only for a 3D file and a
- * role that may transform. Nothing here re-checks that; the server is the authority.
+ * The caller decides whether these may be shown at all — they render for a 3D file when the
+ * role may transform the object OR the cross-section tool is open (a plane's pose is
+ * session-only, so positioning one is available to everyone). Nothing here re-checks that, and
+ * nothing here decides which target — object or plane — a drag actually moves; the server
+ * remains the authority on what gets persisted.
  */
 export default function TransformTools({
   mode,

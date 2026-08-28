@@ -220,7 +220,9 @@ export default function PortalPage() {
   // 3D comment pin state
   const [worldPinPositions, setWorldPinPositions] = useState<Map<string, PinScreenPosition>>(new Map());
 
-  // null hides the gizmo. Only ever set for a role that may transform.
+  // null hides the gizmo. Set by any role via handleSelectPlane (arms Move on a plane) or by
+  // TransformTools (arms Move/Rotate on whichever target is live — see the prop comment at the
+  // ViewerContainer call site for how that target is decided and gated).
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | null>(null);
 
   // Session only: a lens is how you happen to be looking at something, not a property of
@@ -924,12 +926,22 @@ export default function PortalPage() {
             onPinPositionsUpdate={handlePinPositionsUpdate}
             onTransformChange={handleTransformChange}
             transform={selectedFile.transform}
-            transformMode={canTransform ? transformMode : null}
+            transformMode={canTransform || selectedPlane !== null ? transformMode : null}
             focalLength={focalLength}
             sectionSlots={sectionSlots}
             selectedPlane={selectedPlane}
             onSelectPlane={handleSelectPlane}
-            onTransformCommit={handleTransformCommit}
+            // Structural guarantee, not a tidy-up: ModelViewerInner's OBJECT-gizmo branch
+            // mounts on `transformMode && onTransformCommit && ... && selectedPlane === null`
+            // (its plane-gizmo branch carries no onCommit at all). Withholding this prop
+            // whenever the user may not transform means that branch cannot mount for them no
+            // matter what transformMode or selectedPlane happen to be — a non-null
+            // transformMode arriving here for a selected plane can never accidentally also
+            // satisfy the object branch's condition, because the callback it requires simply
+            // isn't there. Do not widen this to `canTransform ? handleTransformCommit :
+            // undefined` being the only gate elsewhere; this is the one place the invariant is
+            // enforced structurally rather than by every caller happening to agree.
+            onTransformCommit={canTransform ? handleTransformCommit : undefined}
             activeTool={activeTool}
             tagging={tagging}
             // ViewerContainer only forwards this to PDFKonvaViewer (a no-op for every
@@ -1042,15 +1054,20 @@ export default function PortalPage() {
             {/* Planes panel, cross-section, move, rotate — one row of chips at even spacing,
                 the panel inline immediately left of the button that opens it.
 
-                Cross-section is a way of LOOKING at the model so everyone gets it; move and
-                rotate change the design itself, so only a role that may transform sees them.
-                That is why the permission gate is on the two buttons rather than the row:
-                without a permission a viewer still gets the cross-section, alone.
+                Cross-section is a way of LOOKING at the model, so everyone gets it — and a
+                plane's pose is exactly that too: session-only, never persisted, discarded the
+                moment the tool closes. So Move/Rotate render for anyone who may transform the
+                object OR who currently has the cross-section tool open, whether or not they
+                may transform. That is deliberately not "OR has a plane selected" — with the
+                tool open and nothing selected yet, the buttons must still be visible (disabled,
+                below) so the user has an affordance to select a plane in the first place.
 
-                While the tool is open, Move and Rotate belong to planes and never to the
-                object — the object's saved placement is editable only with the tool off. With
-                nothing selected there is nothing for them to act on, so they are disabled and
-                say why. */}
+                The MODEL's own saved placement is a different thing and stays gated on
+                canTransform alone — see ModelViewerInner's object-gizmo branch, which only
+                mounts when onTransformCommit is passed, and that prop is only ever passed to
+                the viewer when canTransform is true (see the ViewerContainer call below). A
+                user without the permission can select and drag a plane here, but the object
+                itself remains structurally unreachable through this row. */}
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <div className="absolute bottom-3 right-3 z-20 flex items-end gap-2">
                 {sectionActive && (
@@ -1062,7 +1079,7 @@ export default function PortalPage() {
                   />
                 )}
                 <CrossSectionControl active={sectionActive} onToggle={handleSectionToggle} />
-                {canTransform && (
+                {(canTransform || sectionActive) && (
                   <TransformTools
                     mode={transformMode}
                     onModeChange={setTransformMode}
