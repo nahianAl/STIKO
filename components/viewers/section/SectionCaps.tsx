@@ -56,7 +56,12 @@ export default function SectionCaps({
   const key = ids.join(',');
 
   const group = useRef<THREE.Group>(null);
-  const caps = useRef<THREE.Mesh[]>([]);
+  // Nullable so the callback ref below can clear a slot on unmount instead of leaving a
+  // detached THREE.Mesh pinned in the array for the component's remaining lifetime.
+  const caps = useRef<(THREE.Mesh | null)[]>([]);
+  // Identity of the `planesRef.current` array last bound onto the caps' `clippingPlanes`, so
+  // the frame loop below can rebind only when that identity changes instead of every frame.
+  const boundPlanes = useRef<THREE.Plane[] | null>(null);
 
   // Rebuilt only when the set of cutting planes changes — the stencil groups mirror the
   // model's geometry and are expensive to assemble.
@@ -74,12 +79,34 @@ export default function SectionCaps({
     // wherever the plane is outside the solid.
     ids.forEach((id, i) => {
       const stencil = stencilGroups[i];
+      // `planesRef.current[i]` is only populated once ApplyCrossSection's own passive effect
+      // has run — it, not this component, owns the write. That effect commits before this one
+      // solely because ApplyCrossSection is mounted as the earlier sibling in
+      // ModelViewerInner.tsx (`section-${url}` above `caps-${url}`) and React flushes passive
+      // effects in tree order. Reorder those two, or interpose anything that defers that write,
+      // and every iteration below bails: no stencil proxies get built, the caps test against an
+      // all-zero stencil, and they render invisible — permanently, since this effect's deps
+      // give it no reason to retry. Nothing logs and nothing throws. See the `section-`/
+      // `measure-` key comment at the ApplyCrossSection mount site for the sibling case this
+      // mirrors.
       const plane = planesRef.current[i];
       if (!plane) return;
 
       model.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh || !mesh.geometry) return;
+        // SkinnedMesh and InstancedMesh both report isMesh === true, but the plain THREE.Mesh
+        // proxy built below cannot stand in for either: it has no skeleton to pose, so a
+        // SkinnedMesh posed away from bind pose would contribute its unskinned geometry, and it
+        // has no per-instance transforms, so an InstancedMesh would contribute one instance at
+        // the base transform instead of N. Either way the stencil mask would land somewhere the
+        // visible geometry isn't, and a cap would fill a region where there is nothing. Skip
+        // them so the failure mode is "no cap contribution from this mesh", not "a cap in the
+        // wrong place". This is not a live bug in the current pipeline — optimizeGlb.ts refuses
+        // documents requiring EXT_mesh_gpu_instancing and its fallback path uploads the
+        // original, so nothing produced today reaches here — it defends against an upload the
+        // pipeline happens to let through.
+        if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh) return;
 
         for (const side of [THREE.BackSide, THREE.FrontSide] as const) {
           const material = new THREE.MeshBasicMaterial();
@@ -97,7 +124,9 @@ export default function SectionCaps({
           const proxy = new THREE.Mesh(mesh.geometry, material);
           proxy.matrixAutoUpdate = false;
           proxy.userData.sourceMesh = mesh;
-          proxy.userData.excludeFromSnapshot = false;
+          // Deliberately NOT excludeFromSnapshot: cut faces are part of the design being
+          // reviewed, unlike the plane widgets and gizmo handles, so the annotation-snapshot
+          // path (which tests `excludeFromSnapshot && visible`) should keep them in frame.
           proxy.renderOrder = i * 2 + 1;
           stencil.add(proxy);
         }
@@ -146,9 +175,30 @@ export default function SectionCaps({
 
   useFrame(() => {
     if (!CAPS_ENABLED) return;
+
+    // lib/threeMaterials.ts's setClippingPlanes doc states the rule: pass the SAME array
+    // instance across frames and mutate the planes it holds, because changing the NUMBER of
+    // clipping planes on a material recompiles its shader. ApplyCrossSection honours that —
+    // it allocates a new THREE.Plane[] only when the SET of cutting planes changes and mutates
+    // the same instances in place otherwise — so that array's identity is the reliable signal
+    // for "the plane set changed" here too. Comparing lengths is not enough: {1,2} -> {1,3}
+    // keeps the length but replaces the Plane instances, and every cap would stay clipped by a
+    // stale object. Rebind only when the identity differs, not every frame.
+    const planes = planesRef.current;
+    if (planes !== boundPlanes.current) {
+      boundPlanes.current = planes;
+      for (let i = 0; i < ids.length; i++) {
+        const cap = caps.current[i];
+        if (cap) {
+          // Every plane except this one, so a cap stops at a neighbouring cut.
+          (cap.material as THREE.Material).clippingPlanes = planes.filter((_, j) => j !== i);
+        }
+      }
+    }
+
     // Keep each stencil proxy on its source mesh, and each cap quad on its plane. Done per
-    // frame for the same reason the clipping planes are: a gizmo drag does not go through
-    // React.
+    // frame for the same reason the clipping planes are tracked live: a gizmo drag does not go
+    // through React.
     for (let i = 0; i < ids.length; i++) {
       const stencil = stencilGroups[i];
       for (const child of stencil.children) {
@@ -162,8 +212,6 @@ export default function SectionCaps({
       if (cap && object) {
         cap.position.setFromMatrixPosition(object.matrixWorld);
         cap.quaternion.setFromRotationMatrix(object.matrixWorld);
-        // Every plane except this one, so a cap stops at a neighbouring cut.
-        (cap.material as THREE.Material).clippingPlanes = planesRef.current.filter((_, j) => j !== i);
       }
     }
   });
@@ -175,7 +223,7 @@ export default function SectionCaps({
       {ids.map((id, i) => (
         <mesh
           key={`cap-${id}`}
-          ref={(mesh) => { if (mesh) caps.current[i] = mesh; }}
+          ref={(mesh) => { caps.current[i] = mesh; }}
           renderOrder={i * 2 + 2}
           material={capMaterials[i]}
           // The stencil buffer is per-frame shared state: leave it dirty and the next cap
