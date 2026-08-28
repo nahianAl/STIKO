@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { cuttingPlaneIds, type PlaneId, type SectionSlots } from '@/lib/crossSection';
@@ -35,8 +35,25 @@ const CAP_COLOUR = '#C6CDE8'; // stiko-dashed — a light neutral that reads as 
  * false above and nothing else changes.
  *
  * COST. Two extra draw calls per mesh per plane, so 6N for three planes over N meshes. GLB
- * import already merges draw calls, which keeps N low for the common case.
+ * import already merges draw calls, which keeps N low for the common case — but STEP, OBJ, DAE
+ * and 3DS all load UNMERGED. lib/STEPLoader.ts in particular emits one mesh, with its own
+ * material, per OCCT solid, so a several-hundred-mesh STEP assembly can mean thousands of
+ * extra meshes and materials built synchronously in the effect below, and thousands of extra
+ * draw calls per frame in the useFrame below that. See MESH_CAP_CEILING for the mitigation.
  */
+
+/**
+ * Ceiling on the model's mesh count above which this component builds no caps at all.
+ *
+ * Every mesh under the model costs two proxy meshes and two materials PER cutting plane (see
+ * the COST note above) — three planes at this ceiling is already 3 * 2 * 150 = 900 extra draw
+ * calls, on top of whatever the model itself costs, built in one blocking effect. 150 is a
+ * GUESS standing in for a measurement nobody has taken yet (this viewer's frame rate under a
+ * heavy STEP assembly with caps on has never been profiled), not a threshold derived from one —
+ * treat it as a placeholder to revisit once someone does.
+ */
+const MESH_CAP_CEILING = 150;
+
 export default function SectionCaps({
   slots,
   modelRef,
@@ -70,6 +87,11 @@ export default function SectionCaps({
   // Identity of the `planesRef.current` array last bound onto the caps' `clippingPlanes`, so
   // the frame loop below can rebind only when that identity changes instead of every frame.
   const boundPlanes = useRef<THREE.Plane[] | null>(null);
+  // Set by the build effect below once it has counted the model's meshes, so the render at the
+  // bottom can bail out exactly like CAPS_ENABLED false — no group, no cap quads, nothing added
+  // to the scene graph — rather than rendering inert cap meshes that a lingering CSS-like
+  // "it's there but does nothing" state would leave behind.
+  const [exceedsCeiling, setExceedsCeiling] = useState(false);
 
   // Rebuilt only when the set of cutting planes changes — the stencil groups mirror the
   // model's geometry and are expensive to assemble.
@@ -81,6 +103,36 @@ export default function SectionCaps({
     const model = modelRef.current;
     const root = group.current;
     if (!model || !root) return;
+
+    // Counted once here, when the caps for this plane set are (re)built — never per frame.
+    // Same filter as the proxy loop below: a SkinnedMesh or InstancedMesh contributes no
+    // proxy there, so it costs nothing and should not count against the ceiling either.
+    let meshCount = 0;
+    model.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry) return;
+      if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh) return;
+      meshCount++;
+    });
+
+    if (meshCount > MESH_CAP_CEILING) {
+      // The only place this decision is made, so it is the only place it can be logged —
+      // once per build, not per frame. Without this, a hollow section on a heavy STEP
+      // assembly looks like a silent rendering bug rather than the ceiling doing its job.
+      console.warn(
+        `SectionCaps: skipping stencil caps — model has ${meshCount} meshes, over the ` +
+          `${MESH_CAP_CEILING}-mesh ceiling (see the MESH_CAP_CEILING comment). Cuts will ` +
+          'render hollow instead of solid-faced.'
+      );
+      setExceedsCeiling(true);
+      // No partial set: nothing below runs, so no stencil group is populated and no material
+      // is created for this build. This effect returns no cleanup on this path, but none is
+      // owed — React already ran the PREVIOUS build's cleanup (which emptied
+      // proxyMaterials.current and detached the stencil groups) before invoking this run, as
+      // it does on every dependency change.
+      return;
+    }
+    setExceedsCeiling(false);
 
     // Built up alongside the proxies below and only swapped into the ref once the whole set
     // has been constructed, so a bail-out mid-build (see the `if (!plane) return` below)
@@ -190,7 +242,11 @@ export default function SectionCaps({
   useEffect(() => () => { for (const m of capMaterials) m.dispose(); }, [capMaterials]);
 
   useFrame(() => {
-    if (!CAPS_ENABLED) return;
+    // exceedsCeiling: no proxies were built and no cap meshes are mounted (see the render
+    // below), so there is nothing here to rebind or reposition. Cheap either way — the loops
+    // below would just iterate over empty stencil groups and null refs — but skip it anyway
+    // for the same reason CAPS_ENABLED does: state, not luck.
+    if (!CAPS_ENABLED || exceedsCeiling) return;
 
     // lib/threeMaterials.ts's setClippingPlanes doc states the rule: pass the SAME array
     // instance across frames and mutate the planes it holds, because changing the NUMBER of
@@ -232,7 +288,10 @@ export default function SectionCaps({
     }
   });
 
-  if (!CAPS_ENABLED || ids.length === 0) return null;
+  // exceedsCeiling bails out exactly like CAPS_ENABLED false: no <group>, no cap <mesh>
+  // elements, nothing in the scene graph — not inert cap quads left mounted with nothing
+  // behind them, which would be a second, subtler way to end up with a "partial" result.
+  if (!CAPS_ENABLED || ids.length === 0 || exceedsCeiling) return null;
 
   return (
     <group ref={group}>
