@@ -21,6 +21,7 @@ import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import type { Comment, FileRecord } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { DEFAULT_CROSS_SECTION, type CrossSection } from '@/lib/crossSection';
+import { CANVAS_MATTE } from '@/lib/markup/matte';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -127,7 +128,7 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
     offscreen.height = containerRect.height;
     const ctx = offscreen.getContext('2d');
     if (ctx) {
-      ctx.fillStyle = '#000';
+      ctx.fillStyle = CANVAS_MATTE;
       ctx.fillRect(0, 0, offscreen.width, offscreen.height);
       ctx.drawImage(
         video,

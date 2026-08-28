@@ -111,6 +111,17 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
             // The same number the editor wrapped at, so committing does not reflow the text.
             width={obj.width > 0 ? obj.width : undefined}
             wrap="word"
+            // Konva's default Text hit area is getWidth() x getHeight(), and getWidth() returns
+            // the explicit `width` attr — which we must set for wrap parity with the editor. That
+            // would give a two-character label a hit box hundreds of px wide, swallowing clicks
+            // meant for whatever is beneath it. Hit-test the glyphs instead.
+            hitFunc={(ctx, shape) => {
+              const t = shape as Konva.Text;
+              ctx.beginPath();
+              ctx.rect(0, 0, t.getTextWidth(), t.height());
+              ctx.closePath();
+              ctx.fillStrokeShape(t);
+            }}
             visible={editingId !== obj.id}
             onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
               if (isDraft || activeTool !== 'pointer' || !onEditText) return;

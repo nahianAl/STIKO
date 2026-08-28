@@ -266,13 +266,15 @@ function PDFKonvaViewer(
       if (!annotating) return; // live view: pointer pans (handled by Stage draggable)
 
       if (activeTool === 'text') {
-        const id = ann.addText(coords, {
+        const wrapWidth = wrapWidthForContent(pageSize.width);
+        const x = Math.max(0, Math.min(coords.x, pageSize.width - wrapWidth));
+        const id = ann.addText({ x, y: coords.y }, {
           text: '',
           color,
           fontSize: fontSizeForStrokeWidth(strokeWidth),
           // The page's own width, not the stage's: the stage width changes with the zoom, and a
           // zoom-dependent wrap would reflow committed text on every scroll.
-          width: wrapWidthForContent(pageSize.width),
+          width: wrapWidth,
         });
         setEditingId(id);
         onObjectCreated?.();

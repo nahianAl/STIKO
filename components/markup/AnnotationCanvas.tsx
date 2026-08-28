@@ -179,13 +179,19 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     const p = stage.getPointerPosition();
     if (!p) return;
     if (activeTool === 'text') {
-      const id = ann.addText(p, {
+      const wrapWidth = wrapWidthForContent(bgFit ? bgFit.width : size.width);
+      // Keep the whole box on the surface. Clamp against the fitted background when there is
+      // one — a native-resolution capture crops to exactly that region, so a box outside it
+      // would be cropped away entirely.
+      const bounds = bgFit ?? { x: 0, y: 0, width: size.width, height: size.height };
+      const x = Math.max(bounds.x, Math.min(p.x, bounds.x + bounds.width - wrapWidth));
+      const id = ann.addText({ x, y: p.y }, {
         text: '',
         color,
         fontSize: fontSizeForStrokeWidth(strokeWidth),
         // The fitted background region, not the stage: the wrap width must not depend on how
         // much matte happens to surround the snapshot.
-        width: wrapWidthForContent(bgFit ? bgFit.width : size.width),
+        width: wrapWidth,
       });
       setEditingId(id);
       // Return to the pointer immediately. Otherwise the click that commits this box would also

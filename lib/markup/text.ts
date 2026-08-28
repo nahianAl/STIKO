@@ -28,7 +28,7 @@ const WRAP_FRACTION = 0.4;
 /**
  * Index of the entry in `ladder` nearest to `value`.
  *
- * Ties resolve to the earlier (smaller) entry, because `>` rather than `>=` means a later
+ * Ties resolve to the earlier (smaller) entry, because `<` rather than `<=` means a later
  * entry has to be strictly closer to win. That determinism matters: `strokeWidthForFontSize`
  * is fed continuous sizes from a manual resize, and a toolbar chip that flickered between two
  * presets for the same object would look like a bug.
