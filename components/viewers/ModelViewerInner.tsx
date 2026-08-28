@@ -576,6 +576,10 @@ export default function ModelViewerInner({
         // localClippingEnabled is what makes per-material clippingPlanes take effect at all;
         // without it the cross-section silently does nothing.
         gl={{ preserveDrawingBuffer: true, localClippingEnabled: true }}
+        onPointerMissed={() => {
+          if (gizmoDraggingRef.current) return;
+          onSelectPlane?.(null);
+        }}
       >
         <Suspense
           fallback={
@@ -601,7 +605,16 @@ export default function ModelViewerInner({
                 model, so moving the model would displace every pin saved before this
                 change. The ground stack is offset down to the model's base instead. */}
             <Center>
-              <group ref={modelRef}>
+              <group
+                ref={modelRef}
+                onClick={() => {
+                  // A gizmo drag reaches R3F as a click on nothing in particular — drei's
+                  // TransformControls does not stop propagation — so a drag that happens to
+                  // finish over the model would otherwise deselect the plane being dragged.
+                  if (gizmoDraggingRef.current) return;
+                  onSelectPlane?.(null);
+                }}
+              >
                 <Model url={url} />
               </group>
             </Center>

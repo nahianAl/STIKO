@@ -14,13 +14,14 @@ import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
 import CrossSectionControl from '@/components/viewers/CrossSectionControl';
+import PlanesPanel from '@/components/viewers/section/PlanesPanel';
 import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import type { Comment, FileRecord } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
-import { DEFAULT_CROSS_SECTION, type CrossSection } from '@/lib/crossSection';
+import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
@@ -227,10 +228,13 @@ export default function PortalPage() {
   const [focalLength, setFocalLength] = useState(DEFAULT_FOCAL_LENGTH);
 
   // Session only, like the focal length: a cut is a way of looking at the model, not a
-  // property of the design. Null means not sectioned; the last cut is remembered in
-  // `lastSection` so toggling the tool off and on does not throw away your position.
-  const [crossSection, setCrossSection] = useState<CrossSection | null>(null);
-  const lastSection = useRef<CrossSection>(DEFAULT_CROSS_SECTION);
+  // property of the design. Nothing here is persisted, and nothing survives a file change.
+  //
+  // Only the FLAGS live here. Each plane's position and rotation live on its Object3D inside
+  // the canvas and are never read back — see lib/crossSection for why.
+  const [sectionActive, setSectionActive] = useState(false);
+  const [sectionSlots, setSectionSlots] = useState<SectionSlots>(emptySlots);
+  const [selectedPlane, setSelectedPlane] = useState<PlaneId | null>(null);
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
@@ -334,9 +338,37 @@ export default function PortalPage() {
     setWorldPinPositions(positions);
   }, []);
 
-  const handleCrossSectionChange = useCallback((next: CrossSection | null) => {
-    if (next) lastSection.current = next;
-    setCrossSection(next);
+  // The master toggle is the only control that removes a cut: switching the tool off clears
+  // every slot, so `cutting` goes false everywhere and the model returns to its whole shape.
+  const handleSectionToggle = useCallback(() => {
+    if (!sectionActive) {
+      setSectionActive(true);
+      return;
+    }
+    setSectionActive(false);
+    setSectionSlots(emptySlots());
+    setSelectedPlane(null);
+    setTransformMode(null);
+  }, [sectionActive]);
+
+  const handlePlaneToggle = useCallback((id: PlaneId) => {
+    setSectionSlots((slots) => togglePlane(slots, id));
+    // A hidden plane cannot be dragged, so hiding the selected one has to release it —
+    // otherwise the gizmo hangs in mid-air over an invisible target. Read the CURRENT
+    // visibility to know which way the toggle is going; deciding this inside the updater
+    // would mean calling setState from a function React may invoke twice.
+    if (sectionSlots[id].visible && selectedPlane === id) setSelectedPlane(null);
+  }, [sectionSlots, selectedPlane]);
+
+  const handlePlaneFlip = useCallback((id: PlaneId) => {
+    setSectionSlots((slots) => setPlaneFlipped(slots, id, !slots[id].flipped));
+  }, []);
+
+  // Clicking a plane arms Move on it, per the tool's design: selection and the move gizmo are
+  // one gesture. Switching to Rotate afterwards keeps the same plane.
+  const handleSelectPlane = useCallback((id: PlaneId | null) => {
+    setSelectedPlane(id);
+    setTransformMode(id === null ? null : 'translate');
   }, []);
 
   // Content transform for markups to follow image zoom/pan
@@ -631,8 +663,9 @@ export default function PortalPage() {
     setTagging(false);
     setTransformMode(null);
     setFocalLength(DEFAULT_FOCAL_LENGTH);
-    setCrossSection(null);
-    lastSection.current = DEFAULT_CROSS_SECTION;
+    setSectionActive(false);
+    setSectionSlots(emptySlots());
+    setSelectedPlane(null);
   }, [selectedFileId]);
 
   const handleSelectVersion = (versionId: string) => {
@@ -862,7 +895,9 @@ export default function PortalPage() {
             transform={selectedFile.transform}
             transformMode={canTransform ? transformMode : null}
             focalLength={focalLength}
-            crossSection={crossSection}
+            sectionSlots={sectionSlots}
+            selectedPlane={selectedPlane}
+            onSelectPlane={handleSelectPlane}
             onTransformCommit={handleTransformCommit}
             activeTool={activeTool}
             tagging={tagging}
@@ -973,20 +1008,36 @@ export default function PortalPage() {
               </div>
             )}
 
-            {/* Cross-section, move, rotate — separate chips at even spacing. Cross-section is
-                a way of LOOKING at the model so everyone gets it; move and rotate change the
-                design itself, so only a role that may transform sees them. That is why the
-                permission gate is on the two buttons rather than the row: without a permission
-                a viewer still gets the cross-section, alone. */}
+            {/* Planes panel, cross-section, move, rotate — one row of chips at even spacing,
+                the panel inline immediately left of the button that opens it.
+
+                Cross-section is a way of LOOKING at the model so everyone gets it; move and
+                rotate change the design itself, so only a role that may transform sees them.
+                That is why the permission gate is on the two buttons rather than the row:
+                without a permission a viewer still gets the cross-section, alone.
+
+                While the tool is open, Move and Rotate belong to planes and never to the
+                object — the object's saved placement is editable only with the tool off. With
+                nothing selected there is nothing for them to act on, so they are disabled and
+                say why. */}
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <div className="absolute bottom-3 right-3 z-20 flex items-end gap-2">
-                <CrossSectionControl
-                  section={crossSection}
-                  lastSection={lastSection.current}
-                  onChange={handleCrossSectionChange}
-                />
+                {sectionActive && (
+                  <PlanesPanel
+                    slots={sectionSlots}
+                    selected={selectedPlane}
+                    onToggle={handlePlaneToggle}
+                    onFlip={handlePlaneFlip}
+                  />
+                )}
+                <CrossSectionControl active={sectionActive} onToggle={handleSectionToggle} />
                 {canTransform && (
-                  <TransformTools mode={transformMode} onModeChange={setTransformMode} />
+                  <TransformTools
+                    mode={transformMode}
+                    onModeChange={setTransformMode}
+                    disabled={sectionActive && selectedPlane === null}
+                    disabledReason="Select a plane"
+                  />
                 )}
               </div>
             )}
