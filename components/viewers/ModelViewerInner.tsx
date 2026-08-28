@@ -510,6 +510,9 @@ export default function ModelViewerInner({
     if (object) planeObjects.current.set(id, object);
     else planeObjects.current.delete(id);
   }, []);
+  // Set for the duration of a gizmo drag, on either target. See TransformGizmo's doc comment
+  // for why this exists.
+  const gizmoDraggingRef = useRef(false);
   // The measurement is stored WITH the url it was taken from, and `bounds` is derived by
   // matching that url against the current one. Nothing clears it. Everything below that sizes
   // itself off `bounds` — the framing, the dolly range, the ground and axes, the cross-section
@@ -684,11 +687,25 @@ export default function ModelViewerInner({
           smoothTime={0.15}
           draggingSmoothTime={0.08}
         />
-        {transformMode && onTransformCommit && bounds && (
+        {/* Two mutually exclusive targets. With a plane selected the gizmo drives that plane
+            and commits nothing — a plane's pose is session-only. Otherwise it drives the
+            model's placement, which is persisted. The page guarantees a plane can only be
+            selected while the cross-section tool is open, which is when object placement is
+            deliberately unavailable. */}
+        {transformMode && bounds && selectedPlane !== null && planeObjects.current.get(selectedPlane) && (
           <TransformGizmo
-            targetRef={transformRef}
+            key={`plane-gizmo-${selectedPlane}`}
+            target={planeObjects.current.get(selectedPlane)!}
+            mode={transformMode}
+            draggingRef={gizmoDraggingRef}
+          />
+        )}
+        {transformMode && onTransformCommit && bounds && selectedPlane === null && transformRef.current && (
+          <TransformGizmo
+            target={transformRef.current}
             mode={transformMode}
             onCommit={onTransformCommit}
+            draggingRef={gizmoDraggingRef}
           />
         )}
         <ViewGizmo />

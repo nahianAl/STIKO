@@ -18,9 +18,14 @@ export type TransformMode = 'translate' | 'rotate' | null;
 export default function TransformTools({
   mode,
   onModeChange,
+  disabled = false,
+  disabledReason,
 }: {
   mode: TransformMode;
   onModeChange: (mode: TransformMode) => void;
+  /** True while the cross-section tool is open with no plane selected — nothing to move. */
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   // Clicking the active tool turns it off, so neither is a trap with no way back to plain
   // orbiting.
@@ -32,6 +37,8 @@ export default function TransformTools({
       <ViewportToolButton
         label="Move"
         active={mode === 'translate'}
+        disabled={disabled}
+        title={disabledReason}
         onClick={() => toggle('translate')}
       >
         {MoveIcon}
@@ -40,6 +47,8 @@ export default function TransformTools({
       <ViewportToolButton
         label="Rotate"
         active={mode === 'rotate'}
+        disabled={disabled}
+        title={disabledReason}
         onClick={() => toggle('rotate')}
       >
         {RotateIcon}
