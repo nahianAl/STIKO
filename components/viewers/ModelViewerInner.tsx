@@ -11,13 +11,13 @@ import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
-import { makeDoubleSided, setClippingPlanes } from '@/lib/threeMaterials';
+import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
-import { planeForSection, type CrossSection, type ModelBox } from '@/lib/crossSection';
+import { cuttingPlaneIds, defaultPoseFor, emptySlots, isClipped, type ModelBox, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { boundsForUrl, type MeasuredModel } from '@/lib/modelMeasurement';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
@@ -25,6 +25,8 @@ import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
 import SceneLighting from './SceneLighting';
 import ViewerNavigation from './ViewerNavigation';
+import ApplyCrossSection from './section/ApplyCrossSection';
+import SectionPlaneWidget from './section/SectionPlaneWidget';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import type CameraControlsImpl from 'camera-controls';
@@ -84,8 +86,11 @@ export interface ModelViewerInnerProps {
   onTransformCommit?: (transform: ObjectTransform) => void;
   /** Camera focal length in millimetres. Drives the field of view. */
   focalLength?: number;
-  /** Null when the model is not sectioned. */
-  crossSection?: CrossSection | null;
+  /** Per-slot cross-section flags. Every slot idle means the model is not sectioned. */
+  sectionSlots?: SectionSlots;
+  /** Which plane the Move/Rotate gizmo targets, or null for none. */
+  selectedPlane?: PlaneId | null;
+  onSelectPlane?: (id: PlaneId | null) => void;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -190,7 +195,7 @@ function SceneInteraction({
   onPinPositionsUpdate,
   modelRef,
   transform,
-  clipPlaneRef,
+  clipPlanesRef,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
@@ -198,7 +203,7 @@ function SceneInteraction({
   onPinPositionsUpdate?: ModelViewerInnerProps['onPinPositionsUpdate'];
   modelRef: React.RefObject<THREE.Object3D>;
   transform: ObjectTransform;
-  clipPlaneRef: React.MutableRefObject<THREE.Plane | null>;
+  clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
 }) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -234,8 +239,9 @@ function SceneInteraction({
         // hittable. Without this, clicking into an opened cavity drops the pin on the
         // invisible near half — and it then appears to float in space once the section is
         // cleared. distanceToPoint is negative on the side three clips away.
-        const clip = clipPlaneRef.current;
-        if (clip && clip.distanceToPoint(hit.point) < 0) continue;
+        // Several planes clip by intersection, so a hit survives only if it is on the kept
+        // side of all of them.
+        if (isClipped(clipPlanesRef.current, hit.point)) continue;
 
         const point = hit.point;
         const projected = point.clone().project(camera);
@@ -249,7 +255,7 @@ function SceneInteraction({
         break;
       }
     },
-    [commentToolActive, onSceneClick, camera, gl, modelRef, transform, clipPlaneRef]
+    [commentToolActive, onSceneClick, camera, gl, modelRef, transform, clipPlanesRef]
   );
 
   useEffect(() => {
@@ -402,60 +408,6 @@ function ApplyFocalLength({ focalLength }: { focalLength: number }) {
 }
 
 /**
- * Clips the model to a single plane.
- *
- * The plane is built in the model's own frame and pushed into world space every frame, not
- * on prop change: TransformControls mutates the target group directly while dragging without
- * going through React props, so a change-driven sync would leave the cut lagging behind the
- * object mid-drag.
- */
-function ApplyCrossSection({
-  section,
-  box,
-  modelRef,
-  transformRef,
-  planeRef,
-}: {
-  section: CrossSection | null;
-  box: ModelBox;
-  modelRef: React.RefObject<THREE.Object3D>;
-  transformRef: React.RefObject<THREE.Object3D>;
-  planeRef: React.MutableRefObject<THREE.Plane | null>;
-}) {
-  // One plane instance, mutated in place, in an array whose identity never changes — see
-  // setClippingPlanes on why the array must not be rebuilt per frame.
-  const planes = useRef<THREE.Plane[]>([new THREE.Plane()]);
-  const enabled = section !== null;
-
-  useEffect(() => {
-    const model = modelRef.current;
-    if (!model) return;
-
-    setClippingPlanes(model, enabled ? planes.current : null);
-    planeRef.current = enabled ? planes.current[0] : null;
-
-    // useLoader caches loader results, so glTF/OBJ materials are shared and outlive this
-    // viewer. STL and PLY are worse: they render with DEFAULT_MATERIAL / VERTEX_COLOR_MATERIAL
-    // above, module-level singletons shared by every STL/PLY opened in the session and never
-    // disposed — so a missed cleanup here does not just linger in this file, it clips every
-    // STL/PLY opened afterwards too, with no control on screen to explain it and no way back
-    // short of a reload.
-    return () => {
-      setClippingPlanes(model, null);
-      planeRef.current = null;
-    };
-  }, [enabled, modelRef, planeRef]);
-
-  useFrame(() => {
-    const frame = transformRef.current;
-    if (!section || !frame) return;
-    planes.current[0].copy(planeForSection(section, box)).applyMatrix4(frame.matrixWorld);
-  });
-
-  return null;
-}
-
-/**
  * Frames the camera on the measured model and sizes the clipping planes to it.
  *
  * Deliberately does NOT re-run on viewport resize — refitting there would throw away the
@@ -533,18 +485,31 @@ export default function ModelViewerInner({
   transformMode,
   onTransformCommit,
   focalLength = DEFAULT_FOCAL_LENGTH,
-  crossSection = null,
+  sectionSlots,
+  selectedPlane = null,
+  onSelectPlane,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
   const safeTransform = isValidTransform(transform) ? transform : IDENTITY_TRANSFORM;
+  // A stable idle default, so a caller that omits the prop does not hand a fresh object to
+  // ApplyCrossSection on every render.
+  const idleSlots = useMemo(() => emptySlots(), []);
+  const slots = sectionSlots ?? idleSlots;
 
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
   // Written by ApplyCrossSection, read by the raycast guards in SceneInteraction (pin drops)
   // and ViewerNavigation (orbit anchoring). three's raycaster ignores clipping planes, so both
-  // have to reject hits on the hidden half by hand.
-  const clipPlaneRef = useRef<THREE.Plane | null>(null);
+  // have to reject hits on the hidden halves by hand. Empty when nothing is cutting.
+  const clipPlanesRef = useRef<THREE.Plane[]>([]);
+  // Widget groups, keyed by slot. ApplyCrossSection reads their world matrices each frame and
+  // TransformGizmo targets whichever one is selected.
+  const planeObjects = useRef<Map<PlaneId, THREE.Group>>(new Map());
+  const registerPlaneObject = useCallback((id: PlaneId, object: THREE.Group | null) => {
+    if (object) planeObjects.current.set(id, object);
+    else planeObjects.current.delete(id);
+  }, []);
   // The measurement is stored WITH the url it was taken from, and `bounds` is derived by
   // matching that url against the current one. Nothing clears it. Everything below that sizes
   // itself off `bounds` — the framing, the dolly range, the ground and axes, the cross-section
@@ -637,6 +602,22 @@ export default function ModelViewerInner({
                 <Model url={url} />
               </group>
             </Center>
+            {bounds &&
+              cuttingPlaneIds(slots).map((id) => (
+                <SectionPlaneWidget
+                  // Keyed by url as well as slot: a new model must get a fresh pose from the
+                  // new bounding box, and the pose is applied on mount only.
+                  key={`plane-${url}-${id}`}
+                  id={id}
+                  pose={defaultPoseFor(id, bounds.box)}
+                  // Big enough to span the model at any angle, with room to grab past the edge.
+                  size={bounds.radius * 2.6}
+                  visible={slots[id].visible}
+                  selected={selectedPlane === id}
+                  objectRef={registerPlaneObject}
+                  onSelect={(next) => onSelectPlane?.(next)}
+                />
+              ))}
           </group>
           <ApplyFocalLength focalLength={focalLength} />
           <MeasureModel key={`measure-${url}`} targetRef={modelRef} transformRef={transformRef} onMeasured={handleMeasured} />
@@ -645,15 +626,15 @@ export default function ModelViewerInner({
             <ViewerNavigation
               modelRef={modelRef}
               center={bounds.center}
-              clipPlaneRef={clipPlaneRef}
+              clipPlanesRef={clipPlanesRef}
             />
           )}
           {bounds && (
-            // A url-derived key, so a model change forces a remount: ApplyCrossSection's
-            // cleanup clears clippingPlanes from the materials under modelRef, but nothing in
-            // the effect tracks which model modelRef points at, and remounting guarantees the
-            // cleanup runs against the model it applied to before modelRef can be pointing at
-            // a different one. The `section-` prefix is not decoration — MeasureModel is a
+            // A url-derived key, so a model change forces a remount: the cleanup clears
+            // clippingPlanes from the materials under modelRef, but nothing in the effect
+            // tracks which model modelRef points at, and remounting guarantees the cleanup
+            // runs against the model it applied to before modelRef can be pointing at a
+            // different one. The `section-` prefix is not decoration — MeasureModel is a
             // sibling in this same children array and keyed off the same url, so a bare
             // `key={url}` gave the two the same key. React then treats them as one slot: it
             // warns, and it was seen once in eight model switches to commit the new model's
@@ -661,11 +642,10 @@ export default function ModelViewerInner({
             // values, which ViewerNavigation reads live as its clamp and step size.
             <ApplyCrossSection
               key={`section-${url}`}
-              section={crossSection}
-              box={bounds.box}
+              slots={slots}
               modelRef={modelRef}
-              transformRef={transformRef}
-              planeRef={clipPlaneRef}
+              planeObjects={planeObjects}
+              planesRef={clipPlanesRef}
             />
           )}
           {bounds && (
@@ -683,7 +663,7 @@ export default function ModelViewerInner({
             onPinPositionsUpdate={onPinPositionsUpdate}
             modelRef={modelRef}
             transform={safeTransform}
-            clipPlaneRef={clipPlaneRef}
+            clipPlanesRef={clipPlanesRef}
           />
         </Suspense>
         {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls

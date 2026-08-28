@@ -6,13 +6,14 @@ import * as THREE from 'three';
 import type CameraControlsImpl from 'camera-controls';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { pivotForPointer, clampAnchorDistance, isZoomingIn, type Vec3 } from '@/lib/viewerNavigation';
+import { isClipped } from '@/lib/crossSection';
 
 interface ViewerNavigationProps {
   modelRef: React.RefObject<THREE.Object3D>;
   /** Where a rotate drag pivots when it starts over empty background. */
   center: THREE.Vector3;
-  /** The live cross-section plane, or null when none is open. Written by ApplyCrossSection. */
-  clipPlaneRef: React.MutableRefObject<THREE.Plane | null>;
+  /** The live cross-section planes, empty when nothing is cutting. Written by ApplyCrossSection. */
+  clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
 }
 
 /**
@@ -44,7 +45,7 @@ interface ViewerNavigationProps {
  * ancestor, so the pivot and the infinityDolly flag are settled before the library acts on the
  * same event.
  */
-export default function ViewerNavigation({ modelRef, center, clipPlaneRef }: ViewerNavigationProps) {
+export default function ViewerNavigation({ modelRef, center, clipPlanesRef }: ViewerNavigationProps) {
   const { camera, gl, controls } = useThree();
 
   const raycaster = useRef(new THREE.Raycaster());
@@ -83,22 +84,22 @@ export default function ViewerNavigation({ modelRef, center, clipPlaneRef }: Vie
       // lines are all Mesh-derived and large enough to fill the viewport, so an unscoped
       // raycast would report a hit for empty background and defeat the centre fallback.
       const hits = raycaster.current.intersectObject(model, true);
-      const clip = clipPlaneRef.current;
+      const clipped = clipPlanesRef.current;
       for (const hit of hits) {
         if (!(hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh)) continue;
 
-        // three's raycaster ignores clipping planes entirely, so the half a cross-section
-        // hides stays fully hittable. Without this, orbiting into an opened cavity pivots
-        // about invisible geometry sitting in front of everything the user can actually see.
-        // distanceToPoint is negative on the side three clips away — same guard, same reason,
-        // as SceneInteraction's pin-drop raycast.
-        if (clip && clip.distanceToPoint(hit.point) < 0) continue;
+        // three's raycaster ignores clipping planes entirely, so the halves a cross-section
+        // hides stay fully hittable. Without this, orbiting into an opened cavity pivots about
+        // invisible geometry sitting in front of everything the user can actually see. Several
+        // planes clip by intersection — same guard, same reason, as SceneInteraction's
+        // pin-drop raycast.
+        if (isClipped(clipped, hit.point)) continue;
 
         return [hit.point.x, hit.point.y, hit.point.z];
       }
       return null;
     },
-    [camera, gl, modelRef, clipPlaneRef],
+    [camera, gl, modelRef, clipPlanesRef],
   );
 
   const anchorPivot = useCallback(
