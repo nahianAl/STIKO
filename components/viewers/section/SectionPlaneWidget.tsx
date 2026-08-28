@@ -96,6 +96,14 @@ export default function SectionPlaneWidget({
       onClick={
         visible
           ? (e) => {
+              // R3F's own delta<=2 drag-vs-click check (see events-*.esm.js) is applied ONLY on
+              // the onPointerMissed path; an object's onClick, this one, gets no such check and
+              // fires on every genuine DOM 'click' — including one a left-drag orbit produces,
+              // since camera-controls deliberately never calls preventDefault() on pointerdown.
+              // Without this guard, any orbit starting and ending over the plane's quad fires
+              // onSelect and switches the gizmo mid-gesture. `e.delta` is R3F's accumulated
+              // pointer-move distance for the click; 2 is the same threshold R3F applies itself.
+              if (e.delta > 2) return;
               // Without this, the click continues to the model's own deselect handler underneath
               // and the plane is selected and deselected in the same event.
               e.stopPropagation();
