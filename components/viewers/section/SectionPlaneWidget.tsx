@@ -151,10 +151,13 @@ export default function SectionPlaneWidget({
             }
           : undefined
       }
-      // onPointerOver/onPointerOut are R3F's hover events; gated the same way as onClick so a
-      // hidden plane cannot be hovered either.
+      // onPointerOver/onPointerOut are R3F's hover events; gated on the same `visible &&
+      // selectable` condition as onClick, not on `visible` alone. Otherwise, with the comment
+      // tool armed, a visible-but-unselectable plane would still highlight under the cursor and
+      // still sit in R3F's interaction set — an affordance for a click that onClick's own gate
+      // has already decided will never select anything.
       onPointerOver={
-        visible
+        visible && selectable
           ? (e) => {
               e.stopPropagation();
               setHovered(true);
@@ -162,7 +165,7 @@ export default function SectionPlaneWidget({
           : undefined
       }
       onPointerOut={
-        visible
+        visible && selectable
           ? (e) => {
               e.stopPropagation();
               setHovered(false);

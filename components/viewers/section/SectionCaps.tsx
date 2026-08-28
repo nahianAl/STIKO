@@ -45,12 +45,17 @@ const CAP_COLOUR = '#C6CDE8'; // stiko-dashed — a light neutral that reads as 
 /**
  * Ceiling on the model's mesh count above which this component builds no caps at all.
  *
- * Every mesh under the model costs two proxy meshes and two materials PER cutting plane (see
- * the COST note above) — three planes at this ceiling is already 3 * 2 * 150 = 900 extra draw
- * calls, on top of whatever the model itself costs, built in one blocking effect. 150 is a
- * GUESS standing in for a measurement nobody has taken yet (this viewer's frame rate under a
- * heavy STEP assembly with caps on has never been profiled), not a threshold derived from one —
- * treat it as a placeholder to revisit once someone does.
+ * The gate this feeds tests MESH COUNT ONLY, with no term for how many cutting planes are
+ * active — see the `meshCount > MESH_CAP_CEILING` check below, which does not multiply by
+ * `ids.length`. So this is a bound on meshes, not on the total proxy/draw-call cost derived in
+ * the COST note above: a 151-mesh model with a single plane trips it (302 extra proxies) while a
+ * 150-mesh model with all three planes active does not (900 extra proxies, well past that
+ * derivation's own 900-at-three-planes figure). That is accepted as-is — a mesh-count ceiling is
+ * the simpler thing to reason about and to explain in the console.warn below — but do not read
+ * this constant as if it were sized against total proxy cost, because the check does not test
+ * that. 150 is a GUESS standing in for a measurement nobody has taken yet (this viewer's frame
+ * rate under a heavy STEP assembly with caps on has never been profiled), not a threshold
+ * derived from one — treat it as a placeholder to revisit once someone does.
  */
 const MESH_CAP_CEILING = 150;
 
@@ -91,6 +96,19 @@ export default function SectionCaps({
   // bottom can bail out exactly like CAPS_ENABLED false — no group, no cap quads, nothing added
   // to the scene graph — rather than rendering inert cap meshes that a lingering CSS-like
   // "it's there but does nothing" state would leave behind.
+  //
+  // In practice this only ever gets set ONCE per mount, and the one-time console.warn below
+  // rides on that: setting it true nulls `group.current` on the next render (see the returned
+  // `null` at the bottom), and every later run of the build effect below bails out at its
+  // `if (!model || !root) return` before it can count meshes again — so once tripped, this
+  // never gets a chance to re-evaluate or reset for the rest of the mount's life, no matter how
+  // many times `key` below changes. That is a side effect of the early-return guard, not
+  // something this effect sets out to do, and it is only safe because this component is keyed
+  // on the model url (`caps-${url}` at the mount site) and therefore remounts fresh — with a
+  // new `group` ref and a new `exceedsCeiling` — for every new model. Drop that key, or render
+  // the root <group> unconditionally instead of bailing to null, and this latch breaks: the
+  // ceiling would go back to being evaluated on every plane-set change, and the warning below
+  // would fire on every one of them for a model over the ceiling, not just the first.
   const [exceedsCeiling, setExceedsCeiling] = useState(false);
 
   // Rebuilt only when the set of cutting planes changes — the stencil groups mirror the
@@ -134,9 +152,14 @@ export default function SectionCaps({
     }
     setExceedsCeiling(false);
 
-    // Built up alongside the proxies below and only swapped into the ref once the whole set
-    // has been constructed, so a bail-out mid-build (see the `if (!plane) return` below)
-    // cannot leave the ref pointing at a partially-built list.
+    // Built up alongside the proxies below and swapped into the ref once `ids.forEach` finishes.
+    // The `if (!plane) return` below is a `return` from the forEach CALLBACK, not from this
+    // effect — it skips building proxies for that one plane and the loop moves on to the next
+    // id; it is not a bail-out of the whole build. So `materials` can legitimately end up
+    // short of `ids.length * 2 * meshCount` when a plane is skipped, and that is fine: the
+    // invariant this relies on is only that the ref ends up holding exactly the proxies that
+    // were actually created, matching what the cleanup below needs to dispose — not that
+    // construction is all-or-nothing.
     const materials: THREE.Material[] = [];
 
     // One stencil group per plane, each a copy of every mesh in the model rendered with no
