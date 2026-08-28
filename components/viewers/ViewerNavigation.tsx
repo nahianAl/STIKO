@@ -84,7 +84,7 @@ export default function ViewerNavigation({ modelRef, center, clipPlanesRef }: Vi
       // lines are all Mesh-derived and large enough to fill the viewport, so an unscoped
       // raycast would report a hit for empty background and defeat the centre fallback.
       const hits = raycaster.current.intersectObject(model, true);
-      const clipped = clipPlanesRef.current;
+      const clipPlanes = clipPlanesRef.current;
       for (const hit of hits) {
         if (!(hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh)) continue;
 
@@ -93,7 +93,7 @@ export default function ViewerNavigation({ modelRef, center, clipPlanesRef }: Vi
         // invisible geometry sitting in front of everything the user can actually see. Several
         // planes clip by intersection — same guard, same reason, as SceneInteraction's
         // pin-drop raycast.
-        if (isClipped(clipped, hit.point)) continue;
+        if (isClipped(clipPlanes, hit.point)) continue;
 
         return [hit.point.x, hit.point.y, hit.point.z];
       }

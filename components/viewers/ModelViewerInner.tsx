@@ -235,12 +235,12 @@ function SceneInteraction({
       for (const hit of intersects) {
         if (!(hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh)) continue;
 
-        // Raycaster ignores clipping planes entirely, so the hidden half stays fully
-        // hittable. Without this, clicking into an opened cavity drops the pin on the
-        // invisible near half — and it then appears to float in space once the section is
-        // cleared. distanceToPoint is negative on the side three clips away.
-        // Several planes clip by intersection, so a hit survives only if it is on the kept
-        // side of all of them.
+        // three's raycaster ignores clipping planes entirely, so the halves a cross-section
+        // hides stay fully hittable. Without this, clicking into an opened cavity drops the pin
+        // on invisible geometry — and it then appears to float in space once the section is
+        // cleared. Several planes clip by intersection, so a hit survives only if it is on the
+        // kept side of all of them. Same guard, same reason, as ViewerNavigation's orbit-anchor
+        // raycast.
         if (isClipped(clipPlanesRef.current, hit.point)) continue;
 
         const point = hit.point;

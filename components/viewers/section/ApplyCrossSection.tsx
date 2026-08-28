@@ -12,7 +12,7 @@ import { cuttingPlaneIds, writePlaneFromMatrix, type PlaneId, type SectionSlots 
  * The planes are rewritten from the widgets' world matrices every FRAME rather than on prop
  * change: TransformControls mutates a widget directly while dragging without going through
  * React, so a change-driven sync would leave the cut lagging behind the plane mid-drag. Same
- * reason the single-plane version did it, for the same reason.
+ * reason the single-plane version did.
  *
  * The array handed to the materials keeps its identity for as long as the SET of cutting
  * planes is unchanged. Changing the number of clipping planes on a material recompiles its
