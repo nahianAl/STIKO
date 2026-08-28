@@ -511,6 +511,8 @@ function PDFKonvaViewer(
 
           {editingObj && (
             <CanvasTextEditor
+              // Keyed by the object — see the note on the same line in AnnotationCanvas.
+              key={editingObj.id}
               // Page space -> screen space. The Stage carries the zoom and the pan, so the
               // overlay has to apply them by hand to sit on top of the node it stands in for.
               x={editingObj.x * stageScale + stagePos.x}

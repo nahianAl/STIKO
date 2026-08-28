@@ -234,6 +234,11 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
 
       {editingObj && (
         <CanvasTextEditor
+          // Keyed by the object so a different text block gets a FRESH editor. The mount
+          // effect that focuses and puts the caret at the end runs once per mount; without
+          // this, an edit that began while another was open would reuse the instance and
+          // open unfocused — which is exactly the re-edit path.
+          key={editingObj.id}
           // The stage is untransformed here, so object space is screen space.
           x={editingObj.x}
           y={editingObj.y}
