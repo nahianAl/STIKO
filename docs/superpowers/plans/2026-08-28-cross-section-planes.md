@@ -1970,8 +1970,11 @@ Every line below must be confirmed by eye. Record the result of each.
 - [ ] Arm the comment tool with a cut open and click into the opened cavity: no pin is dropped
       on the hidden half.
 - [ ] Orbit-drag starting over a cut cavity: the pivot does not anchor on invisible geometry.
-- [ ] Start a markup session with planes visible: no plane, gizmo or cap appears in the
-      captured snapshot.
+- [ ] Start a markup session with planes visible: no plane or gizmo appears in the captured
+      snapshot. Cut faces (caps) SHOULD still appear — they are geometry being reviewed, not
+      interaction furniture, so `SectionCaps` deliberately does not mark them
+      `excludeFromSnapshot` (see the comment at the proxy build site). A reviewer marking up a
+      section wants the section to read solid.
 - [ ] Switch to another file and back: no plane, no cut, nothing carried over.
 - [ ] Open an STL, section it, switch to a different STL: the second one is **not** clipped.
       (These render with module-level singleton materials shared across the session — this is

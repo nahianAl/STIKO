@@ -59,6 +59,14 @@ export default function SectionCaps({
   // Nullable so the callback ref below can clear a slot on unmount instead of leaving a
   // detached THREE.Mesh pinned in the array for the component's remaining lifetime.
   const caps = useRef<(THREE.Mesh | null)[]>([]);
+  // The proxy materials built below, captured as they are created rather than read back off
+  // `stencil.children` at cleanup time. When the root <group> below unmounts (master toggle
+  // off, plane count to zero, model change), R3F's `removeChild` runs `removeRecursive` over
+  // its children in the MUTATION phase — which empties these imperatively-added stencil groups
+  // — before this effect's own passive cleanup runs. By then `stencil.children` is already
+  // empty, so enumerating it disposes nothing. This ref is the disposal list instead, so it
+  // does not matter whether the groups still hold their children when cleanup runs.
+  const proxyMaterials = useRef<THREE.Material[]>([]);
   // Identity of the `planesRef.current` array last bound onto the caps' `clippingPlanes`, so
   // the frame loop below can rebind only when that identity changes instead of every frame.
   const boundPlanes = useRef<THREE.Plane[] | null>(null);
@@ -73,6 +81,11 @@ export default function SectionCaps({
     const model = modelRef.current;
     const root = group.current;
     if (!model || !root) return;
+
+    // Built up alongside the proxies below and only swapped into the ref once the whole set
+    // has been constructed, so a bail-out mid-build (see the `if (!plane) return` below)
+    // cannot leave the ref pointing at a partially-built list.
+    const materials: THREE.Material[] = [];
 
     // One stencil group per plane, each a copy of every mesh in the model rendered with no
     // colour output — front faces and back faces separately, so their stencil ops cancel
@@ -129,19 +142,22 @@ export default function SectionCaps({
           // path (which tests `excludeFromSnapshot && visible`) should keep them in frame.
           proxy.renderOrder = i * 2 + 1;
           stencil.add(proxy);
+          materials.push(material);
         }
       });
 
       root.add(stencil);
     });
 
+    proxyMaterials.current = materials;
+
     return () => {
+      // Disposed from the captured list above, NOT from `stencil.children` — by the time this
+      // runs, R3F may already have emptied it (see the ref's own doc comment for why). The
+      // geometry on each proxy is the MODEL's and is not ours to dispose; only the material is.
+      for (const material of proxyMaterials.current) material.dispose();
+      proxyMaterials.current = [];
       for (const stencil of stencilGroups) {
-        for (const child of [...stencil.children]) {
-          const proxy = child as THREE.Mesh;
-          // The geometry is the MODEL's and is not ours to dispose; the material is.
-          (proxy.material as THREE.Material).dispose();
-        }
         stencil.clear();
         stencil.removeFromParent();
       }

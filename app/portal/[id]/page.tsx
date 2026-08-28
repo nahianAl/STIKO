@@ -359,11 +359,19 @@ export default function PortalPage() {
 
   const handlePlaneToggle = useCallback((id: PlaneId) => {
     setSectionSlots((slots) => togglePlane(slots, id));
-    // A hidden plane cannot be dragged, so hiding the selected one has to release it —
-    // otherwise the gizmo hangs in mid-air over an invisible target. Read the CURRENT
-    // visibility to know which way the toggle is going; deciding this inside the updater
-    // would mean calling setState from a function React may invoke twice.
-    if (sectionSlots[id].visible && selectedPlane === id) {
+  }, []);
+
+  // A hidden plane cannot be dragged, so hiding the selected one has to release it — otherwise
+  // the gizmo hangs in mid-air over an invisible target. Driven off the COMMITTED slots rather
+  // than decided inline in handlePlaneToggle: that handler updates slots functionally, and
+  // deciding here too, from a value closed over at call time, would let two toggles batched
+  // into the same render disagree with the update they are supposed to be reacting to. This
+  // effect instead reacts to whatever slots actually end up being, which cannot disagree with
+  // itself. (Not a `setState` call inside the `setSectionSlots` updater above — React may
+  // invoke that updater more than once, which a `setSelectedPlane` call inside it would then
+  // do too.)
+  useEffect(() => {
+    if (selectedPlane !== null && !sectionSlots[selectedPlane].visible) {
       setSelectedPlane(null);
       // Clearing selection alone left transformMode stranded at 'translate' with
       // selectedPlane null and the tool still open — exactly the condition

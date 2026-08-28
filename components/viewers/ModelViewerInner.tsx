@@ -656,6 +656,12 @@ export default function ModelViewerInner({
                   size={bounds.radius * 2.6}
                   visible={slots[id].visible}
                   selected={selectedPlane === id}
+                  // The comment tool and the plane gizmo are mutually exclusive (see the page's
+                  // [transformMode] effect and SceneInteraction's raw pointerdown listener
+                  // above); without this, one click on a visible plane both drops a pin AND
+                  // selects the plane, arming Move over the very model being commented on.
+                  selectable={!commentToolActive}
+                  gizmoDraggingRef={gizmoDraggingRef}
                   objectRef={registerPlaneObject}
                   onSelect={(next) => onSelectPlane?.(next)}
                 />
@@ -741,6 +747,21 @@ export default function ModelViewerInner({
             model's placement, which is persisted. The page guarantees a plane can only be
             selected while the cross-section tool is open, which is when object placement is
             deliberately unavailable. */}
+        {/* This `.get(selectedPlane)` read happens at RENDER time, off a ref that
+            SectionPlaneWidget only populates from its own MOUNT effect (`objectRef` above).
+            Effects run after the render that triggered them, so a commit where `selectedPlane`
+            is already non-null in the very render a widget first mounts would find nothing
+            here — the gizmo would stay unmounted, and nothing in this component's deps would
+            ever retry the lookup, since nothing here depends on the map's contents changing.
+            Not reachable today: `bounds` only goes null on a `url` change, ViewerContainer
+            sets `url` to null first (which unmounts this whole viewer before a new one mounts),
+            and the page resets `selectedPlane` to null on a file change — so a widget never
+            mounts fresh with a stale non-null `selectedPlane` already in hand. If a future
+            change ever keeps this Canvas alive across a file switch (e.g. swapping `url` on a
+            mounted viewer instead of remounting it), that guarantee breaks and this gizmo can
+            go permanently missing for the newly selected plane. Do not restructure this away
+            pre-emptively; note it here so the invariant travels with the code that depends on
+            it. */}
         {transformMode && bounds && selectedPlane !== null && planeObjects.current.get(selectedPlane) && (
           <TransformGizmo
             key={`plane-gizmo-${selectedPlane}`}
