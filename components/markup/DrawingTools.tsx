@@ -133,6 +133,9 @@ const SHAPE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+/** The idle face of the custom-colour chip: soft pink to soft blue, both taken from PALETTE. */
+const CUSTOM_CHIP_GRADIENT = 'linear-gradient(135deg, #E4E8FD 0%, #FFDCE8 100%)';
+
 const STROKE_PRESETS = [
   { value: 2, label: 'Thin', textLabel: 'Small' },
   { value: 4, label: 'Medium', textLabel: 'Medium' },
@@ -378,9 +381,9 @@ export default function DrawingTools({
             onClick={() => setMenu(menu === 'picker' ? null : 'picker')}
             className="h-[20px] w-[20px] rounded-[7px] border border-stiko-divider transition-transform duration-150 hover:scale-[1.15]"
             style={{
-              background: isPresetColor(color)
-                ? 'conic-gradient(from 90deg, #ff6b6b, #ffcf2e, #7bc24a, #4a9fe0, #9a82f0, #ff6b6b)'
-                : color,
+              // Two of the row's own pastels, softly blended — a full rainbow wheel at 20px
+              // reads as noise next to five flat pastel chips.
+              background: isPresetColor(color) ? CUSTOM_CHIP_GRADIENT : color,
               boxShadow: isPresetColor(color) ? undefined : '0 0 0 2px #fff, 0 0 0 3.5px #5B60FF',
             }}
           />
