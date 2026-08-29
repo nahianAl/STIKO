@@ -13,6 +13,7 @@ import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/mark
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
+import { sweepPoints } from '@/lib/markup/eraseSweep';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -70,6 +71,26 @@ function PDFKonvaViewer(
     // The text object currently open for editing. The object itself already exists in `ann` —
     // this is only which one the editor is bound to.
     const [editingId, setEditingId] = useState<string | null>(null);
+
+    // Eraser drag state. Refs, not state: this changes on every pointer move and nothing
+    // renders from it.
+    const erasingRef = useRef(false);
+    const lastErasePointRef = useRef<{ x: number; y: number } | null>(null);
+
+    /**
+     * Delete whatever object is under `p`. NOTE: container coordinates, not page coordinates
+     * — getIntersection walks the stage's hit graph, which already accounts for the zoom and
+     * pan that getPageCoords otherwise divides out.
+     */
+    const eraseAt = useCallback((stage: Konva.Stage, p: { x: number; y: number }) => {
+      const id = stage.getIntersection(p)?.id();
+      if (id) ann.deleteObject(id);
+    }, [ann]);
+
+    const stopErasing = useCallback(() => {
+      erasingRef.current = false;
+      lastErasePointRef.current = null;
+    }, []);
 
     // Selection-vs-tool contract: clear the selection when the active tool changes to a
     // non-pointer tool, so Transformer handles don't linger over a previously selected object
@@ -279,17 +300,32 @@ function PDFKonvaViewer(
         return;
       }
       if (activeTool === 'pointer') { if (e.target === stage) ann.setSelectedId(null); return; }
-      if (activeTool === 'eraser') return;
+      if (activeTool === 'eraser') {
+        const p = stage.getPointerPosition();
+        if (!p) return;
+        erasingRef.current = true;
+        lastErasePointRef.current = p;
+        eraseAt(stage, p);
+        return;
+      }
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
       const stage = e.target.getStage();
       if (!stage) return;
+      if (activeTool === 'eraser') {
+        if (!erasingRef.current) return;
+        const p = stage.getPointerPosition();
+        if (!p) return;
+        for (const pt of sweepPoints(lastErasePointRef.current, p)) eraseAt(stage, pt);
+        lastErasePointRef.current = p;
+        return;
+      }
       const coords = getPageCoords(stage);
       if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
-    }, [annotating, activeTool, getPageCoords, ann]);
+    }, [annotating, activeTool, getPageCoords, ann, eraseAt]);
 
     const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
 
@@ -444,8 +480,8 @@ function PDFKonvaViewer(
               onWheel={handleWheel}
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
-              onMouseUp={() => { if (ann.endDraw()) onObjectCreated?.(); }}
-              onMouseLeave={() => { if (ann.endDraw()) onObjectCreated?.(); }}
+              onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
+              onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
             >
               {/* PDF Background */}
               <Layer>

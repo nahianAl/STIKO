@@ -9,6 +9,7 @@ import CanvasTextEditor from './CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
+import { sweepPoints } from '@/lib/markup/eraseSweep';
 
 export interface AnnotationCanvasHandle {
   /**
@@ -49,6 +50,24 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const ann = useAnnotationObjects();
+
+  // Eraser drag state. Refs, not state: this changes on every pointer move and nothing
+  // renders from it.
+  const erasingRef = useRef(false);
+  const lastErasePointRef = useRef<{ x: number; y: number } | null>(null);
+
+  /** Delete whatever object is under `p`, given in CONTAINER coordinates. */
+  const eraseAt = (stage: Konva.Stage, p: { x: number; y: number }) => {
+    const id = stage.getIntersection(p)?.id();
+    // Konva returns the Transformer's own handles and any unnamed node too; only our objects
+    // carry an id.
+    if (id) ann.deleteObject(id);
+  };
+
+  const stopErasing = () => {
+    erasingRef.current = false;
+    lastErasePointRef.current = null;
+  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -200,15 +219,30 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
       return;
     }
     if (activeTool === 'pointer') { if (e.target === stage) ann.setSelectedId(null); return; }
-    if (activeTool === 'eraser') return;
+    if (activeTool === 'eraser') {
+      erasingRef.current = true;
+      lastErasePointRef.current = p;
+      eraseAt(stage, p);
+      return;
+    }
     ann.startDraw(activeTool, p, color, strokeWidth);
   };
 
   const handleMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    const p = e.target.getStage()?.getPointerPosition();
+    const stage = e.target.getStage();
+    const p = stage?.getPointerPosition();
+    if (!stage || !p) return;
+    if (activeTool === 'eraser') {
+      if (!erasingRef.current) return;
+      // Interpolated, because pointer events arrive once a frame and a quick flick would
+      // otherwise jump clean over an object.
+      for (const pt of sweepPoints(lastErasePointRef.current, p)) eraseAt(stage, pt);
+      lastErasePointRef.current = p;
+      return;
+    }
     // Read Shift off the event rather than tracking it: the constraint applies from the next
     // pointer move, which is what every other design tool does.
-    if (p) ann.moveDraw(activeTool, p, e.evt.shiftKey);
+    ann.moveDraw(activeTool, p, e.evt.shiftKey);
   };
 
   const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
@@ -239,8 +273,8 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
           height={size.height}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          onMouseUp={() => { if (ann.endDraw()) onObjectCreated?.(); }}
-          onMouseLeave={() => { if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
         >
           <Layer listening={false}>
             {/* Inside the stage, not on the container: toDataURL reads the stage, and JPEG has no
