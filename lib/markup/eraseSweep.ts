@@ -24,7 +24,10 @@ export const MAX_ERASE_SAMPLES = 64;
  * sample count is capped.
  */
 export function sweepPoints(from: Point | null, to: Point, spacing: number = ERASE_SAMPLE_SPACING): Point[] {
-  if (spacing <= 0) spacing = ERASE_SAMPLE_SPACING;
+  // Negated rather than `spacing <= 0`, so NaN falls back too: NaN fails every comparison,
+  // and an unguarded NaN makes the step count NaN and returns nothing at all — silently
+  // breaking the one guarantee above, that `to` is always sampled.
+  if (!(spacing > 0)) spacing = ERASE_SAMPLE_SPACING;
   if (!from) return [to];
   const dx = to.x - from.x;
   const dy = to.y - from.y;
