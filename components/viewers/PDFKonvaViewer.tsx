@@ -44,10 +44,17 @@ interface PDFKonvaViewerProps {
   pendingCommentId?: string | null;
   onObjectCreated?: () => void;
   onSelectionChange?: (selection: MarkupSelection | null) => void;
+  /**
+   * Fired ONCE, when the first page has rendered or the document failed to
+   * load. Deliberately not re-fired on page changes: the viewport's loading
+   * indicator means "this file is not on screen yet", and paging through a
+   * document that is already open is not that.
+   */
+  onReady?: () => void;
 }
 
 function PDFKonvaViewer(
-    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange }: PDFKonvaViewerProps
+    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange, onReady }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -56,6 +63,19 @@ function PDFKonvaViewer(
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [loading, setLoading] = useState(true);
+    // onReady is a one-shot, and announceReady must be stable: the effects that
+    // call it also load the document and render the page, so anything that
+    // changed its identity would re-run those. Holding the callback in a ref
+    // keeps the dependency list honest instead of silenced — a caller that
+    // passes an inline arrow cannot make this refetch the PDF every render.
+    const readyFired = useRef(false);
+    const onReadyRef = useRef(onReady);
+    onReadyRef.current = onReady;
+    const announceReady = useCallback(() => {
+      if (readyFired.current) return;
+      readyFired.current = true;
+      onReadyRef.current?.();
+    }, []);
 
     // Container sizing
     const containerRef = useRef<HTMLDivElement>(null);
@@ -185,11 +205,19 @@ function PDFKonvaViewer(
           setNumPages(doc.numPages);
         } catch (err) {
           console.error('Failed to load PDF:', err);
+          // Without this the document-level failure left `loading` true for
+          // ever: the spinner spun on a PDF that was never going to arrive, and
+          // nothing downstream could tell the difference between "still coming"
+          // and "gave up".
+          if (!cancelled) {
+            setLoading(false);
+            announceReady();
+          }
         }
       };
       loadDoc();
       return () => { cancelled = true; };
-    }, [url]);
+    }, [url, announceReady]);
 
     // Render current page to image
     useEffect(() => {
@@ -217,15 +245,19 @@ function PDFKonvaViewer(
             setPageImage(img);
             setPageSize({ width: viewport.width, height: viewport.height });
             setLoading(false);
+            announceReady();
           };
         } catch (err) {
           console.error('Failed to render page:', err);
-          if (!cancelled) setLoading(false);
+          if (!cancelled) {
+            setLoading(false);
+            announceReady();
+          }
         }
       };
       renderPage();
       return () => { cancelled = true; };
-    }, [pdfDoc, currentPage]);
+    }, [pdfDoc, currentPage, announceReady]);
 
     // Fit page to container when page or container changes
     useEffect(() => {

@@ -11,9 +11,15 @@ export interface ContentTransform {
 interface ImageViewerProps {
   url: string;
   onTransformChange?: (transform: ContentTransform) => void;
+  /**
+   * Fired once the image has actually decoded — or failed to. The viewport's
+   * loading indicator is held up until every viewer says this, so a viewer that
+   * never reports it would spin forever over content that is already there.
+   */
+  onReady?: () => void;
 }
 
-export default function ImageViewer({ url, onTransformChange }: ImageViewerProps) {
+export default function ImageViewer({ url, onTransformChange, onReady }: ImageViewerProps) {
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -107,6 +113,8 @@ export default function ImageViewer({ url, onTransformChange }: ImageViewerProps
             crossOrigin="anonymous"
             className="max-h-[80vh] max-w-full object-contain"
             draggable={false}
+            onLoad={onReady}
+            onError={onReady}
           />
         </div>
       </div>

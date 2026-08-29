@@ -6,7 +6,6 @@ import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { PlaneId, SectionSlots } from '@/lib/crossSection';
 import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
-import LoadingCube from '@/components/ui/LoadingCube';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -50,6 +49,13 @@ interface ViewerContainerProps {
   pdfViewerRef?: React.Ref<PDFKonvaViewerHandle>;
   modelViewerRef?: React.Ref<ModelViewerHandle>;
   pendingCommentId?: string | null;
+  /**
+   * Fired once this file is actually on screen — decoded, rendered, measured —
+   * or once it definitively cannot be. The page holds ONE loading indicator up
+   * until then. Every branch below must report it; a branch that forgets leaves
+   * the indicator covering content that has already arrived.
+   */
+  onReady?: () => void;
   onObjectCreated?: () => void;
   onSelectionChange?: (selection: MarkupSelection | null) => void;
 }
@@ -67,7 +73,7 @@ function getExtension(filename: string): string {
 
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
-  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane,
+  activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -95,6 +101,19 @@ export default function ViewerContainer({
       .catch(() => setError(true));
   }, [viewerKey]);
 
+  // Two dead ends that no viewer will ever report on: we could not get a URL,
+  // or nothing here can open this format. Both are finished states, so release
+  // the indicator — otherwise it covers the very message explaining why there
+  // is nothing to see.
+  const isViewable =
+    IMAGE_EXTENSIONS.includes(ext) ||
+    VIDEO_EXTENSIONS.includes(ext) ||
+    PDF_EXTENSIONS.includes(ext) ||
+    MODEL_EXTENSIONS.includes(ext);
+  useEffect(() => {
+    if (error || !isViewable) onReady?.();
+  }, [error, isViewable, onReady]);
+
   if (error) {
     return (
       <div className="flex h-full w-full items-center justify-center">
@@ -103,16 +122,13 @@ export default function ViewerContainer({
     );
   }
 
-  if (!url) {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <LoadingCube size={36} label="Loading file…" />
-      </div>
-    );
-  }
+  // Nothing is rendered while the presigned URL is in flight. This used to be a
+  // second, smaller cube: the page's indicator ended, this one started, and the
+  // handover read as the animation stopping short. The page's one covers it.
+  if (!url) return null;
 
-  if (IMAGE_EXTENSIONS.includes(ext)) return <ImageViewer url={url} onTransformChange={onTransformChange} />;
-  if (VIDEO_EXTENSIONS.includes(ext)) return <VideoViewer url={url} frozen={frozen} />;
+  if (IMAGE_EXTENSIONS.includes(ext)) return <ImageViewer url={url} onTransformChange={onTransformChange} onReady={onReady} />;
+  if (VIDEO_EXTENSIONS.includes(ext)) return <VideoViewer url={url} frozen={frozen} onReady={onReady} />;
   if (PDF_EXTENSIONS.includes(ext)) {
     return (
       <PDFKonvaViewer
@@ -131,10 +147,11 @@ export default function ViewerContainer({
         pendingCommentId={pendingCommentId}
         onObjectCreated={onObjectCreated}
         onSelectionChange={onSelectionChange}
+        onReady={onReady}
       />
     );
   }
-  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} sectionSlots={sectionSlots} selectedPlane={selectedPlane} onSelectPlane={onSelectPlane} />;
+  if (MODEL_EXTENSIONS.includes(ext)) return <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} sectionSlots={sectionSlots} selectedPlane={selectedPlane} onSelectPlane={onSelectPlane} onReady={onReady} />;
 
   return (
     <div className="flex h-full w-full items-center justify-center">

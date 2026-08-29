@@ -3,13 +3,12 @@
 import dynamic from 'next/dynamic';
 import type { ModelViewerInnerProps } from './ModelViewerInner';
 
+// No `loading` fallback on purpose. The viewport already shows one indicator,
+// held up until the model has actually been measured, and this chunk download
+// is the first moment of that same wait — a second, differently-worded state
+// underneath it just reads as the first one ending early.
 const ModelViewerInner = dynamic(() => import('./ModelViewerInner'), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full w-full items-center justify-center">
-      <p className="text-gray-500">Loading 3D model...</p>
-    </div>
-  ),
 });
 
 export type { WorldPin, PinScreenPosition, ModelViewerHandle } from './ModelViewerInner';

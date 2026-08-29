@@ -157,6 +157,12 @@ export default function PortalPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(true);
   const [filesLoading, setFilesLoading] = useState(false);
+  // Whether the selected file is actually on screen. Not the same question as
+  // "have we finished fetching the file list" — a 3D model still has to be
+  // downloaded, parsed and measured after that, and the indicator used to stop
+  // at the earlier moment, leaving the viewport visibly still working.
+  const [viewerReady, setViewerReady] = useState(false);
+  const handleViewerReady = useCallback(() => setViewerReady(true), []);
   const [commentsCollapsed, setCommentsCollapsed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -509,6 +515,7 @@ export default function PortalPage() {
         setVersions(data);
         if (data.length > 0) {
           setSelectedVersionId(data[0].id);
+          setFilesLoading(true);
         }
       } catch (err) {
         console.error('Failed to fetch versions:', err);
@@ -682,6 +689,9 @@ export default function PortalPage() {
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
+    // A different file has to prove itself on screen again before the
+    // indicator comes down.
+    setViewerReady(false);
     setViewerSnapshot(null);
     setViewportImage(null);
     setAnnotating(false);
@@ -701,6 +711,7 @@ export default function PortalPage() {
 
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
+    setFilesLoading(true);
     setSelectedFileId(null);
     setFiles([]);
     setActiveTool('pointer');
@@ -880,14 +891,16 @@ export default function PortalPage() {
     [selectedFileId]
   );
 
+  // The viewport has nothing usable on it yet — still finding the files, or the
+  // file is still becoming visible. One expression, because the indicator and
+  // everything that must not sit on top of it have to agree exactly.
+  const viewportBusy = loading || filesLoading || (!!selectedFile && !viewerReady);
+
   const renderFileViewer = () => {
-    if (loading || filesLoading) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <LoadingCube label={loading ? 'Loading package…' : 'Loading files…'} />
-        </div>
-      );
-    }
+    // No loading branch here any more. One overlay below owns the whole wait,
+    // from "which files are there" through to the file being drawn, so the
+    // animation runs once instead of being handed between two components.
+    if (loading || filesLoading) return null;
 
     if (!selectedFile) {
       return (
@@ -959,6 +972,7 @@ export default function PortalPage() {
             pendingCommentId={pendingTag ? PENDING_TAG_ID : null}
             onObjectCreated={() => setActiveTool('pointer')}
             onSelectionChange={handleSelectionChange}
+            onReady={handleViewerReady}
           />
         </div>
       </>
@@ -1002,9 +1016,35 @@ export default function PortalPage() {
             <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, #F6F8FE 0 16px, #FBFCFF 16px 32px)' }} />
             {renderFileViewer()}
 
+            {/* ONE loading indicator for the whole viewport, from "which files are
+                in this version" through to the file being decoded, measured and
+                drawn. It used to be two — this page's, which ended when the file
+                LIST arrived, and a second, smaller one inside ViewerContainer
+                that started when the presigned URL was requested — so the
+                animation appeared to stop short and restart, and a third state
+                (the 3D chunk's "Loading 3D model...") could follow it.
+
+                Opaque, so nothing half-drawn shows through underneath, and it
+                covers a viewer's own internal spinner on first load. The PDF
+                viewer keeps its ring for page-to-page changes, which happen
+                afterwards and are not this. */}
+            {viewportBusy && (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-white">
+                <LoadingCube
+                  label={
+                    loading
+                      ? 'Loading package…'
+                      : filesLoading
+                        ? 'Loading files…'
+                        : 'Opening file…'
+                  }
+                />
+              </div>
+            )}
+
             {/* Markup tools float over the top of the viewport rather than taking a row above
                 it. Hidden while an attachment is open there — there is nothing to mark up. */}
-            {!loading && !filesLoading && !viewportImage && (
+            {!viewportBusy && !viewportImage && (
               <DrawingTools
                 activeTool={activeTool}
                 onToolChange={setActiveTool}
@@ -1194,7 +1234,10 @@ export default function PortalPage() {
             .then((r) => (r.ok ? r.json() : []))
             .then((next: Version[]) => {
               setVersions(next);
-              if (next.length > 0) setSelectedVersionId(next[0].id);
+              if (next.length > 0) {
+                setSelectedVersionId(next[0].id);
+                setFilesLoading(true);
+              }
             })
             .catch(() => {});
         }}

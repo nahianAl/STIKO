@@ -96,6 +96,14 @@ export interface ModelViewerInnerProps {
   /** Which plane the Move/Rotate gizmo targets, or null for none. */
   selectedPlane?: PlaneId | null;
   onSelectPlane?: (id: PlaneId | null) => void;
+  /**
+   * Fired when the model has loaded and been measured — the first moment there
+   * is something real on screen. The viewport's loading indicator waits on it.
+   * Measurement is the right signal rather than the loader resolving: it runs
+   * inside Suspense, after the geometry exists, and it is what every other
+   * "the model is here now" gate in this file keys off.
+   */
+  onReady?: () => void;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -493,6 +501,7 @@ export default function ModelViewerInner({
   sectionSlots,
   selectedPlane = null,
   onSelectPlane,
+  onReady,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
@@ -551,8 +560,11 @@ export default function ModelViewerInner({
   // has moved on again, is then simply ignored by the line above instead of being adopted as
   // the current model's size.
   const handleMeasured = useCallback(
-    (next: ModelBounds) => setMeasured({ url, bounds: next }),
-    [url],
+    (next: ModelBounds) => {
+      setMeasured({ url, bounds: next });
+      onReady?.();
+    },
+    [url, onReady],
   );
 
   // TransformControls mutates this group directly while dragging, and R3F will not put it back
@@ -595,14 +607,14 @@ export default function ModelViewerInner({
           onSelectPlane?.(null);
         }}
       >
-        <Suspense
-          fallback={
-            <mesh>
-              <boxGeometry args={[0.5, 0.5, 0.5]} />
-              <meshStandardMaterial color="gray" wireframe />
-            </mesh>
-          }
-        >
+        {/* fallback={null} on purpose. This used to be a grey wireframe box,
+            which read as a SECOND loading state: the viewport's own indicator
+            stopped when the file list arrived, and then a wireframe cube sat in
+            the scene while the model actually downloaded. The viewport now
+            holds one indicator up until onReady, which fires from the
+            measurement below — after the geometry is really in the scene — so
+            there is nothing for a placeholder to cover. */}
+        <Suspense fallback={null}>
           <SceneLighting />
           {/* The transform group wraps <Center>, never the reverse. <Center> re-centres its
               contents and measures them with its own world matrix forced to identity, so it

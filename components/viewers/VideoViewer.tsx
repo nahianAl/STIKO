@@ -5,9 +5,14 @@ import { useRef, useEffect } from 'react';
 interface VideoViewerProps {
   url: string;
   frozen?: boolean;
+  /**
+   * Fired once the first frame is decodable — or the load failed. The
+   * viewport's loading indicator waits on this.
+   */
+  onReady?: () => void;
 }
 
-export default function VideoViewer({ url, frozen = false }: VideoViewerProps) {
+export default function VideoViewer({ url, frozen = false, onReady }: VideoViewerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -24,6 +29,8 @@ export default function VideoViewer({ url, frozen = false }: VideoViewerProps) {
         src={url}
         controls
         crossOrigin="anonymous"
+        onLoadedData={onReady}
+        onError={onReady}
         className="max-h-full max-w-full"
         style={{ maxHeight: '80vh' }}
       >
