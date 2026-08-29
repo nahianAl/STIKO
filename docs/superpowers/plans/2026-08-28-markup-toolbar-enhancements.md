@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - **Spec:** `docs/superpowers/specs/2026-08-28-markup-toolbar-enhancements-design.md`.
-- **No `@/` alias imports in any `lib/markup/*.ts` module reached by a test.** The node test runner resolves neither the alias nor JSX. Use relative paths (`../commentColors`). Components may keep using `@/`.
+- **No `@/` alias imports in any `lib/markup/*.ts` module reached by a test.** The node test runner resolves neither the alias nor JSX. Use relative paths. Components may keep using `@/`.
+- **Relative imports between `lib/` modules must carry the `.ts` extension** (`'../commentColors.ts'`, `'./draft.ts'`). Node's ESM resolver does not probe extensions, so an extensionless specifier fails the test run outright; `tsconfig.json` sets `allowImportingTsExtensions: true`, so TypeScript and the Next build both accept the explicit form. Verified against the real toolchain in Task 1, not assumed.
 - **`lib/commentColors.ts` `PALETTE` must keep exactly five entries.** It feeds `paletteForKey`, whose modulus decides every existing comment's pin and avatar colour.
 - **Rotation snapping is absolute** (0/90/180/270), never incremental from the drag start.
 - **Both drawing surfaces must stay in step:** `components/markup/AnnotationCanvas.tsx` and `components/viewers/PDFKonvaViewer.tsx`. `AnnotationCanvas` has an untransformed stage; `PDFKonvaViewer` has a zoomed/panned stage and converts pointer coords to page coords via `getPageCoords`. Drawing uses page coords; eraser hit-testing uses container coords.
@@ -126,7 +127,7 @@ Create `lib/markup/colors.ts`:
 //
 // Relative import, not the '@/' alias: this module is unit-tested by `node --test`, which
 // does not resolve the alias.
-import { PALETTE, type Pastel } from '../commentColors';
+import { PALETTE, type Pastel } from '../commentColors.ts';
 
 /**
  * Grey chip, black stroke. The swatch row's language is "the chip is a pastel hint of the
@@ -831,7 +832,7 @@ Create `lib/markup/cloud.ts`:
 // Emitted as data rather than drawn here, so the geometry can be unit-tested without a
 // canvas. AnnotationObjects feeds these straight to ctx.arc in a Konva sceneFunc.
 
-import { normalizedBox } from './draft';
+import { normalizedBox } from './draft.ts';
 
 export interface CloudArc {
   cx: number;
@@ -994,7 +995,7 @@ Create `lib/markup/eraseSweep.ts`:
 // once a frame — a quick flick can jump a hundred pixels between two of them, straight over
 // an object. This fills the gap in with sample points to hit-test.
 
-import type { Point } from './draft';
+import type { Point } from './draft.ts';
 
 export type { Point };
 
@@ -1993,8 +1994,14 @@ git commit -m "feat(markup): add a custom colour picker to the toolbar"
 
 - [ ] **Step 1: Run everything**
 
-Run: `npm test && npx tsc --noEmit && npm run lint && npm run build`
-Expected: `fail 0` from the test suite, no type errors, no new lint output, and a successful production build.
+Run: `npm test && npx tsc --noEmit && npm run lint`
+Expected: `fail 0` from the test suite, no type errors, no new lint output.
+
+`npm run build` additionally needs a `DATABASE_URL`: `lib/db.ts` throws at module load without
+one, so the build fails while collecting page data for `/api/auth/reset-password` on any
+machine with no `.env.local`. That failure is pre-existing and unrelated to this work —
+webpack compilation completes before it. Run the build only with credentials present, and if
+it fails, confirm the failure is that same route before treating it as yours.
 
 - [ ] **Step 2: Walk the spec's manual checklist end to end**
 
