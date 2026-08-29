@@ -5,7 +5,7 @@ import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { PlaneId, SectionSlots } from '@/lib/crossSection';
-import type { MarkupSelection } from '@/components/markup/useAnnotationObjects';
+import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
 import LoadingCube from '@/components/ui/LoadingCube';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
@@ -20,8 +20,6 @@ export type { WorldPin, PinScreenPosition };
 export type { ContentTransform };
 export type { PDFKonvaViewerHandle };
 export type { ModelViewerHandle };
-
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 interface ViewerContainerProps {
   file: FileRecord;

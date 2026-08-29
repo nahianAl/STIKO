@@ -28,7 +28,7 @@ import { CANVAS_MATTE } from '@/lib/markup/matte';
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
 const AnnotationCanvas = dynamic(() => import('@/components/markup/AnnotationCanvas'), { ssr: false });
 import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
-import type { AnnTool, AnnotationObjectType, MarkupSelection } from '@/components/markup/useAnnotationObjects';
+import type { AnnTool, AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
 
 interface Project {
   id: string;
@@ -57,8 +57,6 @@ interface Participant {
   role: string;
   createdAt: string;
 }
-
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp', '.obj', '.stl', '.3ds', '.ply', '.dae'];
 

@@ -6,6 +6,16 @@ import { fontSizeForStrokeWidth, strokeWidthForFontSize, MIN_FONT_SIZE } from '@
 export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'image';
 export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
+/**
+ * Everything the toolbar can have armed. One definition, imported by the toolbar, both
+ * drawing surfaces and the portal page — it used to be hand-copied into four files, which
+ * is one place to forget when a tool is added.
+ *
+ * 'comment' is the pin mode, which is a toolbar state but never an AnnTool: it places a
+ * comment rather than drawing an object.
+ */
+export type ToolType = AnnTool | 'comment';
+
 export interface AnnotationObject {
   id: string;
   type: AnnotationObjectType;

@@ -6,15 +6,13 @@ import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
 import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
-import { useAnnotationObjects, type AnnTool, type MarkupSelection } from '@/components/markup/useAnnotationObjects';
+import { useAnnotationObjects, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
-
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 

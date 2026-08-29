@@ -3,9 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { PALETTE } from '@/lib/commentColors';
 import { BAR, SUB_BAR, slot, LABEL } from './toolbarStyles';
-import type { AnnotationObjectType } from './useAnnotationObjects';
-
-type ToolType = 'pointer' | 'comment' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
+import type { AnnotationObjectType, ToolType } from './useAnnotationObjects';
 
 interface DrawingToolsProps {
   activeTool: ToolType;
