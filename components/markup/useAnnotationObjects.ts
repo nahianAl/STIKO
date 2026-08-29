@@ -2,9 +2,10 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { fontSizeForStrokeWidth, strokeWidthForFontSize, MIN_FONT_SIZE } from '@/lib/markup/text';
+import { startGeometry, updateGeometry, isBoxTool, type DraftTool } from '@/lib/markup/draft';
 
-export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'image';
-export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'text' | 'eraser';
+export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'image';
+export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'eraser';
 
 /**
  * Everything the toolbar can have armed. One definition, imported by the toolbar, both
@@ -35,7 +36,7 @@ export interface MarkupSelection {
   strokeWidth: number;
 }
 
-const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'line', 'arrow', 'rect']);
+const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'line', 'arrow', 'rect', 'ellipse', 'cloud']);
 
 export function useAnnotationObjects() {
   const [objects, setObjects] = useState<AnnotationObject[]>([]);
@@ -51,22 +52,19 @@ export function useAnnotationObjects() {
 
   const startDraw = useCallback((tool: AnnTool, p: { x: number; y: number }, color: string, strokeWidth: number) => {
     if (!GESTURE_TOOLS.has(tool)) return;
-    const o = base(tool as AnnotationObjectType, color, strokeWidth);
-    if (tool === 'freehand') o.points = [p.x, p.y];
-    else if (tool === 'line' || tool === 'arrow') o.points = [p.x, p.y, p.x, p.y];
-    else if (tool === 'rect') { o.x = p.x; o.y = p.y; }
+    const o = { ...base(tool as AnnotationObjectType, color, strokeWidth), ...startGeometry(tool as DraftTool, p) };
     draftRef.current = o;
     setDraft(o);
   }, []);
 
-  const moveDraw = useCallback((tool: AnnTool, p: { x: number; y: number }) => {
+  /**
+   * `constrain` is the Shift key, read fresh off each pointer event by the surface. Optional
+   * so a caller that does not care (a test, a surface not yet wired) behaves as before.
+   */
+  const moveDraw = useCallback((tool: AnnTool, p: { x: number; y: number }, constrain = false) => {
     const d = draftRef.current;
-    if (!d) return;
-    let next: AnnotationObject;
-    if (tool === 'freehand') next = { ...d, points: [...d.points, p.x, p.y] };
-    else if (tool === 'line' || tool === 'arrow') next = { ...d, points: [d.points[0], d.points[1], p.x, p.y] };
-    else if (tool === 'rect') next = { ...d, width: p.x - d.x, height: p.y - d.y };
-    else return;
+    if (!d || !GESTURE_TOOLS.has(tool)) return;
+    const next = { ...d, ...updateGeometry(tool as DraftTool, d, p, constrain) };
     draftRef.current = next;
     setDraft(next);
   }, []);
@@ -77,12 +75,12 @@ export function useAnnotationObjects() {
     setDraft(null);
     if (!d) return null;
     const valid = d.type === 'freehand' ? d.points.length > 2
-      : d.type === 'rect' ? Math.abs(d.width) > 3 && Math.abs(d.height) > 3
+      : isBoxTool(d.type) ? Math.abs(d.width) > 3 && Math.abs(d.height) > 3
       : (d.type === 'line' || d.type === 'arrow') ? Math.hypot(d.points[2] - d.points[0], d.points[3] - d.points[1]) > 3
       : true;
     if (!valid) return null;
     let obj = d;
-    if (d.type === 'rect') {
+    if (isBoxTool(d.type)) {
       obj = { ...d, x: Math.min(d.x, d.x + d.width), y: Math.min(d.y, d.y + d.height), width: Math.abs(d.width), height: Math.abs(d.height) };
     }
     setObjects((prev) => [...prev, obj]);
