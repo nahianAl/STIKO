@@ -133,8 +133,11 @@ const SHAPE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-/** The idle face of the custom-colour chip: soft pink to soft blue, both taken from PALETTE. */
+/** The idle face of the custom-colour chip: two of the row's own pastels, softly blended. */
 const CUSTOM_CHIP_GRADIENT = 'linear-gradient(135deg, #E4E8FD 0%, #FFDCE8 100%)';
+
+/** PALETTE's purple `dark`. Ringing the chip in it is what stops it reading as a 7th preset. */
+const CUSTOM_CHIP_BORDER = '#6B4FC4';
 
 const STROKE_PRESETS = [
   { value: 2, label: 'Thin', textLabel: 'Small' },
@@ -379,11 +382,13 @@ export default function DrawingTools({
             aria-label="Custom colour"
             aria-expanded={menu === 'picker'}
             onClick={() => setMenu(menu === 'picker' ? null : 'picker')}
-            className="h-[20px] w-[20px] rounded-[7px] border border-stiko-divider transition-transform duration-150 hover:scale-[1.15]"
+            // Round, ringed, and set apart from the swatch strip on purpose: this one opens a
+            // panel rather than setting a colour, and as another rounded square in the run of
+            // six it just read as a seventh preset.
+            className="ml-[10px] h-[20px] w-[20px] rounded-full border-[1.5px] transition-transform duration-150 hover:scale-[1.15]"
             style={{
-              // Two of the row's own pastels, softly blended — a full rainbow wheel at 20px
-              // reads as noise next to five flat pastel chips.
               background: isPresetColor(color) ? CUSTOM_CHIP_GRADIENT : color,
+              borderColor: CUSTOM_CHIP_BORDER,
               boxShadow: isPresetColor(color) ? undefined : '0 0 0 2px #fff, 0 0 0 3.5px #5B60FF',
             }}
           />
