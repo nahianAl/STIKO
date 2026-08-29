@@ -288,7 +288,7 @@ function PDFKonvaViewer(
       const stage = e.target.getStage();
       if (!stage) return;
       const coords = getPageCoords(stage);
-      if (coords) ann.moveDraw(activeTool as AnnTool, coords);
+      if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
     }, [annotating, activeTool, getPageCoords, ann]);
 
     const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;

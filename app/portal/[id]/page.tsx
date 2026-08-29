@@ -60,7 +60,7 @@ interface Participant {
 
 const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp', '.obj', '.stl', '.3ds', '.ply', '.dae'];
 
-const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'text'];
+const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'ellipse', 'cloud', 'text'];
 
 // Synthetic id for the not-yet-posted tag, so it renders as a live preview pin
 const PENDING_TAG_ID = '__pending_tag__';

@@ -206,7 +206,9 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
 
   const handleMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const p = e.target.getStage()?.getPointerPosition();
-    if (p) ann.moveDraw(activeTool, p);
+    // Read Shift off the event rather than tracking it: the constraint applies from the next
+    // pointer move, which is what every other design tool does.
+    if (p) ann.moveDraw(activeTool, p, e.evt.shiftKey);
   };
 
   const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
