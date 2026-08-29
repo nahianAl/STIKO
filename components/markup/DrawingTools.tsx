@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { MARKUP_COLORS, isPresetColor } from '@/lib/markup/colors';
+import { MARKUP_COLORS, isPresetColor, sameColor } from '@/lib/markup/colors';
 import ColorPickerPopover from './ColorPickerPopover';
 import { BAR, SUB_BAR, slot, LABEL } from './toolbarStyles';
 import type { AnnotationObjectType, ToolType } from './useAnnotationObjects';
@@ -353,7 +353,7 @@ export default function DrawingTools({
             tooltips fighting over the same strip of viewport. */}
         <div className="flex items-center gap-[6px] pr-[2px]">
           {MARKUP_COLORS.map((p) => {
-            const selected = color === p.accent;
+            const selected = sameColor(color, p.accent);
             return (
               <button
                 key={p.name}
@@ -385,7 +385,12 @@ export default function DrawingTools({
             }}
           />
           {menu === 'picker' && (
-            <div className={SUB_BAR}>
+            // Not SUB_BAR: that centres under the trigger, which is the toolbar's rightmost
+            // chip, and the 188px panel would hang well past the toolbar's right edge and
+            // clip in a narrow viewer pane. Anchor the panel's right edge to the trigger's
+            // right edge instead — same offset below the bar, but it grows leftward, staying
+            // inside the toolbar's own footprint.
+            <div className="absolute top-full mt-[13px] right-0">
               <ColorPickerPopover color={color} onChange={onColorChange} />
             </div>
           )}

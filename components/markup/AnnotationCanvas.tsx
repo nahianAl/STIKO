@@ -233,6 +233,12 @@ export default function AnnotationCanvas({ backgroundDataUrl, activeTool, color,
     const p = stage?.getPointerPosition();
     if (!stage || !p) return;
     if (activeTool === 'eraser') {
+      // A mouseup this stage never received — focus lost mid-press (Cmd-Tab, Mission
+      // Control, an OS dialog) and the button released elsewhere — leaves erasingRef armed
+      // forever, since onMouseUp/onMouseLeave are the only other places that clear it.
+      // buttons === 0 means the press has already ended, so disarm before it turns ordinary
+      // mouse movement into silent deletion.
+      if (e.evt.buttons === 0) { stopErasing(); return; }
       if (!erasingRef.current) return;
       // Interpolated, because pointer events arrive once a frame and a quick flick would
       // otherwise jump clean over an object.

@@ -76,6 +76,12 @@ export interface Comment {
   attachments?: CommentAttachment[];
 }
 
+// Legacy per-object markup persistence, matching the CHECK constraint on the `markups` table
+// in lib/schema.sql. Nothing reads or writes this today — markup is flattened into a snapshot
+// image instead — so this union has drifted behind the live one and is missing newer object
+// types (e.g. 'ellipse', 'cloud'). The live list is AnnotationObjectType in
+// components/markup/useAnnotationObjects.ts; update both there and in schema.sql together if
+// per-object persistence is ever revived.
 export interface Markup {
   id: string;
   fileId: string;

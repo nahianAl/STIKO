@@ -316,6 +316,12 @@ function PDFKonvaViewer(
       const stage = e.target.getStage();
       if (!stage) return;
       if (activeTool === 'eraser') {
+        // A mouseup this stage never received — focus lost mid-press (Cmd-Tab, Mission
+        // Control, an OS dialog) and the button released elsewhere — leaves erasingRef armed
+        // forever, since onMouseUp/onMouseLeave are the only other places that clear it.
+        // buttons === 0 means the press has already ended, so disarm before it turns
+        // ordinary mouse movement into silent deletion.
+        if (e.evt.buttons === 0) { stopErasing(); return; }
         if (!erasingRef.current) return;
         const p = stage.getPointerPosition();
         if (!p) return;
@@ -325,7 +331,7 @@ function PDFKonvaViewer(
       }
       const coords = getPageCoords(stage);
       if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
-    }, [annotating, activeTool, getPageCoords, ann, eraseAt]);
+    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing]);
 
     const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
 

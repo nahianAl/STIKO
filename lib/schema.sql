@@ -140,6 +140,12 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Legacy per-object markup persistence. Nothing reads or writes this table today — markup is
+-- flattened into a snapshot image instead, and the app/api/markups routes have no callers — so
+-- this type list has drifted behind the live one and does not include every object type the
+-- editor can create (e.g. 'ellipse', 'cloud'). If per-object persistence is ever revived, bring
+-- this CHECK up to date against AnnotationObjectType in components/markup/useAnnotationObjects.ts
+-- first.
 CREATE TABLE IF NOT EXISTS markups (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,

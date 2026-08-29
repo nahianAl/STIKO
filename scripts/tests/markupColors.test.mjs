@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MARKUP_COLORS, BLACK, isPresetColor } from '../../lib/markup/colors.ts';
+import { MARKUP_COLORS, BLACK, isPresetColor, sameColor } from '../../lib/markup/colors.ts';
 import { PALETTE } from '../../lib/commentColors.ts';
 
 test('the markup row is the five comment pastels plus black, in that order', () => {
@@ -27,6 +27,16 @@ test('isPresetColor recognises every swatch and nothing else', () => {
   for (const c of MARKUP_COLORS) assert.ok(isPresetColor(c.accent), `${c.name} not recognised`);
   assert.ok(isPresetColor('#111111'.toUpperCase()), 'case must not matter');
   assert.ok(!isPresetColor('#123456'));
+});
+
+test('sameColor is case-insensitive, both directions', () => {
+  // The bug this guards: PALETTE accents are uppercase (#FFCF2E) but a hex typed into the
+  // picker comes out lowercase. Both a swatch-ring check and isPresetColor route through
+  // this, so they can never disagree on a mixed-case match.
+  assert.ok(sameColor('#ffcf2e', '#FFCF2E'));
+  assert.ok(sameColor('#FFCF2E', '#ffcf2e'));
+  assert.ok(sameColor('#abc123', '#abc123'));
+  assert.ok(!sameColor('#ffcf2e', '#111111'));
 });
 
 import { normalizeHex, hexToRgb, rgbToHex, hsvToHex, hexToHsv } from '../../lib/markup/color.ts';

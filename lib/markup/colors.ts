@@ -24,8 +24,17 @@ export const BLACK: Pastel = {
 
 export const MARKUP_COLORS: Pastel[] = [...PALETTE, BLACK];
 
+/**
+ * Hex colours agree regardless of case — the picker's hex field and `PALETTE`'s uppercase
+ * accents otherwise disagree on identical colours. Every comparison against a swatch accent
+ * (here and in the toolbar) must route through this, so a case mismatch can't leave one
+ * caller believing a colour is selected while another does not.
+ */
+export function sameColor(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /** True when `color` is one of the fixed swatches — i.e. not something the picker produced. */
 export function isPresetColor(color: string): boolean {
-  const c = color.toLowerCase();
-  return MARKUP_COLORS.some((entry) => entry.accent.toLowerCase() === c);
+  return MARKUP_COLORS.some((entry) => sameColor(entry.accent, color));
 }
