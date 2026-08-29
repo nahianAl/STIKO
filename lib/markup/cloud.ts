@@ -15,7 +15,11 @@ export interface CloudArc {
   end: number;
 }
 
-/** Below this a scallop stops reading as a bump and just thickens the line. */
+/**
+ * Below this a scallop stops reading as a bump and just thickens the line. Also clamps the
+ * scallop count per side: `countFor` rounds to the nearest count for a target size, and
+ * rounding up can land a radius under this floor even when a smaller count would not.
+ */
 export const MIN_SCALLOP_RADIUS = 4;
 
 /** Sets the target scallop size: the short side of the box gets about this many bumps. */
@@ -45,7 +49,10 @@ export function cloudArcs(width: number, height: number): CloudArc[] {
   if (box.width <= 0 || box.height <= 0) return [];
 
   const target = Math.max(MIN_SCALLOP_RADIUS, Math.min(box.width, box.height) / (SCALLOPS_PER_SHORT_SIDE * 2));
-  const countFor = (side: number) => Math.max(1, Math.round(side / (2 * target)));
+  const countFor = (side: number) => {
+    const maxCount = Math.max(1, Math.floor(side / (2 * MIN_SCALLOP_RADIUS)));
+    return Math.min(maxCount, Math.max(1, Math.round(side / (2 * target))));
+  };
   const nx = countFor(box.width);
   const ny = countFor(box.height);
   const rx = box.width / (2 * nx);

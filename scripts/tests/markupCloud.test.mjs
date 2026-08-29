@@ -39,7 +39,10 @@ test('every arc is centred on the perimeter of the box it was asked for', () => 
 test('scallops stay legible on a small cloud and do not bloat on a large one', () => {
   const small = cloudArcs(12, 12);
   assert.ok(small.length >= 4, 'a tiny cloud still has a scallop per side');
-  for (const a of small) assert.ok(a.r <= 12, 'a scallop never exceeds the box it decorates');
+  for (const a of small) {
+    assert.ok(a.r <= 12, 'a scallop never exceeds the box it decorates');
+    assert.ok(a.r >= MIN_SCALLOP_RADIUS, 'a small cloud must not round its count above the legibility floor');
+  }
 
   const large = cloudArcs(800, 600);
   for (const a of large) {
@@ -56,6 +59,38 @@ test('a box dragged up and left is mirrored, not drawn off into space', () => {
   for (const a of arcs) {
     assert.ok(a.cx >= -160 - 1e-9 && a.cx <= 1e-9, `cx ${a.cx} outside the box`);
     assert.ok(a.cy >= -100 - 1e-9 && a.cy <= 1e-9, `cy ${a.cy} outside the box`);
+  }
+});
+
+test('every scallop bulges outward, not into the box', () => {
+  // The continuity test only checks that consecutive arcs' endpoints coincide. A mirrored
+  // construction — every side's start/end swapped and its traversal order reversed — would
+  // still satisfy that while drawing every scallop bulging inward. Pin outwardness directly
+  // via the sagitta point (the arc's midpoint, at the angle halfway between start and end).
+  for (const [w, h] of [[160, 100], [-160, -100]]) {
+    const left = Math.min(0, w);
+    const top = Math.min(0, h);
+    const right = left + Math.abs(w);
+    const bottom = top + Math.abs(h);
+    const arcs = cloudArcs(w, h);
+    assert.ok(arcs.length >= 4);
+    for (const a of arcs) {
+      const mid = (a.start + a.end) / 2;
+      const mx = a.cx + a.r * Math.cos(mid);
+      const my = a.cy + a.r * Math.sin(mid);
+      if (Math.abs(a.cy - top) < 1e-9) {
+        // top edge: canvas y grows downward, so outward means a SMALLER y.
+        assert.ok(my < top - 1e-9, `${w}x${h} top scallop sagitta y=${my} is not above the top edge (${top})`);
+      } else if (Math.abs(a.cy - bottom) < 1e-9) {
+        assert.ok(my > bottom + 1e-9, `${w}x${h} bottom scallop sagitta y=${my} is not below the bottom edge (${bottom})`);
+      } else if (Math.abs(a.cx - left) < 1e-9) {
+        assert.ok(mx < left - 1e-9, `${w}x${h} left scallop sagitta x=${mx} is not left of the left edge (${left})`);
+      } else if (Math.abs(a.cx - right) < 1e-9) {
+        assert.ok(mx > right + 1e-9, `${w}x${h} right scallop sagitta x=${mx} is not right of the right edge (${right})`);
+      } else {
+        assert.fail(`arc centre (${a.cx}, ${a.cy}) is not on a recognised edge`);
+      }
+    }
   }
 });
 
