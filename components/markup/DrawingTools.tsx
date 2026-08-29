@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { PALETTE } from '@/lib/commentColors';
+import { MARKUP_COLORS } from '@/lib/markup/colors';
 import { BAR, SUB_BAR, slot, LABEL } from './toolbarStyles';
 import type { AnnotationObjectType, ToolType } from './useAnnotationObjects';
 
@@ -345,11 +345,13 @@ export default function DrawingTools({
 
         <div className="w-px h-[24px] bg-stiko-divider mx-[6px]" />
 
-        {/* Pastel swatches — sets pin colour (pastel) + markup stroke (saturated accent).
-            No hover label: the chip is its own label, and a tooltip per colour would be five
+        {/* Swatches — sets the markup stroke to the entry's saturated accent. Rendered from
+            MARKUP_COLORS, not PALETTE: black is a markup colour only, and adding it to the
+            comment palette would recolour every existing comment's pin and avatar.
+            No hover label: the chip is its own label, and a tooltip per colour would be six
             tooltips fighting over the same strip of viewport. */}
         <div className="flex items-center gap-[6px] pr-[2px]">
-          {PALETTE.map((p) => {
+          {MARKUP_COLORS.map((p) => {
             const selected = color === p.accent;
             return (
               <button
