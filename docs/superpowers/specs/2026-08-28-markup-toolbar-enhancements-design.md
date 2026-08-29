@@ -110,8 +110,10 @@ hairline style, sized optically to match the row.
 `moveDraw` gains a `constrain: boolean` parameter, passed by both surfaces from
 `e.evt.shiftKey`:
 
-- **rect / ellipse / cloud** — `height = sign(height) * abs(width)`. A square box, so an
-  ellipse becomes a perfect circle and the drag still tracks all four directions.
+- **rect / ellipse / cloud** — both extents take the magnitude of the *larger* of the two,
+  each keeping its own sign. A square box, so an ellipse becomes a perfect circle, the drag
+  still tracks all four directions, and a mostly-vertical drag is not collapsed to the
+  width it happens to have.
 - **line / arrow** — snap the segment angle to the nearest 45°, preserving length along
   the snapped direction.
 - **freehand** — ignored.
@@ -191,10 +193,31 @@ The row goes from five chips to seven. The bar has room at the current 20px chip
 
 ## Testing
 
-No test harness exists for the markup surfaces, and these are interaction behaviours that
-a unit test would not meaningfully cover. Verification is manual, in a browser, per
-`stiko-local-visual-verification`, exercising each item on **both** surfaces (a 3D
-snapshot session and a PDF session):
+`npm test` runs `node --test scripts/tests/*.mjs`. The established pattern in this repo is
+to extract pure logic into a self-contained `lib/` module and unit-test that, leaving the
+React component as thin wiring — see `lib/markup/text.ts` with
+`scripts/tests/markupText.test.mjs`, and `lib/crossSection.ts` with
+`scripts/tests/crossSection.test.mjs`.
+
+Every piece of arithmetic here follows that pattern. New pure modules, each with its own
+test file:
+
+- `lib/markup/draft.ts` — draft geometry for every gesture tool, including both shift
+  constraints and box normalisation.
+- `lib/markup/rotationSnap.ts` — the snap angle set, the Konva tolerance, and Euler
+  right-angle rounding.
+- `lib/markup/cloud.ts` — the scallop arc geometry for the cloud path.
+- `lib/markup/eraseSweep.ts` — interpolation of sample points along an eraser drag.
+- `lib/markup/colors.ts` — the markup colour list.
+- `lib/markup/color.ts` — hex/HSV conversion for the picker.
+
+These modules must stay import-clean for the node runner: no `@/` alias imports, since
+the test runner resolves neither the alias nor JSX. `colors.ts` reaches `PALETTE` by
+relative path.
+
+The component wiring on top of those modules is verified manually in a browser, per
+`stiko-local-visual-verification`, exercising each item on **both** surfaces (a 3D snapshot
+session and a PDF session):
 
 1. Shift-rotate a markup object → lands on 0/90/180/270. Shift-rotate the 3D model and a
    cross-section plane → same.
