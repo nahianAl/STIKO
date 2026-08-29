@@ -20,30 +20,34 @@ export default function ColorPickerPopover({ color, onChange }: { color: string;
   const svRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);
 
-  // The last hex WE emitted through onChange. Round-tripping our own output back through
-  // hexToHsv would lose information for any colour hexToHsv can't represent uniquely — pure
-  // black, pure white, any grey has undefined hue/saturation and hexToHsv always answers 0.
-  // Dragging value down to 0 would otherwise snap the hue handle back to red the instant the
-  // parent's `color` prop echoes the black we just asked for. So: a `color` change that
-  // matches what we last emitted is our own echo and is ignored; only a change that did NOT
-  // originate here (a swatch click, or selecting a different object) resyncs HSV from hex.
-  const lastEmitted = useRef<string | null>(null);
+  // The hex our HSV state currently agrees with — whichever side last moved it, us via emit()/
+  // commitHex() or the parent via a `color` prop change we resynced from. Round-tripping a hex
+  // back through hexToHsv would lose information for any colour hexToHsv can't represent
+  // uniquely — pure black, pure white, any grey has undefined hue/saturation and hexToHsv always
+  // answers 0. Dragging value down to 0 would otherwise snap the hue handle back to red the
+  // instant the parent's `color` prop echoes the black we just asked for. So: a `color` change
+  // that matches this ref is already reflected in our HSV state and is ignored; only a change
+  // that differs from it (a swatch click, or selecting a different object) resyncs HSV from hex.
+  // The ref is updated on every resync, not just on emit, so it can never go stale and mask a
+  // genuine external change that happens to match an old emitted value.
+  const syncedHex = useRef<string | null>(null);
 
   // Follow the toolbar when the colour changes from outside — a swatch click, or selecting an
   // object, which pulls that object's style into the toolbar.
   useEffect(() => {
     const normalized = normalizeHex(color);
-    if (normalized && normalized === lastEmitted.current) return;
+    if (normalized && normalized === syncedHex.current) return;
     const next = hexToHsv(color);
     if (!next) return;
     setHsv(next);
     setHexDraft(normalized ?? '#000000');
+    syncedHex.current = normalized ?? null;
   }, [color]);
 
   const emit = useCallback((next: HSV) => {
     setHsv(next);
     const hex = hsvToHex(next);
-    lastEmitted.current = hex;
+    syncedHex.current = hex;
     setHexDraft(hex);
     onChange(hex);
   }, [onChange]);
@@ -104,7 +108,7 @@ export default function ColorPickerPopover({ color, onChange }: { color: string;
     }
     const next = hexToHsv(parsed);
     if (next) setHsv(next);
-    lastEmitted.current = parsed;
+    syncedHex.current = parsed;
     setHexDraft(parsed);
     onChange(parsed);
   };
@@ -159,6 +163,7 @@ export default function ColorPickerPopover({ color, onChange }: { color: string;
         role="slider"
         tabIndex={0}
         aria-label="Hue"
+        aria-orientation="horizontal"
         aria-valuemin={0}
         aria-valuemax={360}
         aria-valuenow={Math.round(hsv.h)}
@@ -184,9 +189,10 @@ export default function ColorPickerPopover({ color, onChange }: { color: string;
           onBlur={commitHex}
           onKeyDown={(e) => {
             if (e.key === 'Enter') { e.preventDefault(); commitHex(); }
-            // The toolbar's Delete/Backspace handler already ignores events whose target is an
-            // input, but stopping propagation here costs nothing and makes that independent of
-            // the other handler's guard.
+            // Redundant belt-and-braces: the app's global Delete/Backspace handler already
+            // ignores events targeting INPUT/TEXTAREA/contentEditable elements, so this input
+            // would never trigger it even without stopping propagation. Kept anyway so this
+            // component doesn't depend on that guard's continued existence.
             e.stopPropagation();
           }}
           className="h-[28px] w-full min-w-0 rounded-[8px] border border-stiko-divider bg-white px-[8px] text-[12px] text-stiko-ink outline-none focus:border-stiko-primary-light"
