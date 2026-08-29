@@ -1,6 +1,15 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { paletteForKey } from '@/lib/commentColors';
+import { getInitials } from '@/lib/initials';
+import {
+  BRIEF_MIN_COMMENTS,
+  shouldShowBrief,
+  briefDigest,
+  statChips,
+  stalenessLine,
+} from '@/lib/brief';
 
 /**
  * The AI brief above the comment list.
@@ -8,7 +17,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
  * Four states, deliberately distinct: not configured (an honest line instead
  * of a brief), configured with no brief yet (offer to summarise), brief
  * current, and brief present-but-stale (show it, say how far behind it is).
- * The fact strip renders in all four.
+ *
+ * Collapsed by default. The digest beside the label is what makes that
+ * acceptable — a bare "Brief / Show" row gives a reader no reason to open it.
  */
 
 interface Theme {
@@ -31,14 +42,27 @@ interface Summary {
   };
   brief: { headline: string; themes: Theme[] } | null;
   /** Comment id → file id, for every comment cited anywhere in the brief. A
-   * chip whose id is missing here (e.g. the comment was deleted after the
+   * citation whose id is missing here (e.g. the comment was deleted after the
    * brief was generated) has nothing to resolve to and must not render. */
   commentFiles: Record<string, string>;
+  /** Comment id → author name, for the citation avatars. A comment can be
+   * present in commentFiles and absent here (a legacy row with no author); that
+   * citation still renders, with a neutral avatar. Dropping it would hide a
+   * real citation over a cosmetic gap. */
+  commentAuthors: Record<string, string>;
   generatedAt: string | null;
   newSinceBrief: number;
 }
 
-const AUTO_GENERATE_THRESHOLD = 3;
+// The same number as the show threshold, from lib/brief. Generating below the
+// count at which the section renders would spend a model call on a brief no one
+// can open.
+const AUTO_GENERATE_THRESHOLD = BRIEF_MIN_COMMENTS;
+
+const GRADIENT = 'linear-gradient(135deg, #8094F5, #5B60FF)';
+
+/** Focus treatment for every button in here; the prototype specified none. */
+const FOCUS = 'focus:outline-none focus-visible:shadow-stiko-focus';
 
 export default function VersionBrief({
   versionId,
@@ -53,7 +77,7 @@ export default function VersionBrief({
   const [data, setData] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   // generate() leaves data.brief null on failure, so without this the effect
   // re-fires on every busy transition and loops against a paid API. Records
   // the versionId an auto-attempt has already been made for, capping it to
@@ -94,7 +118,7 @@ export default function VersionBrief({
       if (target !== currentVersion.current) return;
       // On failure the existing brief stays on screen; only the notice changes.
       if (!res.ok) {
-        setError(body.error ?? 'Could not refresh the summary');
+        setError(body.error ?? 'Could not refresh the brief');
       } else {
         loadedFor.current = target;
         setData(body);
@@ -132,107 +156,178 @@ export default function VersionBrief({
   }, [data, busy, generate, versionId]);
 
   if (!data || !data.enabled) return null;
+  // A version with few comments has no Brief section at all — no card, no
+  // dashed placeholder, no header. Applied regardless of whether a brief
+  // exists: one whose comments have since been deleted goes away with them.
+  if (!shouldShowBrief(data.facts.commentCount)) return null;
 
   const f = data.facts;
+  const brief = data.brief;
+
+  // No brief yet, or summarising is switched off for the deployment. Dashed and
+  // muted because the section is inert — there is nothing here to collapse.
+  if (!brief) {
+    return (
+      <section className="shrink-0 rounded-[12px] border border-dashed border-stiko-dashed bg-white p-[13px]">
+        <h3 className="text-[10px] font-extrabold uppercase tracking-label text-stiko-muted">
+          Brief
+        </h3>
+        <p className="mt-2 text-[12px] leading-[1.5] text-stiko-muted">
+          {data.configured
+            ? `No brief yet. Summarise the ${f.commentCount} comments on this version into themes.`
+            : 'Summarising is not configured for this deployment.'}
+        </p>
+        {data.configured && (
+          <button
+            type="button"
+            onClick={generate}
+            disabled={busy}
+            className={`mt-2.5 px-3.5 py-[7px] rounded-[10px] text-[11px] font-bold text-white disabled:opacity-40 transition-[filter] hover:brightness-[0.97] ${FOCUS}`}
+            style={{ background: GRADIENT }}
+          >
+            {busy ? 'Summarising…' : 'Summarise'}
+          </button>
+        )}
+        {error && (
+          <p className="mt-2 text-[10.5px] text-note-red-text">{error}</p>
+        )}
+      </section>
+    );
+  }
+
+  const toggle = (
+    <button
+      type="button"
+      onClick={() => setCollapsed((c) => !c)}
+      className={`shrink-0 text-[11px] font-bold text-stiko-primary hover:text-stiko-primary-hover transition-colors ${FOCUS}`}
+    >
+      {collapsed ? 'Show' : 'Hide'}
+    </button>
+  );
 
   return (
-    <section className="border-b border-gray-200 bg-gray-50/60 px-4 py-3">
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Summary
-        </h3>
-        <button
-          type="button"
-          onClick={() => setCollapsed((c) => !c)}
-          className="text-xs text-gray-500 hover:text-gray-900"
-        >
-          {collapsed ? 'Show' : 'Hide'}
-        </button>
+    <section className="shrink-0 rounded-[12px] border border-stiko-divider bg-white overflow-hidden">
+      {/* Header strip — the whole card when collapsed, so it sits slightly
+          taller in that state. */}
+      <div
+        className={`bg-stiko-tint px-3 flex items-center justify-between gap-2 ${
+          collapsed ? 'py-2.5' : 'py-[9px]'
+        }`}
+      >
+        <div className="flex items-center gap-[7px] min-w-0">
+          <span className="w-[5px] h-[5px] shrink-0 rounded-full bg-stiko-primary" />
+          <h3 className="shrink-0 text-[10px] font-extrabold uppercase tracking-label text-stiko-primary">
+            Brief
+          </h3>
+          {collapsed && (
+            <span className="text-[11.5px] text-stiko-muted truncate">
+              {briefDigest(brief.themes)}
+            </span>
+          )}
+        </div>
+        {toggle}
       </div>
 
       {!collapsed && (
         <>
-          {data.brief ? (
-            <>
-              <p className="mt-2 text-sm font-medium text-gray-900">
-                {data.brief.headline}
-              </p>
-              <ul className="mt-2 space-y-2">
-                {data.brief.themes.map((theme, i) => (
-                  <li key={i} className="text-sm text-gray-700">
-                    <span className="font-medium text-gray-900">{theme.title}</span>
-                    {theme.firstSeenVersionId && (
-                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
-                        Raised earlier, still open
+          <div className="p-3">
+            <p className="text-[12.5px] font-bold leading-[1.45] text-stiko-ink">
+              {brief.headline}
+            </p>
+
+            {/* Fixed-length scroll region. The cap is on the theme list alone —
+                headline, stat chips and the staleness row stay fully visible. */}
+            <div className="mt-3 max-h-[190px] overflow-y-auto flex flex-col gap-3">
+              {brief.themes.map((theme, i) => (
+                <div key={i} className="flex gap-[9px]">
+                  <span className="mt-px w-[17px] h-[17px] shrink-0 rounded-[5px] bg-stiko-tint text-stiko-primary text-[9px] font-extrabold flex items-center justify-center">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      <span className="text-[12px] font-bold text-stiko-ink">
+                        {theme.title}
                       </span>
-                    )}
-                    <span className="block">{theme.body}</span>
-                    <span className="mt-1 flex flex-wrap gap-1">
+                      {theme.firstSeenVersionId && (
+                        <span className="text-[9px] font-bold bg-note-yellow text-note-yellow-text px-1.5 py-0.5 rounded-chip">
+                          Still open
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-[3px] text-[12px] leading-[1.5] text-[#4A4F63]">
+                      {theme.body}
+                    </p>
+                    <div className="mt-[7px] flex items-center gap-[5px]">
                       {theme.commentIds
-                        // A chip that cannot resolve to a file must not be shown at
-                        // all — rendering it dead (no scroll, no message) is worse
-                        // than not rendering it.
+                        // A citation that cannot resolve to a file must not be
+                        // shown at all — rendering it dead (no scroll, no
+                        // message) is worse than not rendering it.
                         .filter((id) => data.commentFiles[id])
-                        .map((id) => (
-                          <button
-                            key={id}
-                            type="button"
-                            onClick={() => onSelectComment(id, data.commentFiles[id])}
-                            className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 hover:border-gray-500"
-                          >
-                            pin
-                          </button>
-                        ))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
+                        .map((id) => {
+                          const author = data.commentAuthors[id];
+                          const pal = author ? paletteForKey(author) : null;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              title={author ?? 'Unknown author'}
+                              onClick={() => onSelectComment(id, data.commentFiles[id])}
+                              className={`w-[19px] h-[19px] shrink-0 rounded-full flex items-center justify-center text-[8px] font-extrabold transition-shadow hover:shadow-[0_0_0_2px_rgba(91,96,255,0.25)] ${FOCUS} ${
+                                pal ? '' : 'bg-stiko-idle text-stiko-muted'
+                              }`}
+                              style={
+                                pal ? { background: pal.swatch, color: pal.dark } : undefined
+                              }
+                            >
+                              {author ? getInitials(author) : '?'}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-stiko-border px-3 py-2.5 flex flex-wrap gap-[5px]">
+            {statChips(f).map((chip) => (
+              <span
+                key={chip.key}
+                className={`text-[10px] font-bold px-2 py-[3px] rounded-chip ${
+                  chip.tone === 'red'
+                    ? 'bg-note-red text-note-red-text'
+                    : chip.tone === 'green'
+                    ? 'bg-note-green text-note-green-text'
+                    : 'bg-stiko-subtle text-stiko-secondary'
+                }`}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
+
+          {error ? (
+            <div className="border-t border-stiko-border px-3 py-[9px] bg-[#FDFDFF]">
+              <p className="text-[10.5px] text-note-red-text">{error}</p>
+            </div>
           ) : (
-            <p className="mt-2 text-sm text-gray-500">
-              {data.configured
-                ? 'No summary yet.'
-                : 'Summarising is not configured for this deployment.'}
-              {data.configured && !data.brief && f.commentCount > 0 && (
+            data.newSinceBrief > 0 && (
+              <div className="border-t border-stiko-border px-3 py-[9px] flex items-center justify-between gap-2 bg-[#FDFDFF]">
+                <span className="text-[10.5px] text-stiko-muted">
+                  {stalenessLine(data.newSinceBrief)}
+                </span>
                 <button
                   type="button"
                   onClick={generate}
                   disabled={busy}
-                  className="ml-2 font-medium text-gray-900 underline disabled:opacity-50"
+                  className={`shrink-0 text-[10.5px] font-bold text-stiko-primary hover:text-stiko-primary-hover disabled:opacity-40 transition-colors ${FOCUS}`}
                 >
-                  {busy ? 'Summarising…' : 'Summarise'}
+                  {busy ? 'Refreshing…' : 'Refresh'}
                 </button>
-              )}
-            </p>
+              </div>
+            )
           )}
-
-          {data.newSinceBrief > 0 && (
-            <p className="mt-2 text-xs text-gray-500">
-              {data.newSinceBrief} new comment{data.newSinceBrief === 1 ? '' : 's'} since
-              this summary.{' '}
-              <button
-                type="button"
-                onClick={generate}
-                disabled={busy}
-                className="font-medium text-gray-900 underline disabled:opacity-50"
-              >
-                {busy ? 'Refreshing…' : 'Refresh'}
-              </button>
-            </p>
-          )}
-
-          {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-
-          <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-            <span>{f.openThreadCount} unanswered</span>
-            <span>{f.commentCount} comments</span>
-            <span>{f.participantCount} people</span>
-            {f.changesRequestedCount > 0 && (
-              <span>{f.changesRequestedCount} requested changes</span>
-            )}
-            {f.approvedCount > 0 && <span>{f.approvedCount} approved</span>}
-            {f.mostAnnotatedFile && <span>most pins on {f.mostAnnotatedFile}</span>}
-          </dl>
         </>
       )}
     </section>

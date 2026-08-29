@@ -77,27 +77,40 @@ export async function versionCoverage(
 }
 
 /**
- * Comment id → file id, for the whole version.
+ * Where each of a version's comments lives, and who wrote it.
  *
  * A brief's themes can cite pins from any file in the version (versionComments
  * gathers across all of them), but the comment panel only ever has one file's
- * comments loaded at a time. This is what lets a citation chip know which file
- * to switch to before it can jump to the comment — a dedicated query rather
- * than reusing versionComments, which also drags in bodies/authors this does
- * not need.
+ * comments loaded at a time. commentFiles is what lets a citation know which
+ * file to switch to before it can jump to the comment.
+ *
+ * commentAuthors backs the citation avatars. It has to come from here rather
+ * than from the comments the panel already holds: a cited comment may live on
+ * a file other than the selected one, so a client-side lookup would miss
+ * exactly the cross-file citations the avatars exist to make legible.
+ *
+ * Both maps come from one query — two would let a comment be deleted between
+ * them and leave an author with no file, or a file with no author.
  */
-export async function versionCommentFiles(versionId: string): Promise<Record<string, string>> {
+export async function versionCommentIndex(versionId: string): Promise<{
+  commentFiles: Record<string, string>;
+  commentAuthors: Record<string, string>;
+}> {
   const rows = await sql`
-    SELECT c.id, c.file_id AS "fileId"
+    SELECT c.id, c.file_id AS "fileId", c.author
     FROM comments c
     JOIN files f ON f.id = c.file_id
     WHERE f.version_id = ${versionId}
   `;
-  const map: Record<string, string> = {};
+  const commentFiles: Record<string, string> = {};
+  const commentAuthors: Record<string, string> = {};
   for (const row of rows) {
-    map[row.id as string] = row.fileId as string;
+    commentFiles[row.id as string] = row.fileId as string;
+    // An empty author is possible on legacy rows; the avatar falls back rather
+    // than dropping the citation, so leave the key absent instead of storing ''.
+    if (row.author) commentAuthors[row.id as string] = row.author as string;
   }
-  return map;
+  return { commentFiles, commentAuthors };
 }
 
 /** Newest first — capComments takes from the front. */

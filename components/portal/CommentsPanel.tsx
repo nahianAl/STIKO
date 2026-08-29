@@ -7,6 +7,7 @@ import { uploadFile } from '@/lib/uploadAttachment';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
 import VersionBrief from '@/components/portal/VersionBrief';
+import { getInitials } from '@/lib/initials';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -38,16 +39,6 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((w) => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
 }
 
 function isImageType(contentType: string): boolean {
@@ -355,7 +346,7 @@ function CommentItem({
   };
 
   return (
-    <div id={`comment-${comment.id}`} className={hasPosition && onClick ? 'cursor-pointer' : ''}>
+    <div id={`comment-${comment.id}`} className={`shrink-0 ${hasPosition && onClick ? 'cursor-pointer' : ''}`}>
       <div
         onClick={hasPosition && onClick ? () => onClick(comment) : undefined}
         className="rounded-xl p-[13px] transition-colors"

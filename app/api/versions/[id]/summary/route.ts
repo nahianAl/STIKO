@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
-import { versionFacts, versionCoverage, versionCommentFiles, isStale } from '@/lib/ai/facts';
+import { versionFacts, versionCoverage, versionCommentIndex, isStale } from '@/lib/ai/facts';
 import { summarizeVersion, readVersionBrief } from '@/lib/ai/summarize';
 import { isConfigured } from '@/lib/ai/provider';
 
@@ -58,6 +58,7 @@ async function payload(versionId: string, enabled: boolean) {
       facts,
       brief: null,
       commentFiles: {},
+      commentAuthors: {},
       generatedAt: null,
       newSinceBrief: 0,
     };
@@ -68,10 +69,13 @@ async function payload(versionId: string, enabled: boolean) {
     versionCoverage(versionId),
   ]);
 
-  // Citation chips need to know which file each cited comment lives on, so a
-  // click can switch the panel to it before jumping to the comment — but
-  // there is nothing to resolve when there is no brief to cite from.
-  const commentFiles = brief ? await versionCommentFiles(versionId) : {};
+  // Citations need to know which file each cited comment lives on, so a click
+  // can switch the panel to it before jumping to the comment, and who wrote it,
+  // so the avatar matches that comment's card accent and pin. Neither is worth
+  // a query when there is no brief to cite from.
+  const { commentFiles, commentAuthors } = brief
+    ? await versionCommentIndex(versionId)
+    : { commentFiles: {}, commentAuthors: {} };
 
   return {
     enabled: true,
@@ -79,6 +83,7 @@ async function payload(versionId: string, enabled: boolean) {
     facts,
     brief,
     commentFiles,
+    commentAuthors,
     generatedAt,
     newSinceBrief: isStale(coveredCount, coverage.count)
       ? coverage.count - (coveredCount ?? 0)
