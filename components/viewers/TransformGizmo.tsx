@@ -6,6 +6,8 @@ import { TransformControls } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import type { TransformControls as TransformControlsImpl } from 'three-stdlib';
 import type { ObjectTransform } from '@/lib/objectTransform';
+import useShiftKey from '@/components/markup/useShiftKey';
+import { snapEulerToRightAngles } from '@/lib/markup/rotationSnap';
 
 /**
  * Move/rotate handles for whatever object is handed in — the loaded model, or one
@@ -37,6 +39,7 @@ export default function TransformGizmo({
 }) {
   const defaultControls = useThree((state) => state.controls);
   const controlsRef = useRef<TransformControlsImpl>(null);
+  const shiftHeld = useShiftKey();
 
   useEffect(() => {
     return () => {
@@ -70,6 +73,17 @@ export default function TransformGizmo({
       ref={controlsRef}
       object={target}
       mode={mode}
+      // Absolute snapping, applied after the control has written its own rotation for this
+      // frame. three's own rotationSnap quantises the drag DELTA instead, which would step an
+      // object 90 deg from wherever it started and never straighten a crooked one.
+      //
+      // Safe to overwrite each frame: three recomputes the rotation from the drag's start
+      // quaternion every move, so this cannot accumulate.
+      onObjectChange={() => {
+        if (mode !== 'rotate' || !shiftHeld) return;
+        const [x, y, z] = snapEulerToRightAngles([target.rotation.x, target.rotation.y, target.rotation.z]);
+        target.rotation.set(x, y, z);
+      }}
       // Fires on pointerdown over a handle — i.e. when the drag actually STARTS — unlike
       // onObjectChange, which fires only once the object has actually moved. A
       // pointerdown-and-release on a handle with no movement in between (a stationary click)
