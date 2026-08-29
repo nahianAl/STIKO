@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Line, Arrow, Rect, Text, Image as KonvaImage, Transformer } from 'react-konva';
+import { Line, Arrow, Rect, Shape, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
 import { TEXT_FONT_FAMILY } from '@/lib/markup/text';
+import { cloudArcs } from '@/lib/markup/cloud';
+import { normalizedBox } from '@/lib/markup/draft';
 
 function ImageObj({ obj, common, onLoaded }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'>; onLoaded?: () => void }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -98,6 +100,45 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
         return <Arrow key={obj.id} {...common} points={obj.points} stroke={obj.color} fill={obj.color} strokeWidth={obj.strokeWidth} pointerLength={10} pointerWidth={8} hitStrokeWidth={hit} />;
       case 'rect':
         return <Rect key={obj.id} {...common} width={obj.width} height={obj.height} stroke={obj.color} strokeWidth={obj.strokeWidth} />;
+      case 'ellipse':
+      case 'cloud': {
+        const box = normalizedBox(obj.width, obj.height);
+        return (
+          <Shape
+            key={obj.id}
+            {...common}
+            // The Transformer reads these to size its bounding box; the drawing below is
+            // independent of them.
+            width={box.width}
+            height={box.height}
+            stroke={obj.color}
+            strokeWidth={obj.strokeWidth}
+            sceneFunc={(ctx, shape) => {
+              ctx.beginPath();
+              if (obj.type === 'ellipse') {
+                ctx.ellipse(box.left + box.width / 2, box.top + box.height / 2, box.width / 2, box.height / 2, 0, 0, Math.PI * 2);
+              } else {
+                // Consecutive arcs share endpoints exactly (see lib/markup/cloud), so the
+                // implicit lineTo between them is a zero-length move, not a chord.
+                for (const a of cloudArcs(obj.width, obj.height)) {
+                  ctx.arc(a.cx, a.cy, a.r, a.start, a.end, false);
+                }
+              }
+              ctx.closePath();
+              ctx.strokeShape(shape);
+            }}
+            // Stroke-only shapes have no fillable interior, so Konva's default hit test would
+            // only register on the line itself and clicks inside the shape would fall through
+            // to whatever is beneath. A filled bounding box matches what Rect gives for free.
+            hitFunc={(ctx, shape) => {
+              ctx.beginPath();
+              ctx.rect(box.left, box.top, box.width, box.height);
+              ctx.closePath();
+              ctx.fillStrokeShape(shape);
+            }}
+          />
+        );
+      }
       case 'text':
         return (
           <Text
