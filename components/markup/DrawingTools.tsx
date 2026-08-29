@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { MARKUP_COLORS } from '@/lib/markup/colors';
+import { MARKUP_COLORS, isPresetColor } from '@/lib/markup/colors';
+import ColorPickerPopover from './ColorPickerPopover';
 import { BAR, SUB_BAR, slot, LABEL } from './toolbarStyles';
 import type { AnnotationObjectType, ToolType } from './useAnnotationObjects';
 
@@ -197,7 +198,7 @@ export default function DrawingTools({
   selectionType = null,
 }: DrawingToolsProps) {
   // Only ever one sub-bar open — two stacked panels under one short bar reads as a mess.
-  const [menu, setMenu] = useState<'shapes' | 'stroke' | null>(null);
+  const [menu, setMenu] = useState<'shapes' | 'stroke' | 'picker' | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -365,6 +366,29 @@ export default function DrawingTools({
               />
             );
           })}
+        </div>
+
+        {/* Custom colour — last in the row. The chip carries the gradient until a colour that
+            is not one of the swatches is in play, at which point it shows that colour over the
+            gradient so the current pick is visible without opening the panel. */}
+        <div className="relative flex">
+          <button
+            aria-label="Custom colour"
+            aria-expanded={menu === 'picker'}
+            onClick={() => setMenu(menu === 'picker' ? null : 'picker')}
+            className="h-[20px] w-[20px] rounded-[7px] border border-stiko-divider transition-transform duration-150 hover:scale-[1.15]"
+            style={{
+              background: isPresetColor(color)
+                ? 'conic-gradient(from 90deg, #ff6b6b, #ffcf2e, #7bc24a, #4a9fe0, #9a82f0, #ff6b6b)'
+                : color,
+              boxShadow: isPresetColor(color) ? undefined : '0 0 0 2px #fff, 0 0 0 3.5px #5B60FF',
+            }}
+          />
+          {menu === 'picker' && (
+            <div className={SUB_BAR}>
+              <ColorPickerPopover color={color} onChange={onColorChange} />
+            </div>
+          )}
         </div>
       </div>
     </div>
