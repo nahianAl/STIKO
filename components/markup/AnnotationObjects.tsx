@@ -7,6 +7,8 @@ import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
 import { TEXT_FONT_FAMILY } from '@/lib/markup/text';
 import { cloudArcs } from '@/lib/markup/cloud';
 import { normalizedBox } from '@/lib/markup/draft';
+import useShiftKey from './useShiftKey';
+import { ROTATION_SNAPS_DEG, ROTATION_SNAP_TOLERANCE_DEG } from '@/lib/markup/rotationSnap';
 
 function ImageObj({ obj, common, onLoaded }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'>; onLoaded?: () => void }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -45,6 +47,7 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
   // Bumped when an ImageObj finishes decoding, so the Transformer rebinds once the
   // (initially null) image node actually exists in the stage.
   const [imgLoadTick, setImgLoadTick] = useState(0);
+  const shiftHeld = useShiftKey();
 
   // Bind the Transformer to the selected node — unless that node is open in the text editor,
   // where resize handles would fight the caret and sit over the textarea.
@@ -192,6 +195,11 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
         rotateEnabled
         keepRatio={false}
         ignoreStroke
+        // Konva's rotationSnaps are ABSOLUTE angles, which is exactly the behaviour wanted:
+        // Shift straightens a crooked object rather than stepping it 90 deg from wherever it
+        // was. An empty array means no snapping at all.
+        rotationSnaps={shiftHeld ? ROTATION_SNAPS_DEG : []}
+        rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
         boundBoxFunc={(oldBox, newBox) => (newBox.width < 5 || newBox.height < 5 ? oldBox : newBox)}
       />
     </>
