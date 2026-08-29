@@ -20,8 +20,9 @@ export const ROTATION_SNAP_TOLERANCE_DEG = 45;
 
 export function snapToRightAngle(radians: number): number {
   const snapped = Math.round(radians / RIGHT_ANGLE) * RIGHT_ANGLE;
-  // Math.round(-0.001 / RIGHT_ANGLE) is -0, and -0 * RIGHT_ANGLE is -0. That would flow into
-  // the persisted object transform and compare unequal to 0 under Object.is.
+  // Math.round ties toward +Infinity: positive ties round away from zero, negative ties round
+  // toward it. Math.round(-0.5) is -0, which would flow into the persisted transform and
+  // compare unequal to 0 under Object.is.
   return snapped === 0 ? 0 : snapped;
 }
 

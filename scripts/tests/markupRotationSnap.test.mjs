@@ -30,8 +30,13 @@ test('snapping is absolute, not incremental', () => {
   close(snapToRightAngle(2 * Math.PI - 0.05), 2 * Math.PI, 'a full turn is a snap point');
 });
 
-test('exactly halfway rounds away from zero, deterministically', () => {
-  close(snapToRightAngle(RIGHT_ANGLE / 2), RIGHT_ANGLE, 'Math.round rounds up');
+test('ties round toward positive infinity (away on +, toward on -)', () => {
+  // Math.round(0.5) is 1, rounding away from zero.
+  close(snapToRightAngle(RIGHT_ANGLE / 2), RIGHT_ANGLE, '+45° → +90°');
+  // Math.round(-0.5) is 0 via -Infinity, rounding toward zero. Result is 0, not -0.
+  assert.ok(Object.is(snapToRightAngle(-RIGHT_ANGLE / 2), 0), '-45° → 0 (not -0)');
+  // Math.round(-1.5) is -1, rounding toward +Infinity.
+  close(snapToRightAngle(-3 * RIGHT_ANGLE / 2), -RIGHT_ANGLE, '-135° → -90°');
 });
 
 test('a straightened angle is never negative zero', () => {
