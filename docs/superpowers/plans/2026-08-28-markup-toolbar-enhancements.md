@@ -1361,7 +1361,7 @@ Expected: no errors.
 
 - [ ] **Step 5: Verify in a browser**
 
-Start the app per `stiko-local-visual-verification` (`npm run dev`, open a package, open a file). On **both** a 3D/image file and a PDF:
+Start the app with the same throwaway env (`AUTH_SECRET=dev-only-local-harness DATABASE_URL='postgresql://u:p@127.0.0.1:5432/db' npm run dev`), then open a package and a file. On **both** a 3D/image file and a PDF:
 
 - Shapes menu now shows Line, Arrow, Rectangle, Ellipse, Cloud.
 - Drawing an ellipse and a cloud works in all four drag directions, and each can then be selected, dragged, scaled and rotated.
@@ -1997,11 +1997,19 @@ git commit -m "feat(markup): add a custom colour picker to the toolbar"
 Run: `npm test && npx tsc --noEmit && npm run lint`
 Expected: `fail 0` from the test suite, no type errors, no new lint output.
 
-`npm run build` additionally needs a `DATABASE_URL`: `lib/db.ts` throws at module load without
-one, so the build fails while collecting page data for `/api/auth/reset-password` on any
-machine with no `.env.local`. That failure is pre-existing and unrelated to this work —
-webpack compilation completes before it. Run the build only with credentials present, and if
-it fails, confirm the failure is that same route before treating it as yours.
+Then the production build. A bare `npm run build` fails on a checkout with no `.env.local`,
+because `lib/db.ts` and `lib/s3.ts` each throw at module load when their config is missing —
+that failure is pre-existing and unrelated to this work. Supply six throwaway values instead;
+`neon()` connects lazily, so a fake URL is fine, and never write a `.env.local` (it would
+shadow real config later):
+
+```bash
+AUTH_SECRET=dev-only-local-harness DATABASE_URL='postgresql://u:p@127.0.0.1:5432/db' \
+R2_ACCESS_KEY_ID=dev R2_SECRET_ACCESS_KEY=dev \
+R2_ENDPOINT_URL='https://example.invalid' R2_BUCKET_NAME=dev npm run build
+```
+
+Expected: a complete build. `main` deploys straight to production, so this must pass before merge.
 
 - [ ] **Step 2: Walk the spec's manual checklist end to end**
 
