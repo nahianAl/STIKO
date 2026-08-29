@@ -63,7 +63,13 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
 
   // Object click: select (pointer) or erase; ignored for draw tools so you can draw over objects
   const handleObj = (e: Konva.KonvaEventObject<MouseEvent>, id: string) => {
-    if (activeTool === 'eraser') { e.cancelBubble = true; onErase(id); }
+    // Erase this object immediately (so a plain click erases with no drag needed), but do NOT
+    // cancel the bubble: the stage-level handler owns the drag-erase sweep and arms it on this
+    // same mousedown. Swallowing the event here would mean a drag that starts on top of an
+    // object erases that one object and then arms nothing, leaving the rest of the drag inert.
+    // The stage handler will also erase this object a moment later via getIntersection; that's
+    // a harmless double delete since deleteObject filters by id.
+    if (activeTool === 'eraser') { onErase(id); }
     else if (activeTool === 'pointer') { e.cancelBubble = true; onSelect(id); }
   };
 
