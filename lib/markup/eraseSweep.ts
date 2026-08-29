@@ -7,10 +7,13 @@ import type { Point } from './draft.ts';
 
 export type { Point };
 
-/** Roughly half the smallest object we care about hitting; small enough to never skip one. */
+/** Roughly half the smallest object we care about hitting; small enough to never skip one.
+ * Past MAX_ERASE_SAMPLES * ERASE_SAMPLE_SPACING (about 384px), the cap takes precedence and
+ * gaps between samples grow without bound. */
 export const ERASE_SAMPLE_SPACING = 6;
 
-/** A backstop on a pathological jump (window resize, tab restore) — 64 hit tests is plenty. */
+/** A backstop on a pathological jump (window resize, tab restore) — 64 hit tests is plenty.
+ * Beyond MAX_ERASE_SAMPLES * ERASE_SAMPLE_SPACING, the spacing guarantee gives way to this cap. */
 export const MAX_ERASE_SAMPLES = 64;
 
 /**
@@ -21,6 +24,7 @@ export const MAX_ERASE_SAMPLES = 64;
  * sample count is capped.
  */
 export function sweepPoints(from: Point | null, to: Point, spacing: number = ERASE_SAMPLE_SPACING): Point[] {
+  if (spacing <= 0) spacing = ERASE_SAMPLE_SPACING;
   if (!from) return [to];
   const dx = to.x - from.x;
   const dy = to.y - from.y;

@@ -43,3 +43,27 @@ test('an enormous jump is capped rather than allocating thousands of samples', (
 test('spacing is overridable', () => {
   assert.equal(sweepPoints({ x: 0, y: 0 }, { x: 100, y: 0 }, 50).length, 2);
 });
+
+test('non-positive spacing falls back to default', () => {
+  const pts = sweepPoints({ x: 0, y: 0 }, { x: 10, y: 0 }, -1);
+  assert.ok(pts.length > 0, 'must return at least the destination');
+  close(pts[pts.length - 1].x, 10, 'must end at destination');
+  close(pts[pts.length - 1].y, 0, 'must end at destination');
+});
+
+test('a capped jump maintains the destination invariant and documents the spacing trade-off', () => {
+  const pts = sweepPoints({ x: 0, y: 0 }, { x: 100000, y: 0 });
+  assert.equal(pts.length, MAX_ERASE_SAMPLES, 'sample count is exactly the cap');
+  close(pts[pts.length - 1].x, 100000, 'destination is still the final sample');
+  close(pts[pts.length - 1].y, 0, 'destination is still the final sample');
+
+  // Verify that gaps now exceed the nominal spacing — this documents the trade-off.
+  let maxGap = 0;
+  let prev = { x: 0, y: 0 };
+  for (const p of pts) {
+    const gap = Math.hypot(p.x - prev.x, p.y - prev.y);
+    maxGap = Math.max(maxGap, gap);
+    prev = p;
+  }
+  assert.ok(maxGap > ERASE_SAMPLE_SPACING, `max gap ${maxGap} must exceed nominal spacing ${ERASE_SAMPLE_SPACING}`);
+});
