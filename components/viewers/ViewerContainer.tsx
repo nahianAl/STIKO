@@ -154,11 +154,11 @@ export default function ViewerContainer({
   }
   if (MODEL_EXTENSIONS.includes(ext)) {
     return (
-      // key={viewerKey}: the boundary latches once it catches an error — its
-      // failed-state render persists until the component remounts, regardless
-      // of prop changes. Without a key tied to the file actually being loaded,
-      // a STEP file that fails to tessellate would leave every subsequent file
-      // (including perfectly good ones) stuck showing the same failure message.
+      // key={viewerKey}: forces a remount on file switch instead of relying on
+      // the `!url` gate above to unmount the failed boundary first — a future
+      // refactor (e.g. keeping the last frame visible while loading) could drop
+      // that gate silently. It also closes the single-frame window where stale
+      // fallback content could otherwise show before the url-fetch effect fires.
       <ModelErrorBoundary key={viewerKey} onReady={onReady}>
         <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} sectionSlots={sectionSlots} selectedPlane={selectedPlane} onSelectPlane={onSelectPlane} onReady={onReady} />
       </ModelErrorBoundary>

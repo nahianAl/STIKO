@@ -42,10 +42,10 @@ export default class ModelErrorBoundary extends Component<Props, State> {
       <div className="flex h-full w-full items-center justify-center p-8">
         <div className="max-w-sm text-center">
           <p className="text-sm font-medium text-gray-700">
-            This 3D file could not be prepared for viewing.
+            This 3D file could not be displayed.
           </p>
           <p className="mt-1 text-sm text-gray-500">
-            It is too complex to display in the browser. You can still download it.
+            It may be too complex to prepare in the browser. Ask whoever uploaded it to share a GLB version.
           </p>
         </div>
       </div>
