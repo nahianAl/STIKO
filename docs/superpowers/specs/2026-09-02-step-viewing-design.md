@@ -88,8 +88,14 @@ responsive throughout.
 
 If viewer-side tessellation exceeds its budget or fails, the viewport shows:
 
-> **This 3D file could not be prepared for viewing.**
-> It is too complex to display in the browser. You can still download it.
+> **This 3D file could not be displayed.**
+> It may be too complex to prepare in the browser. Ask whoever uploaded it to share a GLB version.
+
+(An earlier draft of this spec said "You can still download it." There is no download
+affordance anywhere in the portal UI — the only occurrence of the word was that message — so
+the copy promised a way out that does not exist. The boundary is also general-purpose and
+catches any render-phase throw, so asserting "too complex" as the cause was wrong on the other
+paths it can appear on.)
 
 That message is a finished state and releases the loading indicator. The failure is now
 visible, bounded and explained, which is the single most important change in this document.
