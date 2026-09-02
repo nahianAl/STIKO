@@ -18,7 +18,7 @@ self.onmessage = async (event: MessageEvent<ArrayBuffer>) => {
     // Copy out of the WASM heap view into a standalone ArrayBuffer so it can be
     // transferred. glb.buffer may be the whole heap, and may be larger than glb.
     const buffer = glb.slice().buffer;
-    (self as unknown as Worker).postMessage({ ok: true, buffer }, [buffer]);
+    self.postMessage({ ok: true, buffer }, [buffer]);
   } catch (error) {
     self.postMessage({ ok: false, error: String(error) });
   }

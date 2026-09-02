@@ -96,6 +96,40 @@ test('a worker that cannot be constructed resolves null', async () => {
   assert.equal(result, null);
 });
 
+test('runStepConvert takes ownership of bytes: it is detached even on a failure path', async () => {
+  // The transfer list on postMessage(bytes, [bytes]) detaches the caller's ArrayBuffer
+  // *synchronously at call time* — before the worker ever replies. This test pins that this
+  // holds even when the call ends in `null` ("use the original file"): the original `bytes`
+  // is unusable by then, so "use the original file" must mean re-reading the source, not
+  // reusing this buffer.
+  //
+  // structuredClone(message, { transfer }) is what a real postMessage(message, transfer) does
+  // under the hood (a structured clone that detaches everything in the transfer list), so
+  // calling it for real here — rather than a no-op stub — is what makes the detachment
+  // genuine instead of merely asserted.
+  const worker = {
+    postMessage(message, transfer) {
+      structuredClone(message, { transfer });
+      queueMicrotask(() => worker.onerror({ message: 'stub crash to reach a failure path' }));
+    },
+    terminate() {},
+    onmessage: null,
+    onerror: null,
+  };
+
+  const bytes = new ArrayBuffer(8);
+  assert.equal(bytes.byteLength, 8, 'sanity check: the buffer starts non-empty');
+
+  const result = await runStepConvert(bytes, { createWorker: () => worker });
+
+  assert.equal(result, null);
+  assert.equal(
+    bytes.byteLength,
+    0,
+    "the caller's buffer must be detached (transferred away), even though this call resolved null"
+  );
+});
+
 test('a late reply after a timeout cannot resolve twice', async () => {
   // settled-guard check: a worker that replies just after being killed must not run finish()
   // a second time. Calling resolve() twice on an already-settled promise is a silent no-op,

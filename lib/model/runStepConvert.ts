@@ -32,6 +32,21 @@ function defaultWorker(): ConvertWorker {
   return new Worker(new URL('./stepWorker.ts', import.meta.url)) as unknown as ConvertWorker;
 }
 
+/**
+ * TAKES OWNERSHIP of `bytes`. The buffer is handed to the worker via `postMessage(bytes,
+ * [bytes])`, which detaches it *synchronously*, at the moment of the call — not when the
+ * worker replies. By the time this function returns (or its promise settles, on any path),
+ * `bytes` is neutered: `byteLength === 0` and its contents are gone.
+ *
+ * This holds on every failure path too, including the ones that resolve `null`. Per the
+ * module contract, `null` means "use the original file" — but "the original file" must mean
+ * re-reading the source (e.g. re-fetching or re-reading the input `File`/Blob), never reusing
+ * this `bytes` buffer. `const toSend = (await runStepConvert(bytes)) ?? bytes;` sends a
+ * zero-length buffer.
+ *
+ * Do not copy `bytes` before calling to work around this — these buffers run up to 50 MB and
+ * the transfer (rather than a structured-clone copy) is the reason this is cheap.
+ */
 export function runStepConvert(
   bytes: ArrayBuffer,
   options: { createWorker?: () => ConvertWorker; timeoutMs?: number } = {}
