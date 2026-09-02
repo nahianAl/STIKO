@@ -97,15 +97,21 @@ test('a worker that cannot be constructed resolves null', async () => {
 });
 
 test('a late reply after a timeout cannot resolve twice', async () => {
-  // settled-guard check: a worker that replies just after being killed must not overwrite
-  // the null the caller already received, which would surface as a resolved promise
-  // changing value.
+  // settled-guard check: a worker that replies just after being killed must not run finish()
+  // a second time. Calling resolve() twice on an already-settled promise is a silent no-op,
+  // so the only way to detect a missing guard is via a side effect of finish() that a second
+  // run would repeat: worker.terminate(). The stub counts its calls, and we assert the exact
+  // count — one from the timeout, and still one (not two) after the late reply arrives — so
+  // this test fails if the `settled` guard in runStepConvert is ever removed.
+  let terminateCount = 0;
   let captured = null;
   const worker = {
     postMessage() {
       captured = () => worker.onmessage({ data: { ok: true, buffer: new ArrayBuffer(4) } });
     },
-    terminate() {},
+    terminate() {
+      terminateCount += 1;
+    },
     onmessage: null,
     onerror: null,
   };
@@ -114,5 +120,7 @@ test('a late reply after a timeout cannot resolve twice', async () => {
     timeoutMs: 10,
   });
   assert.equal(result, null);
-  assert.doesNotThrow(() => captured());
+  assert.equal(terminateCount, 1, 'the timeout path must terminate the worker exactly once');
+  captured();
+  assert.equal(terminateCount, 1, 'a late reply after the timeout must not terminate again');
 });
