@@ -25,6 +25,23 @@ export function isOptimizableFilename(filename: string): boolean {
   return OPTIMIZABLE_EXTENSIONS.has(extensionOf(filename));
 }
 
+/**
+ * STEP is tessellated by OCCT, not by the gltf-transform chain, so it is a SEPARATE
+ * predicate from isOptimizableFilename rather than another member of that set. Both
+ * produce the same `.optimized.glb` variant key, because both produce the object the
+ * viewer should load instead of the original.
+ */
+export const TESSELLATABLE_EXTENSIONS: ReadonlySet<string> = new Set(['stp', 'step']);
+
+export function isTessellatableFilename(filename: string): boolean {
+  return TESSELLATABLE_EXTENSIONS.has(extensionOf(filename));
+}
+
+/** True when uploading this file should also produce a viewer variant. */
+export function producesViewerVariant(filename: string): boolean {
+  return isOptimizableFilename(filename) || isTessellatableFilename(filename);
+}
+
 export function optimizedVariantKey(originalStorageKey: string): string {
   if (originalStorageKey.endsWith(OPTIMIZED_SUFFIX)) return originalStorageKey;
 
