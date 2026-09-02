@@ -21,6 +21,12 @@ export const MAX_OPTIMIZE_BYTES = 100 * 1024 * 1024;
 /** Generous next to the ~6s the 22 MB reference file takes, tight enough to not strand an upload. */
 const TIMEOUT_MS = 120_000;
 
+/**
+ * Retained deliberately as the GLB-only public API, even though `shouldPrepareVariant` below
+ * is the only predicate the app actually calls now (it covers STEP too). Nothing in this
+ * codebase references `shouldOptimize` anymore — don't take that as license to edit it
+ * expecting an observable effect, and don't read its absence of callers as dead code to prune.
+ */
 export function shouldOptimize(filename: string, bytes: number): boolean {
   return isOptimizableFilename(filename) && bytes <= MAX_OPTIMIZE_BYTES;
 }
@@ -59,6 +65,12 @@ export function shouldPrepareVariant(filename: string, bytes: number): boolean {
  */
 let optimizeQueue: Promise<void> = Promise.resolve();
 
+/**
+ * Retained deliberately as the GLB-only public API. The app itself no longer calls this
+ * directly — `prepareViewerVariant` below is the only path in use, and it reaches the
+ * optimizer via `runOptimizeNow`, not this function (see the comment on that call for why).
+ * Kept exported and working so don't assume it's dead code to prune.
+ */
 export function runOptimize(file: File): Promise<OptimizeResult | null> {
   const result = optimizeQueue.then(() => runOptimizeNow(file));
   optimizeQueue = result.then(
@@ -97,6 +109,10 @@ async function prepareViewerVariantNow(file: File): Promise<VariantResult | null
 
   if (!isOptimizableFilename(file.name)) return null;
 
+  // Calls runOptimizeNow, not runOptimize: this function is already running inside a turn
+  // of optimizeQueue (see prepareViewerVariant above), and runOptimize chains onto that same
+  // single-slot queue. Calling it here would enqueue behind a slot this call itself holds,
+  // deadlocking the queue permanently rather than running the optimization.
   const optimized = await runOptimizeNow(file);
   if (!optimized) return null;
   const { before, after } = optimized.stats;

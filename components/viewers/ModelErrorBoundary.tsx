@@ -45,7 +45,7 @@ export default class ModelErrorBoundary extends Component<Props, State> {
             This 3D file could not be displayed.
           </p>
           <p className="mt-1 text-sm text-gray-500">
-            It may be too complex to prepare in the browser. Ask whoever uploaded it to share a GLB version.
+            It may be too complex for the browser to prepare, or the file may not have uploaded correctly.
           </p>
         </div>
       </div>

@@ -2,6 +2,13 @@
  * Browser-side front door to STEP tessellation, modelled on runOptimize.ts. Every failure
  * path resolves `null`, which callers read as "use the original file" — conversion is an
  * improvement, never a gate.
+ *
+ * This function does NOT serialize concurrent calls — there is no queue here. Serialization,
+ * where it matters, lives entirely in `prepareViewerVariant` (lib/model/runOptimize.ts),
+ * which chains onto its own single-slot queue for the upload path. The other call site,
+ * lib/STEPLoader.ts, calls this function unqueued on purpose — that's correct for the
+ * single-file viewer, which has no sibling conversions to contend with. A future caller must
+ * decide for itself whether it needs serialization; it will not get it for free from here.
  */
 
 /**

@@ -35,7 +35,12 @@ type OcctImportJs = Awaited<ReturnType<typeof import('occt-import-js').default>>
 let occtPromise: Promise<OcctImportJs> | null = null;
 
 /**
- * The WASM is 7.6 MB and initialises in ~25 ms, so it is loaded once and reused. In the
+ * The WASM is 7.6 MB and initialises in ~25 ms, so within a single worker's lifetime it is
+ * loaded once and reused. That lifetime is short: runStepConvert terminates the worker after
+ * every conversion, success or failure alike, so this module-level cache never actually
+ * survives to serve a second call — a batch of ten STEP uploads re-initialises the WASM ten
+ * times, once per worker. That's fine (~25 ms against a ~20 s conversion); this comment
+ * exists only so the "loaded once" phrasing isn't read as "once per browser session". In the
  * browser it is served from /occt-import-js.wasm, copied there by the postinstall script;
  * tests pass a path into node_modules instead.
  *

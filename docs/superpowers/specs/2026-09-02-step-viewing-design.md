@@ -144,7 +144,8 @@ and a reviewer who never opens a STEP must not download it.
 
 **`lib/model/runStepConvert.ts`** — browser-side front door, modelled directly on
 `runOptimize.ts`: spawns the worker, enforces a timeout, terminates on expiry, and resolves
-`null` on every failure. Shares `runOptimize`'s single-slot queue so a multi-file upload
+`null` on every failure. Has no queue of its own; `prepareViewerVariant` in `runOptimize.ts`
+serializes the upload path by chaining onto its own single-slot queue, so a multi-file upload
 never runs two tessellations at once.
 
 Terminating the worker is what makes the timeout real. A wedged synchronous WASM call cannot

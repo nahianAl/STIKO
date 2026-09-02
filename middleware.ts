@@ -57,9 +57,16 @@ export default auth((req) => {
 
 export const config = {
   // occt-import-js.wasm: static asset fetched by the STEP tessellation worker
-  // (lib/model/stepToGlb.ts) when a viewed file has no converted GLB variant.
-  // /portal/[id] is public, so this fetch is frequently unauthenticated. Without
-  // this exemption it 307s to /login and the worker tries to WebAssembly-compile
-  // the login page's HTML.
+  // (lib/model/stepToGlb.ts) when a viewed file has no converted GLB variant. It is
+  // generated, identical for everyone, and carries no user data — the same category as
+  // the already-exempt uploads and favicon.ico — so it must never be auth-gated. Without
+  // this exemption it 307s to /login and the worker tries to WebAssembly-compile the
+  // login page's HTML.
+  //
+  // Today every caller happens to be authenticated anyway: /api/files/url 401s without a
+  // session and 403s without package access, so a logged-out viewer can't obtain a file
+  // URL to trigger this fetch in the first place. This exemption is therefore defensive
+  // rather than load-bearing right now — but it is also what keeps this correct if
+  // unauthenticated package viewing ships, per ARCHITECTURE.md.
   matcher: ['/((?!_next/static|_next/image|favicon.ico|uploads|occt-import-js.wasm).*)'],
 };
