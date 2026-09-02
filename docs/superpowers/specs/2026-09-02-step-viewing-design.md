@@ -88,8 +88,14 @@ responsive throughout.
 
 If viewer-side tessellation exceeds its budget or fails, the viewport shows:
 
-> **This 3D file could not be prepared for viewing.**
-> It is too complex to display in the browser. You can still download it.
+> **This 3D file could not be displayed.**
+> It may be too complex to prepare in the browser. Ask whoever uploaded it to share a GLB version.
+
+(An earlier draft of this spec said "You can still download it." There is no download
+affordance anywhere in the portal UI — the only occurrence of the word was that message — so
+the copy promised a way out that does not exist. The boundary is also general-purpose and
+catches any render-phase throw, so asserting "too complex" as the cause was wrong on the other
+paths it can appear on.)
 
 That message is a finished state and releases the loading indicator. The failure is now
 visible, bounded and explained, which is the single most important change in this document.
@@ -138,7 +144,8 @@ and a reviewer who never opens a STEP must not download it.
 
 **`lib/model/runStepConvert.ts`** — browser-side front door, modelled directly on
 `runOptimize.ts`: spawns the worker, enforces a timeout, terminates on expiry, and resolves
-`null` on every failure. Shares `runOptimize`'s single-slot queue so a multi-file upload
+`null` on every failure. Has no queue of its own; `prepareViewerVariant` in `runOptimize.ts`
+serializes the upload path by chaining onto its own single-slot queue, so a multi-file upload
 never runs two tessellations at once.
 
 Terminating the worker is what makes the timeout real. A wedged synchronous WASM call cannot

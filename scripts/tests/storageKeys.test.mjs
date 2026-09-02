@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   optimizedVariantKey,
   isOptimizableFilename,
+  isTessellatableFilename,
+  producesViewerVariant,
+  TESSELLATABLE_EXTENSIONS,
 } from '../../lib/storageKeys.ts';
 
 test('the variant key replaces the extension of the last segment', () => {
@@ -56,4 +59,39 @@ test('only glb is optimizable', () => {
   for (const name of ['m.gltf', 'm.step', 'm.obj', 'm.stl', 'm.pdf', 'noext', '.glb']) {
     assert.equal(isOptimizableFilename(name), false, name);
   }
+});
+
+test('STEP files are tessellatable but not optimizable', () => {
+  // Two distinct predicates on purpose. isOptimizableFilename gates the gltf-transform
+  // chain, which can only read binary GLB; isTessellatableFilename gates OCCT. Collapsing
+  // them into one would send a .stp into WebIO.readBinary and throw on every upload.
+  for (const name of ['clamp.stp', 'clamp.step', 'CLAMP.STP', 'a.b.step']) {
+    assert.equal(isTessellatableFilename(name), true, name);
+    assert.equal(isOptimizableFilename(name), false, name);
+  }
+});
+
+test('producesViewerVariant covers both families and nothing else', () => {
+  for (const name of ['m.glb', 'm.stp', 'm.step', 'M.GLB', 'M.STP']) {
+    assert.equal(producesViewerVariant(name), true, name);
+  }
+  // .gltf is excluded for the reason documented on OPTIMIZABLE_EXTENSIONS; the rest have
+  // no converter at all. An accidental `true` here presigns a variant URL that is never
+  // used, which is harmless, but it also puts the file into the 'optimizing' UI state.
+  for (const name of ['m.gltf', 'm.obj', 'm.stl', 'm.pdf', 'm.png', 'noext', '.stp']) {
+    assert.equal(producesViewerVariant(name), false, name);
+  }
+});
+
+test('the tessellatable set is exactly stp and step', () => {
+  assert.deepEqual([...TESSELLATABLE_EXTENSIONS].sort(), ['step', 'stp']);
+});
+
+test('a .stp original yields a .optimized.glb variant', () => {
+  // The suffix is reused deliberately: one variant key scheme, not two. The converted
+  // STEP really is the object the viewer prefers, which is what the suffix means.
+  assert.equal(
+    optimizedVariantKey('uploads/p/po/v/abc-123.stp'),
+    'uploads/p/po/v/abc-123.optimized.glb'
+  );
 });

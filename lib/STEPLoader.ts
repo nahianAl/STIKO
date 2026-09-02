@@ -1,39 +1,19 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { runStepConvert, STEP_VIEWER_TIMEOUT_MS } from './model/runStepConvert';
 
-// Singleton WASM instance — initialized once, reused
-let occtPromise: Promise<OcctImportJs> | null = null;
-
-interface OcctMeshAttributes {
-  position: { array: number[] };
-  normal: { array: number[] };
-}
-
-interface OcctMesh {
-  index: { array: number[] };
-  attributes: OcctMeshAttributes;
-  color?: [number, number, number];
-}
-
-interface OcctResult {
-  success: boolean;
-  meshes: OcctMesh[];
-}
-
-interface OcctImportJs {
-  ReadStepFile: (buffer: Uint8Array, params: null) => OcctResult;
-}
-
-function initOcct(): Promise<OcctImportJs> {
-  if (!occtPromise) {
-    occtPromise = import('occt-import-js').then((mod) =>
-      mod.default({
-        locateFile: () => '/occt-import-js.wasm',
-      })
-    );
-  }
-  return occtPromise;
-}
-
+/**
+ * Loads a STEP file by tessellating it to GLB in a worker, then parsing that GLB.
+ *
+ * It used to call occt.ReadStepFile directly, synchronously, on the main thread, with null
+ * params. That combination froze the tab for the entire tessellation — which on a heavy
+ * Rhino export never finished — while the viewport's CSS loading animation kept running on
+ * the compositor thread, so it looked like progress. See
+ * docs/superpowers/specs/2026-09-02-step-viewing-design.md.
+ *
+ * This path is now the FALLBACK. Files uploaded after that change carry a converted GLB and
+ * never reach here; this serves files uploaded before it, and any whose conversion failed.
+ */
 export class STEPLoader extends THREE.Loader {
   load(
     url: string,
@@ -48,55 +28,21 @@ export class STEPLoader extends THREE.Loader {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async loadAsync(url: string, onProgress?: (event: ProgressEvent) => void): Promise<THREE.Group> {
-    // Fetch the STEP file
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`STEPLoader: Failed to fetch ${url} (${response.status})`);
     }
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = new Uint8Array(arrayBuffer);
+    const bytes = await response.arrayBuffer();
 
-    // Initialize WASM and tessellate
-    const occt = await initOcct();
-    const result = occt.ReadStepFile(buffer, null);
-
-    if (!result.success) {
-      throw new Error('STEPLoader: Failed to parse STEP file');
+    const glb = await runStepConvert(bytes, { timeoutMs: STEP_VIEWER_TIMEOUT_MS });
+    if (!glb) {
+      // Throwing is what surfaces the message. ModelErrorBoundary catches it and releases
+      // the viewport indicator; returning an empty Group would show a blank viewport with
+      // no explanation, which is the behaviour this change exists to remove.
+      throw new Error('STEPLoader: could not tessellate this file in the browser');
     }
 
-    // Convert to Three.js objects
-    const group = new THREE.Group();
-
-    for (const mesh of result.meshes) {
-      const geometry = new THREE.BufferGeometry();
-
-      geometry.setAttribute(
-        'position',
-        new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3),
-      );
-      geometry.setAttribute(
-        'normal',
-        new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3),
-      );
-
-      if (mesh.index && mesh.index.array.length > 0) {
-        geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(mesh.index.array), 1));
-      }
-
-      const materialColor = mesh.color
-        ? new THREE.Color(mesh.color[0], mesh.color[1], mesh.color[2])
-        : new THREE.Color('#8899aa');
-
-      const material = new THREE.MeshStandardMaterial({
-        color: materialColor,
-        roughness: 0.6,
-        metalness: 0,
-        side: THREE.DoubleSide,
-      });
-
-      group.add(new THREE.Mesh(geometry, material));
-    }
-
-    return group;
+    const gltf = await new GLTFLoader().parseAsync(glb, '');
+    return gltf.scene;
   }
 }

@@ -16,9 +16,16 @@
 - `MAX_STEP_BYTES` is exactly `50 * 1024 * 1024`.
 - Tests are `.mjs` files under `scripts/tests/`, run with `npm test` (`node --test scripts/tests/*.mjs`). They import TypeScript directly with an explicit `.ts` extension, e.g. `from '../../lib/storageKeys.ts'`.
 - Never write a `.env.local` into the checkout.
+- Any module a `.mjs` test imports (directly or transitively) must use RELATIVE, `.ts`-extensioned
+  specifiers, not the `@/` alias. `node --test` strips types but does not resolve tsconfig path
+  aliases, so an `@/` import anywhere in the graph fails at module load. Webpack resolves both
+  forms, so this is invisible until a test first reaches the file.
 - Conversion failure must never fail an upload. Every failure path resolves `null` and the original is uploaded unchanged.
 - The variant storage key is always DERIVED server-side, never accepted from the client. Preserve this.
-- Run `npm run lint` before each commit.
+- Run `npm run lint` AND `npx tsc --noEmit` before each commit. Lint and tests both pass on
+  code that fails type-checking: `tsconfig.json` sets no `target` and no `downlevelIteration`,
+  so iterator syntax (`for...of` over `.entries()`, spreading a `Set`) compiles under neither.
+  `next build` type-checks, so a miss here breaks the deploy, not the test run.
 
 ---
 
@@ -339,7 +346,11 @@ export async function stepToGlb(
   const buffer = doc.createBuffer();
   const scene = doc.createScene();
 
-  for (const [i, mesh] of result.meshes.entries()) {
+  // An indexed loop, not `for...of result.meshes.entries()`: tsconfig.json sets no `target`
+  // and no `downlevelIteration`, so iterating an iterator is a compile error. `npm test` and
+  // `npm run lint` both pass regardless — only `tsc --noEmit` and `next build` catch it.
+  for (let i = 0; i < result.meshes.length; i++) {
+    const mesh = result.meshes[i];
     const name = mesh.name || `solid_${i}`;
 
     const primitive = doc.createPrimitive().setAttribute(
@@ -526,15 +537,21 @@ test('a worker that cannot be constructed resolves null', async () => {
 });
 
 test('a late reply after a timeout cannot resolve twice', async () => {
-  // settled-guard check: a worker that replies just after being killed must not overwrite
-  // the null the caller already received, which would surface as a resolved promise
-  // changing value.
+  // settled-guard check: a worker that replies just after being killed must not run finish()
+  // a second time. Calling resolve() twice on an already-settled promise is a silent no-op,
+  // so the only way to detect a missing guard is via a side effect of finish() that a second
+  // run would repeat: worker.terminate(). The stub counts its calls, and we assert the exact
+  // count — one from the timeout, and still one (not two) after the late reply arrives — so
+  // this test fails if the `settled` guard in runStepConvert is ever removed.
+  let terminateCount = 0;
   let captured = null;
   const worker = {
     postMessage() {
       captured = () => worker.onmessage({ data: { ok: true, buffer: new ArrayBuffer(4) } });
     },
-    terminate() {},
+    terminate() {
+      terminateCount += 1;
+    },
     onmessage: null,
     onerror: null,
   };
@@ -543,7 +560,9 @@ test('a late reply after a timeout cannot resolve twice', async () => {
     timeoutMs: 10,
   });
   assert.equal(result, null);
-  assert.doesNotThrow(() => captured());
+  assert.equal(terminateCount, 1, 'the timeout path must terminate the worker exactly once');
+  captured();
+  assert.equal(terminateCount, 1, 'a late reply after the timeout must not terminate again');
 });
 ```
 
@@ -770,8 +789,8 @@ import {
   isOptimizableFilename,
   isTessellatableFilename,
   producesViewerVariant,
-} from '@/lib/storageKeys';
-import { runStepConvert } from './runStepConvert';
+} from '../storageKeys.ts';
+import { runStepConvert } from './runStepConvert.ts';
 ```
 
 Add after the `MAX_OPTIMIZE_BYTES` declaration:
@@ -982,10 +1001,10 @@ export default class ModelErrorBoundary extends Component<Props, State> {
       <div className="flex h-full w-full items-center justify-center p-8">
         <div className="max-w-sm text-center">
           <p className="text-sm font-medium text-gray-700">
-            This 3D file could not be prepared for viewing.
+            This 3D file could not be displayed.
           </p>
           <p className="mt-1 text-sm text-gray-500">
-            It is too complex to display in the browser. You can still download it.
+            It may be too complex to prepare in the browser. Ask whoever uploaded it to share a GLB version.
           </p>
         </div>
       </div>

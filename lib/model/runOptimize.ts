@@ -1,5 +1,10 @@
 import type { OptimizeResult } from './optimizeGlb';
-import { isOptimizableFilename } from '@/lib/storageKeys';
+import {
+  isOptimizableFilename,
+  isTessellatableFilename,
+  producesViewerVariant,
+} from '../storageKeys.ts';
+import { runStepConvert } from './runStepConvert.ts';
 
 /**
  * Browser-side front door to the optimizer. Every failure path resolves `null`, which the
@@ -16,8 +21,33 @@ export const MAX_OPTIMIZE_BYTES = 100 * 1024 * 1024;
 /** Generous next to the ~6s the 22 MB reference file takes, tight enough to not strand an upload. */
 const TIMEOUT_MS = 120_000;
 
+/**
+ * Retained deliberately as the GLB-only public API, even though `shouldPrepareVariant` below
+ * is the only predicate the app actually calls now (it covers STEP too). Nothing in this
+ * codebase references `shouldOptimize` anymore — don't take that as license to edit it
+ * expecting an observable effect, and don't read its absence of callers as dead code to prune.
+ */
 export function shouldOptimize(filename: string, bytes: number): boolean {
   return isOptimizableFilename(filename) && bytes <= MAX_OPTIMIZE_BYTES;
+}
+
+/**
+ * A cap on absurd inputs only. Unlike MAX_OPTIMIZE_BYTES this is NOT a memory projection:
+ * OCCT peaked near 60 MB on a 13.7 MB file. Tessellation cost tracks surface complexity,
+ * not byte count, so the timeout in runStepConvert is the real guard.
+ */
+export const MAX_STEP_BYTES = 50 * 1024 * 1024;
+
+export interface VariantResult {
+  buffer: ArrayBuffer;
+  /** One line for the console. Its shape differs per source format. */
+  summary: string;
+}
+
+export function shouldPrepareVariant(filename: string, bytes: number): boolean {
+  if (!producesViewerVariant(filename)) return false;
+  if (isTessellatableFilename(filename)) return bytes <= MAX_STEP_BYTES;
+  return bytes <= MAX_OPTIMIZE_BYTES;
 }
 
 /**
@@ -35,6 +65,12 @@ export function shouldOptimize(filename: string, bytes: number): boolean {
  */
 let optimizeQueue: Promise<void> = Promise.resolve();
 
+/**
+ * Retained deliberately as the GLB-only public API. The app itself no longer calls this
+ * directly — `prepareViewerVariant` below is the only path in use, and it reaches the
+ * optimizer via `runOptimizeNow`, not this function (see the comment on that call for why).
+ * Kept exported and working so don't assume it's dead code to prune.
+ */
 export function runOptimize(file: File): Promise<OptimizeResult | null> {
   const result = optimizeQueue.then(() => runOptimizeNow(file));
   optimizeQueue = result.then(
@@ -42,6 +78,51 @@ export function runOptimize(file: File): Promise<OptimizeResult | null> {
     () => undefined
   );
   return result;
+}
+
+/**
+ * Produce the object the viewer should load instead of the original, whatever the source
+ * format. Shares runOptimize's single-slot queue, so a multi-file upload never runs two
+ * conversions at once regardless of which kind they are.
+ */
+export function prepareViewerVariant(file: File): Promise<VariantResult | null> {
+  const result = optimizeQueue.then(() => prepareViewerVariantNow(file));
+  optimizeQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+async function prepareViewerVariantNow(file: File): Promise<VariantResult | null> {
+  if (isTessellatableFilename(file.name)) {
+    const bytes = await file.arrayBuffer();
+    const glb = await runStepConvert(bytes);
+    if (!glb) return null;
+    return {
+      buffer: glb,
+      summary:
+        `Tessellated ${file.name}: ` +
+        `${Math.round(file.size / 1024)}KB STEP → ${Math.round(glb.byteLength / 1024)}KB GLB`,
+    };
+  }
+
+  if (!isOptimizableFilename(file.name)) return null;
+
+  // Calls runOptimizeNow, not runOptimize: this function is already running inside a turn
+  // of optimizeQueue (see prepareViewerVariant above), and runOptimize chains onto that same
+  // single-slot queue. Calling it here would enqueue behind a slot this call itself holds,
+  // deadlocking the queue permanently rather than running the optimization.
+  const optimized = await runOptimizeNow(file);
+  if (!optimized) return null;
+  const { before, after } = optimized.stats;
+  return {
+    buffer: optimized.buffer,
+    summary:
+      `Optimised ${file.name}: ${before.primitives} → ${after.primitives} draw calls, ` +
+      `${after.triangles} triangles preserved, ` +
+      `${Math.round(before.bytes / 1024)}KB → ${Math.round(after.bytes / 1024)}KB`,
+  };
 }
 
 function runOptimizeNow(file: File): Promise<OptimizeResult | null> {

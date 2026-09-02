@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { FileWithPath } from '@/components/ui/FileDropzone';
 import type { UploadItem } from '@/components/ui/UploadProgress';
-import { runOptimize, shouldOptimize } from '@/lib/model/runOptimize';
+import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptimize';
 
 /**
  * Parallel, per-file upload with progress and retry — gap #12.
@@ -89,27 +89,22 @@ export function useUpload() {
         // try/finally to enforce the invariant that state is ALWAYS restored on every path,
         // even if runOptimize (or any future change) unexpectedly rejects.
         let hasOptimizedVariant = false;
-        if (variantPresignedUrl && shouldOptimize(entry.file.name, entry.file.size)) {
+        if (variantPresignedUrl && shouldPrepareVariant(entry.file.name, entry.file.size)) {
           patch(entry.path, { state: 'optimizing' });
           try {
-            const optimized = await runOptimize(entry.file);
+            const variant = await prepareViewerVariant(entry.file);
 
-            if (optimized) {
+            if (variant) {
               try {
                 const put = await fetch(variantPresignedUrl, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'model/gltf-binary' },
-                  body: optimized.buffer,
+                  body: variant.buffer,
                 });
                 if (!put.ok) throw new Error(`Variant upload failed (${put.status})`);
 
                 hasOptimizedVariant = true;
-                const { before, after } = optimized.stats;
-                console.info(
-                  `Optimised ${entry.file.name}: ${before.primitives} → ${after.primitives} draw calls, ` +
-                    `${after.triangles} triangles preserved, ` +
-                    `${Math.round(before.bytes / 1024)}KB → ${Math.round(after.bytes / 1024)}KB`
-                );
+                console.info(variant.summary);
               } catch (err) {
                 // Same policy as everywhere else here: the original is already uploaded and
                 // the viewer falls back to it, so this is a downgrade, not a failure.
