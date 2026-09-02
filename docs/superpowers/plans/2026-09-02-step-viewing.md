@@ -18,7 +18,10 @@
 - Never write a `.env.local` into the checkout.
 - Conversion failure must never fail an upload. Every failure path resolves `null` and the original is uploaded unchanged.
 - The variant storage key is always DERIVED server-side, never accepted from the client. Preserve this.
-- Run `npm run lint` before each commit.
+- Run `npm run lint` AND `npx tsc --noEmit` before each commit. Lint and tests both pass on
+  code that fails type-checking: `tsconfig.json` sets no `target` and no `downlevelIteration`,
+  so iterator syntax (`for...of` over `.entries()`, spreading a `Set`) compiles under neither.
+  `next build` type-checks, so a miss here breaks the deploy, not the test run.
 
 ---
 
@@ -339,7 +342,11 @@ export async function stepToGlb(
   const buffer = doc.createBuffer();
   const scene = doc.createScene();
 
-  for (const [i, mesh] of result.meshes.entries()) {
+  // An indexed loop, not `for...of result.meshes.entries()`: tsconfig.json sets no `target`
+  // and no `downlevelIteration`, so iterating an iterator is a compile error. `npm test` and
+  // `npm run lint` both pass regardless — only `tsc --noEmit` and `next build` catch it.
+  for (let i = 0; i < result.meshes.length; i++) {
+    const mesh = result.meshes[i];
     const name = mesh.name || `solid_${i}`;
 
     const primitive = doc.createPrimitive().setAttribute(
