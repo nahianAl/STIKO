@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
-import { isOptimizableFilename, optimizedVariantKey } from '@/lib/storageKeys';
+import { producesViewerVariant, optimizedVariantKey } from '@/lib/storageKeys';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   // back, and there is no window in which the file row must already exist.
   //
   // Presigning a variant the client may never use costs nothing: the URL simply expires.
-  const variantStorageKey = isOptimizableFilename(filename)
+  const variantStorageKey = producesViewerVariant(filename)
     ? optimizedVariantKey(storageKey)
     : null;
 
