@@ -56,5 +56,10 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|uploads).*)'],
+  // occt-import-js.wasm: static asset fetched by the STEP tessellation worker
+  // (lib/model/stepToGlb.ts) when a viewed file has no converted GLB variant.
+  // /portal/[id] is public, so this fetch is frequently unauthenticated. Without
+  // this exemption it 307s to /login and the worker tries to WebAssembly-compile
+  // the login page's HTML.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|uploads|occt-import-js.wasm).*)'],
 };
