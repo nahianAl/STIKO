@@ -16,6 +16,10 @@
 - `MAX_STEP_BYTES` is exactly `50 * 1024 * 1024`.
 - Tests are `.mjs` files under `scripts/tests/`, run with `npm test` (`node --test scripts/tests/*.mjs`). They import TypeScript directly with an explicit `.ts` extension, e.g. `from '../../lib/storageKeys.ts'`.
 - Never write a `.env.local` into the checkout.
+- Any module a `.mjs` test imports (directly or transitively) must use RELATIVE, `.ts`-extensioned
+  specifiers, not the `@/` alias. `node --test` strips types but does not resolve tsconfig path
+  aliases, so an `@/` import anywhere in the graph fails at module load. Webpack resolves both
+  forms, so this is invisible until a test first reaches the file.
 - Conversion failure must never fail an upload. Every failure path resolves `null` and the original is uploaded unchanged.
 - The variant storage key is always DERIVED server-side, never accepted from the client. Preserve this.
 - Run `npm run lint` AND `npx tsc --noEmit` before each commit. Lint and tests both pass on
@@ -785,8 +789,8 @@ import {
   isOptimizableFilename,
   isTessellatableFilename,
   producesViewerVariant,
-} from '@/lib/storageKeys';
-import { runStepConvert } from './runStepConvert';
+} from '../storageKeys.ts';
+import { runStepConvert } from './runStepConvert.ts';
 ```
 
 Add after the `MAX_OPTIMIZE_BYTES` declaration:
