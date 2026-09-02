@@ -38,12 +38,24 @@ let occtPromise: Promise<OcctImportJs> | null = null;
  * The WASM is 7.6 MB and initialises in ~25 ms, so it is loaded once and reused. In the
  * browser it is served from /occt-import-js.wasm, copied there by the postinstall script;
  * tests pass a path into node_modules instead.
+ *
+ * `locateFile` is only honoured for whichever call first populates `occtPromise`; every
+ * later call reuses that already-initialised module regardless of the `locateFile` it
+ * passes. This is fine as-is: the browser always uses the default path, and tests use a
+ * single path throughout a process. Do not add a cache key or a map of instances to make
+ * `locateFile` reconfigurable per call — nothing in this codebase needs it.
  */
 function initOcct(locateFile?: (path: string) => string): Promise<OcctImportJs> {
   if (!occtPromise) {
-    occtPromise = import('occt-import-js').then((mod) =>
-      mod.default({ locateFile: locateFile ?? (() => '/occt-import-js.wasm') })
-    );
+    occtPromise = import('occt-import-js')
+      .then((mod) => mod.default({ locateFile: locateFile ?? (() => '/occt-import-js.wasm') }))
+      .catch((err) => {
+        // A failed init must not be cached: the next call should retry, not replay this
+        // rejection forever. The rejection still propagates to this call's own caller
+        // via the returned (now-rejected) promise below.
+        occtPromise = null;
+        throw err;
+      });
   }
   return occtPromise;
 }

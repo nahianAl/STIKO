@@ -61,3 +61,30 @@ test('a file that is not STEP at all rejects rather than returning empty geometr
     /STEP/
   );
 });
+
+test('a failed init does not poison later calls', async () => {
+  // Import a fresh copy of the module (cache-busted via query string) so this test owns
+  // its own private `occtPromise` module state, independent of whatever the other tests
+  // in this file have already warmed it to — this test must prove something regardless
+  // of execution order.
+  const { stepToGlb: freshStepToGlb } = await import(
+    '../../lib/model/stepToGlb.ts?bust=poison-test'
+  );
+
+  const brokenLocateFile = (p) => path.join(process.cwd(), 'no/such/directory/', p);
+
+  // First call: init must fail, because the WASM binary genuinely isn't at that path.
+  await assert.rejects(() => freshStepToGlb(new Uint8Array(readFileSync(CUBE)), {
+    locateFile: brokenLocateFile,
+  }));
+
+  // Second call, same module instance, correct locateFile this time: before the fix this
+  // replayed the first call's cached rejection forever. It must now succeed and return
+  // real geometry, proving the failed init did not poison the module-level cache.
+  const glb = await freshStepToGlb(new Uint8Array(readFileSync(CUBE)), { locateFile });
+  const doc = await new WebIO().readBinary(glb);
+  const meshes = doc.getRoot().listMeshes();
+  assert.ok(meshes.length >= 1, 'expected at least one mesh');
+  const position = meshes[0].listPrimitives()[0].getAttribute('POSITION');
+  assert.ok(position.getCount() > 0, 'expected vertices');
+});
