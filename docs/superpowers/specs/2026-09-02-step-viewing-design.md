@@ -178,6 +178,12 @@ the timeout, because cost tracks surface complexity, not file size.
 results carry. The declaration is hand-written, so it is the only thing enforcing this
 shape.
 
+**`app/api/files/upload/route.ts`** — presigns the variant URL only when
+`isOptimizableFilename(filename)`, so a `.stp` upload currently receives
+`variantPresignedUrl: null` and no amount of client work could store a converted copy. Switch
+the gate to `producesViewerVariant`. Without this one line the rest of the upload path is
+dead code.
+
 **`components/viewers/ViewerContainer.tsx`** — wraps the `ModelViewer` branch in
 `ModelErrorBoundary`, passing `onReady` through.
 
