@@ -69,7 +69,8 @@ export async function stepToGlb(
   const buffer = doc.createBuffer();
   const scene = doc.createScene();
 
-  for (const [i, mesh] of result.meshes.entries()) {
+  for (let i = 0; i < result.meshes.length; i++) {
+    const mesh = result.meshes[i];
     const name = mesh.name || `solid_${i}`;
 
     const primitive = doc.createPrimitive().setAttribute(
