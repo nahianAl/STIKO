@@ -48,3 +48,44 @@ export function capabilitiesFor(role: EffectiveRole): Capabilities {
     }
   }
 }
+
+export interface DeleteContext {
+  role: EffectiveRole;
+  /** The caller uploaded this file. Always false when judging a whole version. */
+  isOwnUpload: boolean;
+  /** The version is published — for a file, the version containing it. */
+  isPublished: boolean;
+}
+
+/**
+ * Who may destroy content.
+ *
+ * Deleting a file cascades to every comment and markup on it, so this is the
+ * power to erase other people's work, not just one's own. That is why an
+ * uploader's reach stops at publication: before it nobody has seen the file, so
+ * deletion harms no one; after it, removal is the owner's call.
+ *
+ * A version is never "own upload" — one version can hold files from several
+ * uploaders, so letting any of them delete the container would let them delete
+ * the others' work.
+ */
+export function canDeleteContent(ctx: DeleteContext): boolean {
+  switch (ctx.role) {
+    case 'owner':
+    case 'coordinator':
+      return true;
+    case 'uploader':
+      return ctx.isOwnUpload && !ctx.isPublished;
+    case 'commenter':
+    case 'viewer':
+      return false;
+    default: {
+      // Same two guarantees as capabilitiesFor: a role added to EffectiveRole
+      // without a case here fails to typecheck, and one that reaches this
+      // through an unchecked cast is denied rather than falling through.
+      const unhandled: never = ctx.role;
+      void unhandled;
+      return false;
+    }
+  }
+}
