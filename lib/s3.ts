@@ -71,3 +71,32 @@ export async function uploadFromUrl(
     })
   );
 }
+
+/**
+ * Remove several stored objects, best effort.
+ *
+ * Deliberately never throws. Callers run this *after* the database rows are
+ * gone, so by the time it fails the user's intent is already satisfied; turning
+ * a storage hiccup into a failed request would tell them the delete did not
+ * happen when it did. A failure here leaves an orphaned object: invisible,
+ * slightly costly, harmless.
+ *
+ * The reverse order — storage first — would risk a file gone from R2 but still
+ * listed in the UI, which reads to the user as corruption.
+ */
+export async function deleteObjects(
+  keys: (string | null | undefined)[]
+): Promise<void> {
+  const present = keys.filter(
+    (k): k is string => typeof k === 'string' && k.length > 0
+  );
+  await Promise.all(
+    present.map(async (key) => {
+      try {
+        await deleteObject(key);
+      } catch (err) {
+        console.error(`[s3] orphaned object, delete failed: ${key}`, err);
+      }
+    })
+  );
+}
