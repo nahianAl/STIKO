@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
-import { producesViewerVariant, optimizedVariantKey } from '@/lib/storageKeys';
+import { isOptimizableFilename, optimizedVariantKey } from '@/lib/storageKeys';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
@@ -19,7 +19,23 @@ export async function POST(request: NextRequest) {
   // back, and there is no window in which the file row must already exist.
   //
   // Presigning a variant the client may never use costs nothing: the URL simply expires.
-  const variantStorageKey = producesViewerVariant(filename)
+  // KILL SWITCH, 2026-09-03: this is isOptimizableFilename (GLB only) rather than
+  // producesViewerVariant (GLB + STEP) on purpose.
+  //
+  // Upload-time STEP tessellation was disabled after teammates hit failing uploads across
+  // .stp, .step AND .stl, with ERR_CONNECTION_RESET / ERR_SSL_BAD_RECORD_MAC_ALERT on
+  // PutObject and "THREE.WebGLRenderer: Context Lost". STL never had a variant, so the tab
+  // itself — not the file type — was the common factor: OCCT tessellation runs concurrently
+  // with a 4-wide upload pool, and under that memory pressure in-flight requests die.
+  //
+  // Returning null here means the client receives variantPresignedUrl: null and skips the
+  // whole conversion block, so no OCCT runs during upload. The viewer-side worker, its
+  // timeout and ModelErrorBoundary are all untouched and still fix the original tab-freeze.
+  //
+  // Re-enable by restoring producesViewerVariant, but only with the memory ceiling measured
+  // first: MAX_STEP_BYTES is 50 MB of STEP text, which can be arbitrarily complex, and
+  // conversions serialize across the pool while uploads are in flight.
+  const variantStorageKey = isOptimizableFilename(filename)
     ? optimizedVariantKey(storageKey)
     : null;
 
