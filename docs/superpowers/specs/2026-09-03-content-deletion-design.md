@@ -85,6 +85,14 @@ sitting in currently-open drafts.
 `files.uploaded_by` is set on insert going forward, in the upload completion
 path (`app/api/files/complete/route.ts`).
 
+**That route must be authorized first.** It currently has no session check at
+all: it takes `fileId`, `versionId`, `filename` and `storageKey` straight from
+the request body and inserts them, so anyone can register a file row against
+any version. Recording `uploaded_by` requires a session, so authorizing this
+route is a prerequisite of the column rather than optional extra scope. It gains
+the standard session check plus `getPackageAccess(...).canUpload` on the version's
+package.
+
 **Deployment note:** migrations here are applied manually and have been
 forgotten before. This migration must run *before* the code that reads
 `uploaded_by` is deployed, or every uploader delete check reads NULL and
@@ -242,10 +250,19 @@ trip.
 
 ### Affordances
 
-- `components/portal/FileList.tsx` — per-file delete, rendered only when
-  `canDelete`.
-- The version rail in `app/portal/[id]/page.tsx` — per-version delete, same
-  gating.
+Both live in `components/portal/FileTreeSidebar.tsx`, which renders the version
+rail and the file tree together.
+
+- Per-file delete on the `FileItem` row, rendered only when `canDelete`.
+- Per-version delete on the version row, same gating.
+
+Note: `components/portal/FileList.tsx` is dead code — it is imported nowhere.
+It is not the file to edit, and this work does not revive it.
+
+`FileItem` is currently a single `<button>` wrapping the whole row, so a delete
+control cannot be nested inside it — that would be invalid HTML and the two
+click targets would fight. The row becomes a `<div>` holding the existing
+select button and the delete button as siblings.
 
 ### Confirms scale to the stakes
 
