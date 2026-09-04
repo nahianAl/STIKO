@@ -16,7 +16,7 @@ export async function GET(
 ) {
   const rows = await sql`
     SELECT t.id, t.token, t.portal_id AS "portalId", t.role, t.email,
-           t.multi_use AS "multiUse",
+           t.multi_use AS "multiUse", t.all_versions AS "allVersions",
            t.expires_at AS "expiresAt", t.used_at AS "usedAt",
            t.revoked_at AS "revokedAt",
            po.name AS "packageName", pr.name AS "projectName",
@@ -61,15 +61,29 @@ export async function GET(
     }
   }
 
-  // The latest published version, and the files inside it.
-  const versionRows = await sql`
-    SELECT id, version_number AS "versionNumber", changelog,
-           published_at AS "publishedAt"
-    FROM versions
-    WHERE portal_id = ${invite.portalId} AND published_at IS NOT NULL
-    ORDER BY version_number DESC
-    LIMIT 1
-  `;
+  // The latest published version, and the files inside it — except for a
+  // scoped invitation, where showing the package's actual latest would leak
+  // exactly what the scope is meant to hide. In that case, the newest
+  // published version among the ones this token grants stands in for it.
+  const versionRows =
+    invite.allVersions === false
+      ? await sql`
+          SELECT v.id, v.version_number AS "versionNumber", v.changelog,
+                 v.published_at AS "publishedAt"
+          FROM versions v
+          JOIN invite_token_versions itv ON itv.version_id = v.id
+          WHERE itv.token_id = ${invite.id} AND v.published_at IS NOT NULL
+          ORDER BY v.version_number DESC
+          LIMIT 1
+        `
+      : await sql`
+          SELECT id, version_number AS "versionNumber", changelog,
+                 published_at AS "publishedAt"
+          FROM versions
+          WHERE portal_id = ${invite.portalId} AND published_at IS NOT NULL
+          ORDER BY version_number DESC
+          LIMIT 1
+        `;
   const version = versionRows[0] ?? null;
 
   const files = version
@@ -171,14 +185,28 @@ export async function POST(
   // invite that only changed the grant, and the notification below would fire
   // "accepted your invitation" a second time for someone who already had.
   const joined = await sql`
-    INSERT INTO participants (id, portal_id, user_id, role, can_download)
+    INSERT INTO participants (id, portal_id, user_id, role, can_download, all_versions)
     VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role},
-            ${invite.can_download === true})
+            ${invite.can_download === true}, ${invite.all_versions !== false})
     ON CONFLICT (portal_id, user_id) DO UPDATE
-      SET can_download = EXCLUDED.can_download
+      SET can_download = EXCLUDED.can_download,
+          all_versions = EXCLUDED.all_versions
       WHERE ${!invite.multi_use}
     RETURNING id, (xmax = 0) AS "isNew"
   `;
+
+  const participantId = joined[0]?.id;
+  if (participantId && invite.all_versions === false) {
+    // Replace rather than add: the invitation the owner just sent is the
+    // intended scope, not an increment on whatever was there before.
+    await sql`DELETE FROM participant_versions WHERE participant_id = ${participantId}`;
+    await sql`
+      INSERT INTO participant_versions (id, participant_id, version_id)
+      SELECT gen_random_uuid()::text, ${participantId}, version_id
+      FROM invite_token_versions WHERE token_id = ${invite.id}
+      ON CONFLICT (participant_id, version_id) DO NOTHING
+    `;
+  }
 
   // A share link is not consumed by the person who walks through it — stamping
   // used_at would retire the link for everyone behind them, since every

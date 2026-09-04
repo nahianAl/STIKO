@@ -54,7 +54,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { portalId, email, role, note, shareLink, canDownload } = await request.json();
+  const { portalId, email, role, note, shareLink, canDownload, allVersions, versionIds } =
+    await request.json();
 
   // Asked for explicitly. Inferring "mint a public standing-access link" from a
   // missing email would mean any caller that dropped the field — a client
@@ -73,6 +74,13 @@ export async function POST(request: NextRequest) {
   // Enforced here rather than by omitting the control, because a link can be
   // forwarded to anyone and the UI is not what protects this.
   const grantsDownload = isShareLink ? false : canDownload === true;
+
+  // Only commenters and viewers are ever scoped. An uploader's work builds on
+  // what came before, so a scoped uploader would be unable to do the job.
+  const scopable = role === 'commenter' || role === 'viewer';
+  const scopeAll = !scopable || allVersions !== false;
+  const scopeIds: string[] =
+    scopeAll || !Array.isArray(versionIds) ? [] : versionIds.filter((v) => typeof v === 'string');
 
   if (!portalId || !role) {
     return NextResponse.json(
@@ -101,13 +109,28 @@ export async function POST(request: NextRequest) {
 
   const rows = await sql`
     INSERT INTO invite_tokens
-      (id, token, portal_id, role, email, multi_use, expires_at, invited_by, note, can_download)
+      (id, token, portal_id, role, email, multi_use, expires_at, invited_by, note, can_download, all_versions)
     VALUES (
       ${uuidv4()}, ${token}, ${portalId}, ${role}, ${recipient}, ${isShareLink},
-      ${expiresAt.toISOString()}, ${session.user.id}, ${note ?? null}, ${grantsDownload}
+      ${expiresAt.toISOString()}, ${session.user.id}, ${note ?? null}, ${grantsDownload}, ${scopeAll}
     )
-    RETURNING token
+    RETURNING id, token
   `;
+
+  if (!scopeAll && scopeIds.length > 0) {
+    // Only versions that really belong to this package. A caller could
+    // otherwise name a version from a package they have nothing to do with.
+    for (const vId of scopeIds) {
+      await sql`
+        INSERT INTO invite_token_versions (id, token_id, version_id)
+        SELECT ${uuidv4()}, ${rows[0].id}, ${vId}
+        WHERE EXISTS (
+          SELECT 1 FROM versions WHERE id = ${vId} AND portal_id = ${portalId}
+        )
+        ON CONFLICT (token_id, version_id) DO NOTHING
+      `;
+    }
+  }
 
   const context = await sql`
     SELECT po.name AS "packageName", pr.name AS "projectName"
