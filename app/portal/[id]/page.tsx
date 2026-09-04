@@ -213,8 +213,12 @@ export default function PortalPage() {
     pageNumber?: number; timestamp?: number;
   } | null>(null);
   const composerInputRef = useRef<HTMLInputElement>(null);
-  // Which version an auto-generate has already been attempted for this mount.
-  const autoBriefAttempted = useRef<string | null>(null);
+  // Every version an auto-generate has been attempted for this mount. A Set,
+  // not a single slot: with one slot, selecting V3, switching away, and
+  // switching back re-armed the guard while the first POST was still in
+  // flight, and the GET still reported no brief — so a second, paid
+  // generation went out for a version already being summarised.
+  const autoBriefAttempted = useRef<Set<string>>(new Set());
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
@@ -596,13 +600,13 @@ export default function PortalPage() {
   useEffect(() => {
     const target = selectedVersionId;
     if (!target) return;
-    if (autoBriefAttempted.current === target) return;
+    if (autoBriefAttempted.current.has(target)) return;
     // Claimed synchronously, before any await. React re-invokes effects in
     // development, and a guard set after an await lets both invocations through
     // to a paid endpoint. The cost of claiming early is that a network failure
     // skips this version for the rest of the session — acceptable, because the
     // drawer's Summarise and Refresh buttons both still work.
-    autoBriefAttempted.current = target;
+    autoBriefAttempted.current.add(target);
 
     let cancelled = false;
     (async () => {
@@ -1445,6 +1449,7 @@ export default function PortalPage() {
         files={files}
         filesLoading={filesLoading}
         briefGenerating={!!detailVersion && autoBriefBusy === detailVersion.id}
+        confirmOpen={!!fileToDelete || !!versionToDelete}
         onClose={() => setDetailVersionId(null)}
         onSelectFile={setSelectedFileId}
         onSelectCitedComment={handleSelectCitedComment}

@@ -25,6 +25,7 @@ export default function Drawer({
   subtitle,
   footer,
   width = 452,
+  closeOnEscape = true,
   children,
 }: {
   isOpen: boolean;
@@ -33,16 +34,24 @@ export default function Drawer({
   subtitle?: string;
   footer?: React.ReactNode;
   width?: number;
+  /** Set to false while a confirm dialog is open above this drawer. Drawer and
+   *  Modal both listen for Escape on `document`, and the drawer's listener is
+   *  registered first (it mounts first) and so runs first — one Escape press
+   *  would otherwise close the confirm *and* the drawer beneath it. Defaults
+   *  to true so existing consumers are unaffected. */
+  closeOnEscape?: boolean;
   children: React.ReactNode;
 }) {
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (!closeOnEscape) return;
+      onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, closeOnEscape]);
 
   if (!isOpen) return null;
 

@@ -154,6 +154,7 @@ export default function VersionDetailDrawer({
   files,
   filesLoading,
   briefGenerating,
+  confirmOpen,
   onClose,
   onSelectFile,
   onSelectCitedComment,
@@ -169,6 +170,8 @@ export default function VersionDetailDrawer({
    *  straight through so the Brief cannot offer a button that would fire a
    *  second, concurrent call to a paid endpoint. */
   briefGenerating: boolean;
+  /** True while a delete confirm is open above this drawer. */
+  confirmOpen: boolean;
   onClose: () => void;
   onSelectFile: (fileId: string) => void;
   onSelectCitedComment: (commentId: string, fileId: string) => void;
@@ -188,6 +191,7 @@ export default function VersionDetailDrawer({
     <Drawer
       isOpen
       onClose={onClose}
+      closeOnEscape={!confirmOpen}
       title={`Version ${version.versionNumber}`}
       subtitle={versionSubtitle({
         isCurrent,
