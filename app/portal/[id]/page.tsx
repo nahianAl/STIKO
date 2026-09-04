@@ -626,7 +626,14 @@ export default function PortalPage() {
           // every version's summary again.
           if (headline) setHeadlines((h) => ({ ...h, [target]: headline }));
         } finally {
-          if (!cancelled) setAutoBriefBusy(null);
+          // Released unconditionally, and only if this run still owns the flag.
+          // Conditioning on `cancelled` stranded it: the effect's one-shot
+          // autoBriefAttempted guard means no later run for the same version
+          // would ever clear it, so switching version mid-POST disabled that
+          // version's Summarise button for the rest of the session. Comparing
+          // against the current value also stops a settling older run from
+          // clearing a newer version's claim.
+          setAutoBriefBusy((current) => (current === target ? null : current));
         }
       } catch (err) {
         console.error('Failed to auto-generate brief:', err);
@@ -854,10 +861,6 @@ export default function PortalPage() {
     if (!versionToDelete) return;
     const target = versionToDelete;
     setVersionToDelete(null);
-    // The drawer resolves its version from `versions`, so loadVersions() below
-    // would close it anyway — but only after a round trip. Clearing it here
-    // means the drawer does not linger over the confirm's dismissal.
-    if (detailVersionId === target.id) setDetailVersionId(null);
 
     const res = await fetch(`/api/versions/${target.id}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -866,6 +869,10 @@ export default function PortalPage() {
     }
 
     toast(`Version ${target.versionNumber} deleted`);
+    // The drawer resolves its version from `versions`, so loadVersions() below
+    // would close it anyway — but only after a round trip. Clearing it here
+    // means the drawer does not linger over the confirm's dismissal.
+    if (detailVersionId === target.id) setDetailVersionId(null);
     if (selectedVersionId === target.id) {
       setSelectedVersionId(null);
       setSelectedFileId(null);
