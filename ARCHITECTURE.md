@@ -18,6 +18,7 @@
 | Role | Auth Required | How They Access |
 |---|---|---|
 | Owner | Yes — Auth.js session | Signs up / logs in directly |
+| Coordinator | Yes — Auth.js session | Added to `project_members` by owner → sees every portal in the project |
 | Uploader | Yes — Auth.js session | Invite link → signup/login → portal access granted |
 | Commenter | Yes — Auth.js session | Invite link → signup/login → portal access granted |
 | Viewer | No | Direct portal URL, no login required |
@@ -46,7 +47,7 @@
 
 ### Deletion
 
-Deleting a file, version, package or project now removes its objects from the bucket too, via `deleteObjects` in `lib/s3.ts` — previously only the Neon rows went away, and the bucket kept growing forever. Cleanup runs after those rows are gone, never before: a storage failure at that point strands an object rather than turning a completed delete into an error response, and the reverse order risks the opposite failure — a file still listed with its bytes already gone.
+Deleting a file, version, portal or project now removes its objects from the bucket too, via `deleteObjects` in `lib/s3.ts` — previously only the Neon rows went away, and the bucket kept growing forever. Cleanup runs after those rows are gone, never before: a storage failure at that point strands an object rather than turning a completed delete into an error response, and the reverse order risks the opposite failure — a file still listed with its bytes already gone.
 
 All four scopes gather their keys through the same helper, `storageKeysForFiles` in `lib/access.ts`, so none of them can quietly diverge on what "this file's objects" means. It walks four kinds of object: the upload itself, its optimized viewer variant, any annotation snapshot named in `comments.snapshot_url`, and any comment attachment named in `comments.attachments[].storageKey`. The last two matter because comments cascade with the file — once those rows are gone, nothing in the database names those objects, so they must be collected before the delete runs, not after.
 
@@ -88,7 +89,7 @@ Client
   → POST /api/files/complete  (Vercel: writes FileRecord to Neon)
 ```
 
-Both steps are now authorized. Before this branch, neither `/api/files/upload` (the presign step above) nor `/api/files/complete` checked for a session at all — either would act for any caller who knew a version id. Both now require a session and `canUpload` on the version's package, and the storage key's project and package segments are derived from the version server-side rather than taken from the request body, so an uploader on one package cannot write objects under another's prefix.
+Both steps now require a session and `canUpload` on the version's portal — previously neither checked auth at all. `/api/files/upload` derives the storage key's project and portal segments from the version server-side, never the request body; `/api/files/complete` takes `storageKey` as given, but the only object that can exist at that key is one written through that server-derived presigned PUT.
 
 ### File Viewing Flow
 Files are served directly from S3 (public-read on the uploads prefix). Vercel is not in the streaming path.
@@ -115,22 +116,22 @@ POST /api/comments  (Vercel)
 ```
 
 ### Deletion Flow
-`canDeleteContent` in `lib/capabilities.ts` holds the whole policy and touches no database — it takes a role plus two booleans (own upload, version published) and returns yes or no, so it can be asserted by a test with no live connection. `getFileDeleteDecision` and `getVersionDeleteDecision` in `lib/access.ts` are its only callers: they resolve those facts from Neon and hand back the verdict together with the storage keys cleanup will need once the row is gone.
+`canDeleteContent` in `lib/capabilities.ts` is pure — role plus two booleans in, yes/no out — testable with no database. `getFileDeleteDecision` and `getVersionDeleteDecision` in `lib/access.ts` call it to enforce deletion, resolving the booleans from Neon and returning the verdict with the storage keys to clean up. The GET handlers in `files/route.ts` and `versions/route.ts` call it too, only for the client's `canDelete` hint — never as the gate.
 
-Owners and coordinators may delete any file or version. An uploader may delete their own file only up to the moment its version publishes — deleting a file cascades every comment and markup on it, so this is the power to erase someone else's review work, not just tidy up one's own, and the window closes the instant anyone else could have opened the file. A version is never "own upload": one version can hold files from several uploaders, so only owners and coordinators may take down a whole version. Commenters and viewers never delete anything. There is no trash and no undo.
+Owners and coordinators may delete any file or version. An uploader may delete their own file, but only before its version publishes. A version is never "own upload" — one version can hold files from several uploaders — so only owners and coordinators delete versions. Commenters and viewers can't delete anything. No trash, no undo.
 
-Version numbers are never reused once a version is gone. They already appear in comments, notifications, verdicts and mail already sent, so closing the gap by renumbering would silently repoint all of those at different content — the gap is permanent instead.
+Deleted version numbers are never reused: they already appear in comments, notifications, verdicts and sent mail, and renumbering would silently repoint those at different content.
 
 ```
 DELETE /api/files/[id]     (Vercel: getFileDeleteDecision → Neon)
 DELETE /api/versions/[id]  (Vercel: getVersionDeleteDecision → Neon)
-  ← 404  no such row, or no access to its package
-  ← 403  caller can see the package, but canDeleteContent said no
+  ← 404  no such row, or no access to its portal
+  ← 403  caller can see the portal, but canDeleteContent said no
   → DELETE FROM files / versions   (Neon; comments and markups cascade)
   → deleteObjects(storageKeys)     (lib/s3.ts, after the row — see S3 Bucket Structure)
 ```
 
-A 404 covers "no such row" and "no access to its package" alike, so an id can never be used to confirm something exists behind a boundary the caller cannot cross; a 403 only appears once the caller can already see the package.
+A 404 covers both "no such row" and "no access to its portal", so an id can't confirm something exists behind a boundary the caller can't cross; 403 only appears once the caller can already see the portal.
 
 ### Metadata Reads / Writes
 ```

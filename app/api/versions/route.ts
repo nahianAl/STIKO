@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
       `;
 
   // Counts come back with the rows so the delete confirm can state what dies
-  // without a second round trip. Only versions the caller can delete need them.
+  // without a second round trip.
   const counts = await sql`
     SELECT v.id,
            COUNT(DISTINCT f.id) AS "fileCount",
