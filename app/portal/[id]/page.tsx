@@ -9,6 +9,7 @@ import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
 import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
+import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
@@ -177,6 +178,18 @@ export default function PortalPage() {
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [canUpload, setCanUpload] = useState(false);
   const [canTransform, setCanTransform] = useState(false);
+
+  // Which version the detail drawer is showing. The version OBJECT is resolved
+  // from `versions` each render rather than copied into state, so a version that
+  // disappears — deleted, or dropped by a scope change — closes the drawer with
+  // no extra bookkeeping.
+  const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
+  // The version id currently being auto-summarised, or null. VersionBrief's own
+  // `busy` is local to itself and cannot see this, so without it the Brief's
+  // Summarise button sits enabled during exactly the window the page is already
+  // generating — and POST /api/versions/[id]/summary only short-circuits once a
+  // brief EXISTS, so two concurrent calls with no brief yet are two real ones.
+  const [autoBriefBusy, setAutoBriefBusy] = useState<string | null>(null);
 
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
@@ -602,14 +615,19 @@ export default function PortalPage() {
         if (!body.enabled || !body.configured || body.brief) return;
         if ((body.facts?.commentCount ?? 0) < BRIEF_MIN_COMMENTS) return;
 
-        const gen = await fetch(`/api/versions/${target}/summary`, { method: 'POST' });
-        if (cancelled || !gen.ok) return;
-        const genBody = await gen.json();
-        if (cancelled) return;
-        const headline = genBody.brief?.headline;
-        // Fold the new headline straight into the rail rather than refetching
-        // every version's summary again.
-        if (headline) setHeadlines((h) => ({ ...h, [target]: headline }));
+        setAutoBriefBusy(target);
+        try {
+          const gen = await fetch(`/api/versions/${target}/summary`, { method: 'POST' });
+          if (cancelled || !gen.ok) return;
+          const genBody = await gen.json();
+          if (cancelled) return;
+          const headline = genBody.brief?.headline;
+          // Fold the new headline straight into the rail rather than refetching
+          // every version's summary again.
+          if (headline) setHeadlines((h) => ({ ...h, [target]: headline }));
+        } finally {
+          if (!cancelled) setAutoBriefBusy(null);
+        }
       } catch (err) {
         console.error('Failed to auto-generate brief:', err);
         // A brief is an enhancement. Failing to produce one must not put an
@@ -796,6 +814,21 @@ export default function PortalPage() {
     setActiveCommentId(null);
   };
 
+  // A plain function, matching handleSelectVersion directly above it. Wrapping
+  // it in useCallback would need handleSelectVersion in its dependency array,
+  // and that is redefined every render, so the memo would never hold — while
+  // omitting it trips react-hooks/exhaustive-deps. The sidebar is not memoized,
+  // so a stable identity buys nothing here.
+  const handleOpenVersionDetails = (version: Version) => {
+    // Opening the drawer moves the whole page to that version. Guarded on the
+    // id: handleSelectVersion clears the file list, the selected file, the
+    // active tool and the active comment, so calling it for the version that is
+    // ALREADY selected would throw away the open drawing just because someone
+    // asked to see the version's details.
+    if (version.id !== selectedVersionId) handleSelectVersion(version.id);
+    setDetailVersionId(version.id);
+  };
+
   const confirmDeleteFile = async () => {
     if (!fileToDelete) return;
     const target = fileToDelete;
@@ -821,6 +854,10 @@ export default function PortalPage() {
     if (!versionToDelete) return;
     const target = versionToDelete;
     setVersionToDelete(null);
+    // The drawer resolves its version from `versions`, so loadVersions() below
+    // would close it anyway — but only after a round trip. Clearing it here
+    // means the drawer does not linger over the confirm's dismissal.
+    if (detailVersionId === target.id) setDetailVersionId(null);
 
     const res = await fetch(`/api/versions/${target.id}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -1163,6 +1200,12 @@ export default function PortalPage() {
     (fileToDelete?.commentCount ?? 0) > 0 ||
     Boolean(versions.find((v) => v.id === selectedVersionId)?.publishedAt);
 
+  // Resolved from `versions` each render rather than held in state, so a
+  // version that disappears takes the drawer with it. "Current" is the highest
+  // version number, the same rule FileTreeSidebar uses for its badge gradient.
+  const detailVersion = versions.find((v) => v.id === detailVersionId) ?? null;
+  const maxVersionNumber = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
+
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
@@ -1192,9 +1235,7 @@ export default function PortalPage() {
             canUpload ? () => setVersionDrawerOpen(true) : undefined
           }
           loading={loading}
-          onDeleteFile={openFileDelete}
-          onDeleteVersion={openVersionDelete}
-          onDownloadFile={downloadFile}
+          onOpenVersionDetails={handleOpenVersionDetails}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
@@ -1392,6 +1433,20 @@ export default function PortalPage() {
           }
         />
       </div>
+
+      <VersionDetailDrawer
+        version={detailVersion}
+        isCurrent={!!detailVersion && detailVersion.versionNumber === maxVersionNumber}
+        files={files}
+        filesLoading={filesLoading}
+        briefGenerating={!!detailVersion && autoBriefBusy === detailVersion.id}
+        onClose={() => setDetailVersionId(null)}
+        onSelectFile={setSelectedFileId}
+        onSelectCitedComment={handleSelectCitedComment}
+        onDeleteFile={openFileDelete}
+        onDownloadFile={downloadFile}
+        onDeleteVersion={openVersionDelete}
+      />
 
       <NewVersionDrawer
         isOpen={versionDrawerOpen}
