@@ -30,6 +30,14 @@ some regions and pass in others. The branching logic — which is where the bugs
 are — stays pure and fully tested; the one-line date format stays in the
 component, matching how `FileTreeSidebar` already does it.
 
+The spec's §8 also said unifying the existing byte-size formatters was out of
+scope, and that this work would "add a third". On review that would leave a
+verbatim duplicate inside a file this branch already edits, which is a defect a
+reviewer would rightly flag. Task 2 therefore retires `CommentsPanel`'s copy in
+favour of the shared one — identical behaviour, no rendered number changes.
+`UploadProgress` keeps its own, because it rounds differently and unifying it
+would visibly change a screen this feature does not touch.
+
 ## File Structure
 
 | File | Responsibility |
@@ -198,6 +206,7 @@ that worth fixing."
 **Files:**
 - Create: `lib/versionDetail.ts`
 - Create: `scripts/tests/versionDetail.test.mjs`
+- Modify: `components/portal/CommentsPanel.tsx:48-52`
 
 **Interfaces:**
 - Consumes: nothing. This module imports nothing at all, so it loads without a database — the same rule `lib/brief.ts` follows.
@@ -473,17 +482,55 @@ Run: `npm test`
 
 Expected: PASS — 329 previous tests plus 18 new ones, 347 total.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Retire the byte-identical copy in CommentsPanel**
+
+`components/portal/CommentsPanel.tsx` carries a local `formatFileSize` that is
+byte-for-byte what Step 3 just wrote. Delete that local function (it sits just
+below `isImageType`, around line 48) and import the shared one instead, beside
+the file's other `@/lib` imports:
+
+```ts
+import { formatFileSize } from '@/lib/versionDetail';
+```
+
+Change nothing about how `formatFileSize` is called in that file — the
+behaviour is identical, so no rendered number changes.
+
+**Do not touch `components/ui/UploadProgress.tsx`.** Its own copy rounds
+differently on purpose — `Math.round(bytes / 1024)` for KB and `toFixed(0)` for
+MB — so importing the shared helper there would change what the upload screen
+displays. That screen is not part of this feature.
+
+- [ ] **Step 6: Verify the unification changed no behaviour**
 
 ```bash
-git add lib/versionDetail.ts scripts/tests/versionDetail.test.mjs
+npx tsc --noEmit
+npm test
+npm run lint
+grep -rn "function formatFileSize" components/ lib/
+```
+
+Expected: `tsc` clean, 347 passing, lint clean, and the `grep` finds exactly
+two definitions — `lib/versionDetail.ts` and `components/ui/UploadProgress.tsx`.
+If it still finds one in `CommentsPanel.tsx`, Step 5 was not applied.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add lib/versionDetail.ts scripts/tests/versionDetail.test.mjs \
+        components/portal/CommentsPanel.tsx
 git commit -m "feat: pure formatting helpers for the version drawer
 
 Dates arrive pre-formatted rather than as ISO strings: formatting here would
 mean asserting on toLocaleDateString, whose output depends on the machine's
 timezone, so the suite would pass or fail by region. The branching — draft
 versus published, current versus older, missing author, missing uploader,
-whitespace-only changelog — is what carries the bugs, and all of it is tested."
+whitespace-only changelog — is what carries the bugs, and all of it is tested.
+
+CommentsPanel's local formatFileSize was byte-identical to the one added here,
+so it now imports the shared version rather than leaving a third copy in a file
+this branch already edits. UploadProgress keeps its own on purpose: it rounds
+differently, and unifying it would change what the upload screen displays."
 ```
 
 ---
