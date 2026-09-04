@@ -13,7 +13,7 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
-import { buildPartTree, hasAuthoredColors, type PartNode } from '@/lib/model/partTree';
+import { buildPartTree, collectDrawables, hasAuthoredColors, type PartNode } from '@/lib/model/partTree';
 import { autoColors } from '@/lib/model/autoColor';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
 import { framingForRadius } from '@/lib/cameraFraming';
@@ -208,21 +208,80 @@ function Model({
   }, [root]);
 
   const parts = useMemo(() => (root ? buildPartTree(root) : []), [root]);
+  // HAZARD, currently latent, not live: buildBatches allocates real GPU resources (BatchedMesh
+  // buffers, materials) inside this render-phase useMemo, while disposal only happens in the
+  // commit-phase cleanup below (`useEffect(() => () => batches?.dispose(), [batches])`). React
+  // is free to call a useMemo during a render it never commits — dev-only StrictMode double
+  // invocation, or a concurrent render an update interrupts — and an abandoned render's
+  // `batches` would then never reach that cleanup, leaking a full batch set silently. Safe
+  // today only because `useLoader` suspends before this ever runs, so in practice it executes
+  // once per model that actually commits. A future change to how loading is orchestrated
+  // (concurrent rendering, a Suspense-less path) could remove that guarantee without touching
+  // this line — if that happens, this is where the leak would start.
   const batches = useMemo<PartBatches | null>(() => (parts.length ? buildBatches(parts) : null), [parts]);
+  // Line/point primitives — GLTFLoader's Line/LineSegments/LineLoop/Points for glTF's
+  // LINES/LINE_STRIP/LINE_LOOP/POINTS modes — are not mesh geometry, so buildPartTree/
+  // buildBatches never see them (BatchedMesh only ever holds triangle geometry). Collected
+  // separately here and rendered as plain extra primitives below, alongside the batches: see
+  // collectDrawables' doc comment for why they cannot carry a part key.
+  //
+  // <primitive> below reparents each one directly under this component's own output (the
+  // modelRef group in ModelViewerInner), which keeps the object's LOCAL matrix but drops
+  // whatever the intermediate groups between `root` and this object used to contribute to its
+  // world position. So before that reparenting happens, each drawable's placement is baked from
+  // its still-intact world matrix — relative to `root`, which itself has no parent — into its
+  // own position/quaternion/scale: the same root-relative frame buildBatches bakes into each
+  // instance's matrix, and for the identical reason (see buildBatches.ts's own comment on
+  // updateWorldMatrix(true, false) for why `true` here, not `false`).
+  const drawables = useMemo(() => {
+    if (!root) return [];
+    const found = collectDrawables(root);
+    found.forEach((drawable) => {
+      drawable.updateWorldMatrix(true, false);
+      drawable.matrixWorld.decompose(drawable.position, drawable.quaternion, drawable.scale);
+    });
+    return found;
+  }, [root]);
   // Computed here, where the loaded materials are, and reported upward — the panel's swatches
   // must resolve colours the same way the viewport does, and it cannot see the materials.
   const authored = useMemo(() => (root ? hasAuthoredColors(root) : false), [root]);
   const automatic = useMemo(() => autoColors(parts, authored), [parts, authored]);
 
+  // Latched in refs rather than depended on directly. An inline arrow prop — which Task 9's
+  // panel is expected to pass for onPartsLoaded — gets a new identity every parent render; if
+  // that identity sat in an effect's deps, the loop would be parent re-render -> new arrow ->
+  // effect re-runs -> callback fires -> parent re-renders again, unbounded. A ref always holds
+  // the latest callback without the effect needing to depend on its identity.
+  const onPartsLoadedRef = useRef(onPartsLoaded);
+  useEffect(() => {
+    onPartsLoadedRef.current = onPartsLoaded;
+  }, [onPartsLoaded]);
+
+  // onBatchesReady is a stable useState setter today (see ModelViewerInner's `setBatches`), so
+  // this isn't a live bug — but it is one inline-arrow prop away from becoming the identical
+  // infinite loop as onPartsLoaded above. Same treatment now, rather than waiting for that.
+  const onBatchesReadyRef = useRef(onBatchesReady);
+  useEffect(() => {
+    onBatchesReadyRef.current = onBatchesReady;
+  }, [onBatchesReady]);
+
   useEffect(() => () => batches?.dispose(), [batches]);
 
   useEffect(() => {
-    onPartsLoaded?.(parts, authored);
-  }, [parts, authored, onPartsLoaded]);
+    onPartsLoadedRef.current?.(parts, authored);
+  }, [parts, authored]);
 
   useEffect(() => {
-    onBatchesReady?.(batches);
-  }, [batches, onBatchesReady]);
+    onBatchesReadyRef.current?.(batches);
+    // Reported null on cleanup too — covering both Model unmounting and `batches` changing to a
+    // new value. Without this, ModelViewerInner's `batches` state keeps whatever was last
+    // reported, including a value the sibling dispose effect above is about to (or just did)
+    // free, and the pick handler in SceneInteraction reads that state live. Both cleanups run
+    // synchronously in the same passive-effect flush, before the next render or any new DOM
+    // event can observe the state, so it does not matter which of the two cleanups runs first —
+    // what matters is that the parent is told at all.
+    return () => onBatchesReadyRef.current?.(null);
+  }, [batches]);
 
   // Overrides win over auto-colours, auto-colours win over the model's own material, and a
   // hovered part outranks all three. Every part is written every time rather than diffed:
@@ -233,18 +292,30 @@ function Model({
   // highlight exists for.
   useEffect(() => {
     if (!batches) return;
-    const color = new THREE.Color();
     // .forEach, not for...of: this repo's tsconfig has no `target`, so a for...of over a
     // Map/Set passes `npm test` (ts-node) but fails `next build` with TS2802.
     batches.instances.forEach((instanceList, key) => {
       const hex = partColors[key] ?? automatic.get(key);
-      const base = hex ? color.clone().set(hex) : null;
+      const base = hex ? new THREE.Color(hex) : null;
       if (key !== highlightedPart) {
         applyPartColor(batches, key, base);
         return;
       }
-      const source = base ?? instanceList[0].baseColor;
-      applyPartColor(batches, key, source.clone().lerp(new THREE.Color(0xffffff), 0.45));
+      if (base) {
+        // An explicit override or an auto-colour is one colour for the whole part regardless of
+        // how many materials it has, so lightening it once and applying it uniformly is correct.
+        applyPartColor(batches, key, base.lerp(new THREE.Color(0xffffff), 0.45));
+        return;
+      }
+      // No override and no auto-colour: each instance keeps whatever colour the model itself
+      // gave it, and those can genuinely differ within one part — e.g. a rim with a steel body
+      // and a chrome lip, which the optimizer deliberately groups into a single part with two
+      // instances. Lightening instanceList[0].baseColor and applying it to every instance would
+      // collapse a genuinely two-material part to one colour while hovered; lighten each
+      // instance's own baseColor instead.
+      instanceList.forEach((instance) => {
+        instance.mesh.setColorAt(instance.instanceId, instance.baseColor.clone().lerp(new THREE.Color(0xffffff), 0.45));
+      });
     });
   }, [batches, partColors, automatic, highlightedPart]);
 
@@ -271,7 +342,12 @@ function Model({
   return (
     <>
       {batches.meshes.map((mesh, i) => (
-        <primitive key={i} object={mesh} />
+        <primitive key={`batch-${i}`} object={mesh} />
+      ))}
+      {/* Carried unbatched: no part key, so no colour/hide/pick — see the drawables memo's
+          comment above and collectDrawables' own doc comment in partTree.ts. */}
+      {drawables.map((drawable, i) => (
+        <primitive key={`drawable-${i}`} object={drawable} />
       ))}
     </>
   );
@@ -287,6 +363,7 @@ function SceneInteraction({
   clipPlanesRef,
   batches,
   onPartPick,
+  gizmoDraggingRef,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
@@ -297,6 +374,9 @@ function SceneInteraction({
   clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
   batches: PartBatches | null;
   onPartPick?: ModelViewerInnerProps['onPartPick'];
+  /** Set for the duration of a gizmo drag (TransformControls or a SectionPlaneWidget handle) —
+   * a pick must not fire through it, the same reason the onClick deselect handler checks it. */
+  gizmoDraggingRef: React.MutableRefObject<boolean>;
 }) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -362,6 +442,14 @@ function SceneInteraction({
       // never both fire from one click.
       if (commentToolActive || !onPartPick || !batches) return;
 
+      // A stationary right-click is the pan gesture, not a pick — R3F/native listeners get no
+      // button filtering for free the way onPointerMissed's delta<=2 check does. And a click
+      // that ends on a TransformControls handle or a SectionPlaneWidget reaches this raw
+      // listener as an ordinary pointerup on whatever geometry happens to be behind it, since
+      // neither stops propagation to it — so a plane-select drag would otherwise also pick the
+      // part under the plane from the same click.
+      if (e.button !== 0 || gizmoDraggingRef.current) return;
+
       const down = pointerDownPos.current;
       if (!down) return;
       // A drag that orbits the camera must not also select — only a pointer that stayed put
@@ -389,7 +477,7 @@ function SceneInteraction({
         break;
       }
     },
-    [commentToolActive, onPartPick, batches, modelRef, gl, camera, clipPlanesRef]
+    [commentToolActive, onPartPick, batches, modelRef, gl, camera, clipPlanesRef, gizmoDraggingRef]
   );
 
   useEffect(() => {
@@ -762,8 +850,24 @@ export default function ModelViewerInner({
           >
             {/* Deliberately NOT <Center top>: comment pins are stored relative to the
                 model, so moving the model would displace every pin saved before this
-                change. The ground stack is offset down to the model's base instead. */}
-            <Center>
+                change. The ground stack is offset down to the model's base instead.
+
+                precise={false} is required, not an optimisation. drei's default precise=true
+                calls `Box3().setFromObject(inner, true)`, and three r169's `expandByObject`
+                only takes the fast/approximate branch for `isInstancedMesh` — `BatchedMesh`
+                sets `isBatchedMesh`, not `isInstancedMesh`, so the precise branch runs and
+                calls `getVertexPosition(i)`. `BatchedMesh` does NOT override that method
+                (only `Mesh.prototype` defines it), so it reads straight off the shared merged
+                buffer in each part's original LOCAL space — buildBatches deliberately never
+                bakes placement into the geometry, only into each instance's matrix — and never
+                consults `getMatrixAt`. Every part collapses onto wherever its geometry sat
+                before batching, so the measured box (and the centring offset derived from it)
+                is wrong for any model with more than one part. precise={false} instead reaches
+                `BatchedMesh.computeBoundingBox()`, which unions each instance's own bounding
+                box through `getMatrixAt(i)` — the correct per-instance transform, the same path
+                MeasureModel below already relies on, and cheaper besides. Do not "restore"
+                precision here; there is nothing for BatchedMesh to be precise about. */}
+            <Center precise={false}>
               <group
                 ref={modelRef}
                 onClick={(e) => {
@@ -876,6 +980,7 @@ export default function ModelViewerInner({
             clipPlanesRef={clipPlanesRef}
             batches={batches}
             onPartPick={onPartPick}
+            gizmoDraggingRef={gizmoDraggingRef}
           />
         </Suspense>
         {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls

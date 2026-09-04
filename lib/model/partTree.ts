@@ -38,6 +38,36 @@ function isMesh(object: THREE.Object3D): object is THREE.Mesh {
   return (object as THREE.Mesh).isMesh === true;
 }
 
+function isDrawable(object: THREE.Object3D): object is THREE.Line | THREE.Points {
+  const candidate = object as THREE.Line & THREE.LineSegments & THREE.Points;
+  return candidate.isLine === true || candidate.isLineSegments === true || candidate.isPoints === true;
+}
+
+/**
+ * Line and point drawables anywhere under `root` — the `Line`/`LineSegments`/`LineLoop` and
+ * `Points` objects GLTFLoader builds for glTF's LINES/LINE_STRIP/LINE_LOOP/POINTS primitives
+ * (see lib/model/optimizeGlb.ts's LINE_MODES handling for a concrete case: the reference file
+ * carries 551 LINE_STRIP primitives).
+ *
+ * `ownMeshes` above only ever collects `isMesh` objects, and `buildBatches` only ever batches
+ * triangle geometry — `BatchedMesh` has no way to hold a strip or a point cloud — so without a
+ * separate pass, every line and point primitive in a model that has parts is silently dropped
+ * once the batched render replaces the loaded tree. They carry no part key (there is no slot in
+ * `PartNode.meshes` for them), so the caller cannot colour, hide or pick them through the part
+ * panel — it renders them as plain extra primitives, unbatched, alongside the batches instead.
+ *
+ * Deliberately does not overlap `ownMeshes`/`buildPartTree`: `isDrawable` and `isMesh` are
+ * mutually exclusive on every object three.js produces, so nothing collected here can already be
+ * sitting inside a batch.
+ */
+export function collectDrawables(root: THREE.Object3D): (THREE.Line | THREE.Points)[] {
+  const out: (THREE.Line | THREE.Points)[] = [];
+  root.traverse((object) => {
+    if (isDrawable(object)) out.push(object);
+  });
+  return out;
+}
+
 function isBoundary(object: THREE.Object3D): boolean {
   return object.userData?.[PART_MARKER] === true;
 }

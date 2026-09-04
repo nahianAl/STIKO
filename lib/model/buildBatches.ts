@@ -177,6 +177,10 @@ export function buildBatches(parts: PartNode[]): PartBatches | null {
 
   flattenParts(parts).forEach((part) => {
     part.meshes.forEach((mesh) => {
+      // A mesh the model itself ships hidden — helper geometry, LOD stand-ins, construction
+      // aids — should stay hidden. Without this check every batched model showed such meshes
+      // regardless of what the source authored, since nothing else downstream reads `.visible`.
+      if (!mesh.visible) return;
       if (!mesh.geometry?.getAttribute('position')) return;
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { buildPartTree, flattenParts, hasAuthoredColors, PART_MARKER } from '../../lib/model/partTree.ts';
+import { buildPartTree, collectDrawables, flattenParts, hasAuthoredColors, PART_MARKER } from '../../lib/model/partTree.ts';
 
 /** A mesh with `tris` triangles, so triangle-count ranking is testable. */
 function mesh(name, tris = 1) {
@@ -184,4 +184,49 @@ test('hasAuthoredColors is true when materials differ in colour', () => {
   brass.material = new THREE.MeshStandardMaterial({ color: 0xc8a05a });
   root.add(mesh('a'), brass);
   assert.equal(hasAuthoredColors(root), true);
+});
+
+// --- Critical finding 2: buildBatches only ever sees isMesh objects, so LineSegments/Points
+// (what GLTFLoader builds for glTF's LINES/LINE_STRIP/LINE_LOOP/POINTS primitives) vanished
+// entirely from the batched render. collectDrawables is the separate collection pass that keeps
+// them. ---
+
+function lineSegments(name) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const line = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial());
+  line.name = name;
+  return line;
+}
+
+function points(name) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+  const p = new THREE.Points(geometry, new THREE.PointsMaterial());
+  p.name = name;
+  return p;
+}
+
+test('collectDrawables finds Line/LineSegments/Points anywhere in the tree', () => {
+  const nested = group('Nested', false, lineSegments('wire'), points('cloud'));
+  const root = new THREE.Group();
+  root.add(mesh('body'), nested);
+
+  const drawables = collectDrawables(root).map((d) => d.name);
+
+  assert.deepEqual(drawables.sort(), ['cloud', 'wire']);
+});
+
+test('collectDrawables never returns a Mesh, so nothing it finds can already be inside a batch', () => {
+  const root = new THREE.Group();
+  root.add(mesh('body'), lineSegments('wire'));
+
+  const drawables = collectDrawables(root);
+
+  assert.equal(drawables.length, 1);
+  assert.equal(drawables[0].isMesh, undefined);
+});
+
+test('an empty scene has no drawables', () => {
+  assert.deepEqual(collectDrawables(new THREE.Group()), []);
 });

@@ -276,3 +276,25 @@ test('materials differing in emissive get separate batches', () => {
   const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
   assert.equal(batches.meshes.length, 2);
 });
+
+// --- Minor gap 6: buildBatches never read mesh.visible, so a model shipping hidden helper
+// geometry (LOD stand-ins, construction aids) showed it once batched. ---
+
+test('a mesh with visible = false produces no instance', () => {
+  const [hidden] = part('0', 'Helper', [grey()]).meshes;
+  hidden.visible = false;
+
+  const batches = buildBatches([{ key: '0', name: 'Helper', children: [], meshes: [hidden], triangles: 2 }]);
+
+  assert.equal(batches, null, 'the only mesh was invisible, so nothing was left to batch');
+});
+
+test('an invisible mesh is skipped while a visible sibling in the same part is still batched', () => {
+  const visible = part('0', 'Body', [grey()]).meshes[0];
+  const hidden = part('0', 'Helper', [brass()]).meshes[0];
+  hidden.visible = false;
+
+  const batches = buildBatches([{ key: '0', name: 'Body', children: [], meshes: [visible, hidden], triangles: 4 }]);
+
+  assert.equal(batches.instances.get('0').length, 1, 'only the visible mesh produced an instance');
+});
