@@ -66,6 +66,21 @@ export async function GET(request: NextRequest) {
     counts.map((c) => [c.id as string, { commentCount: Number(c.commentCount) }])
   );
 
+  // Sparse by construction — only deliberate overrides are rows — so one query for the whole
+  // version is cheaper than a join that would repeat every file row per coloured part.
+  const colorRows = await sql`
+    SELECT pc.file_id AS "fileId", pc.part_key AS "partKey", pc.color
+    FROM part_colors pc
+    JOIN files f ON f.id = pc.file_id
+    WHERE f.version_id = ${versionId}
+  `;
+  const colorsByFile = new Map<string, Record<string, string>>();
+  colorRows.forEach((row) => {
+    const forFile = colorsByFile.get(row.fileId as string) ?? {};
+    forFile[row.partKey as string] = row.color as string;
+    colorsByFile.set(row.fileId as string, forFile);
+  });
+
   const files = rows.map((row) => {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
     return {
@@ -89,6 +104,9 @@ export async function GET(request: NextRequest) {
         mayDownload: access.mayDownload,
       }),
       commentCount: countsById.get(file.id as string)?.commentCount ?? 0,
+      // Computed server-side from the same table the PATCH route writes, never re-derived in
+      // the client: what renders and what persists must not be able to disagree.
+      partColors: colorsByFile.get(row.id as string) ?? {},
     };
   });
 
