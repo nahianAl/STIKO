@@ -10,6 +10,7 @@ const GRADIENT = 'linear-gradient(135deg, #8094F5, #5B60FF)';
 export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: boolean; onClose: () => void; portalId: string }) {
   const [email, setEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Role>('commenter');
+  const [inviteCanDownload, setInviteCanDownload] = useState(false);
   const [linkRole, setLinkRole] = useState<Role>('viewer');
   const [busy, setBusy] = useState<'invite' | 'link' | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
   // Reset the form each time the modal closes so a stale link/email doesn't reappear on reopen.
   useEffect(() => {
     if (!isOpen) {
-      setEmail(''); setInviteLink(null); setShareLink(null);
+      setEmail(''); setInviteCanDownload(false); setInviteLink(null); setShareLink(null);
       setError(null); setBusy(null); setCopied(null);
       setSentTo(null); setDelivered(false);
     }
@@ -35,7 +36,8 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
 
   const createInvite = async (
     emailValue: string,
-    role: Role
+    role: Role,
+    canDownload = false
   ): Promise<{ link: string; emailDelivered: boolean } | null> => {
     // No recipient means a share link, and the route wants that said out loud
     // rather than inferred from the empty field.
@@ -44,7 +46,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
       const res = await fetch('/api/participants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portalId, email: emailValue, role, shareLink }),
+        body: JSON.stringify({ portalId, email: emailValue, role, shareLink, canDownload }),
       });
       if (!res.ok) return null;
       const { token, emailDelivered } = await res.json();
@@ -62,7 +64,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
     if (!recipient || busy) return;
     setBusy('invite'); setError(null);
     try {
-      const result = await createInvite(recipient, inviteRole);
+      const result = await createInvite(recipient, inviteRole, inviteCanDownload);
       if (result) {
         setInviteLink(result.link);
         setDelivered(result.emailDelivered);
@@ -119,6 +121,16 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
               {busy === 'invite' ? '…' : 'Send'}
             </button>
           </div>
+
+          <label className="mt-2 flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
+            <input
+              type="checkbox"
+              checked={inviteCanDownload}
+              onChange={(e) => setInviteCanDownload(e.target.checked)}
+              className="h-[15px] w-[15px] accent-stiko-primary"
+            />
+            Can download files
+          </label>
 
           {sentTo && delivered && (
             <div className="mt-2 rounded-lg px-2.5 py-2 text-[12px] font-semibold" style={{ background: '#EDFFDA', color: '#4B7A28' }}>
