@@ -243,6 +243,7 @@ export async function getFileDeleteDecision(
 ): Promise<DeleteDecision | null> {
   const rows = await sql`
     SELECT v.portal_id       AS "portalId",
+           v.id              AS "versionId",
            f.uploaded_by     AS "uploadedBy",
            v.published_at    AS "publishedAt"
     FROM files f
@@ -254,6 +255,9 @@ export async function getFileDeleteDecision(
 
   const access = await getPackageAccess(userId, row.portalId as string);
   if (!access) return null;
+  // A version outside the caller's scope must be indistinguishable from one
+  // that does not exist, so this returns null rather than a denied decision.
+  if (!canSeeVersion(access.versionScope, row.versionId as string)) return null;
 
   return {
     allowed: canDeleteContent({
@@ -285,6 +289,7 @@ export async function getVersionDeleteDecision(
 
   const access = await getPackageAccess(userId, row.portalId as string);
   if (!access) return null;
+  if (!canSeeVersion(access.versionScope, versionId)) return null;
 
   const fileRows = await sql`
     SELECT id FROM files WHERE version_id = ${versionId}
@@ -324,6 +329,7 @@ export async function getFileDownloadDecision(
 ): Promise<DownloadDecision | null> {
   const rows = await sql`
     SELECT v.portal_id     AS "portalId",
+           v.id            AS "versionId",
            f.uploaded_by   AS "uploadedBy",
            f.storage_key   AS "storageKey",
            f.filename      AS "filename"
@@ -336,6 +342,9 @@ export async function getFileDownloadDecision(
 
   const access = await getPackageAccess(userId, row.portalId as string);
   if (!access) return null;
+  // Without this a scoped reviewer with a download grant could fetch a file
+  // from a version they were never given, by id.
+  if (!canSeeVersion(access.versionScope, row.versionId as string)) return null;
 
   return {
     allowed: canDownloadFile({
