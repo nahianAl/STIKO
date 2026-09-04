@@ -30,8 +30,9 @@ export async function GET(request: NextRequest) {
   // credential for someone else's invitation into a browser and any request log
   // that sees this response, for no gain.
   const rows = await sql`
-    SELECT CASE WHEN multi_use THEN token END AS token,
-           email, role, can_download AS "canDownload", multi_use AS "multiUse",
+    SELECT id, CASE WHEN multi_use THEN token END AS token,
+           email, role, all_versions AS "allVersions", can_download AS "canDownload",
+           multi_use AS "multiUse",
            created_at AS "createdAt", expires_at AS "expiresAt"
     FROM invite_tokens
     WHERE portal_id = ${portalId}
@@ -41,7 +42,35 @@ export async function GET(request: NextRequest) {
     ORDER BY created_at DESC
   `;
 
-  return NextResponse.json(rows);
+  // The invite modal renders a scope editor, which needs the current
+  // selection. Filtered the same way as the listing above, not just by
+  // portal — a used, revoked, or expired token's leftover scope rows belong
+  // to an invitation that is not part of this listing.
+  const scopes = await sql`
+    SELECT itv.token_id AS "tokenId", itv.version_id AS "versionId"
+    FROM invite_token_versions itv
+    JOIN invite_tokens it ON it.id = itv.token_id
+    WHERE it.portal_id = ${portalId}
+      AND it.used_at IS NULL
+      AND it.revoked_at IS NULL
+      AND it.expires_at > NOW()
+  `;
+  const byToken = new Map<string, string[]>();
+  for (const s of scopes) {
+    const key = s.tokenId as string;
+    byToken.set(key, [...(byToken.get(key) ?? []), s.versionId as string]);
+  }
+
+  // `id` is only the correlation key above — never handed back. It is not a
+  // credential like `token`, but nothing downstream needs it (a pending
+  // invite is addressed by email, or by token for a share link), so it does
+  // not belong in the response either.
+  return NextResponse.json(
+    rows.map((r) => {
+      const { id, ...rest } = r;
+      return { ...rest, versionIds: byToken.get(id as string) ?? [] };
+    })
+  );
 }
 
 /**

@@ -26,14 +26,31 @@ export async function GET(request: NextRequest) {
 
   const rows = await sql`
     SELECT p.id, p.portal_id AS "portalId", p.user_id AS "userId",
-           p.role, p.can_download AS "canDownload", p.created_at AS "createdAt",
+           p.role, p.all_versions AS "allVersions", p.can_download AS "canDownload",
+           p.created_at AS "createdAt",
            u.email, u.name, u.company
     FROM participants p
     JOIN users u ON u.id = p.user_id
     WHERE p.portal_id = ${portalId}
     ORDER BY p.created_at ASC
   `;
-  return NextResponse.json(rows);
+
+  // The panel renders a scope editor, which needs the current selection.
+  const scopes = await sql`
+    SELECT pv.participant_id AS "participantId", pv.version_id AS "versionId"
+    FROM participant_versions pv
+    JOIN participants p ON p.id = pv.participant_id
+    WHERE p.portal_id = ${portalId}
+  `;
+  const byParticipant = new Map<string, string[]>();
+  for (const s of scopes) {
+    const key = s.participantId as string;
+    byParticipant.set(key, [...(byParticipant.get(key) ?? []), s.versionId as string]);
+  }
+
+  return NextResponse.json(
+    rows.map((r) => ({ ...r, versionIds: byParticipant.get(r.id as string) ?? [] }))
+  );
 }
 
 /**
