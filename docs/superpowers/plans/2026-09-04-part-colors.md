@@ -845,18 +845,20 @@ test('part names survive — the regression this feature exists to fix', async (
   assert.equal(stats.after.parts, 6);
 });
 
-test('an unstamped document still optimizes and reports zero parts', async () => {
+test('a document built without our stamps still optimizes, and conserves its parts', async () => {
+  // fragmentedGlb builds nodes the way a raw exporter would. Once optimizeGlb stamps every
+  // geometry-carrying node (Step 8), these count as parts too — so the guarantee under test
+  // is conservation, which holds either way, not a particular count.
   const { stats } = await optimizeGlb(await toArrayBuffer(fragmentedGlb(100, 2)));
 
-  assert.equal(stats.before.parts, 0);
-  assert.equal(stats.after.parts, 0);
+  assert.equal(stats.after.parts, stats.before.parts);
   assert.ok(stats.after.primitives < stats.before.primitives, 'still merged');
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="parts survive|part names survive|unstamped"`
+Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts"`
 Expected: FAIL — `stats.before.parts` is `undefined`.
 
 - [ ] **Step 3: Count parts in `measure()`**
@@ -901,9 +903,11 @@ Replace the `doc.transform(...)` call and the comment above it with:
 ```ts
   // Order is load-bearing. weld() must precede the per-part merge, so co-located vertices are
   // already indexed and merged by the time primitives are concatenated.
+  // One dedup, not two. The original ran a second pass because flatten() sat between them and
+  // exposed duplicates the first could not see; with flatten gone the second pass finds
+  // nothing and is pure cost.
   await doc.transform(
     dedup(),                        // merge identical accessors / materials / textures
-    dedup(),                        // a second pass catches duplicates the first exposes
     weld(),                         // index and merge co-located vertices
     prune({ keepLeaves: true })     // drop what the above orphaned; keepLeaves protects parts
   );
@@ -935,11 +939,20 @@ Replace the `doc.transform(...)` call and the comment above it with:
 
     for (const group of byMaterial.values()) {
       if (group.length < 2) continue;
-      const merged = joinPrimitives(group);
-      for (const prim of group) {
-        mesh.removePrimitive(prim);
-        prim.dispose();
+      // joinPrimitives throws when primitives are not compatible, and grouping by material
+      // does not guarantee they are — one CAD primitive may carry UVs where its neighbour
+      // does not. An uncaught throw here would abandon the WHOLE optimization (runOptimize
+      // reads any throw as "upload the original"), trading every other part's merge for one
+      // awkward group. Skip the group instead: those primitives stay unmerged, which is
+      // slower to load and completely correct.
+      let merged;
+      try {
+        merged = joinPrimitives(group);
+      } catch {
+        continue;
       }
+      // dispose() detaches each primitive from its mesh, which is the documented idiom.
+      for (const prim of group) prim.dispose();
       mesh.addPrimitive(merged);
     }
   }
@@ -949,7 +962,7 @@ Replace the `doc.transform(...)` call and the comment above it with:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `npm test -- --test-name-pattern="parts survive|part names survive|unstamped"`
+Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts"`
 Expected: PASS — 3 passing tests.
 
 Run: `npm test`
@@ -988,7 +1001,7 @@ Add `Node` to the `@gltf-transform/core` import.
 - [ ] **Step 9: Run the full suite**
 
 Run: `npm test`
-Expected: PASS. `stats.before.parts` in the "unstamped" test is now non-zero, so update that assertion to `assert.equal(stats.before.parts, stats.after.parts)` — the guarantee being tested is conservation, not absence.
+Expected: PASS, with no test edits needed — the conservation assertions were written to hold both before and after stamping.
 
 - [ ] **Step 10: Commit**
 
@@ -1680,7 +1693,7 @@ Pass `onBatchesReady={setBatches}` to `<Model>`, and `batches` plus `onPartPick`
       }
 ```
 
-A drag that orbits the camera must not also select. Guard by recording `e.clientX/Y` on pointerdown and only running the branch above from a `pointerup` within a few pixels of it — follow whatever threshold the existing viewer code already uses for click-versus-drag if there is one.
+A drag that orbits the camera must not also select. Record `e.clientX/e.clientY` in a ref on `pointerdown`, move the branch above to a `pointerup` listener on the same canvas, and run it only when the pointer moved **4 px or less** in both axes since that pointerdown. Below that a click reads as a click; above it, the user was orbiting and selecting a part would be a surprise.
 
 - [ ] **Step 3: Thread the props through**
 
