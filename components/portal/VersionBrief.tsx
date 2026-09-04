@@ -60,9 +60,14 @@ const FOCUS = 'focus:outline-none focus-visible:shadow-stiko-focus';
 
 export default function VersionBrief({
   versionId,
+  autoBusy = false,
   onSelectComment,
 }: {
   versionId: string;
+  /** True while the PAGE is auto-generating this version's brief. The Brief's
+   *  own `busy` cannot see that, so without this the buttons below would offer
+   *  to start a second concurrent generation of the same version. */
+  autoBusy?: boolean;
   /** Fired with the comment's id and the id of the file it lives on — the
    * caller owns switching files and activating the comment, this component
    * only knows where each citation resolves to. */
@@ -120,6 +125,15 @@ export default function VersionBrief({
     load();
   }, [load]);
 
+  // The page generates in the background and does not hand the result down.
+  // When its generation finishes, re-read — otherwise this keeps offering to
+  // summarise a version that now has a brief.
+  const wasAutoBusy = useRef(false);
+  useEffect(() => {
+    if (wasAutoBusy.current && !autoBusy) load();
+    wasAutoBusy.current = autoBusy;
+  }, [autoBusy, load]);
+
   if (!data || !data.enabled) return null;
   // A version with few comments has no Brief section at all — no card, no
   // dashed placeholder, no header. Applied regardless of whether a brief
@@ -146,11 +160,11 @@ export default function VersionBrief({
           <button
             type="button"
             onClick={generate}
-            disabled={busy}
+            disabled={busy || autoBusy}
             className={`mt-2.5 px-3.5 py-[7px] rounded-[10px] text-[11px] font-bold text-white disabled:opacity-40 transition-[filter] hover:brightness-[0.97] ${FOCUS}`}
             style={{ background: GRADIENT }}
           >
-            {busy ? 'Summarising…' : 'Summarise'}
+            {busy || autoBusy ? 'Summarising…' : 'Summarise'}
           </button>
         )}
         {error && (
@@ -285,10 +299,10 @@ export default function VersionBrief({
                 <button
                   type="button"
                   onClick={generate}
-                  disabled={busy}
+                  disabled={busy || autoBusy}
                   className={`shrink-0 text-[10.5px] font-bold text-stiko-primary hover:text-stiko-primary-hover disabled:opacity-40 transition-colors ${FOCUS}`}
                 >
-                  {busy ? 'Refreshing…' : 'Refresh'}
+                  {busy || autoBusy ? 'Refreshing…' : 'Refresh'}
                 </button>
               </div>
             )
