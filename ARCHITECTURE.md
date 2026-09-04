@@ -152,6 +152,17 @@ GET /api/files/[id]/download   (Vercel: getFileDownloadDecision → Neon)
 
 **What this does not stop.** The grant gates the control and this endpoint, not the bytes. `ViewerContainer` fetches a presigned URL unconditionally, for `convertedStorageKey ?? storageKey` — the `isViewable` check runs after that fetch and only decides what gets rendered with the result. Most files have no converted variant, so that URL usually names the original outright — and where a variant does exist, the same ungated call fetches it instead. Anyone who can view a file can therefore already save it from the browser's network tab, whatever `can_download` says. A real wall would mean proxying every view through the app server instead of straight from the bucket — deliberately not done here.
 
+### Version Scope
+A commenter or viewer invited to a package can be limited to specific versions rather than all of them. Owners, coordinators and uploaders are never scoped: an uploader's work builds on what came before, so narrowing their view would break the thing they're there to do.
+
+`canSeeVersion` in `lib/capabilities.ts` holds the rule and is pure — a scope and a version id in, yes/no out. `getVersionAccess` in `lib/access.ts` is the gate every version-keyed route calls, and `getFileAccess` resolves a file to its version and applies the same check, so `files`, `transform`, `download`, `url` and `comments` all inherit the scope without each route re-deriving it.
+
+A version outside the scope answers 404, the same 404 a nonexistent version gets — an id can't be used to confirm something exists behind a boundary the caller can't cross.
+
+`all_versions` on `participants` and `invite_tokens` covers versions published later; an explicit list does not. That is deliberate: a version published seconds ago cannot yet be in anyone's explicit list, so a new version reaches only the unscoped — which is also why publish notifies only participants with `all_versions = TRUE`. Notifying a scoped reviewer would leak by email exactly what the scope hides in the UI.
+
+**What scoping does not hide.** Version numbers are not renumbered per viewer, so someone scoped to V3 still sees the label "Version 3" and can infer that earlier versions exist. Scoping hides the content of other versions — their files, changelogs, comments, dates, who reviewed them — not the bare fact that the package has a history. Renumbering per viewer would contradict the existing rule that version numbers are never reassigned (see Deletion Flow), which exists because those numbers already appear in sent emails.
+
 ### Metadata Reads / Writes
 ```
 All project / portal / version / comment / markup CRUD
@@ -250,6 +261,7 @@ Browser
 - **Snapshot API route (`/api/snapshots`):** Currently writes to local disk. Replaced by presign → direct S3 upload flow.
 - **`005-file-deletion.sql`:** Adds `files.uploaded_by`, backfilled from `versions.created_by` for existing rows so the uploader-delete window has an owner to check against. Apply before deploying code that reads the column.
 - **`007-download-authorization.sql`:** Adds `can_download` to `participants` and `invite_tokens`, both defaulting false. Apply before deploying code that reads them.
+- **`008-version-scoped-invites.sql`:** Adds `all_versions` to `participants` and `invite_tokens`, both defaulting true, plus the `participant_versions` and `invite_token_versions` join tables. Apply before deploying code that reads them.
 
 ---
 
