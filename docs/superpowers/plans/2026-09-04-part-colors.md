@@ -845,6 +845,49 @@ test('part names survive — the regression this feature exists to fix', async (
   assert.equal(stats.after.parts, 6);
 });
 
+test('same-named siblings become one part, not one per material', async () => {
+  // What Rhino emits: one node per object AND per material, so a two-material rim is two
+  // sibling nodes both called "Rim".
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+  const result = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const topLevel = result.getRoot().listScenes()[0].listChildren();
+
+  assert.deepEqual(topLevel.map((n) => n.getName()).sort(), ['Rim', 'Tire']);
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+  assert.equal(rim.listChildren().length, 2, 'both material pieces live under the one Rim part');
+});
+
+test('unnamed siblings are never grouped together', async () => {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  for (let i = 0; i < 3; i++) {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode('').setMesh(doc.createMesh('').addPrimitive(prim)));
+  }
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 3, 'three unnamed nodes stay three parts');
+});
+
 test('a document built without our stamps still optimizes, and conserves its parts', async () => {
   // fragmentedGlb builds nodes the way a raw exporter would. Once optimizeGlb stamps every
   // geometry-carrying node (Step 8), these count as parts too — so the guarantee under test
@@ -858,7 +901,7 @@ test('a document built without our stamps still optimizes, and conserves its par
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts"`
+Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts|same-named|unnamed siblings"`
 Expected: FAIL — `stats.before.parts` is `undefined`.
 
 - [ ] **Step 3: Count parts in `measure()`**
@@ -962,7 +1005,7 @@ Replace the `doc.transform(...)` call and the comment above it with:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts"`
+Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts|same-named|unnamed siblings"`
 Expected: PASS — 3 passing tests.
 
 Run: `npm test`
@@ -984,17 +1027,66 @@ In `lib/model/runOptimize.ts`, in `prepareViewerVariantNow`, change the summary 
 Files uploaded as GLB carry no `stikoPart` marker of their own. Add to `optimizeGlb.ts`, immediately after the primitive-mode normalisation loop and **before** `const before = measure(doc, input.byteLength);`:
 
 ```ts
-  // Stamp the exporter's own nodes as parts, before anything else runs. A node that carries
-  // geometry — directly or through descendants — is a part; a pure transform node is not.
-  // Read back from userData at load time (GLTFLoader copies extras verbatim), this is what
-  // lets the viewer rebuild a tree the exporter authored and we no longer destroy.
+  // Stamp the exporter's own nodes as parts. A node that carries geometry — directly or
+  // through descendants — is a part; a pure transform node is not. Read back from userData at
+  // load time (GLTFLoader copies extras verbatim), this is what lets the viewer rebuild a tree
+  // the exporter authored and we no longer destroy.
+  //
+  // First, though: same-named siblings are ONE object, not several. Rhino emits one node per
+  // object AND per material, so a rim with a steel body and a chrome lip arrives as two
+  // sibling nodes both named "Rim". Stamping each would put the same physical part on two
+  // panel rows and let someone colour half a rim. Grouping them under one stamped wrapper
+  // recovers the object the modeller actually made.
+  //
+  // The wrapper carries an identity transform, so its children keep the world placement their
+  // own transforms give them — this is why the group is NOT reparented under its first member,
+  // which would compose that member's transform onto its siblings.
   const carriesGeometry = (node: Node): boolean =>
     node.getMesh() !== null || node.listChildren().some(carriesGeometry);
+
+  /** Parents whose children may need grouping: the scene roots, and every node. */
+  const parents: { list: () => Node[]; add: (n: Node) => void; remove: (n: Node) => void }[] = [
+    ...doc.getRoot().listScenes().map((scene) => ({
+      list: () => scene.listChildren(),
+      add: (n: Node) => { scene.addChild(n); },
+      remove: (n: Node) => { scene.removeChild(n); },
+    })),
+    ...doc.getRoot().listNodes().map((node) => ({
+      list: () => node.listChildren(),
+      add: (n: Node) => { node.addChild(n); },
+      remove: (n: Node) => { node.removeChild(n); },
+    })),
+  ];
+
+  for (const parent of parents) {
+    const byName = new Map<string, Node[]>();
+    for (const child of parent.list()) {
+      const name = child.getName();
+      // Unnamed nodes are not evidence of anything — grouping every unnamed sibling together
+      // would fuse unrelated geometry into one row.
+      if (!name || !carriesGeometry(child)) continue;
+      const group = byName.get(name);
+      if (group) group.push(child);
+      else byName.set(name, [child]);
+    }
+
+    for (const [name, group] of byName) {
+      if (group.length < 2) continue;
+      const wrapper = doc.createNode(name);
+      for (const child of group) {
+        parent.remove(child);
+        wrapper.addChild(child);
+      }
+      parent.add(wrapper);
+    }
+  }
 
   for (const node of doc.getRoot().listNodes()) {
     if (carriesGeometry(node)) node.setExtras({ ...node.getExtras(), [PART_MARKER]: true });
   }
 ```
+
+The stamping loop runs **after** the grouping loop, so wrappers are stamped along with everything else. A wrapper's children end up stamped too — which is correct and intended: `buildPartTree` will show the rim as one row that can be expanded to its two material pieces, and colouring the rim row colours the subtree.
 
 Add `Node` to the `@gltf-transform/core` import.
 
