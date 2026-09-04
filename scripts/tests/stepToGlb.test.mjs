@@ -4,6 +4,33 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { WebIO } from '@gltf-transform/core';
 import { stepToGlb, STEP_TESSELLATION } from '../../lib/model/stepToGlb.ts';
+import { PART_MARKER } from '../../lib/model/partTree.ts';
+
+/** One triangle, which is the least geometry OCCT could plausibly hand back. */
+function triangleMesh(name) {
+  return {
+    name,
+    index: { array: [0, 1, 2] },
+    attributes: {
+      position: { array: [0, 0, 0, 1, 0, 0, 0, 1, 0] },
+      normal: { array: [0, 0, 1, 0, 0, 1, 0, 0, 1] },
+    },
+  };
+}
+
+/**
+ * Drives stepToGlb's document-building with a canned OCCT result, so the hierarchy can be
+ * tested without a 7.6 MB WASM tessellation on every run.
+ */
+async function buildGlbFromResult(result) {
+  const { buildGlbDocument } = await import('../../lib/model/stepToGlb.ts');
+  return buildGlbDocument(result);
+}
+
+/** Names of a node's children, so nesting can be asserted without depending on indices. */
+function childNames(node) {
+  return node.listChildren().map((c) => c.getName());
+}
 
 // occt-import-js is a direct dependency, so its bundled test cube is always present. It is
 // NOT vendored into this repo: it is third-party GrabCAD content. If the dependency ever
@@ -87,4 +114,55 @@ test('a failed init does not poison later calls', async () => {
   assert.ok(meshes.length >= 1, 'expected at least one mesh');
   const position = meshes[0].listPrimitives()[0].getAttribute('POSITION');
   assert.ok(position.getCount() > 0, 'expected vertices');
+});
+
+test('the OCCT assembly hierarchy is reproduced as nested glTF nodes', async () => {
+  // Two solids under one assembly node, which is what a wheel looks like coming out of OCCT.
+  const fake = {
+    success: true,
+    root: {
+      name: 'Car',
+      meshes: [],
+      children: [
+        { name: 'Wheel_FL', meshes: [], children: [
+          { name: 'Rim', meshes: [0], children: [] },
+          { name: 'Tire', meshes: [1], children: [] },
+        ] },
+      ],
+    },
+    meshes: [triangleMesh('Rim'), triangleMesh('Tire')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const doc = await new WebIO().readBinary(glb);
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+
+  assert.equal(carNode.getName(), 'Car');
+  assert.deepEqual(childNames(carNode), ['Wheel_FL']);
+  assert.deepEqual(childNames(carNode.listChildren()[0]), ['Rim', 'Tire']);
+});
+
+test('every node in the hierarchy is stamped as a part', async () => {
+  const fake = {
+    success: true,
+    root: { name: 'Car', meshes: [], children: [{ name: 'Body', meshes: [0], children: [] }] },
+    meshes: [triangleMesh('Body')],
+  };
+
+  const doc = await new WebIO().readBinary(await buildGlbFromResult(fake));
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+
+  assert.equal(carNode.getExtras()[PART_MARKER], true);
+  assert.equal(carNode.listChildren()[0].getExtras()[PART_MARKER], true);
+});
+
+test('a result with no root falls back to a flat list of stamped solids', async () => {
+  // Older occt-import-js builds, and any file whose product structure is empty.
+  const fake = { success: true, meshes: [triangleMesh('solid_a'), triangleMesh('solid_b')] };
+
+  const doc = await new WebIO().readBinary(await buildGlbFromResult(fake));
+  const children = doc.getRoot().listScenes()[0].listChildren();
+
+  assert.deepEqual(children.map((c) => c.getName()), ['solid_a', 'solid_b']);
+  assert.ok(children.every((c) => c.getExtras()[PART_MARKER] === true));
 });

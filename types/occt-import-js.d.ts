@@ -23,8 +23,22 @@ declare module 'occt-import-js' {
     color?: [number, number, number];
   }
 
+  /**
+   * The assembly hierarchy OCCT reads out of the STEP product structure. Previously not
+   * declared at all, which is why stepToGlb flattened every model to a list of sibling
+   * solids and threw the tree away — the data was always there.
+   */
+  interface OcctNode {
+    name?: string;
+    /** Indices into OcctResult.meshes owned by this node directly. */
+    meshes?: number[];
+    children?: OcctNode[];
+  }
+
   interface OcctResult {
     success: boolean;
+    /** Absent on older builds and on files whose product structure is empty. */
+    root?: OcctNode;
     meshes: OcctMesh[];
   }
 
