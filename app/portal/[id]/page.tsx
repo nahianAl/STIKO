@@ -19,7 +19,7 @@ import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
-import type { Comment, FileRecord } from '@/lib/types';
+import type { Comment, FileRecord, Version } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
@@ -45,19 +45,6 @@ interface Portal {
   projectId: string;
   name: string;
   createdAt: string;
-}
-
-interface Version {
-  id: string;
-  portalId: string;
-  versionNumber: number;
-  createdAt: string;
-  // Already present on every row the API returns (Task 8) — declared here so this
-  // local copy stays assignable to FileTreeSidebar's, which now requires it.
-  publishedAt: string | null;
-  canDelete?: boolean;
-  fileCount?: number;
-  commentCount?: number;
 }
 
 interface Participant {

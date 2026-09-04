@@ -3,40 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
 import { SkeletonBar } from '@/components/ui/Primitives';
-import type { ObjectTransform } from '@/lib/objectTransform';
-
-interface Version {
-  id: string;
-  portalId: string;
-  versionNumber: number;
-  createdAt: string;
-  publishedAt: string | null;
-  canDelete?: boolean;
-  fileCount?: number;
-  commentCount?: number;
-}
-
-interface FileRecord {
-  id: string;
-  versionId: string;
-  filename: string;
-  storageKey: string;
-  fileSize: number;
-  fileType: string;
-  createdAt: string;
-  conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
-  convertedStorageKey: string | null;
-  conversionJobId: string | null;
-  folderPath: string | null;
-  /** Where the object has been placed in the 3D viewer. Identity for non-3D files. */
-  transform: ObjectTransform;
-  uploadedBy: string | null;
-  /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
-  canDelete?: boolean;
-  /** Server's verdict on whether this caller may download it. Never re-derived client-side. */
-  canDownload?: boolean;
-  commentCount?: number;
-}
+import type { FileRecord, Version } from '@/lib/types';
 
 interface FileTreeSidebarProps {
   versions: Version[];

@@ -26,6 +26,19 @@ export interface Version {
   portalId: string;
   versionNumber: number;
   createdAt: string;
+  /** Null until the version is published. Drafts are visible only to uploaders. */
+  publishedAt: string | null;
+  /** Verbatim what the uploader wrote when submitting. Set at publish, so null
+   *  on drafts and on rows that predate the field. */
+  changelog: string | null;
+  /** Display name of whoever created the version. Null when that user row was
+   *  deleted — the created_by FK is ON DELETE SET NULL. */
+  createdByName: string | null;
+  /** Server's verdict on whether this caller may delete it. Never re-derived
+   *  client-side. */
+  canDelete?: boolean;
+  fileCount?: number;
+  commentCount?: number;
 }
 
 export interface FileRecord {
@@ -43,6 +56,11 @@ export interface FileRecord {
   /** Where the object has been placed in the 3D viewer. Identity for non-3D files. */
   transform: ObjectTransform;
   uploadedBy: string | null;
+  /** Display name for `uploadedBy`. Null for two legitimate reasons: the
+   *  uploader's user row was deleted (uploaded_by is ON DELETE SET NULL), or a
+   *  row predating migration 005 was backfilled from a null versions.created_by.
+   *  The UI must say so rather than guess. */
+  uploadedByName: string | null;
   /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
   canDelete?: boolean;
   /** Server's verdict on whether this caller may download it. Never re-derived client-side. */
