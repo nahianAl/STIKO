@@ -58,7 +58,6 @@ interface Version {
   canDelete?: boolean;
   fileCount?: number;
   commentCount?: number;
-  markupCount?: number;
 }
 
 interface Participant {
@@ -535,7 +534,6 @@ export default function PortalPage() {
         setSelectedVersionId((current) =>
           current && data.some((v) => v.id === current) ? current : data[0].id
         );
-        setFilesLoading(true);
       }
     } catch (err) {
       console.error('Failed to fetch versions:', err);
@@ -584,7 +582,12 @@ export default function PortalPage() {
       const data: FileRecord[] = await res.json();
       setFiles(data);
       if (data.length > 0) {
-        setSelectedFileId(data[0].id);
+        // A version change should land on the first file, but a delete that
+        // leaves the current selection intact must not throw the viewer back
+        // to file 1.
+        setSelectedFileId((current) =>
+          current && data.some((f) => f.id === current) ? current : data[0].id
+        );
       } else {
         setSelectedFileId(null);
       }
@@ -779,6 +782,39 @@ export default function PortalPage() {
     }
     await loadVersions();
   };
+
+  // The counts on `files` and `versions` were fetched when the version was
+  // selected, and posting a comment does not refresh them. A confirm whose
+  // whole purpose is to state what dies must not read a number that went stale
+  // while the package sat open.
+  const openFileDelete = useCallback(async (file: FileRecord) => {
+    setFileToDelete(file);
+    try {
+      const res = await fetch(`/api/files?versionId=${file.versionId}`);
+      if (!res.ok) return;
+      const fresh: FileRecord[] = await res.json();
+      const match = fresh.find((f) => f.id === file.id);
+      // Only the counts are refreshed — replacing the whole object would
+      // discard nothing, but re-setting state the user may have already
+      // dismissed would reopen the dialog.
+      if (match) setFileToDelete((current) => (current?.id === file.id ? match : current));
+    } catch {
+      // The stale count still shows; failing to refresh must not block a delete.
+    }
+  }, []);
+
+  const openVersionDelete = useCallback(async (version: Version) => {
+    setVersionToDelete(version);
+    try {
+      const res = await fetch(`/api/versions?portalId=${portalId}`);
+      if (!res.ok) return;
+      const fresh: Version[] = await res.json();
+      const match = fresh.find((v) => v.id === version.id);
+      if (match) setVersionToDelete((current) => (current?.id === version.id ? match : current));
+    } catch {
+      // As above.
+    }
+  }, [portalId]);
 
   // Tag placement (image / video). Captures video timestamp when applicable.
   const handleCommentPlace = useCallback((percentX: number, percentY: number) => {
@@ -1041,12 +1077,13 @@ export default function PortalPage() {
     );
   };
 
-  // A file's stakes come from its version: once published, reviewers can have
-  // commented on it, so removing it destroys their work and not just the
-  // uploader's mistake.
-  const fileToDeleteIsPublished = Boolean(
-    versions.find((v) => v.id === selectedVersionId)?.publishedAt
-  );
+  // Publish state alone is the wrong test: a draft can already carry other
+  // people's comments, because commenting is gated on canComment and never on
+  // whether the version is published. What matters is whether anything would
+  // be destroyed alongside the file.
+  const fileDeleteIsGrave =
+    (fileToDelete?.commentCount ?? 0) > 0 ||
+    Boolean(versions.find((v) => v.id === selectedVersionId)?.publishedAt);
 
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
@@ -1077,8 +1114,8 @@ export default function PortalPage() {
             canUpload ? () => setVersionDrawerOpen(true) : undefined
           }
           loading={loading}
-          onDeleteFile={setFileToDelete}
-          onDeleteVersion={setVersionToDelete}
+          onDeleteFile={openFileDelete}
+          onDeleteVersion={openVersionDelete}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
@@ -1317,7 +1354,7 @@ export default function PortalPage() {
       {/* Unpublished: nobody has seen it, so a plain confirm is the honest
           weight. Requiring a typed filename here would train users to type
           past the serious dialog below. */}
-      {fileToDelete && !fileToDeleteIsPublished && (
+      {fileToDelete && !fileDeleteIsGrave && (
         <Modal
           isOpen
           onClose={() => setFileToDelete(null)}
@@ -1341,7 +1378,7 @@ export default function PortalPage() {
 
       {/* Published: reviewers can have built work on this file, so it gets the
           same weight as deleting a whole version. */}
-      {fileToDelete && fileToDeleteIsPublished && (
+      {fileToDelete && fileDeleteIsGrave && (
         <DestructiveConfirm
           isOpen
           onClose={() => setFileToDelete(null)}
@@ -1351,7 +1388,6 @@ export default function PortalPage() {
           consequence="This cannot be undone. Everyone loses this file and the review work on it, including people mid-review."
           inventory={[
             { label: 'Comments', value: fileToDelete.commentCount ?? 0, urgent: (fileToDelete.commentCount ?? 0) > 0 },
-            { label: 'Markups', value: fileToDelete.markupCount ?? 0, urgent: (fileToDelete.markupCount ?? 0) > 0 },
           ]}
           confirmLabel="Delete file"
         />
@@ -1370,7 +1406,6 @@ export default function PortalPage() {
           inventory={[
             { label: 'Files', value: versionToDelete.fileCount ?? 0 },
             { label: 'Comments', value: versionToDelete.commentCount ?? 0, urgent: (versionToDelete.commentCount ?? 0) > 0 },
-            { label: 'Markups', value: versionToDelete.markupCount ?? 0, urgent: (versionToDelete.markupCount ?? 0) > 0 },
           ]}
           confirmLabel="Delete version"
         />

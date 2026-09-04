@@ -55,19 +55,14 @@ export async function GET(request: NextRequest) {
   // for the file it is looking at.
   const counts = await sql`
     SELECT f.id,
-           COUNT(DISTINCT c.id) AS "commentCount",
-           COUNT(DISTINCT m.id) AS "markupCount"
+           COUNT(DISTINCT c.id) AS "commentCount"
     FROM files f
     LEFT JOIN comments c ON c.file_id = f.id
-    LEFT JOIN markups m ON m.file_id = f.id
     WHERE f.version_id = ${versionId}
     GROUP BY f.id
   `;
   const countsById = new Map(
-    counts.map((c) => [
-      c.id as string,
-      { commentCount: Number(c.commentCount), markupCount: Number(c.markupCount) },
-    ])
+    counts.map((c) => [c.id as string, { commentCount: Number(c.commentCount) }])
   );
 
   const files = rows.map((row) => {
@@ -86,7 +81,6 @@ export async function GET(request: NextRequest) {
         isPublished,
       }),
       commentCount: countsById.get(file.id as string)?.commentCount ?? 0,
-      markupCount: countsById.get(file.id as string)?.markupCount ?? 0,
     };
   });
 

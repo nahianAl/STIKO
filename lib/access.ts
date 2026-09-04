@@ -131,17 +131,20 @@ export interface DeleteDecision {
 }
 
 /**
- * Every R2 object belonging to these files — the uploads themselves and
- * everything hanging off their comments.
+ * The R2 objects belonging to these files.
  *
- * Comments cascade when a file is deleted, so their snapshots and attachments
- * become unreachable the moment the rows go: nothing left names those keys, and
- * no later sweep can find them from the database. They have to be collected
- * before the delete, alongside the files' own keys.
+ * Deliberately limited to the uploads themselves and their optimized variants.
+ * Comment snapshots and attachments also hang off these files and are also
+ * orphaned when the comments cascade — but their keys are minted flat, as
+ * `snapshots/{uuid}` and `comment-attachments/{uuid}`, with no project or
+ * portal segment, and /api/comments stores whichever key the caller supplies.
+ * Collecting them here would therefore let a commenter name another package's
+ * snapshot on their own comment, delete their own file, and destroy an object
+ * they never had access to.
  *
- * snapshot_url holds a storage key only when it is not an external URL or an
- * inline data URI — the same test app/api/comments/route.ts applies when
- * deciding whether to presign it.
+ * So those two kinds leak on delete, as they did before deletion existed.
+ * Restore them here once the two namespaces carry a portal segment and the
+ * routes that mint them require a session — not before.
  */
 export async function storageKeysForFiles(fileIds: string[]): Promise<string[]> {
   if (fileIds.length === 0) return [];
@@ -152,35 +155,7 @@ export async function storageKeysForFiles(fileIds: string[]): Promise<string[]> 
     FROM files WHERE id = ANY(${fileIds})
   `;
 
-  const snapshotRows = await sql`
-    SELECT snapshot_url AS "snapshotUrl"
-    FROM comments
-    WHERE file_id = ANY(${fileIds})
-      AND snapshot_url IS NOT NULL
-      AND snapshot_url NOT LIKE 'http%'
-      AND snapshot_url NOT LIKE 'data:%'
-  `;
-
-  // The attachments column is a JSONB array of {storageKey, ...} objects. The
-  // jsonb_typeof guard is the same one app/api/files/url/route.ts uses: a row
-  // holding anything other than an array would otherwise abort the query.
-  const attachmentRows = await sql`
-    SELECT att->>'storageKey' AS "storageKey"
-    FROM comments c,
-         jsonb_array_elements(
-           CASE jsonb_typeof(c.attachments)
-             WHEN 'array' THEN c.attachments
-             ELSE '[]'::jsonb
-           END
-         ) AS att
-    WHERE c.file_id = ANY(${fileIds})
-  `;
-
-  const keys = [
-    ...fileRows.flatMap((r) => [r.storageKey, r.convertedStorageKey]),
-    ...snapshotRows.map((r) => r.snapshotUrl),
-    ...attachmentRows.map((r) => r.storageKey),
-  ];
+  const keys = fileRows.flatMap((r) => [r.storageKey, r.convertedStorageKey]);
 
   // Deduplicated because a key deleted twice logs a spurious failure on the
   // second attempt, and nothing guarantees two rows cannot name one object.

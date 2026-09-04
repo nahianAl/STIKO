@@ -47,12 +47,10 @@ export async function GET(request: NextRequest) {
   const counts = await sql`
     SELECT v.id,
            COUNT(DISTINCT f.id) AS "fileCount",
-           COUNT(DISTINCT c.id) AS "commentCount",
-           COUNT(DISTINCT m.id) AS "markupCount"
+           COUNT(DISTINCT c.id) AS "commentCount"
     FROM versions v
     LEFT JOIN files f ON f.version_id = v.id
     LEFT JOIN comments c ON c.file_id = f.id
-    LEFT JOIN markups m ON m.file_id = f.id
     WHERE v.portal_id = ${portalId}
     GROUP BY v.id
   `;
@@ -62,7 +60,6 @@ export async function GET(request: NextRequest) {
       {
         fileCount: Number(c.fileCount),
         commentCount: Number(c.commentCount),
-        markupCount: Number(c.markupCount),
       },
     ])
   );
@@ -77,7 +74,6 @@ export async function GET(request: NextRequest) {
       }),
       fileCount: countsById.get(row.id as string)?.fileCount ?? 0,
       commentCount: countsById.get(row.id as string)?.commentCount ?? 0,
-      markupCount: countsById.get(row.id as string)?.markupCount ?? 0,
     }))
   );
 }

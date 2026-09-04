@@ -46,7 +46,6 @@ export interface FileRecord {
   /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
   canDelete?: boolean;
   commentCount?: number;
-  markupCount?: number;
 }
 
 export interface CommentAttachment {

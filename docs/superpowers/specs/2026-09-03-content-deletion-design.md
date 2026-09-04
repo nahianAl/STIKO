@@ -328,3 +328,11 @@ deploy:
 - Bulk delete of multiple files at once.
 - Deleting comments or markups directly — that already exists.
 - Download authorization and per-version scoping — specs 2 and 3.
+- Removing comment snapshots and attachments on delete. Their storage keys are
+  minted flat (`snapshots/{uuid}`, `comment-attachments/{uuid}`), carry no
+  project or portal segment, and `/api/comments` stores whichever key the
+  caller supplies — so collecting them for cleanup would be a cross-package
+  destruction primitive, not a convenience. This is a known storage leak,
+  identical to the one that existed before deletion shipped, and it stays
+  until those namespaces carry a tenant segment and the routes that mint them
+  require a session.
