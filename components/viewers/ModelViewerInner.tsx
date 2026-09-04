@@ -13,6 +13,9 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
+import { buildPartTree, hasAuthoredColors, type PartNode } from '@/lib/model/partTree';
+import { autoColors } from '@/lib/model/autoColor';
+import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
 import { framingForRadius } from '@/lib/cameraFraming';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
@@ -104,6 +107,20 @@ export interface ModelViewerInnerProps {
    * "the model is here now" gate in this file keys off.
    */
   onReady?: () => void;
+  /** Explicit per-part overrides, keyed by `PartNode.key`. Outranked only by the hovered part. */
+  partColors: Record<string, string>;
+  /** Keys of parts the eye has switched off. */
+  hiddenParts: string[];
+  /** The part under the cursor, if any — outranks both overrides and auto-colour. */
+  highlightedPart: string | null;
+  /**
+   * Fired whenever the loaded model's part tree changes. Computed here, where the loaded
+   * materials live, and reported upward — the panel's swatches must resolve colours the same
+   * way the viewport does, and it cannot see the materials itself.
+   */
+  onPartsLoaded?: (parts: PartNode[], authored: boolean) => void;
+  /** Fired when a part is clicked in the viewport (comment tool must be off). */
+  onPartPick?: (key: string) => void;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -145,7 +162,22 @@ function getLoaderForExt(ext: string) {
   }
 }
 
-function Model({ url }: { url: string }) {
+function Model({
+  url,
+  partColors,
+  hiddenParts,
+  highlightedPart,
+  onPartsLoaded,
+  onBatchesReady,
+}: {
+  url: string;
+  partColors: Record<string, string>;
+  hiddenParts: string[];
+  highlightedPart: string | null;
+  onPartsLoaded?: (parts: PartNode[], authored: boolean) => void;
+  /** Hands the batches to SceneInteraction so a click can be mapped back to a part. */
+  onBatchesReady?: (batches: PartBatches | null) => void;
+}) {
   const ext = getExtFromUrl(url);
   const LoaderClass = getLoaderForExt(ext);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -153,29 +185,76 @@ function Model({ url }: { url: string }) {
 
   // For PLY, compute vertex normals once
   useMemo(() => {
-    if (ext === '.ply' && data instanceof THREE.BufferGeometry) {
-      data.computeVertexNormals();
-    }
+    if (ext === '.ply' && data instanceof THREE.BufferGeometry) data.computeVertexNormals();
   }, [ext, data]);
+
+  const root = useMemo<THREE.Object3D | null>(() => {
+    if (data instanceof THREE.BufferGeometry) return null;
+    return data instanceof THREE.Object3D ? data : ((data as GLTF | Collada)?.scene ?? null);
+  }, [data]);
 
   // Materials that ship inside the file (OBJ / 3DS / DAE / STEP / glTF) are single-sided
   // by default, which hides the far inner wall of thin or perforated parts when you look
   // through an opening. STL and PLY use the shared materials above, already double-sided.
   //
-  // Repair runs first: it only ever touches materials the exporter left at glTF's
-  // metal=1/rough=1 defaults, and doing it before the side change keeps both passes over
-  // the same freshly-loaded tree.
+  // Repair runs first and on the LOADED tree, before batching: it only ever touches materials
+  // the exporter left at glTF's metal=1/rough=1 defaults, and buildBatches reads those same
+  // materials to decide appearance groups and baked colours. Batching a pitch-black material
+  // would bake pitch black.
   useMemo(() => {
-    const root: THREE.Object3D | undefined =
-      data instanceof THREE.Object3D ? data : (data as GLTF | Collada | undefined)?.scene;
     if (!root) return;
     repairExporterDefaults(root);
     makeDoubleSided(root);
-  }, [data]);
+  }, [root]);
 
-  if (ext === '.obj') {
-    return <primitive object={data} />;
-  }
+  const parts = useMemo(() => (root ? buildPartTree(root) : []), [root]);
+  const batches = useMemo<PartBatches | null>(() => (parts.length ? buildBatches(parts) : null), [parts]);
+  // Computed here, where the loaded materials are, and reported upward — the panel's swatches
+  // must resolve colours the same way the viewport does, and it cannot see the materials.
+  const authored = useMemo(() => (root ? hasAuthoredColors(root) : false), [root]);
+  const automatic = useMemo(() => autoColors(parts, authored), [parts, authored]);
+
+  useEffect(() => () => batches?.dispose(), [batches]);
+
+  useEffect(() => {
+    onPartsLoaded?.(parts, authored);
+  }, [parts, authored, onPartsLoaded]);
+
+  useEffect(() => {
+    onBatchesReady?.(batches);
+  }, [batches, onBatchesReady]);
+
+  // Overrides win over auto-colours, auto-colours win over the model's own material, and a
+  // hovered part outranks all three. Every part is written every time rather than diffed:
+  // setColorAt is a texel write, and tracking which changed would cost more than redoing all.
+  //
+  // Highlight is a lightened version of what the part would otherwise be, not a fixed colour —
+  // a fixed highlight over an already-similar part is invisible, which is the one case the
+  // highlight exists for.
+  useEffect(() => {
+    if (!batches) return;
+    const color = new THREE.Color();
+    // .forEach, not for...of: this repo's tsconfig has no `target`, so a for...of over a
+    // Map/Set passes `npm test` (ts-node) but fails `next build` with TS2802.
+    batches.instances.forEach((instanceList, key) => {
+      const hex = partColors[key] ?? automatic.get(key);
+      const base = hex ? color.clone().set(hex) : null;
+      if (key !== highlightedPart) {
+        applyPartColor(batches, key, base);
+        return;
+      }
+      const source = base ?? instanceList[0].baseColor;
+      applyPartColor(batches, key, source.clone().lerp(new THREE.Color(0xffffff), 0.45));
+    });
+  }, [batches, partColors, automatic, highlightedPart]);
+
+  useEffect(() => {
+    if (!batches) return;
+    const hidden = new Set(hiddenParts);
+    batches.instances.forEach((_instances, key) => {
+      applyPartVisibility(batches, key, !hidden.has(key));
+    });
+  }, [batches, hiddenParts]);
 
   if (ext === '.stl' || ext === '.ply') {
     const geometry = data as THREE.BufferGeometry;
@@ -185,20 +264,17 @@ function Model({ url }: { url: string }) {
     return <mesh geometry={geometry} material={material} />;
   }
 
-  if (ext === '.3ds') {
-    return <primitive object={data} />;
-  }
+  // No parts found — a legacy upload whose hierarchy was flattened at import, or a format
+  // that never carried one. Render the tree as-is rather than pretending to segment it.
+  if (!batches || !root) return <primitive object={root ?? data} />;
 
-  if (ext === '.dae') {
-    return <primitive object={(data as Collada).scene} />;
-  }
-
-  if (ext === '.step' || ext === '.stp') {
-    return <primitive object={data as THREE.Group} />;
-  }
-
-  // Default: GLTF/GLB
-  return <primitive object={(data as GLTF).scene} />;
+  return (
+    <>
+      {batches.meshes.map((mesh, i) => (
+        <primitive key={i} object={mesh} />
+      ))}
+    </>
+  );
 }
 
 function SceneInteraction({
@@ -209,6 +285,8 @@ function SceneInteraction({
   modelRef,
   transform,
   clipPlanesRef,
+  batches,
+  onPartPick,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
@@ -217,14 +295,21 @@ function SceneInteraction({
   modelRef: React.RefObject<THREE.Object3D>;
   transform: ObjectTransform;
   clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
+  batches: PartBatches | null;
+  onPartPick?: ModelViewerInnerProps['onPartPick'];
 }) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
   const mouse = useRef(new THREE.Vector2());
   const tempVec3 = useRef(new THREE.Vector3());
+  // A drag that orbits the camera must not also pick a part: pointerdown records where the
+  // gesture started, and the pick raycast on pointerup only runs if it stayed within 4px of it.
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {
+      pointerDownPos.current = { x: e.clientX, y: e.clientY };
+
       if (!commentToolActive || !onSceneClick) return;
 
       const model = modelRef.current;
@@ -271,11 +356,51 @@ function SceneInteraction({
     [commentToolActive, onSceneClick, camera, gl, modelRef, transform, clipPlanesRef]
   );
 
+  const handlePointerUp = useCallback(
+    (e: PointerEvent) => {
+      // A part pick is not a pin drop: it runs when the comment tool is OFF, so the two can
+      // never both fire from one click.
+      if (commentToolActive || !onPartPick || !batches) return;
+
+      const down = pointerDownPos.current;
+      if (!down) return;
+      // A drag that orbits the camera must not also select — only a pointer that stayed put
+      // reads as a click; past this threshold the user was orbiting.
+      if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
+
+      const model = modelRef.current;
+      if (!model) return;
+
+      const rect = gl.domElement.getBoundingClientRect();
+      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width)) return;
+
+      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.current.setFromCamera(mouse.current, camera);
+
+      for (const hit of raycaster.current.intersectObject(model, true)) {
+        // Same clipping guard, same reason, as the pin raycast above: three's raycaster
+        // ignores clipping planes, so a cross-sectioned-away half stays hittable and would
+        // select a part the viewer cannot see.
+        if (isClipped(clipPlanesRef.current, hit.point)) continue;
+        if (hit.batchId === undefined) continue;
+        const key = partKeyAt(batches, hit.object, hit.batchId);
+        if (key) onPartPick(key);
+        break;
+      }
+    },
+    [commentToolActive, onPartPick, batches, modelRef, gl, camera, clipPlanesRef]
+  );
+
   useEffect(() => {
     const canvas = gl.domElement;
     canvas.addEventListener('pointerdown', handlePointerDown);
-    return () => canvas.removeEventListener('pointerdown', handlePointerDown);
-  }, [gl, handlePointerDown]);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [gl, handlePointerDown, handlePointerUp]);
 
   // Project world pins to screen space every frame
   useFrame(() => {
@@ -502,6 +627,11 @@ export default function ModelViewerInner({
   selectedPlane = null,
   onSelectPlane,
   onReady,
+  partColors,
+  hiddenParts,
+  highlightedPart,
+  onPartsLoaded,
+  onPartPick,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
@@ -513,6 +643,9 @@ export default function ModelViewerInner({
 
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
+  // Held beside the model ref: SceneInteraction needs it to map a click's batchId back to a
+  // part key, and it can only come from inside <Model>, where the batches are actually built.
+  const [batches, setBatches] = useState<PartBatches | null>(null);
   // Written by ApplyCrossSection, read by the raycast guards in SceneInteraction (pin drops)
   // and ViewerNavigation (orbit anchoring). three's raycaster ignores clipping planes, so both
   // have to reject hits on the hidden halves by hand. Empty when nothing is cutting.
@@ -653,7 +786,14 @@ export default function ModelViewerInner({
                   onSelectPlane?.(null);
                 }}
               >
-                <Model url={url} />
+                <Model
+                  url={url}
+                  partColors={partColors}
+                  hiddenParts={hiddenParts}
+                  highlightedPart={highlightedPart}
+                  onPartsLoaded={onPartsLoaded}
+                  onBatchesReady={setBatches}
+                />
               </group>
             </Center>
             {bounds &&
@@ -734,6 +874,8 @@ export default function ModelViewerInner({
             modelRef={modelRef}
             transform={safeTransform}
             clipPlanesRef={clipPlanesRef}
+            batches={batches}
+            onPartPick={onPartPick}
           />
         </Suspense>
         {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls

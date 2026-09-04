@@ -5,6 +5,7 @@ import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { PlaneId, SectionSlots } from '@/lib/crossSection';
+import type { PartNode } from '@/lib/model/partTree';
 import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
@@ -36,6 +37,15 @@ interface ViewerContainerProps {
   sectionSlots?: SectionSlots;
   selectedPlane?: PlaneId | null;
   onSelectPlane?: (id: PlaneId | null) => void;
+  // Per-part colour props. Optional here — with safe defaults applied below — rather than
+  // required as ModelViewerInner has them: the page call site for this component is not
+  // updated until the panel that owns this state exists (a later task), and a viewer with no
+  // colouring opinion should still render, not fail to build.
+  partColors?: Record<string, string>;
+  hiddenParts?: string[];
+  highlightedPart?: string | null;
+  onPartsLoaded?: (parts: PartNode[], authored: boolean) => void;
+  onPartPick?: (key: string) => void;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -66,6 +76,14 @@ const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
 const PDF_EXTENSIONS = ['.pdf'];
 const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.3ds', '.ply', '.dae', '.step', '.stp'];
 
+// Stable defaults for the colouring props, so a caller that omits them (every caller today —
+// the panel that owns this state does not exist until a later task) does not hand Model a
+// fresh object/array identity on every render. Model's colour-application effect depends on
+// `partColors` and `hiddenParts` by reference; a new `{}`/`[]` literal each render would re-run
+// setColorAt/setVisibleAt for every part on every unrelated re-render of this container.
+const EMPTY_PART_COLORS: Record<string, string> = {};
+const EMPTY_HIDDEN_PARTS: string[] = [];
+
 function getExtension(filename: string): string {
   const idx = filename.lastIndexOf('.');
   if (idx === -1) return '';
@@ -75,6 +93,7 @@ function getExtension(filename: string): string {
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
+  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -160,7 +179,31 @@ export default function ViewerContainer({
       // that gate silently. It also closes the single-frame window where stale
       // fallback content could otherwise show before the url-fetch effect fires.
       <ModelErrorBoundary key={viewerKey} onReady={onReady}>
-        <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} sectionSlots={sectionSlots} selectedPlane={selectedPlane} onSelectPlane={onSelectPlane} onReady={onReady} />
+        <ModelViewer
+          url={url}
+          commentToolActive={commentToolActive}
+          onSceneClick={onSceneClick}
+          worldPins={worldPins}
+          onPinPositionsUpdate={onPinPositionsUpdate}
+          handleRef={modelViewerRef}
+          transform={transform}
+          transformMode={transformMode}
+          onTransformCommit={onTransformCommit}
+          focalLength={focalLength}
+          sectionSlots={sectionSlots}
+          selectedPlane={selectedPlane}
+          onSelectPlane={onSelectPlane}
+          onReady={onReady}
+          // Defaulted here rather than left required: ModelViewerInner's colouring props are
+          // required (a viewer always resolves SOME colour), but nothing upstream of this
+          // container supplies them yet, so an absent prop means "no opinion" rather than
+          // "broken".
+          partColors={partColors ?? EMPTY_PART_COLORS}
+          hiddenParts={hiddenParts ?? EMPTY_HIDDEN_PARTS}
+          highlightedPart={highlightedPart ?? null}
+          onPartsLoaded={onPartsLoaded}
+          onPartPick={onPartPick}
+        />
       </ModelErrorBoundary>
     );
   }
