@@ -43,11 +43,13 @@ export async function getDownloadPresignedUrl(
     // Without this the browser navigates to the object and renders it in place;
     // a PDF or image would open rather than save. Only set when a filename is
     // given, so the viewer's own presigned URLs are unaffected.
-    // A quote would end the header value early; a CR or LF would split it.
-    // filename comes from the upload request body, so neither is hypothetical.
+    // A quote would end the header value early; a CR or LF would split it; a
+    // backslash escapes the closing quote of the RFC 6266 quoted-string and
+    // corrupts the header the same way a bare quote would. filename comes
+    // from the upload request body, so none of this is hypothetical.
     ...(downloadFilename
       ? {
-          ResponseContentDisposition: `attachment; filename="${downloadFilename.replace(/["\x00-\x1F\x7F]/g, '')}"`,
+          ResponseContentDisposition: `attachment; filename="${downloadFilename.replace(/["\\\x00-\x1F\x7F]/g, '')}"`,
         }
       : {}),
   });

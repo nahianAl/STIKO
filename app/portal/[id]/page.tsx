@@ -839,7 +839,16 @@ export default function PortalPage() {
         return;
       }
       const { url } = await res.json();
-      window.location.href = url;
+      // An anchor rather than window.location.href: if the storage service
+      // ever drops the attachment header, the worst case is a new tab, not the
+      // reviewer being navigated out of the viewer and losing their place.
+      const a = document.createElement('a');
+      a.href = url;
+      a.rel = 'noopener';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch {
       toast('Could not download this file');
     }

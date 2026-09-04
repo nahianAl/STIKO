@@ -120,11 +120,15 @@ export default function PackagePeople() {
   };
 
   const changeDownload = async (userId: string, next: boolean) => {
-    await fetch('/api/participants/download', {
+    const res = await fetch('/api/participants/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, portalId: id, canDownload: next }),
     });
+    if (!res.ok) {
+      toast('Could not change download access');
+      return;
+    }
     toast(next ? 'Download allowed' : 'Download turned off');
     load();
   };

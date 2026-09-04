@@ -70,6 +70,10 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
         setDelivered(result.emailDelivered);
         setSentTo(recipient);
         setEmail('');
+        // Otherwise this grant survives into the next address typed into the
+        // same open modal, and a second person silently gets download rights
+        // the owner never chose for them.
+        setInviteCanDownload(false);
       } else {
         setError('Could not create the invite. Please try again.');
       }
