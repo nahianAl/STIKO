@@ -21,10 +21,10 @@ export async function PATCH(
 
   // Resolve the package from the file rather than trusting anything in the body:
   // otherwise the file id is itself the capability.
-  const portalId = await portalForFile(params.id);
-  if (!portalId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const location = await portalForFile(params.id);
+  if (!location) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const access = await getPackageAccess(session.user.id, portalId);
+  const access = await getPackageAccess(session.user.id, location.portalId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.canTransform) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
