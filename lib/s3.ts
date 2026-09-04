@@ -34,11 +34,20 @@ export async function getUploadPresignedUrl(
 // Generate a presigned URL for a direct client ← R2 GET download
 export async function getDownloadPresignedUrl(
   storageKey: string,
-  expiresIn = 3600 // 1 hour
+  expiresIn = 3600, // 1 hour
+  downloadFilename?: string
 ): Promise<string> {
   const command = new GetObjectCommand({
     Bucket: BUCKET,
     Key: storageKey,
+    // Without this the browser navigates to the object and renders it in place;
+    // a PDF or image would open rather than save. Only set when a filename is
+    // given, so the viewer's own presigned URLs are unaffected.
+    ...(downloadFilename
+      ? {
+          ResponseContentDisposition: `attachment; filename="${downloadFilename.replace(/"/g, '')}"`,
+        }
+      : {}),
   });
   return getSignedUrl(s3, command, { expiresIn });
 }
