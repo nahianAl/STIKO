@@ -8,6 +8,7 @@ import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
 import VersionBrief from '@/components/portal/VersionBrief';
 import { getInitials } from '@/lib/initials';
+import { formatFileSize } from '@/lib/versionDetail';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -43,12 +44,6 @@ function timeAgo(dateStr: string): string {
 
 function isImageType(contentType: string): boolean {
   return contentType.startsWith('image/');
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // ── Attachment previews ────────────────────────────────────
