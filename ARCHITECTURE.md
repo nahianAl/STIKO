@@ -89,7 +89,7 @@ Client
   → POST /api/files/complete  (Vercel: writes FileRecord to Neon)
 ```
 
-Both steps now require a session and `canUpload` on the version's portal — previously neither checked auth at all. `/api/files/upload` derives the storage key's project and portal segments from the version server-side, never the request body; `/api/files/complete` takes `storageKey` as given, but the only object that can exist at that key is one written through that server-derived presigned PUT.
+Both steps now require a session and `canUpload` on the version's portal — previously neither checked auth at all. `/api/files/upload` derives the storage key's project and portal segments from the version server-side, never the request body; `/api/files/complete` re-derives that same key from the version and rejects the request if the caller's `storageKey` doesn't match.
 
 ### File Viewing Flow
 Files are served directly from S3 (public-read on the uploads prefix). Vercel is not in the streaming path.

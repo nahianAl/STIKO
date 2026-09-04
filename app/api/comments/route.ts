@@ -4,6 +4,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getDownloadPresignedUrl } from '@/lib/s3';
 import { getFileAccess } from '@/lib/access';
+import { isAllowedCommentKey } from '@/lib/storageKeys';
 
 // Ensure new columns exist (runs once per cold start)
 let migrationAttempted = false;
@@ -121,6 +122,21 @@ export async function POST(request: NextRequest) {
       { error: 'Your role on this package is view-only' },
       { status: 403 }
     );
+  }
+
+  // Both of these are stored object keys, and deleting a comment's file now
+  // deletes what they name. A comment that names a file object could destroy
+  // it, so each is held to its own prefix.
+  if (snapshotUrl != null && !isAllowedCommentKey(String(snapshotUrl))) {
+    return NextResponse.json({ error: 'Invalid snapshot reference' }, { status: 400 });
+  }
+  const attachmentList = Array.isArray(attachments) ? attachments : [];
+  if (
+    attachmentList.some(
+      (att) => !att?.storageKey || !isAllowedCommentKey(String(att.storageKey))
+    )
+  ) {
+    return NextResponse.json({ error: 'Invalid attachment reference' }, { status: 400 });
   }
 
   // The author is the session, never a client-supplied string.

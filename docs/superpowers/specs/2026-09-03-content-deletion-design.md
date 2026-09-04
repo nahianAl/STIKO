@@ -95,8 +95,10 @@ package.
 
 **Deployment note:** migrations here are applied manually and have been
 forgotten before. This migration must run *before* the code that reads
-`uploaded_by` is deployed, or every uploader delete check reads NULL and
-silently denies.
+`uploaded_by` is deployed: selecting a column that does not exist raises
+Postgres error 42703, not NULL, so without it `GET /api/files` returns 500 for
+every user on every package, and `/api/files/complete` returns 500 after the
+bytes are already in R2, stranding every upload at registration.
 
 ## Authorization
 
@@ -313,7 +315,7 @@ deploy:
 
 | Risk | Mitigation |
 |---|---|
-| Migration not run before deploy — every uploader check reads NULL and denies | Deploy migration first; confirm `schema_migrations` before shipping code |
+| Migration not run before deploy — `GET /api/files` returns 500 for every user on every package, so every package renders as empty, and `/api/files/complete` returns 500 after the bytes are already in R2, so every upload fails at registration and strands its object | Deploy migration first; confirm `schema_migrations` before shipping code |
 | Owner deletes published version, destroying reviewer comments | Typed-name confirm with explicit comment and markup counts |
 | Backfill misattributes a file to the version creator | Bounded — only affects open drafts; owner can delete regardless |
 | R2 delete succeeds, DB delete fails | Impossible in this order; DB is deleted first |

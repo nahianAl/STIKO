@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
-import { optimizedVariantKey } from '@/lib/storageKeys';
+import { optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
@@ -24,7 +24,10 @@ export async function POST(request: NextRequest) {
   // could attach a file row to any version. A version id is an identifier, not
   // a capability — resolve it to a package and check the caller may upload there.
   const versionRows = await sql`
-    SELECT portal_id AS "portalId" FROM versions WHERE id = ${versionId}
+    SELECT po.id AS "portalId", po.project_id AS "projectId"
+    FROM versions v
+    JOIN portals po ON po.id = v.portal_id
+    WHERE v.id = ${versionId}
   `;
   if (!versionRows[0]) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -34,6 +37,28 @@ export async function POST(request: NextRequest) {
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.canUpload) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  if (!fileId || !filename) {
+    return NextResponse.json(
+      { error: 'fileId and filename are required' },
+      { status: 400 }
+    );
+  }
+
+  // The key is derived, then compared — never trusted. This route used to
+  // insert whatever key it was handed, so a caller could register someone
+  // else's object against their own draft and then delete it, destroying bytes
+  // they never had access to.
+  const expectedKey = uploadStorageKey({
+    projectId: versionRows[0].projectId,
+    portalId: versionRows[0].portalId,
+    versionId,
+    fileId,
+    filename,
+  });
+  if (storageKey !== expectedKey) {
+    return NextResponse.json({ error: 'Invalid storage key' }, { status: 400 });
   }
 
   // Derived, never accepted from the caller — see the security note in this task.

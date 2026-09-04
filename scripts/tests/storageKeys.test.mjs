@@ -6,6 +6,8 @@ import {
   isTessellatableFilename,
   producesViewerVariant,
   TESSELLATABLE_EXTENSIONS,
+  uploadStorageKey,
+  isAllowedCommentKey,
 } from '../../lib/storageKeys.ts';
 
 test('the variant key replaces the extension of the last segment', () => {
@@ -94,4 +96,50 @@ test('a .stp original yields a .optimized.glb variant', () => {
     optimizedVariantKey('uploads/p/po/v/abc-123.stp'),
     'uploads/p/po/v/abc-123.optimized.glb'
   );
+});
+
+// The forged-key hole: /api/files/complete accepted any storage key, and this
+// branch made deletion act on those keys. These assert the shape of what a
+// caller may claim, so the routes only have to compare.
+
+test('an upload key is fully determined by its ids and extension', () => {
+  assert.equal(
+    uploadStorageKey({
+      projectId: 'p1', portalId: 'k1', versionId: 'v1',
+      fileId: 'f1', filename: 'bracket.step',
+    }),
+    'uploads/p1/k1/v1/f1.step'
+  );
+});
+
+test('an upload key for an extensionless filename has no trailing dot', () => {
+  assert.equal(
+    uploadStorageKey({
+      projectId: 'p1', portalId: 'k1', versionId: 'v1',
+      fileId: 'f1', filename: 'README',
+    }),
+    'uploads/p1/k1/v1/f1'
+  );
+});
+
+test('a comment may name a snapshot or an attachment', () => {
+  assert.equal(isAllowedCommentKey('snapshots/abc.jpg'), true);
+  assert.equal(isAllowedCommentKey('comment-attachments/abc.pdf'), true);
+});
+
+test('a comment may name an external URL or an inline data URI', () => {
+  // Neither is a stored object, so neither can be deleted by naming it.
+  assert.equal(isAllowedCommentKey('https://example.com/x.png'), true);
+  assert.equal(isAllowedCommentKey('data:image/png;base64,AAAA'), true);
+});
+
+test('a comment may NOT name an upload key', () => {
+  // The whole exploit: a commenter naming a victim's file object, which
+  // deletion would then destroy.
+  assert.equal(isAllowedCommentKey('uploads/p1/k1/v1/f1.step'), false);
+});
+
+test('a comment may not name an arbitrary key', () => {
+  assert.equal(isAllowedCommentKey('anything/else'), false);
+  assert.equal(isAllowedCommentKey(''), false);
 });
