@@ -95,8 +95,10 @@ package.
 
 **Deployment note:** migrations here are applied manually and have been
 forgotten before. This migration must run *before* the code that reads
-`uploaded_by` is deployed, or every uploader delete check reads NULL and
-silently denies.
+`uploaded_by` is deployed: selecting a column that does not exist raises
+Postgres error 42703, not NULL, so without it `GET /api/files` returns 500 for
+every user on every package, and `/api/files/complete` returns 500 after the
+bytes are already in R2, stranding every upload at registration.
 
 ## Authorization
 
@@ -219,10 +221,25 @@ rather than the database; that is its own task.
 ## Version numbering
 
 Numbers are never reassigned. Deleting V2 of V1/V2/V3 leaves V1 and V3 with a
-permanent gap, and the next version is still `MAX(version_number) + 1`, so V4
-follows. The gap is correct and must not be closed: version numbers appear in
-comments, notifications, verdicts and already-sent emails, and renumbering would
-silently repoint every one of those references at different content.
+permanent gap, and the next version is still V4. The gap is correct and must
+not be closed: version numbers appear in comments, notifications, verdicts and
+already-sent emails, and renumbering would silently repoint every one of those
+references at different content.
+
+Numbers come from `portals.last_version_number`, a counter on the package
+that only ever increases, not from `MAX(version_number)` over the versions
+that still exist. The latter was tried first and failed exactly the case this
+rule exists for: deleting the *newest* version lowers the live maximum, so the
+next version claims that same number again, while every email, notification
+and verdict that named the deleted version now points at different content.
+Deleting a version in the middle leaves the maximum untouched, so that case
+happened to hold — which is why static review missed it and it surfaced only
+against a real database. `POST /api/versions` claims a number with
+`UPDATE portals SET last_version_number = last_version_number + 1 ... RETURNING`,
+an atomic increment that also closes the race two concurrent creates would
+otherwise have on a read-then-insert. If the following INSERT into `versions`
+fails, the claimed number is not reclaimed and the next version skips it — a
+gap is harmless, a reused number is not.
 
 Two consequences, both intended:
 
@@ -268,12 +285,14 @@ select button and the delete button as siblings.
 
 Two different confirms, deliberately.
 
-- **Owner or coordinator deleting published content** — the existing
-  `components/settings/DestructiveConfirm.tsx`, with an inventory of the files,
-  comments and markups that die with it. Matches package deletion.
-- **Uploader deleting their own draft file** — a plain `components/ui/Modal.tsx`
-  confirm. Nothing is published, nobody has commented, and the point is a fast
-  fix for a wrong upload.
+- **Anything would be destroyed alongside the file, or its version is
+  published** — the existing `components/settings/DestructiveConfirm.tsx`,
+  with an inventory of the files and comments that die with it. Matches
+  package deletion. Markups are not counted: the table is legacy and nothing
+  writes to it, so a count would only ever show zero.
+- **Neither holds** — a plain `components/ui/Modal.tsx` confirm. Nothing is
+  published, nobody has commented, and the point is a fast fix for a wrong
+  upload.
 
 `DestructiveConfirm` is **not** reused for the second case and **not** modified
 to make its typed name optional. Its header states its three rules — count what
@@ -282,10 +301,13 @@ every destructive confirm, and making the name optional would turn that rule
 into a default that each call site can quietly opt out of. Keeping the component
 strict means the strictness is guaranteed wherever it appears.
 
-The two cases genuinely differ: deleting a published file destroys other
-people's work, while deleting an unpublished one you uploaded a minute ago
-destroys only your own mistake. Requiring a filename to be typed for the second
-would train users to type past the first.
+The split is on stakes, not role or publish state alone: a draft can already
+carry other people's comments, because commenting is gated on `canComment` and
+never on whether the version is published. The two cases genuinely differ:
+destroying other people's work — a comment thread, or anything already
+published — earns the typed-name confirm; deleting an untouched draft you
+uploaded a minute ago destroys only your own mistake, and requiring a filename
+for that would train users to type past the first.
 
 Deletion is not offered as reversible anywhere, because it is not. Unlike
 package deletion, there is no archive alternative to point at.
@@ -313,8 +335,8 @@ deploy:
 
 | Risk | Mitigation |
 |---|---|
-| Migration not run before deploy — every uploader check reads NULL and denies | Deploy migration first; confirm `schema_migrations` before shipping code |
-| Owner deletes published version, destroying reviewer comments | Typed-name confirm with explicit comment and markup counts |
+| Migration not run before deploy — `GET /api/files` returns 500 for every user on every package, so every package renders as empty, and `/api/files/complete` returns 500 after the bytes are already in R2, so every upload fails at registration and strands its object | Deploy migration first; confirm `schema_migrations` before shipping code |
+| Owner deletes published version, destroying reviewer comments | Typed-name confirm with an explicit comment count (markups excluded — the table is unused) |
 | Backfill misattributes a file to the version creator | Bounded — only affects open drafts; owner can delete regardless |
 | R2 delete succeeds, DB delete fails | Impossible in this order; DB is deleted first |
 | Cascade reaches further than the confirm claims | Confirm counts are queried, not estimated |
@@ -326,3 +348,11 @@ deploy:
 - Bulk delete of multiple files at once.
 - Deleting comments or markups directly — that already exists.
 - Download authorization and per-version scoping — specs 2 and 3.
+- Removing comment snapshots and attachments on delete. Their storage keys are
+  minted flat (`snapshots/{uuid}`, `comment-attachments/{uuid}`), carry no
+  project or portal segment, and `/api/comments` stores whichever key the
+  caller supplies — so collecting them for cleanup would be a cross-package
+  destruction primitive, not a convenience. This is a known storage leak,
+  identical to the one that existed before deletion shipped, and it stays
+  until those namespaces carry a tenant segment and the routes that mint them
+  require a session.

@@ -1,8 +1,8 @@
 import { sql } from '@/lib/db';
-import { capabilitiesFor, type Capabilities, type EffectiveRole, type PackageRole, type ProjectRole } from '@/lib/capabilities';
+import { capabilitiesFor, canDeleteContent, type Capabilities, type DeleteContext, type EffectiveRole, type PackageRole, type ProjectRole } from '@/lib/capabilities';
 
-export { capabilitiesFor };
-export type { Capabilities, EffectiveRole, PackageRole, ProjectRole };
+export { capabilitiesFor, canDeleteContent };
+export type { Capabilities, DeleteContext, EffectiveRole, PackageRole, ProjectRole };
 
 /**
  * Access control — stiko_handoff/01.
@@ -121,4 +121,121 @@ export async function visiblePackageIds(userId: string): Promise<string[]> {
       AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL OR pa.user_id IS NOT NULL)
   `;
   return rows.map((r) => r.id as string);
+}
+
+export interface DeleteDecision {
+  allowed: boolean;
+  portalId: string;
+  /** R2 keys to clean up once the rows are gone. Nulls are filtered out. */
+  storageKeys: string[];
+}
+
+/**
+ * The R2 objects belonging to these files.
+ *
+ * Deliberately limited to the uploads themselves and their optimized variants.
+ * Comment snapshots and attachments also hang off these files and are also
+ * orphaned when the comments cascade — but their keys are minted flat, as
+ * `snapshots/{uuid}` and `comment-attachments/{uuid}`, with no project or
+ * portal segment, and /api/comments stores whichever key the caller supplies.
+ * Collecting them here would therefore let a commenter name another package's
+ * snapshot on their own comment, delete their own file, and destroy an object
+ * they never had access to.
+ *
+ * So those two kinds leak on delete, as they did before deletion existed.
+ * Restore them here once the two namespaces carry a portal segment and the
+ * routes that mint them require a session — not before.
+ */
+export async function storageKeysForFiles(fileIds: string[]): Promise<string[]> {
+  if (fileIds.length === 0) return [];
+
+  const fileRows = await sql`
+    SELECT storage_key AS "storageKey",
+           converted_storage_key AS "convertedStorageKey"
+    FROM files WHERE id = ANY(${fileIds})
+  `;
+
+  const keys = fileRows.flatMap((r) => [r.storageKey, r.convertedStorageKey]);
+
+  // Deduplicated because a key deleted twice logs a spurious failure on the
+  // second attempt, and nothing guarantees two rows cannot name one object.
+  return Array.from(
+    new Set(
+      keys.filter((k): k is string => typeof k === 'string' && k.length > 0)
+    )
+  );
+}
+
+/**
+ * May this user delete this file, and what does deleting it strand in storage?
+ *
+ * Returns null when the file does not exist OR the caller cannot see its
+ * package — the caller must not be able to tell those apart, or the id becomes
+ * an existence oracle.
+ *
+ * The storage keys come back with the verdict because the rows are gone by the
+ * time cleanup runs; re-querying afterwards would find nothing.
+ */
+export async function getFileDeleteDecision(
+  userId: string,
+  fileId: string
+): Promise<DeleteDecision | null> {
+  const rows = await sql`
+    SELECT v.portal_id       AS "portalId",
+           f.uploaded_by     AS "uploadedBy",
+           v.published_at    AS "publishedAt"
+    FROM files f
+    JOIN versions v ON v.id = f.version_id
+    WHERE f.id = ${fileId}
+  `;
+  const row = rows[0];
+  if (!row) return null;
+
+  const access = await getPackageAccess(userId, row.portalId as string);
+  if (!access) return null;
+
+  return {
+    allowed: canDeleteContent({
+      role: access.role,
+      isOwnUpload: row.uploadedBy === userId,
+      isPublished: row.publishedAt !== null,
+    }),
+    portalId: row.portalId as string,
+    storageKeys: await storageKeysForFiles([fileId]),
+  };
+}
+
+/**
+ * May this user delete this whole version, and what does it strand in storage?
+ *
+ * isOwnUpload is always false — see the note on canDeleteContent. In practice
+ * that restricts version deletion to owners and coordinators.
+ */
+export async function getVersionDeleteDecision(
+  userId: string,
+  versionId: string
+): Promise<DeleteDecision | null> {
+  const rows = await sql`
+    SELECT portal_id AS "portalId", published_at AS "publishedAt"
+    FROM versions WHERE id = ${versionId}
+  `;
+  const row = rows[0];
+  if (!row) return null;
+
+  const access = await getPackageAccess(userId, row.portalId as string);
+  if (!access) return null;
+
+  const fileRows = await sql`
+    SELECT id FROM files WHERE version_id = ${versionId}
+  `;
+
+  return {
+    allowed: canDeleteContent({
+      role: access.role,
+      isOwnUpload: false,
+      isPublished: row.publishedAt !== null,
+    }),
+    portalId: row.portalId as string,
+    storageKeys: await storageKeysForFiles(fileRows.map((f) => f.id as string)),
+  };
 }

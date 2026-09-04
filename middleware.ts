@@ -24,6 +24,13 @@ const PUBLIC_PATHS = [
   '/api/files',
   '/api/comments',
   '/api/snapshots',
+  // Every handler under here — GET/POST /api/versions, and the [id], publish,
+  // changelog-draft and summary routes — calls auth() itself and returns a
+  // JSON 401. Without this exemption, an expired session made DELETE
+  // /api/versions/[id] 307 to /login; fetch follows redirects, so the client
+  // received a 200 HTML page, `res.ok` was true, and the toast claimed the
+  // version was deleted when nothing had happened.
+  '/api/versions',
 ];
 
 // There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed

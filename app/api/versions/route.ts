@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { canDeleteContent, getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -42,7 +42,40 @@ export async function GET(request: NextRequest) {
         ORDER BY v.version_number DESC
       `;
 
-  return NextResponse.json(rows);
+  // Counts come back with the rows so the delete confirm can state what dies
+  // without a second round trip.
+  const counts = await sql`
+    SELECT v.id,
+           COUNT(DISTINCT f.id) AS "fileCount",
+           COUNT(DISTINCT c.id) AS "commentCount"
+    FROM versions v
+    LEFT JOIN files f ON f.version_id = v.id
+    LEFT JOIN comments c ON c.file_id = f.id
+    WHERE v.portal_id = ${portalId}
+    GROUP BY v.id
+  `;
+  const countsById = new Map(
+    counts.map((c) => [
+      c.id as string,
+      {
+        fileCount: Number(c.fileCount),
+        commentCount: Number(c.commentCount),
+      },
+    ])
+  );
+
+  return NextResponse.json(
+    rows.map((row) => ({
+      ...row,
+      canDelete: canDeleteContent({
+        role: access.role,
+        isOwnUpload: false,
+        isPublished: row.publishedAt !== null,
+      }),
+      fileCount: countsById.get(row.id as string)?.fileCount ?? 0,
+      commentCount: countsById.get(row.id as string)?.commentCount ?? 0,
+    }))
+  );
 }
 
 /**
@@ -68,11 +101,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const existing = await sql`
-    SELECT COALESCE(MAX(version_number), 0) AS max
-    FROM versions WHERE portal_id = ${portalId}
+  // Taken from the package's own counter, not from MAX over live rows: the
+  // latter hands the number back when the newest version is deleted, letting a
+  // new version inherit the identity of one that emails and notifications
+  // already named. UPDATE ... RETURNING is atomic, so two concurrent creates
+  // cannot collide either.
+  const claimed = await sql`
+    UPDATE portals SET last_version_number = last_version_number + 1
+    WHERE id = ${portalId}
+    RETURNING last_version_number AS "versionNumber"
   `;
-  const nextVersion = Number(existing[0].max) + 1;
+  if (!claimed[0]) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  const nextVersion = Number(claimed[0].versionNumber);
 
   const rows = await sql`
     INSERT INTO versions (id, portal_id, version_number, created_by)

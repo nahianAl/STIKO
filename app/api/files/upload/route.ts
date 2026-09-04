@@ -1,15 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
-import { isOptimizableFilename, optimizedVariantKey } from '@/lib/storageKeys';
+import { isOptimizableFilename, optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
+import { sql } from '@/lib/db';
+import { auth } from '@/lib/auth';
+import { getPackageAccess } from '@/lib/access';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
-  const { versionId, projectId, portalId, filename, contentType } = await request.json();
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
-  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
+  const { versionId, filename, contentType } = await request.json();
+
+  if (!versionId || !filename) {
+    return NextResponse.json(
+      { error: 'versionId and filename are required' },
+      { status: 400 }
+    );
+  }
+
+  // This route used to mint a presigned PUT for anyone who asked, so an
+  // unauthenticated caller could write arbitrary objects into the bucket.
+  // A version id is an identifier, not a capability.
+  const versionRows = await sql`
+    SELECT po.id AS "portalId", po.project_id AS "projectId"
+    FROM versions v
+    JOIN portals po ON po.id = v.portal_id
+    WHERE v.id = ${versionId}
+  `;
+  if (!versionRows[0]) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  const access = await getPackageAccess(session.user.id, versionRows[0].portalId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!access.canUpload) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const fileId = uuidv4();
-  const storageKey = `uploads/${projectId}/${portalId}/${versionId}/${fileId}${ext}`;
+  // projectId and portalId come from the version, never from the body. Trusting
+  // the caller's copy would let an authorized uploader on one package write
+  // objects under a different package's prefix.
+  const storageKey = uploadStorageKey({
+    projectId: versionRows[0].projectId,
+    portalId: versionRows[0].portalId,
+    versionId,
+    fileId,
+    filename,
+  });
 
   const presignedUrl = await getUploadPresignedUrl(storageKey, contentType);
 

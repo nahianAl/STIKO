@@ -23,6 +23,10 @@ import type { Comment, FileRecord } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
+import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
+import Modal from '@/components/ui/Modal';
+import Button from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -48,6 +52,12 @@ interface Version {
   portalId: string;
   versionNumber: number;
   createdAt: string;
+  // Already present on every row the API returns (Task 8) — declared here so this
+  // local copy stays assignable to FileTreeSidebar's, which now requires it.
+  publishedAt: string | null;
+  canDelete?: boolean;
+  fileCount?: number;
+  commentCount?: number;
 }
 
 interface Participant {
@@ -146,6 +156,14 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
 export default function PortalPage() {
   const params = useParams();
   const portalId = params.id as string;
+  const { toast } = useToast();
+
+  // Two shapes of confirm, because the stakes differ. A published version
+  // carries other people's comments; a file the uploader added a minute ago to
+  // an unpublished version carries only their own mistake, and making them type
+  // its name to undo it would train them to type past the serious dialog.
+  const [fileToDelete, setFileToDelete] = useState<FileRecord | null>(null);
+  const [versionToDelete, setVersionToDelete] = useState<Version | null>(null);
 
   const [project, setProject] = useState<Project | null>(null);
   const [portal, setPortal] = useState<Portal | null>(null);
@@ -506,25 +524,34 @@ export default function PortalPage() {
       });
   }, [portalId]);
 
-  // Fetch versions and select latest
-  useEffect(() => {
-    const fetchVersions = async () => {
-      try {
-        const res = await fetch(`/api/versions?portalId=${portalId}`);
-        const data: Version[] = await res.json();
-        setVersions(data);
-        if (data.length > 0) {
-          setSelectedVersionId(data[0].id);
-          setFilesLoading(true);
-        }
-      } catch (err) {
-        console.error('Failed to fetch versions:', err);
-      } finally {
-        setLoading(false);
+  // Extracted from the effect below so deleting a version can re-run it.
+  const loadVersions = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/versions?portalId=${portalId}`);
+      // A 401 or 403 returns a JSON error object, not an array. Without this
+      // it lands in setVersions and the sidebar's reduce throws during render,
+      // taking out the whole route — there is no error boundary above it.
+      if (!res.ok) {
+        setVersions([]);
+        return;
       }
-    };
-    fetchVersions();
+      const data: Version[] = await res.json();
+      setVersions(data);
+      if (data.length > 0) {
+        setSelectedVersionId((current) =>
+          current && data.some((v) => v.id === current) ? current : data[0].id
+        );
+      }
+    } catch (err) {
+      console.error('Failed to fetch versions:', err);
+    } finally {
+      setLoading(false);
+    }
   }, [portalId]);
+
+  useEffect(() => {
+    loadVersions();
+  }, [loadVersions]);
 
   // Fetch each version's one-line AI headline for the sidebar. GET never
   // triggers the model — this only reads whatever brief already exists.
@@ -559,10 +586,21 @@ export default function PortalPage() {
     setFilesLoading(true);
     try {
       const res = await fetch(`/api/files?versionId=${versionId}`);
+      // Same failure shape as loadVersions: a 401/403 body is a JSON object,
+      // not an array, and would otherwise reach setFiles and blow up render.
+      if (!res.ok) {
+        setFiles([]);
+        return;
+      }
       const data: FileRecord[] = await res.json();
       setFiles(data);
       if (data.length > 0) {
-        setSelectedFileId(data[0].id);
+        // A version change should land on the first file, but a delete that
+        // leaves the current selection intact must not throw the viewer back
+        // to file 1.
+        setSelectedFileId((current) =>
+          current && data.some((f) => f.id === current) ? current : data[0].id
+        );
       } else {
         setSelectedFileId(null);
       }
@@ -717,6 +755,79 @@ export default function PortalPage() {
     setActiveTool('pointer');
     setActiveCommentId(null);
   };
+
+  const confirmDeleteFile = async () => {
+    if (!fileToDelete) return;
+    const target = fileToDelete;
+    setFileToDelete(null);
+
+    const res = await fetch(`/api/files/${target.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      toast('Could not delete this file');
+      return;
+    }
+
+    // Selection has to move before the refetch, or the viewer keeps rendering a
+    // file that no longer exists.
+    if (selectedFileId === target.id) setSelectedFileId(null);
+    toast('File deleted');
+    if (selectedVersionId) fetchFiles(selectedVersionId);
+    // The version rail carries file and comment counts that the delete confirm
+    // reads, so a stale count here would overstate what the next delete costs.
+    await loadVersions();
+  };
+
+  const confirmDeleteVersion = async () => {
+    if (!versionToDelete) return;
+    const target = versionToDelete;
+    setVersionToDelete(null);
+
+    const res = await fetch(`/api/versions/${target.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      toast('Could not delete this version');
+      return;
+    }
+
+    toast(`Version ${target.versionNumber} deleted`);
+    if (selectedVersionId === target.id) {
+      setSelectedVersionId(null);
+      setSelectedFileId(null);
+    }
+    await loadVersions();
+  };
+
+  // The counts on `files` and `versions` were fetched when the version was
+  // selected, and posting a comment does not refresh them. A confirm whose
+  // whole purpose is to state what dies must not read a number that went stale
+  // while the package sat open.
+  const openFileDelete = useCallback(async (file: FileRecord) => {
+    setFileToDelete(file);
+    try {
+      const res = await fetch(`/api/files?versionId=${file.versionId}`);
+      if (!res.ok) return;
+      const fresh: FileRecord[] = await res.json();
+      const match = fresh.find((f) => f.id === file.id);
+      // Only the counts are refreshed — replacing the whole object would
+      // discard nothing, but re-setting state the user may have already
+      // dismissed would reopen the dialog.
+      if (match) setFileToDelete((current) => (current?.id === file.id ? match : current));
+    } catch {
+      // The stale count still shows; failing to refresh must not block a delete.
+    }
+  }, []);
+
+  const openVersionDelete = useCallback(async (version: Version) => {
+    setVersionToDelete(version);
+    try {
+      const res = await fetch(`/api/versions?portalId=${portalId}`);
+      if (!res.ok) return;
+      const fresh: Version[] = await res.json();
+      const match = fresh.find((v) => v.id === version.id);
+      if (match) setVersionToDelete((current) => (current?.id === version.id ? match : current));
+    } catch {
+      // As above.
+    }
+  }, [portalId]);
 
   // Tag placement (image / video). Captures video timestamp when applicable.
   const handleCommentPlace = useCallback((percentX: number, percentY: number) => {
@@ -979,6 +1090,14 @@ export default function PortalPage() {
     );
   };
 
+  // Publish state alone is the wrong test: a draft can already carry other
+  // people's comments, because commenting is gated on canComment and never on
+  // whether the version is published. What matters is whether anything would
+  // be destroyed alongside the file.
+  const fileDeleteIsGrave =
+    (fileToDelete?.commentCount ?? 0) > 0 ||
+    Boolean(versions.find((v) => v.id === selectedVersionId)?.publishedAt);
+
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
@@ -1008,6 +1127,8 @@ export default function PortalPage() {
             canUpload ? () => setVersionDrawerOpen(true) : undefined
           }
           loading={loading}
+          onDeleteFile={openFileDelete}
+          onDeleteVersion={openVersionDelete}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
@@ -1242,6 +1363,66 @@ export default function PortalPage() {
             .catch(() => {});
         }}
       />
+
+      {/* Unpublished: nobody has seen it, so a plain confirm is the honest
+          weight. Requiring a typed filename here would train users to type
+          past the serious dialog below. */}
+      {fileToDelete && !fileDeleteIsGrave && (
+        <Modal
+          isOpen
+          onClose={() => setFileToDelete(null)}
+          title="Delete this file?"
+          subtitle={fileToDelete.filename}
+          width={420}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setFileToDelete(null)}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={confirmDeleteFile}>Delete file</Button>
+            </>
+          }
+        >
+          <p className="text-[13px] text-stiko-secondary">
+            This removes the file and anything attached to it. It cannot be undone.
+          </p>
+        </Modal>
+      )}
+
+      {/* Published: reviewers can have built work on this file, so it gets the
+          same weight as deleting a whole version. */}
+      {fileToDelete && fileDeleteIsGrave && (
+        <DestructiveConfirm
+          isOpen
+          onClose={() => setFileToDelete(null)}
+          onConfirm={confirmDeleteFile}
+          title="Delete this file?"
+          name={fileToDelete.filename}
+          consequence="This cannot be undone. Everyone loses this file and the review work on it, including people mid-review."
+          inventory={[
+            { label: 'Comments', value: fileToDelete.commentCount ?? 0, urgent: (fileToDelete.commentCount ?? 0) > 0 },
+          ]}
+          confirmLabel="Delete file"
+        />
+      )}
+
+      {/* A whole version, with other people's review work on it. Full weight:
+          typed name and a count of what dies. */}
+      {versionToDelete && (
+        <DestructiveConfirm
+          isOpen
+          onClose={() => setVersionToDelete(null)}
+          onConfirm={confirmDeleteVersion}
+          title={`Delete version ${versionToDelete.versionNumber}?`}
+          name={`V${versionToDelete.versionNumber}`}
+          consequence="This cannot be undone. Everyone loses this version and every comment on it, including people mid-review."
+          inventory={[
+            { label: 'Files', value: versionToDelete.fileCount ?? 0 },
+            { label: 'Comments', value: versionToDelete.commentCount ?? 0, urgent: (versionToDelete.commentCount ?? 0) > 0 },
+          ]}
+          confirmLabel="Delete version"
+        />
+      )}
     </div>
   );
 }

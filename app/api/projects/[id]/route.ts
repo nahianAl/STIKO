@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { isProjectMember } from '@/lib/access';
+import { isProjectMember, storageKeysForFiles } from '@/lib/access';
+import { deleteObjects } from '@/lib/s3';
 
 export async function GET(
   _request: NextRequest,
@@ -35,11 +36,25 @@ export async function DELETE(
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const doomedFiles = await sql`
+    SELECT f.id
+    FROM files f
+    JOIN versions v ON v.id = f.version_id
+    JOIN portals po ON po.id = v.portal_id
+    WHERE po.project_id = ${params.id}
+  `;
+  const doomedKeys = await storageKeysForFiles(
+    doomedFiles.map((f) => f.id as string)
+  );
+
   const result = await sql`
     DELETE FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
     RETURNING id
   `;
   if (!result[0]) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+
+  await deleteObjects(doomedKeys);
+
   return NextResponse.json({ success: true });
 }
 

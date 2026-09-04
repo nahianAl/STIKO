@@ -55,3 +55,42 @@ export function optimizedVariantKey(originalStorageKey: string): string {
 
   return `${directory}${stem}${OPTIMIZED_SUFFIX}`;
 }
+
+export const SNAPSHOT_PREFIX = 'snapshots/';
+export const COMMENT_ATTACHMENT_PREFIX = 'comment-attachments/';
+
+/**
+ * The one key an upload may claim.
+ *
+ * Derived identically to app/api/files/upload/route.ts, and compared against
+ * rather than trusted: /api/files/complete used to insert whatever key it was
+ * handed, and a forged one now names bytes that deletion destroys.
+ */
+export function uploadStorageKey(parts: {
+  projectId: string;
+  portalId: string;
+  versionId: string;
+  fileId: string;
+  filename: string;
+}): string {
+  const { projectId, portalId, versionId, fileId, filename } = parts;
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
+  return `uploads/${projectId}/${portalId}/${versionId}/${fileId}${ext}`;
+}
+
+/**
+ * A key a comment may name.
+ *
+ * Snapshots and attachments live in their own prefixes, so a key pointing into
+ * uploads/ is always forged — no legitimate comment ever references a file
+ * object directly. An http(s) URL or an inline data URI is not a stored object
+ * at all and is left alone, matching how app/api/comments/route.ts decides
+ * whether to presign snapshot_url.
+ */
+export function isAllowedCommentKey(value: string): boolean {
+  if (value.startsWith('http') || value.startsWith('data:')) return true;
+  return (
+    value.startsWith(SNAPSHOT_PREFIX) ||
+    value.startsWith(COMMENT_ATTACHMENT_PREFIX)
+  );
+}

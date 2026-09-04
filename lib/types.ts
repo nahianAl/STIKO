@@ -42,6 +42,10 @@ export interface FileRecord {
   folderPath: string | null;
   /** Where the object has been placed in the 3D viewer. Identity for non-3D files. */
   transform: ObjectTransform;
+  uploadedBy: string | null;
+  /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
+  canDelete?: boolean;
+  commentCount?: number;
 }
 
 export interface CommentAttachment {

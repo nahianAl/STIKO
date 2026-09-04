@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess, isProjectMember } from '@/lib/access';
+import { getPackageAccess, isProjectMember, storageKeysForFiles } from '@/lib/access';
+import { deleteObjects } from '@/lib/s3';
 
 export async function GET(
   _request: NextRequest,
@@ -99,11 +100,26 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  // Collected before the delete: the rows are gone afterwards, and nothing
+  // left would name these objects.
+  const doomedFiles = await sql`
+    SELECT f.id
+    FROM files f
+    JOIN versions v ON v.id = f.version_id
+    WHERE v.portal_id = ${params.id}
+  `;
+  const doomedKeys = await storageKeysForFiles(
+    doomedFiles.map((f) => f.id as string)
+  );
+
   // Versions, files, comments, markups and participants all cascade.
   const result = await sql`
     DELETE FROM portals WHERE id = ${params.id} RETURNING id
   `;
   if (!result[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // Until now this left every file in the bucket forever.
+  await deleteObjects(doomedKeys);
 
   return NextResponse.json({ success: true });
 }

@@ -18,6 +18,7 @@
 | Role | Auth Required | How They Access |
 |---|---|---|
 | Owner | Yes — Auth.js session | Signs up / logs in directly |
+| Coordinator | Yes — Auth.js session | Added to `project_members` by owner → sees every portal in the project |
 | Uploader | Yes — Auth.js session | Invite link → signup/login → portal access granted |
 | Commenter | Yes — Auth.js session | Invite link → signup/login → portal access granted |
 | Viewer | No | Direct portal URL, no login required |
@@ -41,8 +42,18 @@
 ```
 {bucket}/
   uploads/{projectId}/{portalId}/{versionId}/{filename}
-  snapshots/{projectId}/{portalId}/{uuid}.jpg
+  snapshots/{uuid}.{ext}          # flat, no project/portal segment — see Deletion below
 ```
+
+### Deletion
+
+Deleting a file, version, portal or project now removes its objects from the bucket too, via `deleteObjects` in `lib/s3.ts` — previously only the Neon rows went away, and the bucket kept growing forever. Cleanup runs after those rows are gone, never before: a storage failure at that point strands an object rather than turning a completed delete into an error response, and the reverse order risks the opposite failure — a file still listed with its bytes already gone.
+
+All four scopes gather their keys through the same helper, `storageKeysForFiles` in `lib/access.ts`, so none of them can quietly diverge on what "this file's objects" means. It collects two kinds of object: the upload itself and its optimized viewer variant.
+
+Annotation snapshots (`comments.snapshot_url`) and comment attachments (`comments.attachments[].storageKey`) also go unreachable once their file's comments cascade, but are deliberately **not** collected. Both namespaces are minted flat — `snapshots/{uuid}` and `comment-attachments/{uuid}`, no project or portal segment — and `/api/comments` stores whichever key the caller supplies, so collecting them would let a commenter name another package's object on their own comment and destroy it. They leak instead, as they did before deletion existed. Collection can resume once both namespaces carry a portal segment and the routes that mint them require a session — not before.
+
+Objects orphaned by deletions made before this change are not recovered here; finding them would mean reasoning from bucket contents instead of the database.
 
 ---
 
@@ -80,6 +91,8 @@ Client
   → POST /api/files/complete  (Vercel: writes FileRecord to Neon)
 ```
 
+Both steps now require a session and `canUpload` on the version's portal — previously neither checked auth at all. `/api/files/upload` derives the storage key's project and portal segments from the version server-side, never the request body; `/api/files/complete` re-derives that same key from the version and rejects the request if the caller's `storageKey` doesn't match.
+
 ### File Viewing Flow
 Files are served directly from S3 (public-read on the uploads prefix). Vercel is not in the streaming path.
 
@@ -103,6 +116,24 @@ Client composites snapshot + SVG markup (canvas, client-side)
 POST /api/comments  (Vercel)
   → INSERT into Neon comments with snapshotUrl, userId, position, content
 ```
+
+### Deletion Flow
+`canDeleteContent` in `lib/capabilities.ts` is pure — role plus two booleans in, yes/no out — testable with no database. `getFileDeleteDecision` and `getVersionDeleteDecision` in `lib/access.ts` call it to enforce deletion, resolving the booleans from Neon and returning the verdict with the storage keys to clean up. The GET handlers in `files/route.ts` and `versions/route.ts` call it too, only for the client's `canDelete` hint — never as the gate.
+
+Owners and coordinators may delete any file or version. An uploader may delete their own file, but only before its version publishes. A version is never "own upload" — one version can hold files from several uploaders — so only owners and coordinators delete versions. Commenters and viewers can't delete anything. No trash, no undo.
+
+Deleted version numbers are never reused: they already appear in comments, notifications, verdicts and sent mail, and renumbering would silently repoint those at different content.
+
+```
+DELETE /api/files/[id]     (Vercel: getFileDeleteDecision → Neon)
+DELETE /api/versions/[id]  (Vercel: getVersionDeleteDecision → Neon)
+  ← 404  no such row, or no access to its portal
+  ← 403  caller can see the portal, but canDeleteContent said no
+  → DELETE FROM files / versions   (Neon; comments and markups cascade)
+  → deleteObjects(storageKeys)     (lib/s3.ts, after the row — see S3 Bucket Structure)
+```
+
+A 404 covers both "no such row" and "no access to its portal", so an id can't confirm something exists behind a boundary the caller can't cross; 403 only appears once the caller can already see the portal.
 
 ### Metadata Reads / Writes
 ```
@@ -200,6 +231,7 @@ Browser
 - **Local `/public/uploads`:** Replaced entirely by S3. `storageKey` in the files table becomes a full S3 object key.
 - **`/data/*.json` flat files:** Replaced entirely by Neon. The `lib/db.ts` helper is replaced by SQL queries via `@neondatabase/serverless`.
 - **Snapshot API route (`/api/snapshots`):** Currently writes to local disk. Replaced by presign → direct S3 upload flow.
+- **`005-file-deletion.sql`:** Adds `files.uploaded_by`, backfilled from `versions.created_by` for existing rows so the uploader-delete window has an owner to check against. Apply before deploying code that reads the column.
 
 ---
 
