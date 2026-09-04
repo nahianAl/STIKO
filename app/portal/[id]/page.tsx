@@ -48,6 +48,9 @@ interface Version {
   portalId: string;
   versionNumber: number;
   createdAt: string;
+  // Already present on every row the API returns (Task 8) — declared here so this
+  // local copy stays assignable to FileTreeSidebar's, which now requires it.
+  publishedAt: string | null;
 }
 
 interface Participant {

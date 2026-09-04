@@ -9,6 +9,10 @@ interface Version {
   portalId: string;
   versionNumber: number;
   createdAt: string;
+  publishedAt: string | null;
+  canDelete?: boolean;
+  fileCount?: number;
+  commentCount?: number;
 }
 
 interface FileRecord {
@@ -23,6 +27,9 @@ interface FileRecord {
   convertedStorageKey: string | null;
   conversionJobId: string | null;
   folderPath: string | null;
+  uploadedBy: string | null;
+  /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
+  canDelete?: boolean;
 }
 
 interface FileTreeSidebarProps {
@@ -40,6 +47,9 @@ interface FileTreeSidebarProps {
   onSubmitVersion?: () => void;
   /** True while versions are still being fetched — shows skeleton placeholders instead of the empty state. */
   loading?: boolean;
+  /** Absent when the viewer may not delete anything — the row then renders no control. */
+  onDeleteFile?: (file: FileRecord) => void;
+  onDeleteVersion?: (version: Version) => void;
 }
 
 interface FolderNode {
@@ -126,10 +136,12 @@ function FolderItem({
   folder,
   selectedFileId,
   onSelectFile,
+  onDeleteFile,
 }: {
   folder: FolderNode;
   selectedFileId: string | null;
   onSelectFile: (fileId: string) => void;
+  onDeleteFile?: (file: FileRecord) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -156,6 +168,7 @@ function FolderItem({
               file={file}
               isSelected={file.id === selectedFileId}
               onSelect={() => onSelectFile(file.id)}
+              onDelete={onDeleteFile}
             />
           ))}
           {folder.children.map((child) => (
@@ -164,6 +177,7 @@ function FolderItem({
               folder={child}
               selectedFileId={selectedFileId}
               onSelectFile={onSelectFile}
+              onDeleteFile={onDeleteFile}
             />
           ))}
         </div>
@@ -176,25 +190,43 @@ function FileItem({
   file,
   isSelected,
   onSelect,
+  onDelete,
 }: {
   file: FileRecord;
   isSelected: boolean;
   onSelect: () => void;
+  onDelete?: (file: FileRecord) => void;
 }) {
   const chip = getFileChip(file.filename, file.fileType);
+  // A div, not a button: the delete control is a sibling of the select control,
+  // because a button inside a button is invalid and the two clicks would fight.
   return (
-    // File = no row background; just a small type pill + label.
-    <button
-      onClick={onSelect}
-      className="group w-full flex items-center gap-2.5 py-1 text-left"
-    >
-      <span className="text-[9px] font-extrabold px-[7px] py-[2px] rounded-full flex-shrink-0" style={{ background: chip.bg, color: chip.text }}>
-        {chip.label}
-      </span>
-      <span className={`truncate text-[13px] ${isSelected ? 'font-semibold text-stiko-ink' : 'font-medium text-stiko-secondary group-hover:text-stiko-ink'}`}>
-        {file.filename}
-      </span>
-    </button>
+    <div className="group flex w-full items-center gap-2.5 py-1">
+      <button
+        onClick={onSelect}
+        className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+      >
+        <span className="text-[9px] font-extrabold px-[7px] py-[2px] rounded-full flex-shrink-0" style={{ background: chip.bg, color: chip.text }}>
+          {chip.label}
+        </span>
+        <span className={`truncate text-[13px] ${isSelected ? 'font-semibold text-stiko-ink' : 'font-medium text-stiko-secondary group-hover:text-stiko-ink'}`}>
+          {file.filename}
+        </span>
+      </button>
+
+      {onDelete && file.canDelete && (
+        <button
+          onClick={() => onDelete(file)}
+          aria-label={`Delete ${file.filename}`}
+          title={`Delete ${file.filename}`}
+          className="flex-shrink-0 rounded p-1 text-stiko-faint opacity-0 transition hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -210,6 +242,8 @@ export default function FileTreeSidebar({
   onToggleCollapse,
   onSubmitVersion,
   loading,
+  onDeleteFile,
+  onDeleteVersion,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
   const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
@@ -267,36 +301,51 @@ export default function FileTreeSidebar({
             const isCurrent = version.versionNumber === maxVersion;
             return (
               <div key={version.id}>
-                <button
-                  onClick={() => onSelectVersion(version.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-[12px] text-left transition-colors ${isSelected ? 'bg-stiko-primary/20' : 'bg-stiko-primary/[0.08] hover:bg-stiko-primary/[0.14]'}`}
-                >
-                  <span
-                    className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[13px] font-extrabold"
-                    style={isCurrent
-                      ? { background: 'linear-gradient(135deg, #8094F5, #5B60FF)', color: '#fff' }
-                      : { background: '#FFFFFF', color: '#5A6076' }}
+                <div className="group relative">
+                  <button
+                    onClick={() => onSelectVersion(version.id)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-[12px] text-left transition-colors ${isSelected ? 'bg-stiko-primary/20' : 'bg-stiko-primary/[0.08] hover:bg-stiko-primary/[0.14]'}`}
                   >
-                    V{version.versionNumber}
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className={`block text-[14px] truncate ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-ink'}`}>
-                      {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
+                    <span
+                      className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[13px] font-extrabold"
+                      style={isCurrent
+                        ? { background: 'linear-gradient(135deg, #8094F5, #5B60FF)', color: '#fff' }
+                        : { background: '#FFFFFF', color: '#5A6076' }}
+                    >
+                      V{version.versionNumber}
                     </span>
-                    <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
-                    {headlines?.[version.id] && (
-                      <span className="mt-0.5 block truncate text-xs font-normal text-gray-500">
-                        {headlines[version.id]}
+                    <span className="flex-1 min-w-0">
+                      <span className={`block text-[14px] truncate ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-ink'}`}>
+                        {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
                       </span>
-                    )}
-                  </span>
-                  <svg
-                    className={`h-4 w-4 flex-shrink-0 transition-transform text-stiko-primary ${isSelected ? 'rotate-90' : ''}`}
-                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
+                      <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
+                      {headlines?.[version.id] && (
+                        <span className="mt-0.5 block truncate text-xs font-normal text-gray-500">
+                          {headlines[version.id]}
+                        </span>
+                      )}
+                    </span>
+                    <svg
+                      className={`h-4 w-4 flex-shrink-0 transition-transform text-stiko-primary ${isSelected ? 'rotate-90' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+
+                  {onDeleteVersion && version.canDelete && (
+                    <button
+                      onClick={() => onDeleteVersion(version)}
+                      aria-label={`Delete version ${version.versionNumber}`}
+                      title={`Delete version ${version.versionNumber}`}
+                      className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-stiko-faint opacity-0 transition hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
 
                 {/* Selected version's files (bare rows) + folders (filled bars), indented beneath */}
                 {isSelected && (
@@ -306,10 +355,10 @@ export default function FileTreeSidebar({
                     ) : (
                       <>
                         {tree.rootFiles.map((file) => (
-                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} />
+                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} onDelete={onDeleteFile} />
                         ))}
                         {tree.folders.map((folder) => (
-                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} />
+                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} onDeleteFile={onDeleteFile} />
                         ))}
                       </>
                     )}
