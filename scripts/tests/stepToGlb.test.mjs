@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { WebIO } from '@gltf-transform/core';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { stepToGlb, STEP_TESSELLATION } from '../../lib/model/stepToGlb.ts';
-import { PART_MARKER } from '../../lib/model/partTree.ts';
+import { buildPartTree, PART_MARKER } from '../../lib/model/partTree.ts';
 
 /** One triangle, which is the least geometry OCCT could plausibly hand back. */
 function triangleMesh(name) {
@@ -165,4 +166,135 @@ test('a result with no root falls back to a flat list of stamped solids', async 
 
   assert.deepEqual(children.map((c) => c.getName()), ['solid_a', 'solid_b']);
   assert.ok(children.every((c) => c.getExtras()[PART_MARKER] === true));
+});
+
+// The collapse guard (`!occt.name && own.length === 0 && kids.length === 1`) exists only to
+// swallow OCCT's anonymous single-solid wrapper. Until now it was exercised solely by an
+// incidental assertion against the real cube.stp fixture, which would not notice the
+// condition being loosened later (e.g. to `kids.length <= 1`, or dropping the `!occt.name`
+// check) — a looser guard would start swallowing genuine, named, or multi-mesh nodes and
+// silently reassign every saved part colour beneath them. Each test below nests the
+// candidate wrapper one level under a named "Car" so a wrongly-collapsed (or
+// wrongly-preserved) node is visible directly in the child list.
+
+test('the collapse guard fires for an unnamed, mesh-less node with exactly one child', async () => {
+  const fake = {
+    success: true,
+    root: {
+      name: 'Car',
+      meshes: [],
+      children: [
+        { name: '', meshes: [], children: [
+          { name: 'Wheel', meshes: [0], children: [] },
+        ] },
+      ],
+    },
+    meshes: [triangleMesh('Wheel')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const doc = await new WebIO().readBinary(glb);
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+
+  // If the wrapper survived, this would read ['node_0'] with "Wheel" nested one level deeper.
+  assert.deepEqual(childNames(carNode), ['Wheel']);
+});
+
+test('the collapse guard does not fire when the node has a name', async () => {
+  const fake = {
+    success: true,
+    root: {
+      name: 'Car',
+      meshes: [],
+      children: [
+        { name: 'Assy', meshes: [], children: [
+          { name: 'Wheel', meshes: [0], children: [] },
+        ] },
+      ],
+    },
+    meshes: [triangleMesh('Wheel')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const doc = await new WebIO().readBinary(glb);
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+
+  assert.deepEqual(childNames(carNode), ['Assy']);
+  assert.deepEqual(childNames(carNode.listChildren()[0]), ['Wheel']);
+});
+
+test('the collapse guard does not fire when the node owns a mesh of its own', async () => {
+  const fake = {
+    success: true,
+    root: {
+      name: 'Car',
+      meshes: [],
+      children: [
+        { name: '', meshes: [1], children: [
+          { name: 'Wheel', meshes: [0], children: [] },
+        ] },
+      ],
+    },
+    meshes: [triangleMesh('Wheel'), triangleMesh('wrapper_solid')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const doc = await new WebIO().readBinary(glb);
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+  const [wrapperNode] = carNode.listChildren();
+
+  // Fallback-named (it has no name of its own) and not collapsed away, keeping both its own
+  // mesh and its child.
+  assert.deepEqual(childNames(carNode), ['node_0']);
+  assert.ok(wrapperNode.getMesh(), 'expected the wrapper to keep its own mesh');
+  assert.deepEqual(childNames(wrapperNode), ['Wheel']);
+});
+
+test('the collapse guard does not fire when the node has more than one child', async () => {
+  const fake = {
+    success: true,
+    root: {
+      name: 'Car',
+      meshes: [],
+      children: [
+        { name: '', meshes: [], children: [
+          { name: 'WheelA', meshes: [0], children: [] },
+          { name: 'WheelB', meshes: [1], children: [] },
+        ] },
+      ],
+    },
+    meshes: [triangleMesh('WheelA'), triangleMesh('WheelB')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const doc = await new WebIO().readBinary(glb);
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+  const [wrapperNode] = carNode.listChildren();
+
+  assert.deepEqual(childNames(carNode), ['node_0']);
+  assert.deepEqual(childNames(wrapperNode), ['WheelA', 'WheelB']);
+});
+
+test('a node owning several meshes reads back as one part with both meshes, end to end through GLTFLoader', async () => {
+  // This is the whole point of the feature: a wheel rim split across two materials must be a
+  // single row in the parts panel, not two. Every other test in this file gives a node zero
+  // or one mesh; this is the only one that exercises the multi-mesh path, and it does so all
+  // the way through the same GLTFLoader the viewer itself uses (see lib/STEPLoader.ts), not
+  // just at the glTF-document level.
+  const fake = {
+    success: true,
+    root: { name: 'Rim', meshes: [0, 1], children: [] },
+    meshes: [triangleMesh('rim_steel'), triangleMesh('rim_chrome')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const arrayBuffer = glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+  const gltf = await new GLTFLoader().parseAsync(arrayBuffer, '');
+
+  const parts = buildPartTree(gltf.scene);
+
+  assert.equal(parts.length, 1, 'the two meshes must collapse into one part, not two');
+  assert.equal(parts[0].name, 'Rim');
+  assert.equal(parts[0].meshes.length, 2);
+  assert.deepEqual(parts[0].meshes.map((m) => m.name).sort(), ['rim_chrome', 'rim_steel']);
 });

@@ -159,6 +159,11 @@ export async function buildGlbDocument(result: OcctResult): Promise<Uint8Array> 
     // two nested nodes for one solid, breaking "one node per solid" below. A node with a real
     // name is never collapsed, however many children it has — that's a modelled assembly
     // (e.g. "Car" wrapping "Wheel_FL"), not a pass-through.
+    //
+    // Collapsing a level here shifts the index-path key (partTree.ts's `0/2/1`-style `key`)
+    // of every node beneath it. Part keys are the primary key for saved colours, so widening
+    // or narrowing this condition later would silently reassign saved colours on any file
+    // that gets reprocessed through this pipeline.
     if (!occt.name && own.length === 0 && kids.length === 1) {
       return buildNode(kids[0], fallbackName);
     }
