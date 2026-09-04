@@ -2225,7 +2225,9 @@ In `app/portal/[id]/page.tsx`, beside the existing viewer state (`focalLength`, 
   }, []);
 
   // Re-picking the same part is a no-op by design: the row is already open and scrolled to,
-  // so there is nothing for a second reveal to do.
+  // so there is nothing for a second reveal to do. PartsPanel's reveal effect keys on the
+  // prop's VALUE, so setting the same key twice genuinely does nothing — that is intended,
+  // not an oversight to work around with a nonce.
   const handlePartPick = useCallback((key: string) => setRevealPart(key), []);
 ```
 
@@ -2240,12 +2242,34 @@ import type { PartNode } from '@/lib/model/partTree';
 - [ ] **Step 3: Write the colour handler**
 
 ```tsx
+  // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
+  // calls per second. The viewport must follow that live, but the server must not: one PATCH
+  // per pointermove would be a write storm against a row that only the last value matters for.
+  // So the two are split — state updates immediately, the write is trailing-debounced.
+  const colorWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingColorWrite = useRef<{ key: string; color: string | null } | null>(null);
+
+  const flushPartColor = useCallback(async () => {
+    const pending = pendingColorWrite.current;
+    const fileId = selectedFileId;
+    pendingColorWrite.current = null;
+    if (!pending || !fileId) return;
+
+    const response = await fetch(`/api/files/${fileId}/part-colors`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ partKey: pending.key, color: pending.color }),
+    }).catch(() => null);
+
+    // A rejected write must not leave the viewport showing a colour the server does not have.
+    // Reverting to the server's last known answer is the only state we can trust.
+    if (!response?.ok) setPartColors(selectedFile?.partColors ?? {});
+  }, [selectedFileId, selectedFile?.partColors]);
+
   const setPartColor = useCallback(
-    async (key: string, color: string | null) => {
+    (key: string, color: string | null) => {
       if (!selectedFileId) return;
 
-      // Optimistic: the viewport must respond to a colour drag immediately, and the picker
-      // emits on every pointermove. A failed write is reverted from the server's answer below.
       setPartColors((prev) => {
         const next = { ...prev };
         if (color === null) delete next[key];
@@ -2253,16 +2277,21 @@ import type { PartNode } from '@/lib/model/partTree';
         return next;
       });
 
-      const response = await fetch(`/api/files/${selectedFileId}/part-colors`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partKey: key, color }),
-      }).catch(() => null);
-
-      if (!response?.ok) setPartColors(selectedFile?.partColors ?? {});
+      pendingColorWrite.current = { key, color };
+      if (colorWriteTimer.current) clearTimeout(colorWriteTimer.current);
+      colorWriteTimer.current = setTimeout(flushPartColor, 400);
     },
-    [selectedFileId, selectedFile?.partColors]
+    [selectedFileId, flushPartColor]
   );
+
+  // A drag still in flight when the file changes or the page unmounts must still land — the
+  // user saw the colour applied, so dropping it silently would be a lie.
+  useEffect(() => () => {
+    if (colorWriteTimer.current) {
+      clearTimeout(colorWriteTimer.current);
+      void flushPartColor();
+    }
+  }, [flushPartColor]);
 
   const togglePartVisibility = useCallback((key: string) => {
     setHiddenParts((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
@@ -2303,7 +2332,13 @@ Replace the control row at line ~1329 with:
 
 Use whatever the surrounding code already calls the capability object — check the nearby Move/Rotate render condition and match it exactly rather than introducing a second name for the same thing.
 
-- [ ] **Step 5: Pass the viewer props**
+- [ ] **Step 5: Pass the viewer props, and flip them back to required**
+
+Task 7 left the five new props OPTIONAL on `ViewerContainerProps` with safe defaults, purely so
+the build stayed green while this task was outstanding. That removed the compile-time tripwire
+that forces the wiring to happen. Now that it has, **make `partColors`, `hiddenParts`,
+`highlightedPart`, `onPartsLoaded` and `onPartPick` required again** — a future refactor that
+drops one of them should fail the build, not silently ship a viewer with no colouring.
 
 At the `<ViewerContainer ... />` call site, add:
 
