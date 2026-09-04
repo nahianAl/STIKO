@@ -203,7 +203,7 @@ export function AddPeopleModal({
                           <option value="commenter">Commenter</option>
                           <option value="uploader">Uploader</option>
                         </select>
-                        <label className="mt-2 flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
+                        <label className="flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
                           <input
                             type="checkbox"
                             checked={selection[pkg.id].canDownload}

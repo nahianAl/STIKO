@@ -150,7 +150,7 @@ GET /api/files/[id]/download   (Vercel: getFileDownloadDecision → Neon)
   → getDownloadPresignedUrl(storage_key)   Content-Disposition: attachment
 ```
 
-**What this does not stop.** The grant gates the control and this endpoint, not the bytes. `ViewerContainer` fetches a presigned URL unconditionally, for `convertedStorageKey ?? storageKey` — the `isViewable` check runs after that fetch and only decides what gets rendered with the result. Only 9 of the 99 files in production have a converted variant, so for essentially every file that URL names the original object. Anyone who can view a file can therefore already save it from the browser's network tab, whatever `can_download` says. A real wall would mean proxying every view through the app server instead of straight from R2 — deliberately not done here.
+**What this does not stop.** The grant gates the control and this endpoint, not the bytes. `ViewerContainer` fetches a presigned URL unconditionally, for `convertedStorageKey ?? storageKey` — the `isViewable` check runs after that fetch and only decides what gets rendered with the result. Most files have no converted variant, so that URL usually names the original outright — and where a variant does exist, the same ungated call fetches it instead. Anyone who can view a file can therefore already save it from the browser's network tab, whatever `can_download` says. A real wall would mean proxying every view through the app server instead of straight from the bucket — deliberately not done here.
 
 ### Metadata Reads / Writes
 ```

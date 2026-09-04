@@ -170,3 +170,16 @@ test('an unrecognised role cannot download', () => {
     false
   );
 });
+
+test('a commenter or viewer is denied even if isOwnUpload is somehow true', () => {
+  // Unreachable in production — capabilitiesFor denies these roles canUpload,
+  // so isOwnUpload cannot be true for them. Pinned anyway: without it, an edit
+  // that added `isOwnUpload ||` to that branch would pass the whole suite.
+  for (const role of ['commenter', 'viewer']) {
+    assert.equal(
+      canDownloadFile({ role, isOwnUpload: true, mayDownload: false }),
+      false,
+      `${role} with a bogus own-upload claim`
+    );
+  }
+});
