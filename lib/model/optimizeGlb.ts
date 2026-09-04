@@ -1,4 +1,4 @@
-import { Node, Primitive, WebIO, type Document } from '@gltf-transform/core';
+import { Node, Primitive, WebIO, type Document, type Material } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import {
   convertPrimitiveToLines,
@@ -65,6 +65,15 @@ const MODE_TRIANGLES = 4;
  * was being watched. Counting it here is what let that regression be caught by a test.
  */
 const LINE_MODES = new Set([Primitive.Mode.LINES, Primitive.Mode.LINE_STRIP, Primitive.Mode.LINE_LOOP]);
+
+/**
+ * Sentinel standing in for "this primitive has no material" when grouping primitives by
+ * material identity below. A primitive's material may legitimately be null, and null can't be
+ * used as a distinguishing Map key on its own the way a real Material object can — every
+ * materialless primitive would need to share this one key regardless, which is correct: they
+ * really are all in the same "no material" group.
+ */
+const NO_MATERIAL = Symbol('no-material');
 
 function measure(doc: Document, bytes: number): OptimizeCounts {
   let primitives = 0;
@@ -144,8 +153,34 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
   // the modeller made. The wrapper carries an identity transform, so its children keep the
   // world placement their own transforms give them — which is why the group is NOT
   // reparented under its first member, whose transform would then compose onto its siblings.
-  const carriesGeometryForStamp = (node: Node): boolean =>
-    node.getMesh() !== null || node.listChildren().some(carriesGeometryForStamp);
+  //
+  // This is the ONLY "does this node carry geometry" helper in the file. It used to have a
+  // byte-identical twin (`carriesGeometry`) backing the old namesAnything discriminator —
+  // two copies whose *agreement* was the load-bearing invariant of the two-mode design, which
+  // made that agreement incidental rather than structural. The discriminator is now
+  // `before.parts < 2` (parts are counted directly, post-stamping), so there is exactly one
+  // definition of "carries geometry" left, and nothing can drift out of sync with it.
+  const carriesGeometry = (node: Node): boolean =>
+    node.getMesh() !== null || node.listChildren().some(carriesGeometry);
+
+  /**
+   * Every node a scene actually reaches, depth-first. `doc.getRoot().listNodes()` includes
+   * orphans — nodes no scene references at all — and an orphan stamped and counted into
+   * `before.parts` would inflate the part count for geometry nobody will ever render, only to
+   * have prune() remove it later. Scoping the stamping walk to this list keeps that from ever
+   * happening; nothing about `measure()` needs to change, because a node never stamped simply
+   * never counts.
+   */
+  const sceneReachableNodes = (): Node[] => {
+    const seen = new Set<Node>();
+    const visit = (node: Node) => {
+      if (seen.has(node)) return;
+      seen.add(node);
+      node.listChildren().forEach(visit);
+    };
+    doc.getRoot().listScenes().forEach((scene) => scene.listChildren().forEach(visit));
+    return Array.from(seen);
+  };
 
   /** Parents whose children may need grouping: every scene, and every node. */
   const parents: { list: () => Node[]; add: (n: Node) => void; remove: (n: Node) => void }[] = [
@@ -174,7 +209,7 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
       const name = child.getName();
       // Unnamed nodes are not evidence of anything — grouping every unnamed sibling together
       // would fuse unrelated geometry into one row.
-      if (!name || !carriesGeometryForStamp(child)) continue;
+      if (!name || !carriesGeometry(child)) continue;
       const group = byName.get(name);
       if (group) group.push(child);
       else byName.set(name, [child]);
@@ -195,33 +230,35 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
     });
   }
 
-  // Named only, and not a child a wrapper above already speaks for. Wrappers created above
-  // are named, so they are stamped here too.
-  for (const node of doc.getRoot().listNodes()) {
-    if (node.getName() !== '' && carriesGeometryForStamp(node) && !absorbedIntoWrapper.has(node)) {
+  // Named only, and not a child a wrapper above already speaks for, and only among nodes a
+  // scene actually reaches — an orphan must never be stamped (see sceneReachableNodes above).
+  // Wrappers created above are named and scene-reachable (they were added via parent.add, and
+  // parent is always a scene or a node already in the tree), so they are stamped here too.
+  sceneReachableNodes().forEach((node) => {
+    if (node.getName() !== '' && carriesGeometry(node) && !absorbedIntoWrapper.has(node)) {
       node.setExtras({ ...node.getExtras(), [PART_MARKER]: true });
     }
-  }
+  });
 
   const before = measure(doc, input.byteLength);
 
-  /** A node contributes geometry if it or any descendant carries a mesh. */
-  const carriesGeometry = (node: Node): boolean =>
-    node.getMesh() !== null || node.listChildren().some(carriesGeometry);
-
-  // The discriminator. Named geometry nodes mean the exporter told us what the parts are;
-  // no named geometry node anywhere means it did not, and no amount of processing will
-  // invent that information.
-  const namesAnything = doc
-    .getRoot()
-    .listNodes()
-    .some((node) => node.getName() !== '' && carriesGeometry(node));
-
-  if (!namesAnything) {
+  // The discriminator: branch on the part count just measured, not on names. Stamping above
+  // already ran, so `before.parts` is exact. Fewer than two parts means there is nothing to
+  // differentiate and nothing to protect, so the aggressive unsegmented path applies. This
+  // replaced an earlier "does any named node carry geometry" check, which misfired on a very
+  // common export shape: a single named non-geometry ancestor (RootNode, Scene, a wrapper
+  // carrying the filename — exporters emit these constantly) recurses through
+  // carriesGeometry's child walk and flips the whole file to the segmented path even though
+  // it stamps to exactly one part, since the merge is intra-mesh and every leaf node still has
+  // its own unmerged mesh. Branching on the actual part count sidesteps that entirely: one
+  // named RootNode over anonymous fragments stamps to one part and correctly takes the
+  // unsegmented path below.
+  if (before.parts < 2) {
     // UNSEGMENTED MODE — byte-for-byte the pipeline that shipped before this feature. A file
-    // that names nothing gets exactly the optimization it always got, the viewer reports no
-    // parts, and the panel says so. This is also the path the 7,995-primitive Rhino reference
-    // file takes when its objects are unnamed, so its 26-draw-call result is preserved.
+    // that names nothing (or names only a single ancestor with no sibling parts) gets exactly
+    // the optimization it always got, the viewer reports no parts, and the panel says so. This
+    // is also the path the 7,995-primitive Rhino reference file takes when its objects are
+    // unnamed, so its 26-draw-call result is preserved.
     //
     // Order is load-bearing: weld() must precede join(), or join() leaves a
     // KHR_mesh_primitive_restart state that weld() refuses outright.
@@ -245,37 +282,51 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
     // is where a part carrying several primitives collapses; it deliberately never reaches
     // across nodes, because that is exactly what would fuse one part into another.
     for (const mesh of doc.getRoot().listMeshes()) {
-      const groups = new Map<string, Primitive[]>();
+      // Keyed on material IDENTITY, not material NAME: unnamed materials are common — every
+      // unnamed material would otherwise collapse to the same `''` name key, group primitives
+      // that don't actually share a material, and get rejected wholesale by joinPrimitives'
+      // identity check (see the per-group try/catch below), silently losing the merge for the
+      // whole mesh. A Map keyed on the Material object itself (the NO_MATERIAL sentinel
+      // standing in for primitives with no material at all) groups by identity for free; mode
+      // is nested one level in because joinPrimitives cannot concatenate LINES into TRIANGLES,
+      // and CAD exports carry both. Normalisation above already reduced these to
+      // LINES / TRIANGLES.
+      const groups = new Map<Material | typeof NO_MATERIAL, Map<number, Primitive[]>>();
       for (const prim of mesh.listPrimitives()) {
-        // Mode as well as material: joinPrimitives cannot concatenate LINES into TRIANGLES,
-        // and CAD exports carry both. Normalisation above already reduced these to
-        // LINES / TRIANGLES.
-        const key = `${prim.getMaterial()?.getName() ?? ''}#${prim.getMode()}`;
-        const group = groups.get(key);
+        const material = prim.getMaterial() ?? NO_MATERIAL;
+        const mode = prim.getMode();
+        let byMode = groups.get(material);
+        if (!byMode) {
+          byMode = new Map<number, Primitive[]>();
+          groups.set(material, byMode);
+        }
+        const group = byMode.get(mode);
         if (group) group.push(prim);
-        else groups.set(key, [prim]);
+        else byMode.set(mode, [prim]);
       }
 
       // .forEach() rather than for...of: this project's tsconfig sets no `target`, which
       // defaults below ES2015, and iterating a Map's .values() directly needs
       // --downlevelIteration or an ES2015+ target. Array.prototype.forEach needs neither.
-      groups.forEach((group) => {
-        if (group.length < 2) return;
-        // joinPrimitives throws when primitives are not compatible, and grouping by material
-        // does not guarantee they are — one CAD primitive may carry UVs where its neighbour
-        // does not. An uncaught throw would abandon the WHOLE optimization (runOptimize reads
-        // any throw as "upload the original"), trading every other part's merge for one
-        // awkward group. Skip the group instead: those primitives stay unmerged, which is
-        // slower to load and completely correct.
-        let merged;
-        try {
-          merged = joinPrimitives(group);
-        } catch {
-          return;
-        }
-        // dispose() detaches each primitive from its mesh, which is the documented idiom.
-        for (const prim of group) prim.dispose();
-        mesh.addPrimitive(merged);
+      groups.forEach((byMode) => {
+        byMode.forEach((group) => {
+          if (group.length < 2) return;
+          // joinPrimitives throws when primitives are not compatible, and grouping by material
+          // does not guarantee they are — one CAD primitive may carry UVs where its neighbour
+          // does not. An uncaught throw would abandon the WHOLE optimization (runOptimize reads
+          // any throw as "upload the original"), trading every other part's merge for one
+          // awkward group. Skip the group instead: those primitives stay unmerged, which is
+          // slower to load and completely correct.
+          let merged;
+          try {
+            merged = joinPrimitives(group);
+          } catch {
+            return;
+          }
+          // dispose() detaches each primitive from its mesh, which is the documented idiom.
+          for (const prim of group) prim.dispose();
+          mesh.addPrimitive(merged);
+        });
       });
     }
 
