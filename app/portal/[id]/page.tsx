@@ -21,6 +21,9 @@ import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import type { Comment, FileRecord, Version } from '@/lib/types';
+import PartsPanel from '@/components/viewers/PartsPanel';
+import { autoColors, BASE_GREY } from '@/lib/model/autoColor';
+import type { PartNode } from '@/lib/model/partTree';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
@@ -266,6 +269,102 @@ export default function PortalPage() {
   const [sectionActive, setSectionActive] = useState(false);
   const [sectionSlots, setSectionSlots] = useState<SectionSlots>(emptySlots);
   const [selectedPlane, setSelectedPlane] = useState<PlaneId | null>(null);
+
+  const [parts, setParts] = useState<PartNode[]>([]);
+  // Reported by the viewer, which is the only place the loaded materials exist. The panel
+  // needs it so its swatches resolve colours exactly as the viewport does.
+  const [authored, setAuthored] = useState(false);
+  // Session-only, and reset whenever the viewer shows a different file — a part key means
+  // nothing across models, so carrying the set over would hide arbitrary geometry.
+  const [hiddenParts, setHiddenParts] = useState<string[]>([]);
+  // Mirrors the server so the viewport updates on click rather than after a refetch.
+  const [partColors, setPartColors] = useState<Record<string, string>>({});
+  const [hoveredPart, setHoveredPart] = useState<string | null>(null);
+  const [revealPart, setRevealPart] = useState<string | null>(null);
+
+  useEffect(() => {
+    setParts([]);
+    setAuthored(false);
+    setHiddenParts([]);
+    setHoveredPart(null);
+    setRevealPart(null);
+    setPartColors(selectedFile?.partColors ?? {});
+  }, [selectedFileId, selectedFile?.partColors]);
+
+  const handlePartsLoaded = useCallback((next: PartNode[], nextAuthored: boolean) => {
+    setParts(next);
+    setAuthored(nextAuthored);
+  }, []);
+
+  // Re-picking the same part is a no-op by design: the row is already open and scrolled to,
+  // so there is nothing for a second reveal to do. PartsPanel's reveal effect keys on the
+  // prop's VALUE, so setting the same key twice genuinely does nothing — that is intended,
+  // not an oversight to work around with a nonce.
+  const handlePartPick = useCallback((key: string) => setRevealPart(key), []);
+
+  // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
+  // calls per second. The viewport must follow that live, but the server must not: one PATCH
+  // per pointermove would be a write storm against a row that only the last value matters for.
+  // So the two are split — state updates immediately, the write is trailing-debounced.
+  const colorWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingColorWrite = useRef<{ key: string; color: string | null } | null>(null);
+
+  const flushPartColor = useCallback(async () => {
+    const pending = pendingColorWrite.current;
+    const fileId = selectedFileId;
+    pendingColorWrite.current = null;
+    if (!pending || !fileId) return;
+
+    const response = await fetch(`/api/files/${fileId}/part-colors`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ partKey: pending.key, color: pending.color }),
+    }).catch(() => null);
+
+    // A rejected write must not leave the viewport showing a colour the server does not have.
+    // Reverting to the server's last known answer is the only state we can trust.
+    if (!response?.ok) setPartColors(selectedFile?.partColors ?? {});
+  }, [selectedFileId, selectedFile?.partColors]);
+
+  const setPartColor = useCallback(
+    (key: string, color: string | null) => {
+      if (!selectedFileId) return;
+
+      setPartColors((prev) => {
+        const next = { ...prev };
+        if (color === null) delete next[key];
+        else next[key] = color;
+        return next;
+      });
+
+      pendingColorWrite.current = { key, color };
+      if (colorWriteTimer.current) clearTimeout(colorWriteTimer.current);
+      colorWriteTimer.current = setTimeout(flushPartColor, 400);
+    },
+    [selectedFileId, flushPartColor]
+  );
+
+  // A drag still in flight when the file changes or the page unmounts must still land — the
+  // user saw the colour applied, so dropping it silently would be a lie.
+  useEffect(() => () => {
+    if (colorWriteTimer.current) {
+      clearTimeout(colorWriteTimer.current);
+      void flushPartColor();
+    }
+  }, [flushPartColor]);
+
+  const togglePartVisibility = useCallback((key: string) => {
+    setHiddenParts((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }, []);
+
+  // What the panel's pill shows: an override if there is one, else the auto-colour, else the
+  // neutral base. This must agree with the resolution order in ModelViewerInner's colour
+  // effect — a pill disagreeing with the viewport is worse than no pill.
+  const autoPartColors = useMemo(() => autoColors(parts, authored), [parts, authored]);
+  const effectivePartColor = useCallback(
+    (key: string) => partColors[key] ?? autoPartColors.get(key) ?? BASE_GREY,
+    [partColors, autoPartColors]
+  );
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
@@ -1197,6 +1296,11 @@ export default function PortalPage() {
             onObjectCreated={() => setActiveTool('pointer')}
             onSelectionChange={handleSelectionChange}
             onReady={handleViewerReady}
+            partColors={partColors}
+            hiddenParts={hiddenParts}
+            highlightedPart={hoveredPart}
+            onPartsLoaded={handlePartsLoaded}
+            onPartPick={handlePartPick}
           />
         </div>
       </>
@@ -1327,6 +1431,17 @@ export default function PortalPage() {
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <div className="absolute bottom-3 left-3 z-20 flex items-end gap-2">
                 <FocalLengthControl value={focalLength} onChange={setFocalLength} />
+                <PartsPanel
+                  parts={parts}
+                  hiddenParts={hiddenParts}
+                  partColors={partColors}
+                  effectiveColor={effectivePartColor}
+                  canColor={canTransform}
+                  revealKey={revealPart}
+                  onToggleVisibility={togglePartVisibility}
+                  onSetColor={setPartColor}
+                  onHoverPart={setHoveredPart}
+                />
               </div>
             )}
 

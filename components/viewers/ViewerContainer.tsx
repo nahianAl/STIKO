@@ -37,15 +37,13 @@ interface ViewerContainerProps {
   sectionSlots?: SectionSlots;
   selectedPlane?: PlaneId | null;
   onSelectPlane?: (id: PlaneId | null) => void;
-  // Per-part colour props. Optional here — with safe defaults applied below — rather than
-  // required as ModelViewerInner has them: the page call site for this component is not
-  // updated until the panel that owns this state exists (a later task), and a viewer with no
-  // colouring opinion should still render, not fail to build.
-  partColors?: Record<string, string>;
-  hiddenParts?: string[];
-  highlightedPart?: string | null;
-  onPartsLoaded?: (parts: PartNode[], authored: boolean) => void;
-  onPartPick?: (key: string) => void;
+  // Per-part colour props. Required, matching ModelViewerInner: a caller that forgets one of
+  // these should fail to build rather than silently ship a viewer with no colouring opinion.
+  partColors: Record<string, string>;
+  hiddenParts: string[];
+  highlightedPart: string | null;
+  onPartsLoaded: (parts: PartNode[], authored: boolean) => void;
+  onPartPick: (key: string) => void;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -75,14 +73,6 @@ const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bm
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
 const PDF_EXTENSIONS = ['.pdf'];
 const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.3ds', '.ply', '.dae', '.step', '.stp'];
-
-// Stable defaults for the colouring props, so a caller that omits them (every caller today —
-// the panel that owns this state does not exist until a later task) does not hand Model a
-// fresh object/array identity on every render. Model's colour-application effect depends on
-// `partColors` and `hiddenParts` by reference; a new `{}`/`[]` literal each render would re-run
-// setColorAt/setVisibleAt for every part on every unrelated re-render of this container.
-const EMPTY_PART_COLORS: Record<string, string> = {};
-const EMPTY_HIDDEN_PARTS: string[] = [];
 
 function getExtension(filename: string): string {
   const idx = filename.lastIndexOf('.');
@@ -194,13 +184,9 @@ export default function ViewerContainer({
           selectedPlane={selectedPlane}
           onSelectPlane={onSelectPlane}
           onReady={onReady}
-          // Defaulted here rather than left required: ModelViewerInner's colouring props are
-          // required (a viewer always resolves SOME colour), but nothing upstream of this
-          // container supplies them yet, so an absent prop means "no opinion" rather than
-          // "broken".
-          partColors={partColors ?? EMPTY_PART_COLORS}
-          hiddenParts={hiddenParts ?? EMPTY_HIDDEN_PARTS}
-          highlightedPart={highlightedPart ?? null}
+          partColors={partColors}
+          hiddenParts={hiddenParts}
+          highlightedPart={highlightedPart}
           onPartsLoaded={onPartsLoaded}
           onPartPick={onPartPick}
         />
