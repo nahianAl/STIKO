@@ -275,6 +275,31 @@ test('the collapse guard does not fire when the node has more than one child', a
   assert.deepEqual(childNames(wrapperNode), ['WheelA', 'WheelB']);
 });
 
+test('the collapse guard does not fire when the node has zero children', async () => {
+  // An unnamed, mesh-less node with no children is a structural artifact (like the
+  // single-solid wrapper), but the guard must not fire on it — broadening the condition
+  // to `kids.length <= 1` would attempt to access kids[0] when kids is empty, crashing.
+  const fake = {
+    success: true,
+    root: {
+      name: 'Car',
+      meshes: [],
+      children: [
+        { name: '', meshes: [], children: [] },
+        { name: 'Wheel', meshes: [0], children: [] },
+      ],
+    },
+    meshes: [triangleMesh('Wheel')],
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const doc = await new WebIO().readBinary(glb);
+  const [carNode] = doc.getRoot().listScenes()[0].listChildren();
+
+  // The zero-child node becomes node_0 with fallback name, and the Wheel sibling survives.
+  assert.deepEqual(childNames(carNode), ['node_0', 'Wheel']);
+});
+
 test('a node owning several meshes reads back as one part with both meshes, end to end through GLTFLoader', async () => {
   // This is the whole point of the feature: a wheel rim split across two materials must be a
   // single row in the parts panel, not two. Every other test in this file gives a node zero
