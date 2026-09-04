@@ -1,4 +1,4 @@
-import { Node, Primitive, WebIO, type Document, type Material } from '@gltf-transform/core';
+import { Primitive, WebIO, type Document, type Material, type Node } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import {
   convertPrimitiveToLines,
@@ -19,7 +19,12 @@ import { PART_MARKER } from './partTree.ts';
  * object *and* per material, merging nothing. The reference file that prompted this work
  * carried 7,995 primitives at a median of two triangles each. GPUs are indifferent to the
  * 228k triangles involved; they are not indifferent to 8,000 state changes per frame. That
- * file leaves here with 26 primitives and exactly the same triangles.
+ * file leaves here with 26 primitives and exactly the same triangles — but only when its
+ * objects are unnamed, which takes it down the unsegmented path below. A named export of the
+ * same shape takes the segmented path instead, where the merge only ever reaches across
+ * primitives that already share a node's mesh; one-primitive-per-node Rhino geometry has
+ * nothing to merge there, so it ships at its original primitive count — unreduced, but with
+ * every part preserved instead of collapsed away.
  *
  * WebIO rather than NodeIO on purpose: this runs in a Web Worker, and readBinary /
  * writeBinary never touch the filesystem or the network, so the same code path is what the
@@ -75,13 +80,45 @@ const LINE_MODES = new Set([Primitive.Mode.LINES, Primitive.Mode.LINE_STRIP, Pri
  */
 const NO_MATERIAL = Symbol('no-material');
 
+/**
+ * Every node a scene actually reaches, depth-first. `doc.getRoot().listNodes()` includes
+ * orphans — nodes no scene references at all — and an orphan stamped and counted into
+ * `before.parts` would inflate the part count for geometry nobody will ever render, only to
+ * have prune() remove it later. Scoping both the stamping walk and measure()'s counting to
+ * this list keeps that from ever happening.
+ */
+function sceneReachableNodes(doc: Document): Node[] {
+  const seen = new Set<Node>();
+  const visit = (node: Node): void => {
+    if (seen.has(node)) return;
+    seen.add(node);
+    node.listChildren().forEach(visit);
+  };
+  doc.getRoot().listScenes().forEach((scene) => scene.listChildren().forEach(visit));
+  return Array.from(seen);
+}
+
+/**
+ * Counted per NODE REFERENCE, not per mesh. dedup() (segmented mode's first step) merges
+ * byte-identical meshes, so N identically-shaped parts at different transforms — repeated
+ * fasteners, the most ordinary CAD shape there is — end up as N nodes sharing one Mesh
+ * object. Walking `listMeshes()` would then count that shared mesh's triangles once instead
+ * of once per node that actually places it in the scene, reporting a triangle loss that
+ * never happened. All four bolts still render — every node that references the mesh draws it
+ * — so the count has to reflect that: a mesh referenced by four nodes contributes its
+ * primitives, triangles and line indices four times over.
+ */
 function measure(doc: Document, bytes: number): OptimizeCounts {
   let primitives = 0;
   let triangles = 0;
   let lineIndices = 0;
 
-  for (const mesh of doc.getRoot().listMeshes()) {
-    for (const prim of mesh.listPrimitives()) {
+  const reachable = sceneReachableNodes(doc);
+
+  reachable.forEach((node) => {
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    mesh.listPrimitives().forEach((prim) => {
       primitives++;
       const mode = prim.getMode();
       const indices = prim.getIndices();
@@ -92,11 +129,14 @@ function measure(doc: Document, bytes: number): OptimizeCounts {
       } else if (LINE_MODES.has(mode)) {
         lineIndices += count;
       }
-    }
-  }
+    });
+  });
 
-  const parts = doc.getRoot().listNodes()
-    .filter((node) => node.getExtras()[PART_MARKER] === true).length;
+  // Scoped to scene-reachable nodes too, for the same reason the stamping walk is: an orphan
+  // that arrived in the input already carrying a stale marker (or one the stamping walk never
+  // touches, since it only ever adds markers, never clears one that's already there) must not
+  // inflate a count that's supposed to be fully under our control.
+  const parts = reachable.filter((node) => node.getExtras()[PART_MARKER] === true).length;
 
   return {
     primitives,
@@ -164,32 +204,19 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
     node.getMesh() !== null || node.listChildren().some(carriesGeometry);
 
   /**
-   * Every node a scene actually reaches, depth-first. `doc.getRoot().listNodes()` includes
-   * orphans — nodes no scene references at all — and an orphan stamped and counted into
-   * `before.parts` would inflate the part count for geometry nobody will ever render, only to
-   * have prune() remove it later. Scoping the stamping walk to this list keeps that from ever
-   * happening; nothing about `measure()` needs to change, because a node never stamped simply
-   * never counts.
+   * Parents whose children may need grouping: every scene, and every node. `ownerNode` is
+   * `null` for a scene and the Node itself otherwise — the grouping loop below needs it to
+   * recognise a parent that's already an established part (see the re-optimization guard).
    */
-  const sceneReachableNodes = (): Node[] => {
-    const seen = new Set<Node>();
-    const visit = (node: Node) => {
-      if (seen.has(node)) return;
-      seen.add(node);
-      node.listChildren().forEach(visit);
-    };
-    doc.getRoot().listScenes().forEach((scene) => scene.listChildren().forEach(visit));
-    return Array.from(seen);
-  };
-
-  /** Parents whose children may need grouping: every scene, and every node. */
-  const parents: { list: () => Node[]; add: (n: Node) => void; remove: (n: Node) => void }[] = [
+  const parents: { ownerNode: Node | null; list: () => Node[]; add: (n: Node) => void; remove: (n: Node) => void }[] = [
     ...doc.getRoot().listScenes().map((scene) => ({
+      ownerNode: null,
       list: () => scene.listChildren(),
       add: (n: Node) => { scene.addChild(n); },
       remove: (n: Node) => { scene.removeChild(n); },
     })),
     ...doc.getRoot().listNodes().map((node) => ({
+      ownerNode: node,
       list: () => node.listChildren(),
       add: (n: Node) => { node.addChild(n); },
       remove: (n: Node) => { node.removeChild(n); },
@@ -220,6 +247,20 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
     // ES2015+ target. Array.prototype.forEach needs neither.
     byName.forEach((group, name) => {
       if (group.length < 2) return;
+
+      // Re-optimizing an already-optimized file: `parents` is drawn from listNodes(), which
+      // on this second pass includes the wrapper the FIRST pass already built — and that
+      // wrapper's own children are still both named "Rim". Without this guard, grouping would
+      // wrap them again, nesting one level deeper and adding one spurious part every single
+      // pass. A parent that already carries this same name, or already carries PART_MARKER,
+      // is either that pre-existing wrapper or on its way to becoming one via the stamping
+      // loop below — either way these children are already spoken for by their parent, so
+      // treat them the same as this pass's own absorbed children rather than grouping again.
+      if (parent.ownerNode && (parent.ownerNode.getName() === name || parent.ownerNode.getExtras()[PART_MARKER] === true)) {
+        group.forEach((child) => absorbedIntoWrapper.add(child));
+        return;
+      }
+
       const wrapper = doc.createNode(name);
       for (const child of group) {
         parent.remove(child);
@@ -231,10 +272,13 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
   }
 
   // Named only, and not a child a wrapper above already speaks for, and only among nodes a
-  // scene actually reaches — an orphan must never be stamped (see sceneReachableNodes above).
-  // Wrappers created above are named and scene-reachable (they were added via parent.add, and
-  // parent is always a scene or a node already in the tree), so they are stamped here too.
-  sceneReachableNodes().forEach((node) => {
+  // scene actually reaches — an orphan must never be stamped. `parents` above is drawn from
+  // every scene AND every node in listNodes(), which includes orphans no scene references at
+  // all, so a parent is not always a scene or a node already in the tree — it may itself be an
+  // orphan. A wrapper built under a scene-reachable parent is scene-reachable in turn and gets
+  // stamped below; a wrapper built under an orphan parent stays part of that orphan subtree and
+  // is correctly skipped here, the same as any other orphan.
+  sceneReachableNodes(doc).forEach((node) => {
     if (node.getName() !== '' && carriesGeometry(node) && !absorbedIntoWrapper.has(node)) {
       node.setExtras({ ...node.getExtras(), [PART_MARKER]: true });
     }
@@ -260,6 +304,23 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
     // is also the path the 7,995-primitive Rhino reference file takes when its objects are
     // unnamed, so its 26-draw-call result is preserved.
     //
+    // Clear every PART_MARKER first. join() below merges each same-material group into the
+    // group's FIRST node and keeps THAT node's extras — so if the lone stamped node from above
+    // happens to land as a merge destination, its marker survives into a file this branch has
+    // already decided (via before.parts < 2) has no parts to protect, and the surviving node
+    // now also silently contains the geometry of everything merged into it. There is nothing
+    // downstream of this mode that can still need the marker, since the whole point of taking
+    // this branch is that there is nothing to differentiate.
+    doc.getRoot().listNodes().forEach((node) => {
+      const extras = node.getExtras();
+      if (extras[PART_MARKER] === undefined) return;
+      const rest: Record<string, unknown> = {};
+      Object.keys(extras).forEach((key) => {
+        if (key !== PART_MARKER) rest[key] = extras[key];
+      });
+      node.setExtras(rest);
+    });
+
     // Order is load-bearing: weld() must precede join(), or join() leaves a
     // KHR_mesh_primitive_restart state that weld() refuses outright.
     await doc.transform(

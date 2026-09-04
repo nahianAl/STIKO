@@ -385,7 +385,13 @@ test('a single named node among unnamed ones is not enough on its own to take th
   const buffer = doc.createBuffer();
   const scene = doc.createScene();
   const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
-  ['', 'Bonnet', ''].forEach((name, i) => {
+  // D1 fix wave: the named node deliberately comes FIRST here, not last. join()'s merge
+  // destination is the first node in a same-material group, so with the named node first,
+  // it — not one of the unnamed siblings — is the node whose extras would survive a merge
+  // that doesn't clear PART_MARKER before running. Putting it last (as this fixture
+  // originally did) let both assertions below pass by fixture-ordering luck, pinning nothing
+  // about the actual behavior under test.
+  ['Bonnet', '', ''].forEach((name, i) => {
     const position = doc.createAccessor().setType('VEC3')
       .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
     const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
@@ -637,5 +643,105 @@ test('LINE_STRIP survives the segmented path with triangles, line indices and pa
     reread.getRoot().listExtensionsRequired().length,
     0,
     'no required extension may be declared'
+  );
+});
+
+// --- Fix wave 2 — findings from a second review pass ---
+
+test('re-optimizing an already-optimized GLB does not nest wrappers or add spurious parts', async () => {
+  // Finding D2: the same-name grouping loop takes candidate parents from listNodes(), which
+  // on a second pass includes the wrapper the FIRST pass already built for two same-named
+  // siblings — and that wrapper's own children are still both named "Rim". Without a guard
+  // against that, grouping wraps them again on every re-optimization: Rim > Rim > (Rim, Rim)
+  // after pass 2, one more nesting level and one more spurious part after pass 3, and so on —
+  // exactly the "same physical part on two rows" failure the wrapper exists to prevent, one
+  // level deeper each time. Reachable whenever a user re-uploads a previously-optimized GLB as
+  // a new version, which is an entirely ordinary thing to do.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const pass1 = await optimizeGlb(await toArrayBuffer(doc));
+  const pass2 = await optimizeGlb(pass1.buffer);
+  const pass3 = await optimizeGlb(pass2.buffer);
+
+  assert.equal(pass1.stats.after.parts, 2, 'sanity: one Rim wrapper, one Tire, after the first pass');
+  assert.equal(pass2.stats.after.parts, pass1.stats.after.parts, 'part count must not grow on re-optimization');
+  assert.equal(pass3.stats.after.parts, pass1.stats.after.parts, 'part count must stay stable across repeated passes');
+
+  const reread = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(pass3.buffer));
+  const topLevel = reread.getRoot().listScenes()[0].listChildren();
+  assert.deepEqual(topLevel.map((n) => n.getName()).sort(), ['Rim', 'Tire'], 'top level shape must stay the same');
+
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+  assert.equal(rim.listChildren().length, 2, 'the Rim wrapper must not gain an extra nesting level');
+  rim.listChildren().forEach((child) => {
+    assert.equal(child.getName(), 'Rim', 'sanity: still both material pieces');
+    assert.equal(
+      child.listChildren().length,
+      0,
+      'no nested Rim > Rim wrapper may appear — that is the exact bug under test'
+    );
+  });
+});
+
+test('repeated identical parts share a mesh after dedup, and triangles are still conserved', async () => {
+  // Finding D3: segmented mode runs dedup() without a following flatten(). dedup() merges
+  // byte-identical MESHES, so N identically-shaped parts at different transforms — repeated
+  // fasteners, an entirely ordinary CAD shape — end up as N nodes all referencing one shared
+  // Mesh object. measure() used to walk listMeshes(), which after that merge returns the
+  // shared mesh exactly once, so its triangles were counted once instead of once per node that
+  // actually places it in the scene. Every bolt below still renders correctly — this is a
+  // measurement bug, not data loss — but the lossless guarantee is the entire point of this
+  // file, and it would wrongly report that 3 of the 4 bolts' triangles vanished.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+
+  for (let i = 0; i < 4; i++) {
+    // Byte-identical LOCAL geometry for all four bolts — only the node's translation differs
+    // — so dedup() has every reason to merge the four meshes into one shared Mesh object.
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(
+      doc.createNode(`Bolt_${i}`)
+        .setTranslation([i * 10, 0, 0])
+        .setMesh(doc.createMesh(`Bolt_${i}`).addPrimitive(prim))
+        .setExtras({ [PART_MARKER]: true })
+    );
+  }
+
+  const { stats, buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.before.parts, 4, 'sanity: four named parts should take the segmented path');
+  assert.equal(stats.before.triangles, 4, 'sanity: four single-triangle bolts');
+  assert.equal(
+    stats.after.triangles,
+    stats.before.triangles,
+    'triangles must be conserved even though dedup() merges the four bolts onto one shared mesh'
+  );
+
+  const reread = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  assert.equal(
+    reread.getRoot().listMeshes().length,
+    1,
+    'sanity: the bug under test only reproduces once the four bolts actually share one mesh'
+  );
+  assert.equal(
+    reread.getRoot().listNodes().filter((n) => n.getMesh() !== null).length,
+    4,
+    'sanity: all four nodes still reference that one shared mesh'
   );
 });
