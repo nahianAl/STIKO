@@ -29,6 +29,7 @@ interface Person {
   email: string;
   name: string | null;
   role: Role;
+  canDownload?: boolean;
 }
 
 interface Pending {
@@ -40,6 +41,7 @@ interface Pending {
   role: Role;
   createdAt: string;
   expiresAt: string;
+  canDownload?: boolean;
 }
 
 /** 2h — Package people. The package-scoped counterpart to 4a. */
@@ -114,6 +116,16 @@ export default function PackagePeople() {
       body: JSON.stringify({ userId, portalId: id, role: next }),
     });
     toast('Role updated');
+    load();
+  };
+
+  const changeDownload = async (userId: string, next: boolean) => {
+    await fetch('/api/participants/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, portalId: id, canDownload: next }),
+    });
+    toast(next ? 'Download allowed' : 'Download turned off');
     load();
   };
 
@@ -241,6 +253,18 @@ export default function PackagePeople() {
                     {p.email}
                   </div>
                 </div>
+                <label
+                  className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary"
+                  title="Allow this person to download files from this package"
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(p.canDownload)}
+                    onChange={(e) => changeDownload(p.userId, e.target.checked)}
+                    className="h-[14px] w-[14px] accent-stiko-primary"
+                  />
+                  Download
+                </label>
                 <select
                   value={p.role}
                   onChange={(e) => changeRole(p.userId, e.target.value as Role)}
@@ -294,6 +318,21 @@ export default function PackagePeople() {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-3 text-[12px] font-bold">
+                      {/* A share link has no email, and a link can never carry the grant. */}
+                      {p.email && (
+                        <label
+                          className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary"
+                          title="Allow this person to download files once they accept"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={Boolean(p.canDownload)}
+                            onChange={(e) => changeDownload(p.email!, e.target.checked)}
+                            className="h-[14px] w-[14px] accent-stiko-primary"
+                          />
+                          Download
+                        </label>
+                      )}
                       {/* Nothing to resend a share link to. */}
                       {p.email && (
                         <button
