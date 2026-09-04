@@ -259,7 +259,7 @@ export default function FileTreeSidebar({
                     would fight. The card still selects the version and expands
                     its files; the icon opens the detail drawer. */}
                 <div
-                  className={`flex items-center gap-3 rounded-[12px] pr-2 transition-colors ${isSelected ? 'bg-stiko-primary/20' : 'bg-stiko-primary/[0.08] hover:bg-stiko-primary/[0.14]'}`}
+                  className={`group flex items-center gap-3 rounded-[12px] pr-2 transition-colors ${isSelected ? 'bg-stiko-primary/20' : 'bg-stiko-primary/[0.08] hover:bg-stiko-primary/[0.14]'}`}
                 >
                   <button
                     onClick={() => onSelectVersion(version.id)}
@@ -286,13 +286,15 @@ export default function FileTreeSidebar({
                     </span>
                   </button>
 
-                  {/* Always visible, not hover-revealed: this is now the only
-                      route to the version's files, changelog and Brief. */}
+                  {/* Revealed on hover, so a rail being scanned stays quiet.
+                      `focus:opacity-100` keeps it reachable by keyboard, where
+                      there is no hover to trigger it — the same pairing the
+                      file rows used before their controls moved in here. */}
                   <button
                     onClick={() => onOpenVersionDetails(version)}
                     aria-label={`Open version ${version.versionNumber} details`}
                     title={`Version ${version.versionNumber} details`}
-                    className="flex-shrink-0 rounded-[8px] p-1.5 text-stiko-primary transition hover:bg-stiko-primary/20 focus:outline-none focus-visible:shadow-stiko-focus"
+                    className="flex-shrink-0 rounded-[8px] p-1.5 text-stiko-primary opacity-0 transition hover:bg-stiko-primary/20 focus:opacity-100 focus:outline-none focus-visible:shadow-stiko-focus group-hover:opacity-100"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
