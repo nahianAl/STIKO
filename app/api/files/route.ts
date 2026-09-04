@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { canDeleteContent, getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const userId = session.user.id;
 
   const versionId = request.nextUrl.searchParams.get('versionId');
   if (!versionId) {
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const access = await getPackageAccess(session.user.id, versionRows[0].portalId);
+  const access = await getPackageAccess(userId, versionRows[0].portalId);
   if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const rows = await sql`
@@ -33,12 +35,20 @@ export async function GET(request: NextRequest) {
            converted_storage_key AS "convertedStorageKey",
            conversion_job_id AS "conversionJobId",
            folder_path AS "folderPath",
+           uploaded_by AS "uploadedBy",
            position_x AS "positionX", position_y AS "positionY", position_z AS "positionZ",
            rotation_x AS "rotationX", rotation_y AS "rotationY", rotation_z AS "rotationZ",
            created_at AS "createdAt"
     FROM files WHERE version_id = ${versionId}
     ORDER BY folder_path ASC NULLS FIRST, created_at ASC
   `;
+
+  // Whether the version is published decides an uploader's reach, so it is
+  // fetched once here rather than per row.
+  const publishedRows = await sql`
+    SELECT published_at AS "publishedAt" FROM versions WHERE id = ${versionId}
+  `;
+  const isPublished = publishedRows[0]?.publishedAt !== null;
 
   const files = rows.map((row) => {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
@@ -48,6 +58,13 @@ export async function GET(request: NextRequest) {
         position: [positionX, positionY, positionZ],
         rotation: [rotationX, rotationY, rotationZ],
       },
+      // Computed server-side and sent down, never re-derived in the client: a
+      // hidden button and a 403 must not be able to disagree.
+      canDelete: canDeleteContent({
+        role: access.role,
+        isOwnUpload: row.uploadedBy === userId,
+        isPublished,
+      }),
     };
   });
 

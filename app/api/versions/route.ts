@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { canDeleteContent, getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -42,7 +42,37 @@ export async function GET(request: NextRequest) {
         ORDER BY v.version_number DESC
       `;
 
-  return NextResponse.json(rows);
+  // Counts come back with the rows so the delete confirm can state what dies
+  // without a second round trip. Only versions the caller can delete need them.
+  const counts = await sql`
+    SELECT v.id,
+           COUNT(DISTINCT f.id) AS "fileCount",
+           COUNT(DISTINCT c.id) AS "commentCount"
+    FROM versions v
+    LEFT JOIN files f ON f.version_id = v.id
+    LEFT JOIN comments c ON c.file_id = f.id
+    WHERE v.portal_id = ${portalId}
+    GROUP BY v.id
+  `;
+  const countsById = new Map(
+    counts.map((c) => [
+      c.id as string,
+      { fileCount: Number(c.fileCount), commentCount: Number(c.commentCount) },
+    ])
+  );
+
+  return NextResponse.json(
+    rows.map((row) => ({
+      ...row,
+      canDelete: canDeleteContent({
+        role: access.role,
+        isOwnUpload: false,
+        isPublished: row.publishedAt !== null,
+      }),
+      fileCount: countsById.get(row.id as string)?.fileCount ?? 0,
+      commentCount: countsById.get(row.id as string)?.commentCount ?? 0,
+    }))
+  );
 }
 
 /**
