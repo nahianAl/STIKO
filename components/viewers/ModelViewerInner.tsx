@@ -213,11 +213,17 @@ function Model({
   // commit-phase cleanup below (`useEffect(() => () => batches?.dispose(), [batches])`). React
   // is free to call a useMemo during a render it never commits — dev-only StrictMode double
   // invocation, or a concurrent render an update interrupts — and an abandoned render's
-  // `batches` would then never reach that cleanup, leaking a full batch set silently. Safe
-  // today only because `useLoader` suspends before this ever runs, so in practice it executes
-  // once per model that actually commits. A future change to how loading is orchestrated
-  // (concurrent rendering, a Suspense-less path) could remove that guarantee without touching
-  // this line — if that happens, this is where the leak would start.
+  // `batches` would then never reach that cleanup, leaking a full batch set silently. Safe today
+  // NOT because `useLoader` suspends first — suspending only delays when this runs, it does not
+  // stop a later render of the resolved tree from being invoked twice — but because R3F mounts
+  // everything inside <Canvas> on its own reconciler root, created with `isStrictMode` hardcoded
+  // to `false` (see `reconciler.createContainer(store, ConcurrentRoot, null, false, ...)` in
+  // `@react-three/fiber/dist/events-*.esm.js`). That root never double-invokes render for
+  // StrictMode's sake, regardless of whether Next's app router has StrictMode on for the DOM
+  // tree outside the canvas — this component's renders are on the other side of that boundary.
+  // A future change to how loading is orchestrated (concurrent rendering genuinely interrupting
+  // a render, or a Suspense-less path) could still remove the guarantee that this only runs once
+  // per committed model — if that happens, this is where the leak would start.
   const batches = useMemo<PartBatches | null>(() => (parts.length ? buildBatches(parts) : null), [parts]);
   // Line/point primitives — GLTFLoader's Line/LineSegments/LineLoop/Points for glTF's
   // LINES/LINE_STRIP/LINE_LOOP/POINTS modes — are not mesh geometry, so buildPartTree/
@@ -225,23 +231,25 @@ function Model({
   // separately here and rendered as plain extra primitives below, alongside the batches: see
   // collectDrawables' doc comment for why they cannot carry a part key.
   //
-  // <primitive> below reparents each one directly under this component's own output (the
-  // modelRef group in ModelViewerInner), which keeps the object's LOCAL matrix but drops
-  // whatever the intermediate groups between `root` and this object used to contribute to its
-  // world position. So before that reparenting happens, each drawable's placement is baked from
-  // its still-intact world matrix — relative to `root`, which itself has no parent — into its
-  // own position/quaternion/scale: the same root-relative frame buildBatches bakes into each
-  // instance's matrix, and for the identical reason (see buildBatches.ts's own comment on
-  // updateWorldMatrix(true, false) for why `true` here, not `false`).
-  const drawables = useMemo(() => {
-    if (!root) return [];
-    const found = collectDrawables(root);
-    found.forEach((drawable) => {
-      drawable.updateWorldMatrix(true, false);
-      drawable.matrixWorld.decompose(drawable.position, drawable.quaternion, drawable.scale);
-    });
-    return found;
-  }, [root]);
+  // collectDrawables returns a fresh, already-placed wrapper per drawable — never a node still
+  // sitting inside `root` — specifically so this memo has nothing to mutate and nothing to
+  // reparent. `root` is `useLoader`'s cached tree: a version of this that baked placement into
+  // the drawable's OWN position/quaternion/scale while it was still nested inside `root` would
+  // double every ancestor transform the moment the legacy `<primitive object={root ?? data} />`
+  // branch below rendered that same (now-corrupted) `root`, and would corrupt it again on every
+  // re-run of this memo, since nothing distinguishes "not yet baked" from "already baked" on the
+  // mutated node. See collectDrawables' own doc comment in partTree.ts for the full reasoning —
+  // this call is intentionally this thin.
+  const drawables = useMemo(() => (root ? collectDrawables(root) : []), [root]);
+  // No dispose effect alongside this one, unlike `batches` below — and deliberately so, not an
+  // oversight. `batches.dispose()` frees GPU buffers `buildBatches` allocated (BatchedMesh
+  // geometry/material owned outright by the batch). Every wrapper here shares its geometry and
+  // material with the drawable still sitting in `root` (see collectDrawables' doc comment), so
+  // there is nothing this memo owns to free: the wrapper Group and its clone are plain JS
+  // objects with no GPU resources of their own, R3F detaches them from the scene graph on
+  // unmount/re-render like any other `<primitive>`, and disposing the SHARED geometry/material
+  // here would free them out from under `root` — corrupting the useLoader cache exactly the way
+  // mutating or reparenting the original drawable did before this fix.
   // Computed here, where the loaded materials are, and reported upward — the panel's swatches
   // must resolve colours the same way the viewport does, and it cannot see the materials.
   const authored = useMemo(() => (root ? hasAuthoredColors(root) : false), [root]);
@@ -452,6 +460,15 @@ function SceneInteraction({
 
       const down = pointerDownPos.current;
       if (!down) return;
+      // Consumed here, not left for next time: a pointerup with no matching canvas pointerdown
+      // (the down happened on an HTML overlay instead, which this native listener never sees)
+      // would otherwise still find the PREVIOUS gesture's origin sitting in the ref and test
+      // itself against it — and if that stale point happens to land within 4px, a pick fires
+      // for a gesture that never started on the model at all. Clearing immediately, rather than
+      // only on a path that reaches the end of this handler, means every return below (over a
+      // gizmo, no model, no hit) already leaves the ref clean for the next pointerup to find
+      // `null` and bail at the check above, instead of re-testing against this same stale point.
+      pointerDownPos.current = null;
       // A drag that orbits the camera must not also select — only a pointer that stayed put
       // reads as a click; past this threshold the user was orbiting.
       if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
@@ -852,7 +869,11 @@ export default function ModelViewerInner({
                 model, so moving the model would displace every pin saved before this
                 change. The ground stack is offset down to the model's base instead.
 
-                precise={false} is required, not an optimisation. drei's default precise=true
+                precise={!batches} — conditional, NOT hardcoded to one value, and that split is
+                load-bearing. Do not "simplify" this back to a single literal either way; both
+                halves below are deliberate and each protects a different case:
+
+                BATCHED (batches truthy): precise MUST be false. drei's default precise=true
                 calls `Box3().setFromObject(inner, true)`, and three r169's `expandByObject`
                 only takes the fast/approximate branch for `isInstancedMesh` — `BatchedMesh`
                 sets `isBatchedMesh`, not `isInstancedMesh`, so the precise branch runs and
@@ -865,9 +886,22 @@ export default function ModelViewerInner({
                 is wrong for any model with more than one part. precise={false} instead reaches
                 `BatchedMesh.computeBoundingBox()`, which unions each instance's own bounding
                 box through `getMatrixAt(i)` — the correct per-instance transform, the same path
-                MeasureModel below already relies on, and cheaper besides. Do not "restore"
-                precision here; there is nothing for BatchedMesh to be precise about. */}
-            <Center precise={false}>
+                MeasureModel below already relies on, and cheaper besides. There is nothing for
+                BatchedMesh to be precise about.
+
+                LEGACY (batches null — the `<primitive object={root ?? data} />` path in Model,
+                and STL/PLY's single `<mesh>`): precise MUST stay true, i.e. drei's own default.
+                precise=false gives a CONSERVATIVE box — each geometry's own bounding box
+                transformed and unioned, not each vertex — so for a model with rotated
+                sub-geometry the union overshoots and the computed centre shifts from where
+                precise=true (vertex-exact) would put it. This offset sits between
+                `transformRef` (the frame comment pins are stored in, via `worldToModel`) and
+                `modelRef`, so a changed offset displaces every pin ever saved against a legacy
+                model — which is every pin that exists today, since batched models are new
+                uploads with none yet. `!batches` keeps every legacy model's centring, and every
+                stored pin, bit-identical to what it was before this branch touched `<Center>`
+                at all. */}
+            <Center precise={!batches}>
               <group
                 ref={modelRef}
                 onClick={(e) => {

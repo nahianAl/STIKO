@@ -38,16 +38,29 @@ function isMesh(object: THREE.Object3D): object is THREE.Mesh {
   return (object as THREE.Mesh).isMesh === true;
 }
 
-function isDrawable(object: THREE.Object3D): object is THREE.Line | THREE.Points {
-  const candidate = object as THREE.Line & THREE.LineSegments & THREE.Points;
-  return candidate.isLine === true || candidate.isLineSegments === true || candidate.isPoints === true;
+function isDrawable(object: THREE.Object3D): boolean {
+  // Not a type predicate: the wrapper this feeds returns a `THREE.Group`, not the drawable
+  // itself, so nothing downstream needs the narrowed `Line | Points | Sprite` type.
+  const candidate = object as THREE.Line & THREE.LineSegments & THREE.Points & THREE.Sprite;
+  return (
+    candidate.isLine === true ||
+    candidate.isLineSegments === true ||
+    candidate.isPoints === true ||
+    // No loader in this repo currently produces a Sprite, but `isSprite` costs nothing to
+    // check and the alternative — a sprite silently vanishing the day one shows up, the exact
+    // failure this function exists to prevent for Line/Points — costs a debugging session.
+    candidate.isSprite === true
+  );
 }
 
 /**
- * Line and point drawables anywhere under `root` — the `Line`/`LineSegments`/`LineLoop` and
- * `Points` objects GLTFLoader builds for glTF's LINES/LINE_STRIP/LINE_LOOP/POINTS primitives
- * (see lib/model/optimizeGlb.ts's LINE_MODES handling for a concrete case: the reference file
- * carries 551 LINE_STRIP primitives).
+ * Line and point drawables anywhere under `root` — the `Line`/`LineSegments`/`LineLoop`/`Points`
+ * (and, for completeness, `Sprite`) objects GLTFLoader builds for glTF's
+ * LINES/LINE_STRIP/LINE_LOOP/POINTS primitives (see lib/model/optimizeGlb.ts's LINE_MODES
+ * handling for a concrete case: the reference file carries 551 LINE_STRIP primitives) — each
+ * returned wrapped in a fresh `THREE.Group` that carries the drawable's baked WORLD transform
+ * (relative to `root`, which itself has no parent) as its own local transform, and holds a
+ * shallow clone of the drawable, reset to an identity local transform, as its only child.
  *
  * `ownMeshes` above only ever collects `isMesh` objects, and `buildBatches` only ever batches
  * triangle geometry — `BatchedMesh` has no way to hold a strip or a point cloud — so without a
@@ -59,11 +72,73 @@ function isDrawable(object: THREE.Object3D): object is THREE.Line | THREE.Points
  * Deliberately does not overlap `ownMeshes`/`buildPartTree`: `isDrawable` and `isMesh` are
  * mutually exclusive on every object three.js produces, so nothing collected here can already be
  * sitting inside a batch.
+ *
+ * Why a wrapper around a CLONE, rather than returning the drawable found in `root` (baked or
+ * not): `root` is `useLoader`'s cached tree, kept alive across mounts by `suspend-react` with no
+ * lifespan and no `useLoader.clear()` call anywhere in this repo. A caller that reparents the
+ * returned object — `<primitive object={x}>` calls `Object3D.add`, which detaches `x` from
+ * whatever it was previously attached to — would tear the drawable out of `root` on the first
+ * mount, so a second mount resolving to the same cache entry would traverse a `root` that no
+ * longer has it: the line/point vanishes again, permanently. Mutating the drawable's own
+ * position/quaternion/scale in place has a second, sharper failure: this function's own caller
+ * cannot tell whether the tree it was handed already had its placement baked in by an earlier
+ * call — there is nothing to distinguish "never baked" from "baked once" — so a second call
+ * would bake `ancestors × (already-baked local)`, corrupting the placement rather than merely
+ * repeating a no-op. A fresh `Group` wrapping a fresh clone sidesteps both: `root` is only ever
+ * read (`traverse`, `updateWorldMatrix`, `matrixWorld` — nothing here writes through to a node
+ * already in `root`), so it stays exactly as `useLoader` cached it, and every call — first,
+ * second, hundredth — reads the same unmutated source and produces an equivalent wrapper.
+ *
+ * The clone shares (does not duplicate) geometry and material: three's own `Line`/`Points`
+ * `.copy()` assigns `this.geometry = source.geometry` and `this.material = source.material`
+ * (see three/src/objects/Line.js and Points.js), never a deep copy, and `.clone(false)` skips
+ * recursing into children on top of that — there is nothing to gain cloning children a
+ * Line/Points/Sprite never has, and every extra clone is one more object whoever renders this
+ * output has to keep alive. What `.clone()` does NOT reset is the source's own local transform,
+ * which `.copy()` copies verbatim — left alone, the clone would carry the drawable's original
+ * root-relative local placement while sitting inside a wrapper that already supplies the full
+ * baked world placement, doubling the transform one level down from where C1's `<Center
+ * precise>` fix and buildBatches.ts's instance-matrix baking both had to solve the identical
+ * problem. Zeroing it here is what makes the wrapper's transform the only one in effect.
  */
-export function collectDrawables(root: THREE.Object3D): (THREE.Line | THREE.Points)[] {
-  const out: (THREE.Line | THREE.Points)[] = [];
+export function collectDrawables(root: THREE.Object3D): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
   root.traverse((object) => {
-    if (isDrawable(object)) out.push(object);
+    if (!isDrawable(object)) return;
+
+    // Only ever READS position/quaternion/scale/parent, via the cached `matrixWorld` three.js
+    // already maintains that field for. `root` is never attached to a live scene graph (only
+    // the batches/wrappers built from it are), so nothing else brings a stale `matrixWorld` up
+    // to date — this is the same `updateWorldMatrix(true, false)` idiom buildBatches.ts uses
+    // for its own instance matrices, and for the identical reason (see its header comment).
+    object.updateWorldMatrix(true, false);
+
+    const wrapper = new THREE.Group();
+    object.matrixWorld.decompose(wrapper.position, wrapper.quaternion, wrapper.scale);
+
+    const clone = object.clone(false);
+    clone.position.set(0, 0, 0);
+    clone.quaternion.identity();
+    clone.scale.set(1, 1, 1);
+    // Line/LineSegments/LineLoop/Points' own `copy()` (three/src/objects/Line.js, Points.js)
+    // assigns `this.geometry = source.geometry` and `this.material = source.material`, so
+    // `.clone()` already shares rather than duplicates for those. `Sprite.prototype.copy()`
+    // (Sprite.js) does NOT touch `material` — only `center` — so `.clone(false)` on a Sprite
+    // would silently carry the constructor's default `SpriteMaterial` instead of the source's
+    // own. Reassigning both explicitly, for every recognized drawable type alike, makes "shares,
+    // does not duplicate" hold regardless of which subclass's `copy()` gets it right on its own.
+    // Cast through an intersection rather than the Line|Points|Sprite union itself: the union's
+    // `material` type differs per member (`Material | Material[]` vs `SpriteMaterial`), which
+    // TypeScript would otherwise require satisfying for every member at once.
+    type HasGeometryAndMaterial = THREE.Object3D & {
+      geometry?: THREE.BufferGeometry;
+      material?: THREE.Material | THREE.Material[];
+    };
+    (clone as HasGeometryAndMaterial).geometry = (object as HasGeometryAndMaterial).geometry;
+    (clone as HasGeometryAndMaterial).material = (object as HasGeometryAndMaterial).material;
+    wrapper.add(clone);
+
+    out.push(wrapper);
   });
   return out;
 }

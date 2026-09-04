@@ -212,9 +212,11 @@ test('collectDrawables finds Line/LineSegments/Points anywhere in the tree', () 
   const root = new THREE.Group();
   root.add(mesh('body'), nested);
 
-  const drawables = collectDrawables(root).map((d) => d.name);
+  // Each result is a wrapper Group (see the wrapper-shape tests below); the drawable's own name
+  // travelled onto the clone it holds, not onto the wrapper itself.
+  const names = collectDrawables(root).map((wrapper) => wrapper.children[0].name);
 
-  assert.deepEqual(drawables.sort(), ['cloud', 'wire']);
+  assert.deepEqual(names.sort(), ['cloud', 'wire']);
 });
 
 test('collectDrawables never returns a Mesh, so nothing it finds can already be inside a batch', () => {
@@ -224,9 +226,95 @@ test('collectDrawables never returns a Mesh, so nothing it finds can already be 
   const drawables = collectDrawables(root);
 
   assert.equal(drawables.length, 1);
-  assert.equal(drawables[0].isMesh, undefined);
+  assert.equal(drawables[0].isGroup, true);
+  assert.equal(drawables[0].children[0].isMesh, undefined);
 });
 
 test('an empty scene has no drawables', () => {
   assert.deepEqual(collectDrawables(new THREE.Group()), []);
+});
+
+// --- Fix wave 2, finding 1 + 2: the transform bake used to mutate the drawable's own
+// position/quaternion/scale in place — corrupting the useLoader-cached tree, double-applying the
+// bake on a second pass, and reparenting the drawable when <primitive> mounted it. collectDrawables
+// now bakes into a fresh wrapper Group around a clone instead, leaving `root` untouched. These
+// tests fail against the pre-fix collectDrawables, which returned the drawable found in `root`
+// directly: it has no wrapper (so `.children[0]` doesn't exist — indexing it throws or reads
+// undefined) and its position is the source's own untouched LOCAL transform, not the world-baked
+// value these tests assert. ---
+
+test("collectDrawables bakes the WORLD transform into the wrapper, and leaves the source's own local transform and parent untouched", () => {
+  const ancestor = new THREE.Group();
+  ancestor.position.set(5, 0, 0);
+  const line = lineSegments('wire');
+  line.position.set(1, 2, 3);
+  ancestor.add(line);
+  const root = new THREE.Group();
+  root.add(ancestor);
+
+  const [wrapper] = collectDrawables(root);
+
+  // The wrapper carries ancestor-plus-local, i.e. the world position — not the source's
+  // local-only [1, 2, 3].
+  assert.deepEqual(wrapper.position.toArray(), [6, 2, 3]);
+  // The source is exactly as it was: same local position, same parent. Nothing under `root` was
+  // touched, let alone reparented.
+  assert.deepEqual(line.position.toArray(), [1, 2, 3]);
+  assert.equal(line.parent, ancestor);
+  // The wrapped clone's own local transform is reset to identity: the wrapper above already
+  // supplies the full baked placement, so a non-identity clone transform would double it — the
+  // same class of bug one level over from the point of this whole function.
+  const [clone] = wrapper.children;
+  assert.deepEqual(clone.position.toArray(), [0, 0, 0]);
+});
+
+test('collectDrawables is idempotent: a second call bakes the same transform and still finds the source unmutated', () => {
+  const ancestor = new THREE.Group();
+  ancestor.position.set(5, 0, 0);
+  const line = lineSegments('wire');
+  line.position.set(1, 2, 3);
+  ancestor.add(line);
+  const root = new THREE.Group();
+  root.add(ancestor);
+
+  const first = collectDrawables(root);
+  const second = collectDrawables(root);
+
+  // Same baked value both times — a mutating implementation would bake ancestors into the
+  // source's own local position on the first call, so the second call would bake them again on
+  // top of that already-baked value.
+  assert.deepEqual(first[0].position.toArray(), [6, 2, 3]);
+  assert.deepEqual(second[0].position.toArray(), [6, 2, 3]);
+  assert.deepEqual(line.position.toArray(), [1, 2, 3]);
+});
+
+test('the wrapped clone shares geometry and material with the source rather than duplicating them', () => {
+  const root = new THREE.Group();
+  const line = lineSegments('wire');
+  root.add(line);
+
+  const [wrapper] = collectDrawables(root);
+  const [clone] = wrapper.children;
+
+  assert.notEqual(clone, line, 'the clone is a distinct object from the source');
+  assert.equal(clone.geometry, line.geometry);
+  assert.equal(clone.material, line.material);
+});
+
+test('collectDrawables also finds a Sprite, wrapped the same way as Line/Points', () => {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial());
+  sprite.name = 'flare';
+  const root = new THREE.Group();
+  root.add(sprite);
+
+  const [wrapper] = collectDrawables(root);
+  const [clone] = wrapper.children;
+
+  assert.equal(clone.name, 'flare');
+  assert.equal(clone.isSprite, true);
+  // Regression guard: Sprite.prototype.copy() (three/src/objects/Sprite.js) does not propagate
+  // `material` the way Line/Points' own copy() does, so a bare `.clone(false)` on a Sprite would
+  // silently swap in the constructor's default SpriteMaterial instead of sharing the source's.
+  assert.equal(clone.material, sprite.material);
+  assert.equal(clone.geometry, sprite.geometry);
 });
