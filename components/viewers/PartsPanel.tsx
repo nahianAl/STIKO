@@ -12,7 +12,7 @@ import ColorPickerPopover from '@/components/markup/ColorPickerPopover';
  *
  * The eye is available to everyone — hiding a part is a way of LOOKING at a model, session
  * only, exactly as a cross-section plane's pose is. The colour pill writes to the server and
- * is inert without canTransform; the route enforces that independently.
+ * is inert without canColor; the route enforces that independently.
  */
 
 /** Above this many rows the list scrolls rather than grows. Search is the way through. */
@@ -71,6 +71,24 @@ export default function PartsPanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // A different model loaded: `parts` is memoized upstream on the loaded model, so its identity
+  // changes exactly when the model does — that's the signal, rather than inventing a new prop.
+  // Part keys are plain index paths ("0/2/1") and collide across models by construction, so
+  // anything keyed by them from the previous model — a collapsed set, a search, an open colour
+  // picker, a scroll offset — would otherwise silently keep pointing at a same-keyed node in the
+  // new one. The sharpest case: `picking` staying set across a switch would leave the colour
+  // popover open against a part the user never selected in the new model, so a drag or commit
+  // would write that part's colour to the server. `open` is deliberately NOT reset here: a user
+  // who opened the panel should not have it slam shut just because the version underneath it
+  // changed.
+  useEffect(() => {
+    setCollapsed(new Set());
+    setQuery('');
+    setPicking(null);
+    setScrollTop(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [parts]);
+
   // Same dismissal contract as FocalLengthControl, so the two pills behave identically.
   useEffect(() => {
     if (!open) return;
@@ -104,6 +122,23 @@ export default function PartsPanel({
       .map((part) => ({ part, depth: 0 }));
   }, [parts, collapsed, query]);
 
+  // `rows` can shrink out from under a `scrollTop` that was measured against a longer list —
+  // collapsing an ancestor branch or typing a narrowing search both do this while scrolled down.
+  // `scrollTop` is state updated by `onScroll`, so it does not move synchronously when `rows`
+  // shrinks; the browser will eventually clamp its own scrollbar and fire a `scroll` event that
+  // catches state up, but only once the user next interacts with it. `first`/`last` below are
+  // clamped independently so the window never renders blank in the meantime, but this effect
+  // still corrects `scrollTop` (state and the live DOM element) proactively, so the component
+  // never sits holding a scroll position the current list can't back up.
+  useEffect(() => {
+    const maxScrollTop = Math.max(0, rows.length * ROW_HEIGHT - MAX_VISIBLE_ROWS * ROW_HEIGHT);
+    setScrollTop((prev) => {
+      if (prev <= maxScrollTop) return prev;
+      if (listRef.current) listRef.current.scrollTop = maxScrollTop;
+      return maxScrollTop;
+    });
+  }, [rows.length]);
+
   // Clicking a part in the viewport opens the panel and scrolls to its row. This is what
   // keeps the list navigable when a file's part names are poor or absent — the model itself
   // becomes the index into the list.
@@ -134,8 +169,19 @@ export default function PartsPanel({
   // Windowed: a model can carry thousands of parts, and rendering a DOM row for each would
   // cost more than the whole render loop it sits over. Row height is fixed, so the slice is
   // arithmetic rather than measurement.
-  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const last = Math.min(rows.length, first + MAX_VISIBLE_ROWS + OVERSCAN * 2);
+  //
+  // `first` is clamped against the CURRENT `rows.length`, not just `last` — otherwise a `rows`
+  // that shrinks while `scrollTop` is still large (see the effect above) computes a `first` past
+  // the end of the new list, `rows.slice(first, last)` comes back empty, and the leading spacer
+  // still renders at the old, larger height: the list goes blank. `maxFirst` is the largest
+  // window start the current list can support, so `first` can never exceed it regardless of what
+  // `scrollTop` claims — and every one of leading spacer / rendered slice / trailing spacer stays
+  // in sync with `rows.length * ROW_HEIGHT`, for an empty list, a list shorter than the window, a
+  // list scrolled to its very end, and a list that shrinks out from under the current scroll.
+  const windowSize = MAX_VISIBLE_ROWS + OVERSCAN * 2;
+  const maxFirst = Math.max(0, rows.length - windowSize);
+  const first = Math.min(maxFirst, Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN));
+  const last = Math.min(rows.length, first + windowSize);
   const windowed = rows.slice(first, last);
 
   const toggleCollapsed = (key: string) => {
