@@ -23,6 +23,7 @@ import type { Comment, FileRecord, Version } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
+import { BRIEF_MIN_COMMENTS } from '@/lib/brief';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -199,6 +200,8 @@ export default function PortalPage() {
     pageNumber?: number; timestamp?: number;
   } | null>(null);
   const composerInputRef = useRef<HTMLInputElement>(null);
+  // Which version an auto-generate has already been attempted for this mount.
+  const autoBriefAttempted = useRef<string | null>(null);
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
@@ -567,6 +570,55 @@ export default function PortalPage() {
       cancelled = true;
     };
   }, [versions]);
+
+  // One auto-generate attempt per selected version.
+  //
+  // This used to live inside VersionBrief, which mounted in the comment panel
+  // whenever a version was selected. The component now lives in the version
+  // drawer, which most people never open — and the card headline below is read
+  // from a GET that never generates. Leaving the trigger in the component would
+  // mean no brief, so no headline, so no hint that a Brief exists, so nobody
+  // opens the drawer. The cadence here is exactly what the component did: one
+  // attempt per selected version, per mount.
+  useEffect(() => {
+    const target = selectedVersionId;
+    if (!target) return;
+    if (autoBriefAttempted.current === target) return;
+    // Claimed synchronously, before any await. React re-invokes effects in
+    // development, and a guard set after an await lets both invocations through
+    // to a paid endpoint. The cost of claiming early is that a network failure
+    // skips this version for the rest of the session — acceptable, because the
+    // drawer's Summarise and Refresh buttons both still work.
+    autoBriefAttempted.current = target;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/versions/${target}/summary`);
+        if (cancelled || !res.ok) return;
+        const body = await res.json();
+        if (cancelled) return;
+        // Switched off for the deployment, unconfigured, or already summarised.
+        if (!body.enabled || !body.configured || body.brief) return;
+        if ((body.facts?.commentCount ?? 0) < BRIEF_MIN_COMMENTS) return;
+
+        const gen = await fetch(`/api/versions/${target}/summary`, { method: 'POST' });
+        if (cancelled || !gen.ok) return;
+        const genBody = await gen.json();
+        if (cancelled) return;
+        const headline = genBody.brief?.headline;
+        // Fold the new headline straight into the rail rather than refetching
+        // every version's summary again.
+        if (headline) setHeadlines((h) => ({ ...h, [target]: headline }));
+      } catch {
+        // A brief is an enhancement. Failing to produce one must not put an
+        // error in front of someone reviewing drawings.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVersionId]);
 
   // Fetch files when version changes
   const fetchFiles = useCallback(async (versionId: string) => {

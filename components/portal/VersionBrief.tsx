@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { paletteForKey } from '@/lib/commentColors';
 import { getInitials } from '@/lib/initials';
 import {
-  BRIEF_MIN_COMMENTS,
   shouldShowBrief,
   briefDigest,
   statChips,
@@ -54,11 +53,6 @@ interface Summary {
   newSinceBrief: number;
 }
 
-// The same number as the show threshold, from lib/brief. Generating below the
-// count at which the section renders would spend a model call on a brief no one
-// can open.
-const AUTO_GENERATE_THRESHOLD = BRIEF_MIN_COMMENTS;
-
 const GRADIENT = 'linear-gradient(135deg, #8094F5, #5B60FF)';
 
 /** Focus treatment for every button in here; the prototype specified none. */
@@ -78,16 +72,6 @@ export default function VersionBrief({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(true);
-  // generate() leaves data.brief null on failure, so without this the effect
-  // re-fires on every busy transition and loops against a paid API. Records
-  // the versionId an auto-attempt has already been made for, capping it to
-  // one automatic attempt per version per mount.
-  const autoAttempted = useRef<string | null>(null);
-  // Which version the `data` in state was loaded for. setData is queued, so on a
-  // versionId change the auto-generate effect would otherwise still see the
-  // PREVIOUS version's data while already bound to the new versionId — and fire
-  // a POST for the new version on the strength of the old one's facts.
-  const loadedFor = useRef<string | null>(null);
   // Always the version currently on screen. Both load() and generate() capture
   // the version they were started for and compare against this after awaiting —
   // a response that arrives after the user has moved on must be discarded, not
@@ -103,7 +87,6 @@ export default function VersionBrief({
     if (!res.ok) return;
     const body = await res.json();
     if (target !== currentVersion.current) return;
-    loadedFor.current = target;
     setData(body);
   }, [versionId]);
 
@@ -120,7 +103,6 @@ export default function VersionBrief({
       if (!res.ok) {
         setError(body.error ?? 'Could not refresh the brief');
       } else {
-        loadedFor.current = target;
         setData(body);
       }
     } catch {
@@ -135,25 +117,8 @@ export default function VersionBrief({
     setData(null);
     setError(null);
     setBusy(false);
-    autoAttempted.current = null;
-    loadedFor.current = null;
     load();
   }, [load]);
-
-  useEffect(() => {
-    if (loadedFor.current !== versionId) return;
-    if (
-      data?.enabled &&
-      data.configured &&
-      !data.brief &&
-      data.facts.commentCount >= AUTO_GENERATE_THRESHOLD &&
-      !busy
-    ) {
-      if (autoAttempted.current === versionId) return;
-      autoAttempted.current = versionId;
-      generate();
-    }
-  }, [data, busy, generate, versionId]);
 
   if (!data || !data.enabled) return null;
   // A version with few comments has no Brief section at all — no card, no
