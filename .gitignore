@@ -38,3 +38,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 /public/uploads/
+
+# superpowers scratch (sdd ledgers, brainstorm mockups)
+.superpowers/
