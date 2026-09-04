@@ -511,8 +511,14 @@ grep -rn "function formatFileSize" components/ lib/
 ```
 
 Expected: `tsc` clean, 347 passing, lint clean, and the `grep` finds exactly
-two definitions — `lib/versionDetail.ts` and `components/ui/UploadProgress.tsx`.
+two definitions — `lib/versionDetail.ts` and `components/ui/FileDropzone.tsx`.
 If it still finds one in `CommentsPanel.tsx`, Step 5 was not applied.
+
+`FileDropzone`'s copy is byte-identical to the shared one, and
+`components/ui/UploadProgress.tsx` has a fourth variant named `formatSize`
+that rounds differently. **Leave both alone.** They belong to the upload
+screens, which this feature does not touch; unifying them would put a visible
+change to unrelated UI inside this branch.
 
 - [ ] **Step 7: Commit**
 
