@@ -610,7 +610,8 @@ export default function PortalPage() {
         // Fold the new headline straight into the rail rather than refetching
         // every version's summary again.
         if (headline) setHeadlines((h) => ({ ...h, [target]: headline }));
-      } catch {
+      } catch (err) {
+        console.error('Failed to auto-generate brief:', err);
         // A brief is an enhancement. Failing to produce one must not put an
         // error in front of someone reviewing drawings.
       }
