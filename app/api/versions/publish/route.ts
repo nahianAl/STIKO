@@ -91,6 +91,7 @@ export async function POST(request: NextRequest) {
         -- explicit scope yet" does not actually hold.
         AND (
           p.all_versions = TRUE
+          OR p.role = 'uploader'
           OR EXISTS (
             SELECT 1 FROM participant_versions pv
             WHERE pv.participant_id = p.id AND pv.version_id = ${versionId}

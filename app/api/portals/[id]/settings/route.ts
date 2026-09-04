@@ -18,7 +18,12 @@ export async function GET(
   }
 
   const access = await getPackageAccess(session.user.id, params.id);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // The payload is package-wide — counts across every version, the true latest
+  // version and its status. A scoped reviewer must not learn any of that, and
+  // both consumers of this route are manager screens.
+  if (!access?.canManagePeople) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
 
   const portalRows = await sql`
     SELECT po.id, po.name, po.tag, po.link_access AS "linkAccess",

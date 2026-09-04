@@ -191,10 +191,20 @@ export async function POST(
   // never exist. So all_versions only ever takes the invitation's value when
   // the row's role (after the conflict resolves) is one that can carry scope;
   // otherwise it is forced back to TRUE.
+  //
+  // The INSERT arm needs the same rule applied to the invitation's own role:
+  // a role can be reassigned on a still-pending invite (POST
+  // /api/participants/role updates invite_tokens.role without touching
+  // all_versions), so a token can reach here as role='uploader' with
+  // all_versions still false from when it was issued scoped. Without this, a
+  // brand-new participant row would be created in that state — the same
+  // uploader-with-a-stale-scope the DO UPDATE arm above is guarding against.
+  const inviteScopable = invite.role === 'commenter' || invite.role === 'viewer';
   const joined = await sql`
     INSERT INTO participants (id, portal_id, user_id, role, can_download, all_versions)
     VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role},
-            ${invite.can_download === true}, ${invite.all_versions !== false})
+            ${invite.can_download === true},
+            ${inviteScopable ? invite.all_versions !== false : true})
     ON CONFLICT (portal_id, user_id) DO UPDATE
       SET can_download = EXCLUDED.can_download,
           all_versions = CASE

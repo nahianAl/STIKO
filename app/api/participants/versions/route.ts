@@ -54,10 +54,31 @@ export async function POST(request: NextRequest) {
   const isEmail = String(userId).includes('@');
 
   if (isEmail) {
+    // Only commenters and viewers can be scoped. Writing a scope onto an
+    // uploader would create state the UI cannot show and nothing can clear,
+    // so the role has to be checked before anything is written — an invite
+    // token doesn't otherwise surface it to this route.
+    const targets = await sql`
+      SELECT role FROM invite_tokens
+      WHERE portal_id = ${portalId} AND email = ${userId}
+        AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()
+    `;
+    if (targets.length === 0) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+    if (targets.some((t) => t.role !== 'commenter' && t.role !== 'viewer')) {
+      return NextResponse.json(
+        { error: 'Only commenters and viewers can be scoped' },
+        { status: 400 }
+      );
+    }
+
+    // Mirrors /api/invites: an expired token is already gone from the panel,
+    // so a scope change against one must not be able to touch it either.
     const tokens = await sql`
       UPDATE invite_tokens SET all_versions = ${allVersions}
       WHERE portal_id = ${portalId} AND email = ${userId}
-        AND used_at IS NULL AND revoked_at IS NULL
+        AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()
       RETURNING id
     `;
     // Symmetric with the accepted-participant branch below: a scope change
@@ -90,6 +111,23 @@ export async function POST(request: NextRequest) {
       ]);
     }
     return NextResponse.json({ ok: true, updated: tokens.length });
+  }
+
+  // Only commenters and viewers can be scoped. Writing a scope onto an
+  // uploader would create state the UI cannot show and nothing can clear, so
+  // the role has to be checked before anything is written.
+  const target = await sql`
+    SELECT role FROM participants
+    WHERE portal_id = ${portalId} AND user_id = ${userId}
+  `;
+  if (!target[0]) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  if (target[0].role !== 'commenter' && target[0].role !== 'viewer') {
+    return NextResponse.json(
+      { error: 'Only commenters and viewers can be scoped' },
+      { status: 400 }
+    );
   }
 
   const rows = await sql`

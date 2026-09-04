@@ -48,8 +48,31 @@ export async function GET(request: NextRequest) {
     byParticipant.set(key, [...(byParticipant.get(key) ?? []), s.versionId as string]);
   }
 
+  // The roster is fine for any participant to see, but a person's version
+  // scope is not: the union of everyone's versionIds would tell a scoped
+  // reviewer exactly how many versions exist outside their own scope.
+  const canSeeScope = Boolean(access.canManagePeople);
+
   return NextResponse.json(
-    rows.map((r) => ({ ...r, versionIds: byParticipant.get(r.id as string) ?? [] }))
+    rows.map((r) => {
+      if (canSeeScope) {
+        return { ...r, versionIds: byParticipant.get(r.id as string) ?? [] };
+      }
+      // An allowlist rather than a blocklist: a scope field added to the
+      // SELECT above later must be excluded by default, not leaked because
+      // nobody remembered to add it to a strip-list here.
+      return {
+        id: r.id,
+        portalId: r.portalId,
+        userId: r.userId,
+        role: r.role,
+        canDownload: r.canDownload,
+        createdAt: r.createdAt,
+        email: r.email,
+        name: r.name,
+        company: r.company,
+      };
+    })
   );
 }
 

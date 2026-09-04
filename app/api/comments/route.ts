@@ -35,7 +35,9 @@ export async function GET(request: NextRequest) {
   // a check it hands out package contents to anyone holding a file id — and
   // would route straight around the authorization on /api/files/url.
   const access = await getFileAccess(session.user.id, fileId);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // Not an oracle: a nonexistent file and an out-of-scope one both land here,
+  // and the rest of the branch answers that with 404, never 403.
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   await ensureCommentColumns();
 
@@ -116,7 +118,9 @@ export async function POST(request: NextRequest) {
   // has no anonymous role — every role arrives through an invitation — and a
   // viewer is explicitly view-only.
   const access = await getFileAccess(session.user.id, fileId);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // Not an oracle: a nonexistent file and an out-of-scope one both land here,
+  // and the rest of the branch answers that with 404, never 403.
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.canComment) {
     return NextResponse.json(
       { error: 'Your role on this package is view-only' },
