@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { paletteForKey } from '@/lib/commentColors';
 import { getInitials } from '@/lib/initials';
 import {
-  BRIEF_MIN_COMMENTS,
   shouldShowBrief,
   briefDigest,
   statChips,
@@ -18,8 +17,8 @@ import {
  * of a brief), configured with no brief yet (offer to summarise), brief
  * current, and brief present-but-stale (show it, say how far behind it is).
  *
- * Collapsed by default. The digest beside the label is what makes that
- * acceptable — a bare "Brief / Show" row gives a reader no reason to open it.
+ * Expanded by default — this lives in a drawer someone opened deliberately.
+ * It can still be collapsed to a single digest line via the toggle.
  */
 
 interface Theme {
@@ -54,11 +53,6 @@ interface Summary {
   newSinceBrief: number;
 }
 
-// The same number as the show threshold, from lib/brief. Generating below the
-// count at which the section renders would spend a model call on a brief no one
-// can open.
-const AUTO_GENERATE_THRESHOLD = BRIEF_MIN_COMMENTS;
-
 const GRADIENT = 'linear-gradient(135deg, #8094F5, #5B60FF)';
 
 /** Focus treatment for every button in here; the prototype specified none. */
@@ -66,9 +60,14 @@ const FOCUS = 'focus:outline-none focus-visible:shadow-stiko-focus';
 
 export default function VersionBrief({
   versionId,
+  autoBusy = false,
   onSelectComment,
 }: {
   versionId: string;
+  /** True while the PAGE is auto-generating this version's brief. The Brief's
+   *  own `busy` cannot see that, so without this the buttons below would offer
+   *  to start a second concurrent generation of the same version. */
+  autoBusy?: boolean;
   /** Fired with the comment's id and the id of the file it lives on — the
    * caller owns switching files and activating the comment, this component
    * only knows where each citation resolves to. */
@@ -77,17 +76,12 @@ export default function VersionBrief({
   const [data, setData] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
-  // generate() leaves data.brief null on failure, so without this the effect
-  // re-fires on every busy transition and loops against a paid API. Records
-  // the versionId an auto-attempt has already been made for, capping it to
-  // one automatic attempt per version per mount.
-  const autoAttempted = useRef<string | null>(null);
-  // Which version the `data` in state was loaded for. setData is queued, so on a
-  // versionId change the auto-generate effect would otherwise still see the
-  // PREVIOUS version's data while already bound to the new versionId — and fire
-  // a POST for the new version on the strength of the old one's facts.
-  const loadedFor = useRef<string | null>(null);
+  // Expanded by default. It defaulted to collapsed when it lived in the comment
+  // panel, where it competed for space above every file's comments. It now has
+  // a drawer of its own that people open deliberately, so collapsed-by-default
+  // would mean two clicks to reach the thing they opened the drawer for. The
+  // toggle stays, so a long brief can still be folded to reach what is below it.
+  const [collapsed, setCollapsed] = useState(false);
   // Always the version currently on screen. Both load() and generate() capture
   // the version they were started for and compare against this after awaiting —
   // a response that arrives after the user has moved on must be discarded, not
@@ -103,7 +97,6 @@ export default function VersionBrief({
     if (!res.ok) return;
     const body = await res.json();
     if (target !== currentVersion.current) return;
-    loadedFor.current = target;
     setData(body);
   }, [versionId]);
 
@@ -120,7 +113,6 @@ export default function VersionBrief({
       if (!res.ok) {
         setError(body.error ?? 'Could not refresh the brief');
       } else {
-        loadedFor.current = target;
         setData(body);
       }
     } catch {
@@ -135,25 +127,17 @@ export default function VersionBrief({
     setData(null);
     setError(null);
     setBusy(false);
-    autoAttempted.current = null;
-    loadedFor.current = null;
     load();
   }, [load]);
 
+  // The page generates in the background and does not hand the result down.
+  // When its generation finishes, re-read — otherwise this keeps offering to
+  // summarise a version that now has a brief.
+  const wasAutoBusy = useRef(false);
   useEffect(() => {
-    if (loadedFor.current !== versionId) return;
-    if (
-      data?.enabled &&
-      data.configured &&
-      !data.brief &&
-      data.facts.commentCount >= AUTO_GENERATE_THRESHOLD &&
-      !busy
-    ) {
-      if (autoAttempted.current === versionId) return;
-      autoAttempted.current = versionId;
-      generate();
-    }
-  }, [data, busy, generate, versionId]);
+    if (wasAutoBusy.current && !autoBusy) load();
+    wasAutoBusy.current = autoBusy;
+  }, [autoBusy, load]);
 
   if (!data || !data.enabled) return null;
   // A version with few comments has no Brief section at all — no card, no
@@ -181,11 +165,11 @@ export default function VersionBrief({
           <button
             type="button"
             onClick={generate}
-            disabled={busy}
+            disabled={busy || autoBusy}
             className={`mt-2.5 px-3.5 py-[7px] rounded-[10px] text-[11px] font-bold text-white disabled:opacity-40 transition-[filter] hover:brightness-[0.97] ${FOCUS}`}
             style={{ background: GRADIENT }}
           >
-            {busy ? 'Summarising…' : 'Summarise'}
+            {busy || autoBusy ? 'Summarising…' : 'Summarise'}
           </button>
         )}
         {error && (
@@ -320,10 +304,10 @@ export default function VersionBrief({
                 <button
                   type="button"
                   onClick={generate}
-                  disabled={busy}
+                  disabled={busy || autoBusy}
                   className={`shrink-0 text-[10.5px] font-bold text-stiko-primary hover:text-stiko-primary-hover disabled:opacity-40 transition-colors ${FOCUS}`}
                 >
-                  {busy ? 'Refreshing…' : 'Refresh'}
+                  {busy || autoBusy ? 'Refreshing…' : 'Refresh'}
                 </button>
               </div>
             )

@@ -24,18 +24,24 @@ export async function GET(request: NextRequest) {
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const rows = await sql`
-    SELECT id, version_id AS "versionId", filename, storage_key AS "storageKey",
-           file_size AS "fileSize", file_type AS "fileType",
-           conversion_status AS "conversionStatus",
-           converted_storage_key AS "convertedStorageKey",
-           conversion_job_id AS "conversionJobId",
-           folder_path AS "folderPath",
-           uploaded_by AS "uploadedBy",
-           position_x AS "positionX", position_y AS "positionY", position_z AS "positionZ",
-           rotation_x AS "rotationX", rotation_y AS "rotationY", rotation_z AS "rotationZ",
-           created_at AS "createdAt"
-    FROM files WHERE version_id = ${versionId}
-    ORDER BY folder_path ASC NULLS FIRST, created_at ASC
+    SELECT f.id, f.version_id AS "versionId", f.filename,
+           f.storage_key AS "storageKey",
+           f.file_size AS "fileSize", f.file_type AS "fileType",
+           f.conversion_status AS "conversionStatus",
+           f.converted_storage_key AS "convertedStorageKey",
+           f.conversion_job_id AS "conversionJobId",
+           f.folder_path AS "folderPath",
+           f.uploaded_by AS "uploadedBy",
+           u.name AS "uploadedByName",
+           f.position_x AS "positionX", f.position_y AS "positionY",
+           f.position_z AS "positionZ",
+           f.rotation_x AS "rotationX", f.rotation_y AS "rotationY",
+           f.rotation_z AS "rotationZ",
+           f.created_at AS "createdAt"
+    FROM files f
+    LEFT JOIN users u ON u.id = f.uploaded_by
+    WHERE f.version_id = ${versionId}
+    ORDER BY f.folder_path ASC NULLS FIRST, f.created_at ASC
   `;
 
   // Whether the version is published decides an uploader's reach, so it is

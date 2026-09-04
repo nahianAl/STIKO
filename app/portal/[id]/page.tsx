@@ -9,6 +9,7 @@ import FileTreeSidebar from '@/components/portal/FileTreeSidebar';
 import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
 import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
+import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
@@ -19,10 +20,11 @@ import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
-import type { Comment, FileRecord } from '@/lib/types';
+import type { Comment, FileRecord, Version } from '@/lib/types';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
+import { BRIEF_MIN_COMMENTS } from '@/lib/brief';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -45,19 +47,6 @@ interface Portal {
   projectId: string;
   name: string;
   createdAt: string;
-}
-
-interface Version {
-  id: string;
-  portalId: string;
-  versionNumber: number;
-  createdAt: string;
-  // Already present on every row the API returns (Task 8) — declared here so this
-  // local copy stays assignable to FileTreeSidebar's, which now requires it.
-  publishedAt: string | null;
-  canDelete?: boolean;
-  fileCount?: number;
-  commentCount?: number;
 }
 
 interface Participant {
@@ -190,6 +179,18 @@ export default function PortalPage() {
   const [canUpload, setCanUpload] = useState(false);
   const [canTransform, setCanTransform] = useState(false);
 
+  // Which version the detail drawer is showing. The version OBJECT is resolved
+  // from `versions` each render rather than copied into state, so a version that
+  // disappears — deleted, or dropped by a scope change — closes the drawer with
+  // no extra bookkeeping.
+  const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
+  // The version id currently being auto-summarised, or null. VersionBrief's own
+  // `busy` is local to itself and cannot see this, so without it the Brief's
+  // Summarise button sits enabled during exactly the window the page is already
+  // generating — and POST /api/versions/[id]/summary only short-circuits once a
+  // brief EXISTS, so two concurrent calls with no brief yet are two real ones.
+  const [autoBriefBusy, setAutoBriefBusy] = useState<string | null>(null);
+
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
   const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
@@ -212,6 +213,12 @@ export default function PortalPage() {
     pageNumber?: number; timestamp?: number;
   } | null>(null);
   const composerInputRef = useRef<HTMLInputElement>(null);
+  // Every version an auto-generate has been attempted for this mount. A Set,
+  // not a single slot: with one slot, selecting V3, switching away, and
+  // switching back re-armed the guard while the first POST was still in
+  // flight, and the GET still reported no brief — so a second, paid
+  // generation went out for a version already being summarised.
+  const autoBriefAttempted = useRef<Set<string>>(new Set());
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
@@ -581,6 +588,68 @@ export default function PortalPage() {
     };
   }, [versions]);
 
+  // One auto-generate attempt per selected version.
+  //
+  // This used to live inside VersionBrief, which mounted in the comment panel
+  // whenever a version was selected. The component now lives in the version
+  // drawer, which most people never open — and the card headline below is read
+  // from a GET that never generates. Leaving the trigger in the component would
+  // mean no brief, so no headline, so no hint that a Brief exists, so nobody
+  // opens the drawer. The cadence here is exactly what the component did: one
+  // attempt per selected version, per mount.
+  useEffect(() => {
+    const target = selectedVersionId;
+    if (!target) return;
+    if (autoBriefAttempted.current.has(target)) return;
+    // Claimed synchronously, before any await. React re-invokes effects in
+    // development, and a guard set after an await lets both invocations through
+    // to a paid endpoint. The cost of claiming early is that a network failure
+    // skips this version for the rest of the session — acceptable, because the
+    // drawer's Summarise and Refresh buttons both still work.
+    autoBriefAttempted.current.add(target);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/versions/${target}/summary`);
+        if (cancelled || !res.ok) return;
+        const body = await res.json();
+        if (cancelled) return;
+        // Switched off for the deployment, unconfigured, or already summarised.
+        if (!body.enabled || !body.configured || body.brief) return;
+        if ((body.facts?.commentCount ?? 0) < BRIEF_MIN_COMMENTS) return;
+
+        setAutoBriefBusy(target);
+        try {
+          const gen = await fetch(`/api/versions/${target}/summary`, { method: 'POST' });
+          if (cancelled || !gen.ok) return;
+          const genBody = await gen.json();
+          if (cancelled) return;
+          const headline = genBody.brief?.headline;
+          // Fold the new headline straight into the rail rather than refetching
+          // every version's summary again.
+          if (headline) setHeadlines((h) => ({ ...h, [target]: headline }));
+        } finally {
+          // Released unconditionally, and only if this run still owns the flag.
+          // Conditioning on `cancelled` stranded it: the effect's one-shot
+          // autoBriefAttempted guard means no later run for the same version
+          // would ever clear it, so switching version mid-POST disabled that
+          // version's Summarise button for the rest of the session. Comparing
+          // against the current value also stops a settling older run from
+          // clearing a newer version's claim.
+          setAutoBriefBusy((current) => (current === target ? null : current));
+        }
+      } catch (err) {
+        console.error('Failed to auto-generate brief:', err);
+        // A brief is an enhancement. Failing to produce one must not put an
+        // error in front of someone reviewing drawings.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVersionId]);
+
   // Fetch files when version changes
   const fetchFiles = useCallback(async (versionId: string) => {
     setFilesLoading(true);
@@ -756,6 +825,21 @@ export default function PortalPage() {
     setActiveCommentId(null);
   };
 
+  // A plain function, matching handleSelectVersion directly above it. Wrapping
+  // it in useCallback would need handleSelectVersion in its dependency array,
+  // and that is redefined every render, so the memo would never hold — while
+  // omitting it trips react-hooks/exhaustive-deps. The sidebar is not memoized,
+  // so a stable identity buys nothing here.
+  const handleOpenVersionDetails = (version: Version) => {
+    // Opening the drawer moves the whole page to that version. Guarded on the
+    // id: handleSelectVersion clears the file list, the selected file, the
+    // active tool and the active comment, so calling it for the version that is
+    // ALREADY selected would throw away the open drawing just because someone
+    // asked to see the version's details.
+    if (version.id !== selectedVersionId) handleSelectVersion(version.id);
+    setDetailVersionId(version.id);
+  };
+
   const confirmDeleteFile = async () => {
     if (!fileToDelete) return;
     const target = fileToDelete;
@@ -789,6 +873,10 @@ export default function PortalPage() {
     }
 
     toast(`Version ${target.versionNumber} deleted`);
+    // The drawer resolves its version from `versions`, so loadVersions() below
+    // would close it anyway — but only after a round trip. Clearing it here
+    // means the drawer does not linger over the confirm's dismissal.
+    if (detailVersionId === target.id) setDetailVersionId(null);
     if (selectedVersionId === target.id) {
       setSelectedVersionId(null);
       setSelectedFileId(null);
@@ -1123,6 +1211,12 @@ export default function PortalPage() {
     (fileToDelete?.commentCount ?? 0) > 0 ||
     Boolean(versions.find((v) => v.id === selectedVersionId)?.publishedAt);
 
+  // Resolved from `versions` each render rather than held in state, so a
+  // version that disappears takes the drawer with it. "Current" is the highest
+  // version number, the same rule FileTreeSidebar uses for its badge gradient.
+  const detailVersion = versions.find((v) => v.id === detailVersionId) ?? null;
+  const maxVersionNumber = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
+
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
@@ -1130,8 +1224,10 @@ export default function PortalPage() {
           versions it creates, and the top bar had the only other copy. */}
       <PortalTopBar project={project} portal={portal} portalId={portalId} />
 
-      {/* 3-Panel Layout */}
-      <div className={`flex-1 grid gap-3 overflow-hidden min-h-0 ${
+      {/* 3-Panel Layout. `relative` so the version detail drawer can sit beside
+          the rail and inherit this row's height, rather than pinning itself to
+          the window and starting above the panels. */}
+      <div className={`relative flex-1 grid gap-3 overflow-hidden min-h-0 ${
         sidebarCollapsed && commentsCollapsed ? 'grid-cols-[48px_1fr_48px]' :
         sidebarCollapsed ? 'grid-cols-[48px_1fr_340px]' :
         commentsCollapsed ? 'grid-cols-[272px_1fr_48px]' :
@@ -1152,9 +1248,7 @@ export default function PortalPage() {
             canUpload ? () => setVersionDrawerOpen(true) : undefined
           }
           loading={loading}
-          onDeleteFile={openFileDelete}
-          onDeleteVersion={openVersionDelete}
-          onDownloadFile={downloadFile}
+          onOpenVersionDetails={handleOpenVersionDetails}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
@@ -1326,7 +1420,6 @@ export default function PortalPage() {
         {/* Right Panel: Comments */}
         <CommentsPanel
           fileId={selectedFileId}
-          versionId={selectedVersionId}
           onCommentClick={handleCommentClick}
           activeCommentId={activeCommentId}
           refreshKey={commentsRefreshKey}
@@ -1334,7 +1427,6 @@ export default function PortalPage() {
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
           onViewImage={setViewportImage}
           onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
-          onSelectCitedComment={handleSelectCitedComment}
           composer={
             <CommentComposer
               text={composerText}
@@ -1350,6 +1442,26 @@ export default function PortalPage() {
               inputRef={composerInputRef}
             />
           }
+        />
+
+        {/* Inside the grid on purpose: it is positioned against this row, so it
+            lines up beside the rail and ends where the rail ends. */}
+        <VersionDetailDrawer
+          version={detailVersion}
+          isCurrent={!!detailVersion && detailVersion.versionNumber === maxVersionNumber}
+          files={files}
+          filesLoading={filesLoading}
+          briefGenerating={!!detailVersion && autoBriefBusy === detailVersion.id}
+          confirmOpen={!!fileToDelete || !!versionToDelete}
+          // The rail's width plus the grid's 12px gap, so the drawer's left
+          // edge meets the rail's right edge.
+          offsetLeft={(sidebarCollapsed ? 48 : 272) + 12}
+          onClose={() => setDetailVersionId(null)}
+          onSelectFile={setSelectedFileId}
+          onSelectCitedComment={handleSelectCitedComment}
+          onDeleteFile={openFileDelete}
+          onDownloadFile={downloadFile}
+          onDeleteVersion={openVersionDelete}
         />
       </div>
 

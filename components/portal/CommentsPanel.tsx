@@ -6,12 +6,11 @@ import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
-import VersionBrief from '@/components/portal/VersionBrief';
 import { getInitials } from '@/lib/initials';
+import { formatFileSize } from '@/lib/versionDetail';
 
 interface CommentsPanelProps {
   fileId: string | null;
-  versionId?: string | null;
   onCommentClick?: (comment: Comment) => void;
   activeCommentId?: string | null;
   refreshKey?: number;
@@ -20,10 +19,6 @@ interface CommentsPanelProps {
   composer?: React.ReactNode;
   onViewImage?: (url: string) => void;
   onCommentsChanged?: () => void;
-  /** A citation chip in the brief was clicked. The comment may live on a
-   * different file than the one currently selected, so this is owned by
-   * whoever owns `fileId`/`activeCommentId` (the page), not this panel. */
-  onSelectCitedComment?: (commentId: string, fileId: string) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -43,12 +38,6 @@ function timeAgo(dateStr: string): string {
 
 function isImageType(contentType: string): boolean {
   return contentType.startsWith('image/');
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // ── Attachment previews ────────────────────────────────────
@@ -466,7 +455,7 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, versionId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged, onSelectCitedComment }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
@@ -574,12 +563,6 @@ export default function CommentsPanel({ fileId, versionId, onCommentClick, activ
 
       {/* Comment list */}
       <div className="flex-1 overflow-y-auto p-[14px] flex flex-col gap-[10px]">
-        {versionId && (
-          <VersionBrief
-            versionId={versionId}
-            onSelectComment={(id, commentFileId) => onSelectCitedComment?.(id, commentFileId)}
-          />
-        )}
         {!fileId ? (
           <p className="text-sm text-stiko-faint text-center py-8">
             Select a file to view comments

@@ -3,40 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
 import { SkeletonBar } from '@/components/ui/Primitives';
-import type { ObjectTransform } from '@/lib/objectTransform';
-
-interface Version {
-  id: string;
-  portalId: string;
-  versionNumber: number;
-  createdAt: string;
-  publishedAt: string | null;
-  canDelete?: boolean;
-  fileCount?: number;
-  commentCount?: number;
-}
-
-interface FileRecord {
-  id: string;
-  versionId: string;
-  filename: string;
-  storageKey: string;
-  fileSize: number;
-  fileType: string;
-  createdAt: string;
-  conversionStatus: 'pending' | 'processing' | 'completed' | 'failed' | null;
-  convertedStorageKey: string | null;
-  conversionJobId: string | null;
-  folderPath: string | null;
-  /** Where the object has been placed in the 3D viewer. Identity for non-3D files. */
-  transform: ObjectTransform;
-  uploadedBy: string | null;
-  /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
-  canDelete?: boolean;
-  /** Server's verdict on whether this caller may download it. Never re-derived client-side. */
-  canDownload?: boolean;
-  commentCount?: number;
-}
+import type { FileRecord, Version } from '@/lib/types';
 
 interface FileTreeSidebarProps {
   versions: Version[];
@@ -53,11 +20,9 @@ interface FileTreeSidebarProps {
   onSubmitVersion?: () => void;
   /** True while versions are still being fetched — shows skeleton placeholders instead of the empty state. */
   loading?: boolean;
-  /** Absent when the viewer may not delete anything — the row then renders no control. */
-  onDeleteFile?: (file: FileRecord) => void;
-  onDeleteVersion?: (version: Version) => void;
-  /** Absent when the viewer may not download anything. */
-  onDownloadFile?: (file: FileRecord) => void;
+  /** Opens the version detail drawer. Required, not optional: every role can
+   *  open it, and the controls inside it gate themselves individually. */
+  onOpenVersionDetails: (version: Version) => void;
 }
 
 interface FolderNode {
@@ -144,14 +109,10 @@ function FolderItem({
   folder,
   selectedFileId,
   onSelectFile,
-  onDeleteFile,
-  onDownloadFile,
 }: {
   folder: FolderNode;
   selectedFileId: string | null;
   onSelectFile: (fileId: string) => void;
-  onDeleteFile?: (file: FileRecord) => void;
-  onDownloadFile?: (file: FileRecord) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -178,8 +139,6 @@ function FolderItem({
               file={file}
               isSelected={file.id === selectedFileId}
               onSelect={() => onSelectFile(file.id)}
-              onDelete={onDeleteFile}
-              onDownload={onDownloadFile}
             />
           ))}
           {folder.children.map((child) => (
@@ -188,8 +147,6 @@ function FolderItem({
               folder={child}
               selectedFileId={selectedFileId}
               onSelectFile={onSelectFile}
-              onDeleteFile={onDeleteFile}
-              onDownloadFile={onDownloadFile}
             />
           ))}
         </div>
@@ -202,58 +159,24 @@ function FileItem({
   file,
   isSelected,
   onSelect,
-  onDelete,
-  onDownload,
 }: {
   file: FileRecord;
   isSelected: boolean;
   onSelect: () => void;
-  onDelete?: (file: FileRecord) => void;
-  onDownload?: (file: FileRecord) => void;
 }) {
   const chip = getFileChip(file.filename, file.fileType);
-  // A div, not a button: the delete control is a sibling of the select control,
-  // because a button inside a button is invalid and the two clicks would fight.
   return (
-    <div className="group flex w-full items-center gap-2.5 py-1">
-      <button
-        onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
-      >
-        <span className="text-[9px] font-extrabold px-[7px] py-[2px] rounded-full flex-shrink-0" style={{ background: chip.bg, color: chip.text }}>
-          {chip.label}
-        </span>
-        <span className={`truncate text-[13px] ${isSelected ? 'font-semibold text-stiko-ink' : 'font-medium text-stiko-secondary group-hover:text-stiko-ink'}`}>
-          {file.filename}
-        </span>
-      </button>
-
-      {onDownload && file.canDownload && (
-        <button
-          onClick={() => onDownload(file)}
-          aria-label={`Download ${file.filename}`}
-          title={`Download ${file.filename}`}
-          className="flex-shrink-0 rounded p-1 text-stiko-faint opacity-0 transition hover:bg-stiko-app hover:text-stiko-ink focus:opacity-100 group-hover:opacity-100"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-        </button>
-      )}
-
-      {onDelete && file.canDelete && (
-        <button
-          onClick={() => onDelete(file)}
-          aria-label={`Delete ${file.filename}`}
-          title={`Delete ${file.filename}`}
-          className="flex-shrink-0 rounded p-1 text-stiko-faint opacity-0 transition hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
-      )}
-    </div>
+    <button
+      onClick={onSelect}
+      className="group flex w-full items-center gap-2.5 py-1 text-left"
+    >
+      <span className="text-[9px] font-extrabold px-[7px] py-[2px] rounded-full flex-shrink-0" style={{ background: chip.bg, color: chip.text }}>
+        {chip.label}
+      </span>
+      <span className={`truncate text-[13px] ${isSelected ? 'font-semibold text-stiko-ink' : 'font-medium text-stiko-secondary group-hover:text-stiko-ink'}`}>
+        {file.filename}
+      </span>
+    </button>
   );
 }
 
@@ -269,9 +192,7 @@ export default function FileTreeSidebar({
   onToggleCollapse,
   onSubmitVersion,
   loading,
-  onDeleteFile,
-  onDeleteVersion,
-  onDownloadFile,
+  onOpenVersionDetails,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
   const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
@@ -333,10 +254,16 @@ export default function FileTreeSidebar({
             const isCurrent = version.versionNumber === maxVersion;
             return (
               <div key={version.id}>
-                <div className="group relative">
+                {/* A div with two sibling buttons, not a button containing a
+                    button: nesting is invalid HTML and the two click targets
+                    would fight. The card still selects the version and expands
+                    its files; the icon opens the detail drawer. */}
+                <div
+                  className={`group flex items-center gap-3 rounded-[12px] pr-2 transition-colors ${isSelected ? 'bg-stiko-primary/20' : 'bg-stiko-primary/[0.08] hover:bg-stiko-primary/[0.14]'}`}
+                >
                   <button
                     onClick={() => onSelectVersion(version.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-[12px] text-left transition-colors ${isSelected ? 'bg-stiko-primary/20' : 'bg-stiko-primary/[0.08] hover:bg-stiko-primary/[0.14]'}`}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
                   >
                     <span
                       className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[13px] font-extrabold"
@@ -357,26 +284,22 @@ export default function FileTreeSidebar({
                         </span>
                       )}
                     </span>
-                    <svg
-                      className={`h-4 w-4 flex-shrink-0 transition-transform text-stiko-primary ${isSelected ? 'rotate-90' : ''}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
                   </button>
 
-                  {onDeleteVersion && version.canDelete && (
-                    <button
-                      onClick={() => onDeleteVersion(version)}
-                      aria-label={`Delete version ${version.versionNumber}`}
-                      title={`Delete version ${version.versionNumber}`}
-                      className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-stiko-faint opacity-0 transition hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
-                    >
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  )}
+                  {/* Revealed on hover, so a rail being scanned stays quiet.
+                      `focus:opacity-100` keeps it reachable by keyboard, where
+                      there is no hover to trigger it — the same pairing the
+                      file rows used before their controls moved in here. */}
+                  <button
+                    onClick={() => onOpenVersionDetails(version)}
+                    aria-label={`Open version ${version.versionNumber} details`}
+                    title={`Version ${version.versionNumber} details`}
+                    className="flex-shrink-0 rounded-[8px] p-1.5 text-stiko-primary opacity-0 transition hover:bg-stiko-primary/20 focus:opacity-100 focus:outline-none focus-visible:shadow-stiko-focus group-hover:opacity-100"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+                    </svg>
+                  </button>
                 </div>
 
                 {/* Selected version's files (bare rows) + folders (filled bars), indented beneath */}
@@ -387,10 +310,10 @@ export default function FileTreeSidebar({
                     ) : (
                       <>
                         {tree.rootFiles.map((file) => (
-                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} onDelete={onDeleteFile} onDownload={onDownloadFile} />
+                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} />
                         ))}
                         {tree.folders.map((folder) => (
-                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} onDeleteFile={onDeleteFile} onDownloadFile={onDownloadFile} />
+                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} />
                         ))}
                       </>
                     )}
