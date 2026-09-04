@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDownloadPresignedUrl } from '@/lib/s3';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { getFileAccess } from '@/lib/access';
 
 /**
  * Hand back a presigned download URL for a stored object.
@@ -29,36 +29,38 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing key parameter' }, { status: 400 });
   }
 
-  const portalId = await portalForStorageKey(storageKey);
-  if (!portalId) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
+  const located = await portalForStorageKey(storageKey);
+  if (!located) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const access = await getPackageAccess(session.user.id, portalId);
-  if (!access) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  // Resolve through the file so the version scope applies — otherwise a
+  // storage key is a way around it.
+  const access = await getFileAccess(session.user.id, located.fileId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const url = await getDownloadPresignedUrl(storageKey);
   return NextResponse.json({ url });
 }
 
-/** Resolve any stored object back to the package it belongs to. */
-async function portalForStorageKey(storageKey: string): Promise<string | null> {
+/** Resolve any stored object back to the file (and package) it belongs to. */
+async function portalForStorageKey(
+  storageKey: string
+): Promise<{ portalId: string; fileId: string } | null> {
   const fileRows = await sql`
-    SELECT v.portal_id AS "portalId"
+    SELECT v.portal_id AS "portalId", f.id AS "fileId"
     FROM files f
     JOIN versions v ON v.id = f.version_id
     WHERE f.storage_key = ${storageKey}
        OR f.converted_storage_key = ${storageKey}
     LIMIT 1
   `;
-  if (fileRows[0]) return fileRows[0].portalId as string;
+  if (fileRows[0]) {
+    return { portalId: fileRows[0].portalId as string, fileId: fileRows[0].fileId as string };
+  }
 
   // Snapshots and attachments both hang off a comment, which hangs off a file.
   // The attachments column is a JSONB array of {storageKey, ...} objects.
   const commentRows = await sql`
-    SELECT v.portal_id AS "portalId"
+    SELECT v.portal_id AS "portalId", f.id AS "fileId"
     FROM comments c
     JOIN files f ON f.id = c.file_id
     JOIN versions v ON v.id = f.version_id
@@ -74,7 +76,9 @@ async function portalForStorageKey(storageKey: string): Promise<string | null> {
        )
     LIMIT 1
   `;
-  if (commentRows[0]) return commentRows[0].portalId as string;
+  if (commentRows[0]) {
+    return { portalId: commentRows[0].portalId as string, fileId: commentRows[0].fileId as string };
+  }
 
   return null;
 }
