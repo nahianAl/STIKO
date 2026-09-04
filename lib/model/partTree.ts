@@ -71,12 +71,14 @@ function ownMeshes(object: THREE.Object3D, isStart: boolean): THREE.Mesh[] {
   return out;
 }
 
+function sumTriangles(meshes: THREE.Mesh[]): number {
+  return meshes.reduce((sum, m) => sum + trianglesOf(m), 0);
+}
+
 function makePart(object: THREE.Object3D, key: string): PartNode {
   const children = boundariesUnder(object, key);
   const meshes = ownMeshes(object, true);
-  const triangles =
-    meshes.reduce((sum, m) => sum + trianglesOf(m), 0) +
-    children.reduce((sum, c) => sum + c.triangles, 0);
+  const triangles = sumTriangles(meshes) + children.reduce((sum, c) => sum + c.triangles, 0);
   return { key, name: object.name ?? '', children, meshes, triangles };
 }
 
@@ -84,6 +86,13 @@ function makePart(object: THREE.Object3D, key: string): PartNode {
  * The part boundaries directly beneath `object`, descending through unmarked intermediates.
  * Exporters routinely insert an unnamed wrapper node between the scene root and the real
  * assembly; treating that wrapper as a part would put every model inside a single useless row.
+ *
+ * Deliberately blind to geometry: any mesh reachable from `object` without crossing a nested
+ * boundary is already accounted for by the caller's own `ownMeshes(object, true)` (that call
+ * recurses through non-boundary structure exactly as this one does), so re-collecting it here
+ * would double-count it. This function's only job is finding the *next* boundary down each
+ * branch. It is safe to use from within `makePart`, and only from there — see `totalPartsUnder`
+ * for the outermost walk, which has no such enclosing `ownMeshes` call to rely on.
  */
 function boundariesUnder(object: THREE.Object3D, prefix: string): PartNode[] {
   const out: PartNode[] = [];
@@ -95,8 +104,38 @@ function boundariesUnder(object: THREE.Object3D, prefix: string): PartNode[] {
   return out;
 }
 
+/**
+ * The top-level forest: real part boundaries, plus whatever it takes to keep the tree total.
+ *
+ * `buildPartTree` never wraps the scene root itself in a `makePart` call, so nothing plays the
+ * role of "owner" for content that sits above every boundary — a mesh attached directly to an
+ * unmarked node, or an entire unmarked subtree with no marked descendant at all, would otherwise
+ * appear in no PartNode anywhere (see `boundariesUnder`'s own docs for why that function alone
+ * can't be the fix: it stays deliberately blind to geometry so it never conflicts with an
+ * enclosing `ownMeshes` call, but at the top level there is no enclosing call to conflict with).
+ *
+ * So this walk additionally asks, for each non-boundary child, whether it owns any geometry no
+ * boundary has claimed (`ownMeshes(child, true)` — stops at nested boundaries, same as always).
+ * If it does, that child becomes a part in its own right via the ordinary `makePart` machinery,
+ * which — because it goes back through the geometry-blind `boundariesUnder` — cannot re-promote
+ * anything beneath it a second time. If it doesn't (a pure pass-through wrapper), we keep
+ * descending in this totality-aware mode, since a real claim point may still be further down.
+ */
+function totalPartsUnder(object: THREE.Object3D, prefix: string): PartNode[] {
+  const out: PartNode[] = [];
+  object.children.forEach((child, i) => {
+    const key = prefix === '' ? String(i) : `${prefix}/${i}`;
+    if (isBoundary(child) || ownMeshes(child, true).length > 0) {
+      out.push(makePart(child, key));
+      return;
+    }
+    out.push(...totalPartsUnder(child, key));
+  });
+  return out;
+}
+
 export function buildPartTree(root: THREE.Object3D): PartNode[] {
-  if (hasMarkers(root)) return boundariesUnder(root, '');
+  if (hasMarkers(root)) return totalPartsUnder(root, '');
 
   return root.children.map((child, i) => {
     const meshes = ownMeshes(child, true);
@@ -105,7 +144,7 @@ export function buildPartTree(root: THREE.Object3D): PartNode[] {
       name: child.name ?? '',
       children: [],
       meshes,
-      triangles: meshes.reduce((sum, m) => sum + trianglesOf(m), 0),
+      triangles: sumTriangles(meshes),
     };
   });
 }

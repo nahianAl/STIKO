@@ -20,6 +20,20 @@ function group(name, marked, ...children) {
   return g;
 }
 
+/**
+ * An indexed mesh: 4 positions but 6 indices, i.e. 2 triangles. A bug that read the position
+ * count instead of the index count would report `floor(4 / 3) = 1` triangle instead of 2, so
+ * the two paths cannot be confused by this fixture.
+ */
+function indexedMesh(name) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(4 * 3), 3));
+  geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2, 0, 2, 3]), 1));
+  const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x8899aa }));
+  m.name = name;
+  return m;
+}
+
 test('unmarked scene treats direct children of the root as parts', () => {
   const root = new THREE.Group();
   root.add(mesh('Body'), mesh('Bonnet'));
@@ -85,6 +99,15 @@ test('triangles accumulate through descendants', () => {
   assert.equal(wheelNode.triangles, 15);
 });
 
+test('triangle count is read from the index, not the position count', () => {
+  const root = new THREE.Group();
+  root.add(indexedMesh('indexed_geo'));
+
+  const [part] = buildPartTree(root);
+
+  assert.equal(part.triangles, 2);
+});
+
 test('unmarked intermediate nodes are skipped, not turned into parts', () => {
   // Marked mode: an unmarked wrapper between the root and a real part.
   const wrapper = new THREE.Group();
@@ -98,6 +121,40 @@ test('unmarked intermediate nodes are skipped, not turned into parts', () => {
   assert.equal(parts.length, 1);
   assert.equal(parts[0].name, 'Body');
   assert.equal(parts[0].key, '0/0');
+});
+
+test('totality: every mesh in the scene reaches exactly one node in the returned tree', () => {
+  const root = new THREE.Group();
+
+  // A normal marked part.
+  root.add(group('Body', true, mesh('body_geo')));
+
+  // An unmarked node that carries a mesh of its own directly — not a pass-through wrapper.
+  const trim = new THREE.Group();
+  trim.name = 'Trim';
+  trim.add(mesh('trim_geo'));
+  root.add(trim);
+
+  // An unmarked subtree with no marked descendant anywhere within it.
+  const loose = new THREE.Group();
+  loose.name = 'Loose';
+  const looseChild = new THREE.Group();
+  looseChild.name = 'LooseChild';
+  looseChild.add(mesh('loose_geo_1'), mesh('loose_geo_2'));
+  loose.add(looseChild);
+  root.add(loose);
+
+  const parts = buildPartTree(root);
+
+  const expectedIds = new Set();
+  root.traverse((object) => {
+    if (object.isMesh) expectedIds.add(object.uuid);
+  });
+
+  const foundIds = flattenParts(parts).flatMap((node) => node.meshes.map((m) => m.uuid));
+
+  assert.equal(foundIds.length, expectedIds.size, 'no mesh should appear twice');
+  assert.deepEqual(new Set(foundIds), expectedIds);
 });
 
 test('an empty scene has no parts', () => {
