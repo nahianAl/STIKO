@@ -321,7 +321,11 @@ export default function FileTreeSidebar({
               <SkeletonBar height={44} secondary />
             </div>
           ) : (
-            <p className="text-[13px] text-stiko-faint py-2">Submit your first version to get started</p>
+            <p className="text-[13px] text-stiko-faint py-2">
+              {onSubmitVersion
+                ? 'Submit your first version to get started'
+                : 'Nothing in this package has been shared with you yet'}
+            </p>
           )
         ) : (
           versions.map((version) => {

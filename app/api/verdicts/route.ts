@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { getVersionAccess } from '@/lib/access';
 
 /**
  * Reviewer verdicts. Version status is derived from these (01) — there is no
@@ -20,15 +20,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'versionId required' }, { status: 400 });
   }
 
-  const portal = await sql`
-    SELECT portal_id AS "portalId" FROM versions WHERE id = ${versionId}
-  `;
-  if (!portal[0]) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
-
-  const access = await getPackageAccess(session.user.id, portal[0].portalId);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // 404 rather than 403: a version outside the caller's scope must look
+  // exactly like one that does not exist.
+  const access = await getVersionAccess(session.user.id, versionId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const rows = await sql`
     SELECT vd.id, vd.verdict, vd.note, vd.created_at AS "createdAt",
@@ -61,6 +56,16 @@ export async function POST(request: NextRequest) {
   const version = versionRows[0];
   if (!version) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  // Access is checked before the draft check, not after: answering "not
+  // published yet" for a version outside the caller's scope would let anyone
+  // signed in distinguish a real draft from one that doesn't exist — the same
+  // oracle this branch exists to close.
+  //
+  // 404 rather than 403: a version outside the caller's scope must look
+  // exactly like one that does not exist.
+  const access = await getVersionAccess(session.user.id, versionId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
   // A draft has not been sent to anyone, so there is nothing to have an opinion
   // about yet.
   if (!version.publishedAt) {
@@ -69,9 +74,6 @@ export async function POST(request: NextRequest) {
       { status: 409 }
     );
   }
-
-  const access = await getPackageAccess(session.user.id, version.portalId);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   // A viewer can look but not weigh in — a verdict is a review action.
   if (!access.canComment) {
     return NextResponse.json(

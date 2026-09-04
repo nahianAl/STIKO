@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess, portalForFile } from '@/lib/access';
+import { getFileAccess } from '@/lib/access';
 import { isValidTransform } from '@/lib/objectTransform';
 
 /**
@@ -19,12 +19,9 @@ export async function PATCH(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Resolve the package from the file rather than trusting anything in the body:
-  // otherwise the file id is itself the capability.
-  const portalId = await portalForFile(params.id);
-  if (!portalId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-
-  const access = await getPackageAccess(session.user.id, portalId);
+  // getFileAccess resolves the file's version and applies the scope, which the
+  // portalForFile + getPackageAccess pair did not.
+  const access = await getFileAccess(session.user.id, params.id);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.canTransform) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

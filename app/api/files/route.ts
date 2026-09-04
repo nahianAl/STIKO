@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { canDeleteContent, canDownloadFile, getPackageAccess } from '@/lib/access';
+import { canDeleteContent, canDownloadFile, getVersionAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -18,15 +18,10 @@ export async function GET(request: NextRequest) {
 
   // A package is a permission boundary. This route previously listed the files
   // of any version to anyone who knew its id, signed in or not.
-  const versionRows = await sql`
-    SELECT portal_id AS "portalId" FROM versions WHERE id = ${versionId}
-  `;
-  if (!versionRows[0]) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
-
-  const access = await getPackageAccess(userId, versionRows[0].portalId);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // 404 rather than 403: a version outside the caller's scope must look
+  // exactly like one that does not exist.
+  const access = await getVersionAccess(userId, versionId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const rows = await sql`
     SELECT id, version_id AS "versionId", filename, storage_key AS "storageKey",

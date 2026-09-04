@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { getVersionAccess } from '@/lib/access';
 import { versionFacts, versionCoverage, versionCommentIndex, isStale } from '@/lib/ai/facts';
 import { summarizeVersion, readVersionBrief } from '@/lib/ai/summarize';
 import { isConfigured } from '@/lib/ai/provider';
@@ -40,9 +40,11 @@ async function gate(versionId: string) {
   }
 
   // Keyed on a user id, so anonymous link viewers have no access here at all.
-  const access = await getPackageAccess(session.user.id, rows[0].portalId);
+  // 404 rather than 403: a version outside the caller's scope must look
+  // exactly like one that does not exist.
+  const access = await getVersionAccess(session.user.id, versionId);
   if (!access) {
-    return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
+    return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }) };
   }
 
   return { enabled: Boolean(rows[0].enabled) };

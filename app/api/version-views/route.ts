@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess } from '@/lib/access';
+import { getVersionAccess } from '@/lib/access';
 
 /**
  * Record that someone opened a version. This is what lets "Waiting on" (4b)
@@ -20,13 +20,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'versionId required' }, { status: 400 });
   }
 
-  const rows = await sql`
-    SELECT portal_id AS "portalId" FROM versions WHERE id = ${versionId}
-  `;
-  if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-
-  const access = await getPackageAccess(session.user.id, rows[0].portalId);
-  if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // 404 rather than 403: a version outside the caller's scope must look
+  // exactly like one that does not exist.
+  const access = await getVersionAccess(session.user.id, versionId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // First open is the one that matters; re-opening does not reset the clock.
   await sql`

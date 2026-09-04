@@ -30,6 +30,8 @@ interface Person {
   name: string | null;
   role: Role;
   canDownload?: boolean;
+  allVersions?: boolean;
+  versionIds?: string[];
 }
 
 interface Pending {
@@ -42,6 +44,8 @@ interface Pending {
   createdAt: string;
   expiresAt: string;
   canDownload?: boolean;
+  allVersions?: boolean;
+  versionIds?: string[];
 }
 
 /** 2h — Package people. The package-scoped counterpart to 4a. */
@@ -56,15 +60,17 @@ export default function PackagePeople() {
   } | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
+  const [versions, setVersions] = useState<{ id: string; versionNumber: number }[]>([]);
   const [emails, setEmails] = useState('');
   const [role, setRole] = useState<Role>('commenter');
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
-    const [settingsRes, peopleRes, pendingRes] = await Promise.all([
+    const [settingsRes, peopleRes, pendingRes, versionsRes] = await Promise.all([
       fetch(`/api/portals/${id}/settings`),
       fetch(`/api/participants?portalId=${id}`),
       fetch(`/api/invites?portalId=${id}`),
+      fetch(`/api/versions?portalId=${id}`),
     ]);
     if (settingsRes.ok) {
       const d = await settingsRes.json();
@@ -76,6 +82,7 @@ export default function PackagePeople() {
     }
     if (peopleRes.ok) setPeople(await peopleRes.json());
     if (pendingRes.ok) setPending(await pendingRes.json());
+    setVersions(versionsRes.ok ? await versionsRes.json() : []);
   }, [id]);
 
   useEffect(() => {
@@ -131,6 +138,41 @@ export default function PackagePeople() {
     }
     toast(next ? 'Download allowed' : 'Download turned off');
     load();
+  };
+
+  // Sent whole rather than as a diff: the panel always holds the complete
+  // selection, and a diff would need a merge rule for a scope changed in
+  // another tab.
+  const changeScope = async (
+    userId: string,
+    allVersions: boolean,
+    versionIds: string[]
+  ) => {
+    const res = await fetch('/api/participants/versions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, portalId: id, allVersions, versionIds }),
+    });
+    if (!res.ok) {
+      toast('Could not change which versions they can see');
+      return;
+    }
+    toast('Versions updated');
+    load();
+  };
+
+  // Guards every call site below: unchecking "All versions" with nothing yet
+  // picked, or deselecting the last remaining version chip, both produce
+  // allVersions: false with an empty list — a scope that admits nothing,
+  // silently. Short-circuited here rather than sent to a route that now
+  // rejects it anyway.
+  const changeScopeGuarded = (
+    userId: string,
+    nextAllVersions: boolean,
+    nextVersionIds: string[]
+  ) => {
+    if (!nextAllVersions && nextVersionIds.length === 0) return;
+    changeScope(userId, nextAllVersions, nextVersionIds);
   };
 
   // Two handles, because an invitation has two shapes. An email invite is keyed
@@ -242,42 +284,81 @@ export default function PackagePeople() {
             {people.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center gap-3 border-b border-stiko-border py-[10px] last:border-0"
+                className="border-b border-stiko-border py-[10px] last:border-0"
               >
-                <Avatar
-                  id={p.userId}
-                  name={p.name ?? p.email}
-                  size={32}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-bold text-stiko-ink">
-                    {p.name ?? p.email}
-                  </div>
-                  <div className="truncate text-[11.5px] text-stiko-muted">
-                    {p.email}
-                  </div>
-                </div>
-                <label
-                  className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary"
-                  title="Allow this person to download files from this package"
-                >
-                  <input
-                    type="checkbox"
-                    checked={Boolean(p.canDownload)}
-                    onChange={(e) => changeDownload(p.userId, e.target.checked)}
-                    className="h-[14px] w-[14px] accent-stiko-primary"
+                <div className="flex items-center gap-3">
+                  <Avatar
+                    id={p.userId}
+                    name={p.name ?? p.email}
+                    size={32}
                   />
-                  Download
-                </label>
-                <select
-                  value={p.role}
-                  onChange={(e) => changeRole(p.userId, e.target.value as Role)}
-                  className="shrink-0 rounded-[8px] border-[1.5px] border-stiko-divider bg-white px-2 py-1 text-[12px] font-semibold capitalize text-stiko-ink outline-none focus:border-stiko-primary"
-                >
-                  <option value="viewer">Viewer</option>
-                  <option value="commenter">Commenter</option>
-                  <option value="uploader">Uploader</option>
-                </select>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-bold text-stiko-ink">
+                      {p.name ?? p.email}
+                    </div>
+                    <div className="truncate text-[11.5px] text-stiko-muted">
+                      {p.email}
+                    </div>
+                  </div>
+                  <label
+                    className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary"
+                    title="Allow this person to download files from this package"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(p.canDownload)}
+                      onChange={(e) => changeDownload(p.userId, e.target.checked)}
+                      className="h-[14px] w-[14px] accent-stiko-primary"
+                    />
+                    Download
+                  </label>
+                  <select
+                    value={p.role}
+                    onChange={(e) => changeRole(p.userId, e.target.value as Role)}
+                    className="shrink-0 rounded-[8px] border-[1.5px] border-stiko-divider bg-white px-2 py-1 text-[12px] font-semibold capitalize text-stiko-ink outline-none focus:border-stiko-primary"
+                  >
+                    <option value="viewer">Viewer</option>
+                    <option value="commenter">Commenter</option>
+                    <option value="uploader">Uploader</option>
+                  </select>
+                </div>
+                {(p.role === 'commenter' || p.role === 'viewer') && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <label className="flex items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary">
+                      <input
+                        type="checkbox"
+                        checked={p.allVersions !== false}
+                        onChange={(e) => changeScopeGuarded(p.userId, e.target.checked, p.versionIds ?? [])}
+                        className="h-[14px] w-[14px] accent-stiko-primary"
+                      />
+                      All versions
+                    </label>
+                    {p.allVersions === false &&
+                      versions.map((v) => {
+                        const on = (p.versionIds ?? []).includes(v.id);
+                        return (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={() =>
+                              changeScopeGuarded(
+                                p.userId,
+                                false,
+                                on
+                                  ? (p.versionIds ?? []).filter((x) => x !== v.id)
+                                  : [...(p.versionIds ?? []), v.id]
+                              )
+                            }
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-bold transition ${
+                              on ? 'bg-stiko-primary text-white' : 'bg-stiko-app text-stiko-secondary'
+                            }`}
+                          >
+                            V{v.versionNumber}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
             ))}
             {people.length === 0 && (
@@ -298,61 +379,103 @@ export default function PackagePeople() {
                 return (
                   <div
                     key={p.token ?? p.email ?? p.createdAt}
-                    className="flex items-center gap-3 border-b border-stiko-border py-[10px] last:border-0"
+                    className="border-b border-stiko-border py-[10px] last:border-0"
                   >
-                    <Avatar
-                      id={p.email ?? p.token ?? p.createdAt}
-                      name={p.email ?? 'Link'}
-                      size={32}
-                      pending
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-bold text-stiko-ink">
-                        {p.email ?? 'Anyone with the link'}
+                    <div className="flex items-center gap-3">
+                      <Avatar
+                        id={p.email ?? p.token ?? p.createdAt}
+                        name={p.email ?? 'Link'}
+                        size={32}
+                        pending
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-bold text-stiko-ink">
+                          {p.email ?? 'Anyone with the link'}
+                        </div>
+                        <div className="truncate text-[11.5px] text-stiko-muted">
+                          <span className="capitalize">{p.role}</span> ·{' '}
+                          {p.multiUse ? 'link created' : 'invited'}{' '}
+                          {relativeTime(p.createdAt)}
+                          {hoursLeft > 0 && hoursLeft < 24 && (
+                            <span className="ml-1 font-bold text-[#B23A52]">
+                              · expires in {Math.max(1, Math.round(hoursLeft))}h
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="truncate text-[11.5px] text-stiko-muted">
-                        <span className="capitalize">{p.role}</span> ·{' '}
-                        {p.multiUse ? 'link created' : 'invited'}{' '}
-                        {relativeTime(p.createdAt)}
-                        {hoursLeft > 0 && hoursLeft < 24 && (
-                          <span className="ml-1 font-bold text-[#B23A52]">
-                            · expires in {Math.max(1, Math.round(hoursLeft))}h
-                          </span>
+                      <div className="flex shrink-0 items-center gap-3 text-[12px] font-bold">
+                        {/* A share link has no email, and a link can never carry the grant. */}
+                        {p.email && (
+                          <label
+                            className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary"
+                            title="Allow this person to download files once they accept"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(p.canDownload)}
+                              onChange={(e) => changeDownload(p.email!, e.target.checked)}
+                              className="h-[14px] w-[14px] accent-stiko-primary"
+                            />
+                            Download
+                          </label>
                         )}
+                        {/* Nothing to resend a share link to. */}
+                        {p.email && (
+                          <button
+                            onClick={() => resend(p.email!, p.role)}
+                            className="text-stiko-primary hover:text-stiko-primary-hover"
+                          >
+                            Resend
+                          </button>
+                        )}
+                        <button
+                          onClick={() => revoke(p)}
+                          className="text-[#B23A52] hover:opacity-80"
+                        >
+                          Revoke
+                        </button>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-3 text-[12px] font-bold">
-                      {/* A share link has no email, and a link can never carry the grant. */}
-                      {p.email && (
-                        <label
-                          className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary"
-                          title="Allow this person to download files once they accept"
-                        >
+                    {/* Keyed on email, not a user id — a pending row has no
+                        participant yet. A share link has no email, so it gets
+                        no control at all: there is nobody to narrow. */}
+                    {p.email && (p.role === 'commenter' || p.role === 'viewer') && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <label className="flex items-center gap-1.5 text-[11.5px] font-semibold text-stiko-secondary">
                           <input
                             type="checkbox"
-                            checked={Boolean(p.canDownload)}
-                            onChange={(e) => changeDownload(p.email!, e.target.checked)}
+                            checked={p.allVersions !== false}
+                            onChange={(e) => changeScopeGuarded(p.email!, e.target.checked, p.versionIds ?? [])}
                             className="h-[14px] w-[14px] accent-stiko-primary"
                           />
-                          Download
+                          All versions
                         </label>
-                      )}
-                      {/* Nothing to resend a share link to. */}
-                      {p.email && (
-                        <button
-                          onClick={() => resend(p.email!, p.role)}
-                          className="text-stiko-primary hover:text-stiko-primary-hover"
-                        >
-                          Resend
-                        </button>
-                      )}
-                      <button
-                        onClick={() => revoke(p)}
-                        className="text-[#B23A52] hover:opacity-80"
-                      >
-                        Revoke
-                      </button>
-                    </div>
+                        {p.allVersions === false &&
+                          versions.map((v) => {
+                            const on = (p.versionIds ?? []).includes(v.id);
+                            return (
+                              <button
+                                key={v.id}
+                                type="button"
+                                onClick={() =>
+                                  changeScopeGuarded(
+                                    p.email!,
+                                    false,
+                                    on
+                                      ? (p.versionIds ?? []).filter((x) => x !== v.id)
+                                      : [...(p.versionIds ?? []), v.id]
+                                  )
+                                }
+                                className={`rounded-full px-2 py-0.5 text-[11px] font-bold transition ${
+                                  on ? 'bg-stiko-primary text-white' : 'bg-stiko-app text-stiko-secondary'
+                                }`}
+                              >
+                                V{v.versionNumber}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
                 );
               })}

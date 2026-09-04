@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { canDeleteContent, getPackageAccess } from '@/lib/access';
+import { canDeleteContent, canSeeVersion, getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -42,18 +42,27 @@ export async function GET(request: NextRequest) {
         ORDER BY v.version_number DESC
       `;
 
+  // A scoped reviewer sees only their versions — no row, no count, nothing
+  // about the rest. The version number still reveals that a history exists,
+  // which is accepted; the content of it does not.
+  const visible = rows.filter((r) =>
+    canSeeVersion(access.versionScope, r.id as string)
+  );
+
   // Counts come back with the rows so the delete confirm can state what dies
   // without a second round trip.
-  const counts = await sql`
-    SELECT v.id,
-           COUNT(DISTINCT f.id) AS "fileCount",
-           COUNT(DISTINCT c.id) AS "commentCount"
-    FROM versions v
-    LEFT JOIN files f ON f.version_id = v.id
-    LEFT JOIN comments c ON c.file_id = f.id
-    WHERE v.portal_id = ${portalId}
-    GROUP BY v.id
-  `;
+  const counts = visible.length
+    ? await sql`
+        SELECT v.id,
+               COUNT(DISTINCT f.id) AS "fileCount",
+               COUNT(DISTINCT c.id) AS "commentCount"
+        FROM versions v
+        LEFT JOIN files f ON f.version_id = v.id
+        LEFT JOIN comments c ON c.file_id = f.id
+        WHERE v.id = ANY(${visible.map((r) => r.id as string)})
+        GROUP BY v.id
+      `
+    : [];
   const countsById = new Map(
     counts.map((c) => [
       c.id as string,
@@ -65,7 +74,7 @@ export async function GET(request: NextRequest) {
   );
 
   return NextResponse.json(
-    rows.map((row) => ({
+    visible.map((row) => ({
       ...row,
       canDelete: canDeleteContent({
         role: access.role,

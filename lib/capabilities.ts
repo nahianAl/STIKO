@@ -131,3 +131,21 @@ export function canDownloadFile(ctx: DownloadContext): boolean {
     }
   }
 }
+
+/** Which versions a person may see. 'all' includes versions not yet created. */
+export type VersionScope = 'all' | string[];
+
+/**
+ * Whether this scope admits this version.
+ *
+ * The logic is one line; the reason it lives here is that a dozen routes
+ * depend on it, so it needs a single place to be read and a single place to be
+ * asserted without a database.
+ *
+ * An empty list admits nothing, which is right rather than a degenerate case:
+ * deleting a version cascades its scope rows away, so someone scoped to a
+ * single deleted version lands here and should see nothing.
+ */
+export function canSeeVersion(scope: VersionScope, versionId: string): boolean {
+  return scope === 'all' || scope.includes(versionId);
+}

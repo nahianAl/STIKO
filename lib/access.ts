@@ -1,8 +1,8 @@
 import { sql } from '@/lib/db';
-import { capabilitiesFor, canDeleteContent, canDownloadFile, type Capabilities, type DeleteContext, type DownloadContext, type EffectiveRole, type PackageRole, type ProjectRole } from '@/lib/capabilities';
+import { capabilitiesFor, canDeleteContent, canDownloadFile, canSeeVersion, type Capabilities, type DeleteContext, type DownloadContext, type EffectiveRole, type PackageRole, type ProjectRole, type VersionScope } from '@/lib/capabilities';
 
-export { capabilitiesFor, canDeleteContent, canDownloadFile };
-export type { Capabilities, DeleteContext, DownloadContext, EffectiveRole, PackageRole, ProjectRole };
+export { capabilitiesFor, canDeleteContent, canDownloadFile, canSeeVersion };
+export type { Capabilities, DeleteContext, DownloadContext, EffectiveRole, PackageRole, ProjectRole, VersionScope };
 
 /**
  * Access control — stiko_handoff/01.
@@ -25,6 +25,8 @@ export interface Access extends Capabilities {
   isProjectMember: boolean;
   /** Whether this person may take copies of files away. Always true for members. */
   mayDownload: boolean;
+  /** Which versions this person may see. Always 'all' for members and uploaders. */
+  versionScope: VersionScope;
 }
 
 /**
@@ -40,7 +42,9 @@ export async function getPackageAccess(
       pr.owner_id AS "ownerId",
       pm.role     AS "memberRole",
       pa.role     AS "guestRole",
-      pa.can_download AS "guestCanDownload"
+      pa.can_download AS "guestCanDownload",
+      pa.id           AS "participantId",
+      pa.all_versions AS "guestAllVersions"
     FROM portals po
     JOIN projects pr ON pr.id = po.project_id
     LEFT JOIN project_members pm
@@ -54,22 +58,59 @@ export async function getPackageAccess(
   if (!row) return null;
 
   if (row.ownerId === userId) {
-    return { role: 'owner', isProjectMember: true, mayDownload: true, ...capabilitiesFor('owner') };
+    return { role: 'owner', isProjectMember: true, mayDownload: true, versionScope: 'all', ...capabilitiesFor('owner') };
   }
 
   if (row.memberRole === 'coordinator') {
-    return { role: 'coordinator', isProjectMember: true, mayDownload: true, ...capabilitiesFor('coordinator') };
+    return { role: 'coordinator', isProjectMember: true, mayDownload: true, versionScope: 'all', ...capabilitiesFor('coordinator') };
   }
 
   const guest = row.guestRole as PackageRole | null;
   if (!guest) return null;
 
+  // An uploader's work builds on what came before, so scoping one would break
+  // the thing they are there to do. Only commenters and viewers are narrowed.
+  let versionScope: VersionScope = 'all';
+  if (guest !== 'uploader' && row.guestAllVersions === false) {
+    const scoped = await sql`
+      SELECT version_id AS "versionId"
+      FROM participant_versions
+      WHERE participant_id = ${row.participantId}
+    `;
+    versionScope = scoped.map((r) => r.versionId as string);
+  }
+
   return {
     role: guest,
     isProjectMember: false,
     mayDownload: Boolean(row.guestCanDownload),
+    versionScope,
     ...capabilitiesFor(guest),
   };
+}
+
+/**
+ * The caller's access to one version, or null if they may not see it.
+ *
+ * Null covers three cases deliberately made indistinguishable: no such
+ * version, no access to its package, and not in your scope. A version you were
+ * not given must look exactly like one that never existed, or the id becomes a
+ * way to learn what a package contains.
+ */
+export async function getVersionAccess(
+  userId: string,
+  versionId: string
+): Promise<Access | null> {
+  const rows = await sql`
+    SELECT portal_id AS "portalId" FROM versions WHERE id = ${versionId}
+  `;
+  if (!rows[0]) return null;
+
+  const access = await getPackageAccess(userId, rows[0].portalId as string);
+  if (!access) return null;
+  if (!canSeeVersion(access.versionScope, versionId)) return null;
+
+  return access;
 }
 
 /** Whether this user can see the project itself (members only, never guests). */
@@ -90,29 +131,41 @@ export async function isProjectMember(
 }
 
 /**
- * The package a file belongs to, or null if there is no such file.
+ * The package and version a file belongs to, or null if there is no such file.
  *
  * Anything keyed by fileId — comments, markups, downloads — must resolve
  * through here before answering, or the fileId itself becomes the capability.
  */
-export async function portalForFile(fileId: string): Promise<string | null> {
+export async function portalForFile(
+  fileId: string
+): Promise<{ portalId: string; versionId: string } | null> {
   const rows = await sql`
-    SELECT v.portal_id AS "portalId"
+    SELECT v.portal_id AS "portalId", v.id AS "versionId"
     FROM files f JOIN versions v ON v.id = f.version_id
     WHERE f.id = ${fileId}
     LIMIT 1
   `;
-  return rows[0] ? (rows[0].portalId as string) : null;
+  return rows[0]
+    ? { portalId: rows[0].portalId as string, versionId: rows[0].versionId as string }
+    : null;
 }
 
-/** Convenience: the caller's access to the package a file lives in. */
+/**
+ * The caller's access to the package a file lives in, or null if they may not
+ * see it — including when the file's version is outside their scope.
+ */
 export async function getFileAccess(
   userId: string,
   fileId: string
 ): Promise<Access | null> {
-  const portalId = await portalForFile(fileId);
-  if (!portalId) return null;
-  return getPackageAccess(userId, portalId);
+  const location = await portalForFile(fileId);
+  if (!location) return null;
+
+  const access = await getPackageAccess(userId, location.portalId);
+  if (!access) return null;
+  if (!canSeeVersion(access.versionScope, location.versionId)) return null;
+
+  return access;
 }
 
 /** Every package id this user may see, across everything. */
@@ -190,6 +243,7 @@ export async function getFileDeleteDecision(
 ): Promise<DeleteDecision | null> {
   const rows = await sql`
     SELECT v.portal_id       AS "portalId",
+           v.id              AS "versionId",
            f.uploaded_by     AS "uploadedBy",
            v.published_at    AS "publishedAt"
     FROM files f
@@ -201,6 +255,9 @@ export async function getFileDeleteDecision(
 
   const access = await getPackageAccess(userId, row.portalId as string);
   if (!access) return null;
+  // A version outside the caller's scope must be indistinguishable from one
+  // that does not exist, so this returns null rather than a denied decision.
+  if (!canSeeVersion(access.versionScope, row.versionId as string)) return null;
 
   return {
     allowed: canDeleteContent({
@@ -232,6 +289,7 @@ export async function getVersionDeleteDecision(
 
   const access = await getPackageAccess(userId, row.portalId as string);
   if (!access) return null;
+  if (!canSeeVersion(access.versionScope, versionId)) return null;
 
   const fileRows = await sql`
     SELECT id FROM files WHERE version_id = ${versionId}
@@ -271,6 +329,7 @@ export async function getFileDownloadDecision(
 ): Promise<DownloadDecision | null> {
   const rows = await sql`
     SELECT v.portal_id     AS "portalId",
+           v.id            AS "versionId",
            f.uploaded_by   AS "uploadedBy",
            f.storage_key   AS "storageKey",
            f.filename      AS "filename"
@@ -283,6 +342,9 @@ export async function getFileDownloadDecision(
 
   const access = await getPackageAccess(userId, row.portalId as string);
   if (!access) return null;
+  // Without this a scoped reviewer with a download grant could fetch a file
+  // from a version they were never given, by id.
+  if (!canSeeVersion(access.versionScope, row.versionId as string)) return null;
 
   return {
     allowed: canDownloadFile({

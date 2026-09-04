@@ -84,6 +84,19 @@ export async function POST(request: NextRequest) {
       JOIN users u ON u.id = p.user_id
       WHERE p.portal_id = ${version.portalId}
         AND p.user_id <> ${session.user.id}
+        -- Notify whoever can see this version, however their scope was set —
+        -- not just the unscoped. Nothing stops an owner scoping someone to a
+        -- draft before it publishes (the scope editor lists drafts as
+        -- selectable chips), so "a brand-new version can't be in anyone's
+        -- explicit scope yet" does not actually hold.
+        AND (
+          p.all_versions = TRUE
+          OR p.role = 'uploader'
+          OR EXISTS (
+            SELECT 1 FROM participant_versions pv
+            WHERE pv.participant_id = p.id AND pv.version_id = ${versionId}
+          )
+        )
         AND NOT EXISTS (
           SELECT 1 FROM portal_mutes m
           WHERE m.portal_id = p.portal_id AND m.user_id = p.user_id

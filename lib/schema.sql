@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS invite_tokens (
   token TEXT UNIQUE NOT NULL,
   portal_id TEXT NOT NULL REFERENCES portals(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('viewer', 'commenter', 'uploader')),
+  all_versions BOOLEAN NOT NULL DEFAULT TRUE,
   can_download BOOLEAN NOT NULL DEFAULT FALSE,
   -- Null for a share link, which has no named recipient. See 003-share-links.sql.
   email TEXT,
@@ -86,6 +87,7 @@ CREATE TABLE IF NOT EXISTS participants (
   portal_id TEXT NOT NULL REFERENCES portals(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('viewer', 'commenter', 'uploader')),
+  all_versions BOOLEAN NOT NULL DEFAULT TRUE,
   can_download BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(portal_id, user_id)
@@ -99,6 +101,20 @@ CREATE TABLE IF NOT EXISTS versions (
   published_at TIMESTAMPTZ,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS participant_versions (
+  id TEXT PRIMARY KEY,
+  participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  version_id TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+  UNIQUE(participant_id, version_id)
+);
+
+CREATE TABLE IF NOT EXISTS invite_token_versions (
+  id TEXT PRIMARY KEY,
+  token_id TEXT NOT NULL REFERENCES invite_tokens(id) ON DELETE CASCADE,
+  version_id TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+  UNIQUE(token_id, version_id)
 );
 
 CREATE TABLE IF NOT EXISTS files (
