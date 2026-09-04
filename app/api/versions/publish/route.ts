@@ -84,6 +84,10 @@ export async function POST(request: NextRequest) {
       JOIN users u ON u.id = p.user_id
       WHERE p.portal_id = ${version.portalId}
         AND p.user_id <> ${session.user.id}
+        -- A version published seconds ago cannot be in anyone's explicit
+        -- scope, so only the unscoped can see it. Telling a scoped reviewer
+        -- would leak by email exactly what the scope hides in the UI.
+        AND p.all_versions = TRUE
         AND NOT EXISTS (
           SELECT 1 FROM portal_mutes m
           WHERE m.portal_id = p.portal_id AND m.user_id = p.user_id
