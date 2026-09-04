@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Document, Primitive, WebIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { optimizeGlb } from '../../lib/model/optimizeGlb.ts';
+import { PART_MARKER } from '../../lib/model/partTree.ts';
 
 /**
  * A stand-in for what Rhino produces: one node, one mesh and one primitive per triangle,
@@ -251,4 +253,153 @@ test('line geometry index count is preserved exactly through the chain', async (
     stats.before.lineIndices,
     'merging must not add restart sentinels or drop line indices'
   );
+});
+
+/**
+ * What a CAD exporter emits: `partCount` named objects, each fragmented into
+ * `fragmentsPerPart` primitives, dealt `materialCount` materials round-robin. This is the
+ * shape that used to collapse to one primitive per material with every name erased.
+ */
+function fragmentedParts(partCount, fragmentsPerPart, materialCount = 2) {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = Array.from({ length: materialCount }, (_, m) =>
+    doc.createMaterial(`mat_${m}`).setBaseColorFactor([m / materialCount, 0.5, 0.5, 1])
+  );
+
+  for (let p = 0; p < partCount; p++) {
+    const mesh = doc.createMesh(`part_${p}`);
+    for (let f = 0; f < fragmentsPerPart; f++) {
+      const position = doc.createAccessor().setType('VEC3')
+        .setArray(new Float32Array([f, p, 0, f + 1, p, 0, f, p + 1, 0])).setBuffer(buffer);
+      mesh.addPrimitive(
+        doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[f % materialCount])
+      );
+    }
+    scene.addChild(doc.createNode(`part_${p}`).setMesh(mesh).setExtras({ [PART_MARKER]: true }));
+  }
+  return doc;
+}
+
+test('parts survive optimization while their fragments are merged away', async () => {
+  const input = await toArrayBuffer(fragmentedParts(6, 50, 2));
+
+  const { stats, buffer } = await optimizeGlb(input);
+
+  assert.equal(stats.before.parts, 6);
+  assert.equal(stats.after.parts, 6, 'six parts in, six parts out');
+  // 6 parts x 50 fragments = 300 primitives in; 6 parts x 2 materials = 12 out.
+  assert.equal(stats.before.primitives, 300);
+  assert.equal(stats.after.primitives, 12);
+  assert.equal(stats.after.triangles, stats.before.triangles);
+
+  const doc = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(buffer));
+  const nodes = doc.getRoot().listNodes().filter((n) => n.getExtras()[PART_MARKER] === true);
+  assert.equal(nodes.length, 6);
+  assert.deepEqual(nodes.map((n) => n.getName()).sort(), [
+    'part_0', 'part_1', 'part_2', 'part_3', 'part_4', 'part_5',
+  ]);
+});
+
+test('part names survive — the regression this feature exists to fix', async () => {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('SteelGrey').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Brass').setBaseColorFactor([0.7, 0.55, 0.2, 1]),
+  ];
+  ['Body', 'Flange_A', 'Flange_B', 'Bonnet', 'Stem', 'Handwheel'].forEach((name, i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[i % 2]);
+    scene.addChild(
+      doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim))
+        .setExtras({ [PART_MARKER]: true })
+    );
+  });
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  // Before this change: 6 nodes / 6 primitives in, 2 nodes / 2 primitives out.
+  assert.equal(stats.after.parts, 6);
+});
+
+test('same-named siblings become one part, not one per material', async () => {
+  // What Rhino emits: one node per object AND per material, so a two-material rim is two
+  // sibling nodes both called "Rim".
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+  const result = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const topLevel = result.getRoot().listScenes()[0].listChildren();
+
+  assert.deepEqual(topLevel.map((n) => n.getName()).sort(), ['Rim', 'Tire']);
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+  assert.equal(rim.listChildren().length, 2, 'both material pieces live under the one Rim part');
+});
+
+test('a file that names nothing takes the unsegmented path and reports no parts', async () => {
+  // Three unnamed nodes sharing a material. There is no part information in this file, so
+  // the honest answer is "no separable parts" — and with nothing to protect, the old
+  // aggressive merge applies and all three collapse into one primitive.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  for (let i = 0; i < 3; i++) {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode('').setMesh(doc.createMesh('').addPrimitive(prim)));
+  }
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 0, 'nothing named means nothing to call a part');
+  assert.equal(stats.after.primitives, 1, 'and with no parts to protect, the old merge applies');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
+test('one named node among unnamed ones is enough to take the segmented path', async () => {
+  // The discriminator is "does anything carry a name", so a single named object must switch
+  // modes — otherwise a mostly-anonymous export would silently lose the one part it declared.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  ['', 'Bonnet', ''].forEach((name, i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 1, 'only the named node is a part');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
+test('a document built without our stamps still optimizes, and conserves its parts', async () => {
+  // fragmentedGlb builds nodes the way a raw exporter would. Once optimizeGlb stamps every
+  // geometry-carrying node (Step 8), these count as parts too — so the guarantee under test
+  // is conservation, which holds either way, not a particular count.
+  const { stats } = await optimizeGlb(await toArrayBuffer(fragmentedGlb(100, 2)));
+
+  assert.equal(stats.after.parts, stats.before.parts);
+  assert.ok(stats.after.primitives < stats.before.primitives, 'still merged');
 });

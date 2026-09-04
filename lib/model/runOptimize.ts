@@ -119,8 +119,8 @@ async function prepareViewerVariantNow(file: File): Promise<VariantResult | null
   return {
     buffer: optimized.buffer,
     summary:
-      `Optimised ${file.name}: ${before.primitives} → ${after.primitives} draw calls, ` +
-      `${after.triangles} triangles preserved, ` +
+      `Optimised ${file.name}: ${before.primitives} → ${after.primitives} primitives, ` +
+      `${after.parts} parts preserved, ${after.triangles} triangles preserved, ` +
       `${Math.round(before.bytes / 1024)}KB → ${Math.round(after.bytes / 1024)}KB`,
   };
 }

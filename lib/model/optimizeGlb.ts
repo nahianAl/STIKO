@@ -1,4 +1,4 @@
-import { Primitive, WebIO, type Document } from '@gltf-transform/core';
+import { Node, Primitive, WebIO, type Document } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import {
   convertPrimitiveToLines,
@@ -6,9 +6,11 @@ import {
   dedup,
   flatten,
   join,
+  joinPrimitives,
   prune,
   weld,
 } from '@gltf-transform/functions';
+import { PART_MARKER } from './partTree.ts';
 
 /**
  * Collapses a fragmented glTF export into as few draw calls as its materials allow.
@@ -33,6 +35,12 @@ export interface OptimizeCounts {
    * see the note on measure() below.
    */
   lineIndices: number;
+  /**
+   * Nodes stamped as parts. Counted for the same reason lineIndices is: the lossless
+   * guarantee has to be able to SEE everything it claims to preserve. join() used to erase
+   * part identity while "triangles unchanged" stayed green.
+   */
+  parts: number;
   nodes: number;
   bytes: number;
 }
@@ -78,10 +86,14 @@ function measure(doc: Document, bytes: number): OptimizeCounts {
     }
   }
 
+  const parts = doc.getRoot().listNodes()
+    .filter((node) => node.getExtras()[PART_MARKER] === true).length;
+
   return {
     primitives,
     triangles: Math.round(triangles),
     lineIndices,
+    parts,
     nodes: doc.getRoot().listNodes().length,
     bytes,
   };
@@ -120,18 +132,155 @@ export async function optimizeGlb(input: ArrayBuffer): Promise<OptimizeResult> {
     }
   }
 
+  // Stamp parts before anything measures or merges. Only NAMED nodes are stamped — an
+  // unnamed node is not a part, which is the discriminator the whole two-mode design below
+  // rests on, and stamping unnamed fragments would put a 7,995-row list in the panel for a
+  // file that never told us what its objects are.
+  //
+  // Same-named siblings are ONE object, not several. Rhino emits one node per object AND per
+  // material, so a rim with a steel body and a chrome lip arrives as two sibling nodes both
+  // named "Rim". Stamping each would put the same physical part on two panel rows and let
+  // someone colour half a rim. Grouping them under one stamped wrapper recovers the object
+  // the modeller made. The wrapper carries an identity transform, so its children keep the
+  // world placement their own transforms give them — which is why the group is NOT
+  // reparented under its first member, whose transform would then compose onto its siblings.
+  const carriesGeometryForStamp = (node: Node): boolean =>
+    node.getMesh() !== null || node.listChildren().some(carriesGeometryForStamp);
+
+  /** Parents whose children may need grouping: every scene, and every node. */
+  const parents: { list: () => Node[]; add: (n: Node) => void; remove: (n: Node) => void }[] = [
+    ...doc.getRoot().listScenes().map((scene) => ({
+      list: () => scene.listChildren(),
+      add: (n: Node) => { scene.addChild(n); },
+      remove: (n: Node) => { scene.removeChild(n); },
+    })),
+    ...doc.getRoot().listNodes().map((node) => ({
+      list: () => node.listChildren(),
+      add: (n: Node) => { node.addChild(n); },
+      remove: (n: Node) => { node.removeChild(n); },
+    })),
+  ];
+
+  // Children folded into a same-name wrapper below. They keep their original name (that's
+  // how the wrapper got its own), so without tracking this the final stamping loop would
+  // mark them too — reproducing, one level down, exactly the "same physical part on two
+  // panel rows" duplication the wrapper exists to prevent: the panel would show a "Rim" row
+  // whose own children are two more rows both also called "Rim".
+  const absorbedIntoWrapper = new Set<Node>();
+
+  for (const parent of parents) {
+    const byName = new Map<string, Node[]>();
+    for (const child of parent.list()) {
+      const name = child.getName();
+      // Unnamed nodes are not evidence of anything — grouping every unnamed sibling together
+      // would fuse unrelated geometry into one row.
+      if (!name || !carriesGeometryForStamp(child)) continue;
+      const group = byName.get(name);
+      if (group) group.push(child);
+      else byName.set(name, [child]);
+    }
+
+    // .forEach() rather than for...of: this project's tsconfig sets no `target`, which
+    // defaults below ES2015, and iterating a Map directly needs --downlevelIteration or an
+    // ES2015+ target. Array.prototype.forEach needs neither.
+    byName.forEach((group, name) => {
+      if (group.length < 2) return;
+      const wrapper = doc.createNode(name);
+      for (const child of group) {
+        parent.remove(child);
+        wrapper.addChild(child);
+        absorbedIntoWrapper.add(child);
+      }
+      parent.add(wrapper);
+    });
+  }
+
+  // Named only, and not a child a wrapper above already speaks for. Wrappers created above
+  // are named, so they are stamped here too.
+  for (const node of doc.getRoot().listNodes()) {
+    if (node.getName() !== '' && carriesGeometryForStamp(node) && !absorbedIntoWrapper.has(node)) {
+      node.setExtras({ ...node.getExtras(), [PART_MARKER]: true });
+    }
+  }
+
   const before = measure(doc, input.byteLength);
 
-  // Order is load-bearing. weld() must precede join(): run the other way round, join()
-  // leaves a KHR_mesh_primitive_restart state that weld() refuses outright.
-  await doc.transform(
-    dedup(),                        // merge identical accessors / materials / textures
-    flatten(),                      // bake node transforms, collapse the hierarchy
-    dedup(),                        // flatten exposes duplicates the first pass could not see
-    weld(),                         // index and merge co-located vertices
-    join({ keepNamed: false }),     // merge primitives by material — the whole point
-    prune({ keepLeaves: false })    // drop whatever the above orphaned
-  );
+  /** A node contributes geometry if it or any descendant carries a mesh. */
+  const carriesGeometry = (node: Node): boolean =>
+    node.getMesh() !== null || node.listChildren().some(carriesGeometry);
+
+  // The discriminator. Named geometry nodes mean the exporter told us what the parts are;
+  // no named geometry node anywhere means it did not, and no amount of processing will
+  // invent that information.
+  const namesAnything = doc
+    .getRoot()
+    .listNodes()
+    .some((node) => node.getName() !== '' && carriesGeometry(node));
+
+  if (!namesAnything) {
+    // UNSEGMENTED MODE — byte-for-byte the pipeline that shipped before this feature. A file
+    // that names nothing gets exactly the optimization it always got, the viewer reports no
+    // parts, and the panel says so. This is also the path the 7,995-primitive Rhino reference
+    // file takes when its objects are unnamed, so its 26-draw-call result is preserved.
+    //
+    // Order is load-bearing: weld() must precede join(), or join() leaves a
+    // KHR_mesh_primitive_restart state that weld() refuses outright.
+    await doc.transform(
+      dedup(),
+      flatten(),
+      dedup(),
+      weld(),
+      join({ keepNamed: false }),
+      prune({ keepLeaves: false })
+    );
+  } else {
+    // SEGMENTED MODE — the file named its objects, so those names are the parts.
+    await doc.transform(
+      dedup(),                      // merge identical accessors / materials / textures
+      weld(),                       // index and merge co-located vertices
+      prune({ keepLeaves: true })   // keepLeaves so an emptied part node is not pruned away
+    );
+
+    // Merge the primitives a single mesh already holds, grouped by material and mode. This
+    // is where a part carrying several primitives collapses; it deliberately never reaches
+    // across nodes, because that is exactly what would fuse one part into another.
+    for (const mesh of doc.getRoot().listMeshes()) {
+      const groups = new Map<string, Primitive[]>();
+      for (const prim of mesh.listPrimitives()) {
+        // Mode as well as material: joinPrimitives cannot concatenate LINES into TRIANGLES,
+        // and CAD exports carry both. Normalisation above already reduced these to
+        // LINES / TRIANGLES.
+        const key = `${prim.getMaterial()?.getName() ?? ''}#${prim.getMode()}`;
+        const group = groups.get(key);
+        if (group) group.push(prim);
+        else groups.set(key, [prim]);
+      }
+
+      // .forEach() rather than for...of: this project's tsconfig sets no `target`, which
+      // defaults below ES2015, and iterating a Map's .values() directly needs
+      // --downlevelIteration or an ES2015+ target. Array.prototype.forEach needs neither.
+      groups.forEach((group) => {
+        if (group.length < 2) return;
+        // joinPrimitives throws when primitives are not compatible, and grouping by material
+        // does not guarantee they are — one CAD primitive may carry UVs where its neighbour
+        // does not. An uncaught throw would abandon the WHOLE optimization (runOptimize reads
+        // any throw as "upload the original"), trading every other part's merge for one
+        // awkward group. Skip the group instead: those primitives stay unmerged, which is
+        // slower to load and completely correct.
+        let merged;
+        try {
+          merged = joinPrimitives(group);
+        } catch {
+          return;
+        }
+        // dispose() detaches each primitive from its mesh, which is the documented idiom.
+        for (const prim of group) prim.dispose();
+        mesh.addPrimitive(merged);
+      });
+    }
+
+    await doc.transform(prune({ keepLeaves: true }));
+  }
 
   // Belt-and-braces, in case some future primitive shape still tempts join() into a restart
   // merge despite the normalisation above: refuse to hand back a document that requires an
