@@ -68,18 +68,32 @@ export async function GET(request: NextRequest) {
 
   // Sparse by construction — only deliberate overrides are rows — so one query for the whole
   // version is cheaper than a join that would repeat every file row per coloured part.
-  const colorRows = await sql`
-    SELECT pc.file_id AS "fileId", pc.part_key AS "partKey", pc.color
-    FROM part_colors pc
-    JOIN files f ON f.id = pc.file_id
-    WHERE f.version_id = ${versionId}
-  `;
-  const colorsByFile = new Map<string, Record<string, string>>();
-  colorRows.forEach((row) => {
-    const forFile = colorsByFile.get(row.fileId as string) ?? {};
-    forFile[row.partKey as string] = row.color as string;
-    colorsByFile.set(row.fileId as string, forFile);
-  });
+  // IMPORTANT: This query is allowed to fail soft (try/catch below), unlike the files and counts
+  // queries. This endpoint is load-bearing for file listing app-wide in production, and this repo
+  // applies migrations manually (and has forgotten them twice before). If 009-part-colors.sql
+  // has not been run yet, the table won't exist. Rather than take down the whole app, we fall
+  // back to no colours — a model in its original colours is far better than a file-listing outage.
+  let colorsByFile = new Map<string, Record<string, string>>();
+  try {
+    const colorRows = await sql`
+      SELECT pc.file_id AS "fileId", pc.part_key AS "partKey", pc.color
+      FROM part_colors pc
+      JOIN files f ON f.id = pc.file_id
+      WHERE f.version_id = ${versionId}
+    `;
+    colorRows.forEach((row) => {
+      const forFile = colorsByFile.get(row.fileId as string) ?? {};
+      forFile[row.partKey as string] = row.color as string;
+      colorsByFile.set(row.fileId as string, forFile);
+    });
+  } catch (error) {
+    console.error(
+      `Failed to fetch part_colors for version ${versionId}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    // Fall back to no colours; file listing is more important than decoration.
+    colorsByFile = new Map();
+  }
 
   const files = rows.map((row) => {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
