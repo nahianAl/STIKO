@@ -221,10 +221,25 @@ rather than the database; that is its own task.
 ## Version numbering
 
 Numbers are never reassigned. Deleting V2 of V1/V2/V3 leaves V1 and V3 with a
-permanent gap, and the next version is still `MAX(version_number) + 1`, so V4
-follows. The gap is correct and must not be closed: version numbers appear in
-comments, notifications, verdicts and already-sent emails, and renumbering would
-silently repoint every one of those references at different content.
+permanent gap, and the next version is still V4. The gap is correct and must
+not be closed: version numbers appear in comments, notifications, verdicts and
+already-sent emails, and renumbering would silently repoint every one of those
+references at different content.
+
+Numbers come from `portals.last_version_number`, a counter on the package
+that only ever increases, not from `MAX(version_number)` over the versions
+that still exist. The latter was tried first and failed exactly the case this
+rule exists for: deleting the *newest* version lowers the live maximum, so the
+next version claims that same number again, while every email, notification
+and verdict that named the deleted version now points at different content.
+Deleting a version in the middle leaves the maximum untouched, so that case
+happened to hold — which is why static review missed it and it surfaced only
+against a real database. `POST /api/versions` claims a number with
+`UPDATE portals SET last_version_number = last_version_number + 1 ... RETURNING`,
+an atomic increment that also closes the race two concurrent creates would
+otherwise have on a read-then-insert. If the following INSERT into `versions`
+fails, the claimed number is not reclaimed and the next version skips it — a
+gap is harmless, a reused number is not.
 
 Two consequences, both intended:
 

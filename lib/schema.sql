@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS portals (
   tag TEXT,
   archived_at TIMESTAMPTZ,
   link_access BOOLEAN NOT NULL DEFAULT FALSE,
+  last_version_number INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

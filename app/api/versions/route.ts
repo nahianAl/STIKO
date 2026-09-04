@@ -101,11 +101,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const existing = await sql`
-    SELECT COALESCE(MAX(version_number), 0) AS max
-    FROM versions WHERE portal_id = ${portalId}
+  // Taken from the package's own counter, not from MAX over live rows: the
+  // latter hands the number back when the newest version is deleted, letting a
+  // new version inherit the identity of one that emails and notifications
+  // already named. UPDATE ... RETURNING is atomic, so two concurrent creates
+  // cannot collide either.
+  const claimed = await sql`
+    UPDATE portals SET last_version_number = last_version_number + 1
+    WHERE id = ${portalId}
+    RETURNING last_version_number AS "versionNumber"
   `;
-  const nextVersion = Number(existing[0].max) + 1;
+  if (!claimed[0]) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  const nextVersion = Number(claimed[0].versionNumber);
 
   const rows = await sql`
     INSERT INTO versions (id, portal_id, version_number, created_by)
