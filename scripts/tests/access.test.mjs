@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capabilitiesFor, canDeleteContent } from '../../lib/capabilities.ts';
+import { capabilitiesFor, canDeleteContent, canDownloadFile } from '../../lib/capabilities.ts';
 
 // Who may reposition an object everyone else reviews. Kept explicit rather than
 // derived from canUpload: "may add a file" and "may change how everyone sees an
@@ -107,4 +107,79 @@ test('an unrecognised role cannot delete', () => {
     canDeleteContent({ role: 'reviewer', isOwnUpload: true, isPublished: false }),
     false
   );
+});
+
+// Download rules — docs/superpowers/specs/2026-09-04-download-authorization-design.md.
+// Kept as an explicit matrix rather than derived from any role table: download
+// is not a property of the role alone, it is role plus a per-person grant plus
+// whether you supplied the file yourself.
+
+test('owner and coordinator download anything, granted or not', () => {
+  for (const role of ['owner', 'coordinator']) {
+    for (const isOwnUpload of [true, false]) {
+      for (const mayDownload of [true, false]) {
+        assert.equal(
+          canDownloadFile({ role, isOwnUpload, mayDownload }),
+          true,
+          `${role} own=${isOwnUpload} granted=${mayDownload}`
+        );
+      }
+    }
+  }
+});
+
+test('an uploader always gets their own upload back, grant or no grant', () => {
+  // They supplied the file; it is already on their machine. Requiring the
+  // owner's permission to retrieve it is a rule nobody would expect.
+  assert.equal(
+    canDownloadFile({ role: 'uploader', isOwnUpload: true, mayDownload: false }),
+    true
+  );
+});
+
+test("an uploader needs the grant for someone else's file", () => {
+  assert.equal(
+    canDownloadFile({ role: 'uploader', isOwnUpload: false, mayDownload: false }),
+    false
+  );
+  assert.equal(
+    canDownloadFile({ role: 'uploader', isOwnUpload: false, mayDownload: true }),
+    true
+  );
+});
+
+test('commenters and viewers download only with the grant', () => {
+  for (const role of ['commenter', 'viewer']) {
+    assert.equal(
+      canDownloadFile({ role, isOwnUpload: false, mayDownload: false }),
+      false,
+      `${role} without the grant`
+    );
+    assert.equal(
+      canDownloadFile({ role, isOwnUpload: false, mayDownload: true }),
+      true,
+      `${role} with the grant`
+    );
+  }
+});
+
+test('an unrecognised role cannot download', () => {
+  // Same fail-closed guarantee capabilitiesFor and canDeleteContent make.
+  assert.equal(
+    canDownloadFile({ role: 'reviewer', isOwnUpload: true, mayDownload: true }),
+    false
+  );
+});
+
+test('a commenter or viewer is denied even if isOwnUpload is somehow true', () => {
+  // Unreachable in production — capabilitiesFor denies these roles canUpload,
+  // so isOwnUpload cannot be true for them. Pinned anyway: without it, an edit
+  // that added `isOwnUpload ||` to that branch would pass the whole suite.
+  for (const role of ['commenter', 'viewer']) {
+    assert.equal(
+      canDownloadFile({ role, isOwnUpload: true, mayDownload: false }),
+      false,
+      `${role} with a bogus own-upload claim`
+    );
+  }
 });

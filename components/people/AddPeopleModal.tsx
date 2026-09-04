@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/Toast';
 import type { ProjectPackage } from '@/app/project/[id]/page';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
+type PackageGrant = { role: Role; canDownload: boolean };
 
 /**
  * 4c — Add people.
@@ -36,8 +37,10 @@ export function AddPeopleModal({
   // 03: with one package the checklist is skipped entirely — the invite goes
   // straight into it.
   const singlePackage = packages.length === 1;
-  const [selection, setSelection] = useState<Record<string, Role>>(
-    singlePackage ? { [packages[0]?.id ?? '']: 'commenter' } : {}
+  const [selection, setSelection] = useState<Record<string, PackageGrant>>(
+    singlePackage
+      ? { [packages[0]?.id ?? '']: { role: 'commenter', canDownload: false } }
+      : {}
   );
 
   const parsed = emails
@@ -51,7 +54,7 @@ export function AddPeopleModal({
     setSelection((prev) => {
       const next = { ...prev };
       if (next[portalId]) delete next[portalId];
-      else next[portalId] = 'commenter';
+      else next[portalId] = { role: 'commenter', canDownload: false };
       return next;
     });
   };
@@ -62,11 +65,11 @@ export function AddPeopleModal({
     let failed = 0;
 
     for (const email of parsed) {
-      for (const [portalId, role] of Object.entries(selection)) {
+      for (const [portalId, { role, canDownload }] of Object.entries(selection)) {
         const res = await fetch('/api/participants', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ portalId, email, role, note }),
+          body: JSON.stringify({ portalId, email, role, canDownload, note }),
         });
         const data = await res.json().catch(() => ({}));
         if (res.ok && data.emailDelivered) delivered++;
@@ -185,20 +188,36 @@ export function AddPeopleModal({
                     </div>
 
                     {checked && (
-                      <select
-                        value={selection[pkg.id]}
-                        onChange={(e) =>
-                          setSelection((prev) => ({
-                            ...prev,
-                            [pkg.id]: e.target.value as Role,
-                          }))
-                        }
-                        className="shrink-0 rounded-[8px] border-[1.5px] border-stiko-divider bg-white px-2 py-1 text-[12px] font-semibold capitalize text-stiko-ink outline-none focus:border-stiko-primary"
-                      >
-                        <option value="viewer">Viewer</option>
-                        <option value="commenter">Commenter</option>
-                        <option value="uploader">Uploader</option>
-                      </select>
+                      <>
+                        <select
+                          value={selection[pkg.id].role}
+                          onChange={(e) =>
+                            setSelection((prev) => ({
+                              ...prev,
+                              [pkg.id]: { ...prev[pkg.id], role: e.target.value as Role },
+                            }))
+                          }
+                          className="shrink-0 rounded-[8px] border-[1.5px] border-stiko-divider bg-white px-2 py-1 text-[12px] font-semibold capitalize text-stiko-ink outline-none focus:border-stiko-primary"
+                        >
+                          <option value="viewer">Viewer</option>
+                          <option value="commenter">Commenter</option>
+                          <option value="uploader">Uploader</option>
+                        </select>
+                        <label className="flex shrink-0 items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
+                          <input
+                            type="checkbox"
+                            checked={selection[pkg.id].canDownload}
+                            onChange={(e) =>
+                              setSelection((prev) => ({
+                                ...prev,
+                                [pkg.id]: { ...prev[pkg.id], canDownload: e.target.checked },
+                              }))
+                            }
+                            className="h-[15px] w-[15px] accent-stiko-primary"
+                          />
+                          Can download files
+                        </label>
+                      </>
                     )}
                   </div>
                 );

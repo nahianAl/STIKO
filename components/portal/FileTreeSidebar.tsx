@@ -33,6 +33,8 @@ interface FileRecord {
   uploadedBy: string | null;
   /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
   canDelete?: boolean;
+  /** Server's verdict on whether this caller may download it. Never re-derived client-side. */
+  canDownload?: boolean;
   commentCount?: number;
 }
 
@@ -54,6 +56,8 @@ interface FileTreeSidebarProps {
   /** Absent when the viewer may not delete anything — the row then renders no control. */
   onDeleteFile?: (file: FileRecord) => void;
   onDeleteVersion?: (version: Version) => void;
+  /** Absent when the viewer may not download anything. */
+  onDownloadFile?: (file: FileRecord) => void;
 }
 
 interface FolderNode {
@@ -141,11 +145,13 @@ function FolderItem({
   selectedFileId,
   onSelectFile,
   onDeleteFile,
+  onDownloadFile,
 }: {
   folder: FolderNode;
   selectedFileId: string | null;
   onSelectFile: (fileId: string) => void;
   onDeleteFile?: (file: FileRecord) => void;
+  onDownloadFile?: (file: FileRecord) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -173,6 +179,7 @@ function FolderItem({
               isSelected={file.id === selectedFileId}
               onSelect={() => onSelectFile(file.id)}
               onDelete={onDeleteFile}
+              onDownload={onDownloadFile}
             />
           ))}
           {folder.children.map((child) => (
@@ -182,6 +189,7 @@ function FolderItem({
               selectedFileId={selectedFileId}
               onSelectFile={onSelectFile}
               onDeleteFile={onDeleteFile}
+              onDownloadFile={onDownloadFile}
             />
           ))}
         </div>
@@ -195,11 +203,13 @@ function FileItem({
   isSelected,
   onSelect,
   onDelete,
+  onDownload,
 }: {
   file: FileRecord;
   isSelected: boolean;
   onSelect: () => void;
   onDelete?: (file: FileRecord) => void;
+  onDownload?: (file: FileRecord) => void;
 }) {
   const chip = getFileChip(file.filename, file.fileType);
   // A div, not a button: the delete control is a sibling of the select control,
@@ -217,6 +227,19 @@ function FileItem({
           {file.filename}
         </span>
       </button>
+
+      {onDownload && file.canDownload && (
+        <button
+          onClick={() => onDownload(file)}
+          aria-label={`Download ${file.filename}`}
+          title={`Download ${file.filename}`}
+          className="flex-shrink-0 rounded p-1 text-stiko-faint opacity-0 transition hover:bg-stiko-app hover:text-stiko-ink focus:opacity-100 group-hover:opacity-100"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+        </button>
+      )}
 
       {onDelete && file.canDelete && (
         <button
@@ -248,6 +271,7 @@ export default function FileTreeSidebar({
   loading,
   onDeleteFile,
   onDeleteVersion,
+  onDownloadFile,
 }: FileTreeSidebarProps) {
   const tree = useMemo(() => buildFolderTree(files), [files]);
   const maxVersion = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
@@ -359,10 +383,10 @@ export default function FileTreeSidebar({
                     ) : (
                       <>
                         {tree.rootFiles.map((file) => (
-                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} onDelete={onDeleteFile} />
+                          <FileItem key={file.id} file={file} isSelected={file.id === selectedFileId} onSelect={() => onSelectFile(file.id)} onDelete={onDeleteFile} onDownload={onDownloadFile} />
                         ))}
                         {tree.folders.map((folder) => (
-                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} onDeleteFile={onDeleteFile} />
+                          <FolderItem key={folder.path} folder={folder} selectedFileId={selectedFileId} onSelectFile={onSelectFile} onDeleteFile={onDeleteFile} onDownloadFile={onDownloadFile} />
                         ))}
                       </>
                     )}

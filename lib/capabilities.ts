@@ -89,3 +89,45 @@ export function canDeleteContent(ctx: DeleteContext): boolean {
     }
   }
 }
+
+export interface DownloadContext {
+  role: EffectiveRole;
+  /** The caller uploaded this file. */
+  isOwnUpload: boolean;
+  /** The owner granted this person download on this package. */
+  mayDownload: boolean;
+}
+
+/**
+ * Who may take a copy of a file away.
+ *
+ * Not derivable from the role alone: two commenters on the same package can
+ * differ, because the grant is made per person when they are invited.
+ *
+ * An uploader's own file is exempt from the grant — they supplied it, so
+ * needing permission to retrieve it would be a rule nobody would expect.
+ *
+ * Note this gates the control and the endpoint, not the bytes: viewing a file
+ * already hands the browser a presigned URL to it. See the spec's "What this
+ * can and cannot enforce".
+ */
+export function canDownloadFile(ctx: DownloadContext): boolean {
+  switch (ctx.role) {
+    case 'owner':
+    case 'coordinator':
+      return true;
+    case 'uploader':
+      return ctx.isOwnUpload || ctx.mayDownload;
+    case 'commenter':
+    case 'viewer':
+      return ctx.mayDownload;
+    default: {
+      // Same two guarantees as capabilitiesFor: a role added to EffectiveRole
+      // without a case here fails to typecheck, and one arriving through an
+      // unchecked cast is denied rather than falling through.
+      const unhandled: never = ctx.role;
+      void unhandled;
+      return false;
+    }
+  }
+}

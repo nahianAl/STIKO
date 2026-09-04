@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { canDeleteContent, getPackageAccess } from '@/lib/access';
+import { canDeleteContent, canDownloadFile, getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -79,6 +79,13 @@ export async function GET(request: NextRequest) {
         role: access.role,
         isOwnUpload: row.uploadedBy === userId,
         isPublished,
+      }),
+      // Computed server-side from the same predicate the download endpoint
+      // enforces, so a hidden control and a 403 cannot disagree.
+      canDownload: canDownloadFile({
+        role: access.role,
+        isOwnUpload: file.uploadedBy === userId,
+        mayDownload: access.mayDownload,
       }),
       commentCount: countsById.get(file.id as string)?.commentCount ?? 0,
     };

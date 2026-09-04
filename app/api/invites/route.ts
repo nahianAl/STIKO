@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   // that sees this response, for no gain.
   const rows = await sql`
     SELECT CASE WHEN multi_use THEN token END AS token,
-           email, role, multi_use AS "multiUse",
+           email, role, can_download AS "canDownload", multi_use AS "multiUse",
            created_at AS "createdAt", expires_at AS "expiresAt"
     FROM invite_tokens
     WHERE portal_id = ${portalId}

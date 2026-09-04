@@ -157,11 +157,27 @@ export async function POST(
     }
   }
 
+  // DO UPDATE only for an addressed invite: a share link is walked by many
+  // people and always carries can_download = false, so without the WHERE
+  // guard, anyone re-opening a link they already accepted would have an
+  // existing grant silently revoked. role is deliberately not touched here —
+  // that is /api/participants/role's job, and re-sending an invitation should
+  // not quietly demote someone whose role was raised afterwards.
+  //
+  // xmax = 0 is the standard way to tell an INSERT from a DO UPDATE in the
+  // same RETURNING: a freshly inserted row's xmax is still 0, while a row
+  // touched by the UPDATE arm carries the current transaction's xmax. Without
+  // this, joined.length > 0 would also be true for a re-accepted addressed
+  // invite that only changed the grant, and the notification below would fire
+  // "accepted your invitation" a second time for someone who already had.
   const joined = await sql`
-    INSERT INTO participants (id, portal_id, user_id, role)
-    VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role})
-    ON CONFLICT (portal_id, user_id) DO NOTHING
-    RETURNING id
+    INSERT INTO participants (id, portal_id, user_id, role, can_download)
+    VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role},
+            ${invite.can_download === true})
+    ON CONFLICT (portal_id, user_id) DO UPDATE
+      SET can_download = EXCLUDED.can_download
+      WHERE ${!invite.multi_use}
+    RETURNING id, (xmax = 0) AS "isNew"
   `;
 
   // A share link is not consumed by the person who walks through it — stamping
@@ -173,8 +189,10 @@ export async function POST(
   }
 
   // Tell the inviter it landed — but only for someone who actually joined.
-  // Re-opening a share link you are already on must not ping them again.
-  if (joined.length > 0 && invite.invited_by && invite.invited_by !== session.user.id) {
+  // Re-opening a share link you are already on must not ping them again, and
+  // nor should re-accepting an addressed invite that only updated an existing
+  // grant: they already got this notification the first time.
+  if (joined[0]?.isNew && invite.invited_by && invite.invited_by !== session.user.id) {
     const portalRows = await sql`
       SELECT name FROM portals WHERE id = ${invite.portal_id}
     `;

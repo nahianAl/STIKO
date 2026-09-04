@@ -1,8 +1,8 @@
 import { sql } from '@/lib/db';
-import { capabilitiesFor, canDeleteContent, type Capabilities, type DeleteContext, type EffectiveRole, type PackageRole, type ProjectRole } from '@/lib/capabilities';
+import { capabilitiesFor, canDeleteContent, canDownloadFile, type Capabilities, type DeleteContext, type DownloadContext, type EffectiveRole, type PackageRole, type ProjectRole } from '@/lib/capabilities';
 
-export { capabilitiesFor, canDeleteContent };
-export type { Capabilities, DeleteContext, EffectiveRole, PackageRole, ProjectRole };
+export { capabilitiesFor, canDeleteContent, canDownloadFile };
+export type { Capabilities, DeleteContext, DownloadContext, EffectiveRole, PackageRole, ProjectRole };
 
 /**
  * Access control — stiko_handoff/01.
@@ -23,6 +23,8 @@ export interface Access extends Capabilities {
   role: EffectiveRole;
   /** Project members can see the project and all its packages. */
   isProjectMember: boolean;
+  /** Whether this person may take copies of files away. Always true for members. */
+  mayDownload: boolean;
 }
 
 /**
@@ -37,7 +39,8 @@ export async function getPackageAccess(
     SELECT
       pr.owner_id AS "ownerId",
       pm.role     AS "memberRole",
-      pa.role     AS "guestRole"
+      pa.role     AS "guestRole",
+      pa.can_download AS "guestCanDownload"
     FROM portals po
     JOIN projects pr ON pr.id = po.project_id
     LEFT JOIN project_members pm
@@ -51,17 +54,22 @@ export async function getPackageAccess(
   if (!row) return null;
 
   if (row.ownerId === userId) {
-    return { role: 'owner', isProjectMember: true, ...capabilitiesFor('owner') };
+    return { role: 'owner', isProjectMember: true, mayDownload: true, ...capabilitiesFor('owner') };
   }
 
   if (row.memberRole === 'coordinator') {
-    return { role: 'coordinator', isProjectMember: true, ...capabilitiesFor('coordinator') };
+    return { role: 'coordinator', isProjectMember: true, mayDownload: true, ...capabilitiesFor('coordinator') };
   }
 
   const guest = row.guestRole as PackageRole | null;
   if (!guest) return null;
 
-  return { role: guest, isProjectMember: false, ...capabilitiesFor(guest) };
+  return {
+    role: guest,
+    isProjectMember: false,
+    mayDownload: Boolean(row.guestCanDownload),
+    ...capabilitiesFor(guest),
+  };
 }
 
 /** Whether this user can see the project itself (members only, never guests). */
@@ -237,5 +245,52 @@ export async function getVersionDeleteDecision(
     }),
     portalId: row.portalId as string,
     storageKeys: await storageKeysForFiles(fileRows.map((f) => f.id as string)),
+  };
+}
+
+export interface DownloadDecision {
+  allowed: boolean;
+  /** The ORIGINAL object, never the viewer's optimized variant. */
+  storageKey: string;
+  filename: string;
+}
+
+/**
+ * May this user take a copy of this file, and which object is the copy?
+ *
+ * Returns null when the file does not exist OR the caller cannot see its
+ * package — the caller must not be able to tell those apart, or the id becomes
+ * an existence oracle.
+ *
+ * The key returned is storage_key and never converted_storage_key: a download
+ * is the file the uploader supplied, not the copy the viewer prefers.
+ */
+export async function getFileDownloadDecision(
+  userId: string,
+  fileId: string
+): Promise<DownloadDecision | null> {
+  const rows = await sql`
+    SELECT v.portal_id     AS "portalId",
+           f.uploaded_by   AS "uploadedBy",
+           f.storage_key   AS "storageKey",
+           f.filename      AS "filename"
+    FROM files f
+    JOIN versions v ON v.id = f.version_id
+    WHERE f.id = ${fileId}
+  `;
+  const row = rows[0];
+  if (!row) return null;
+
+  const access = await getPackageAccess(userId, row.portalId as string);
+  if (!access) return null;
+
+  return {
+    allowed: canDownloadFile({
+      role: access.role,
+      isOwnUpload: row.uploadedBy === userId,
+      mayDownload: access.mayDownload,
+    }),
+    storageKey: row.storageKey as string,
+    filename: row.filename as string,
   };
 }

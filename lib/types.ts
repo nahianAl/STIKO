@@ -45,6 +45,8 @@ export interface FileRecord {
   uploadedBy: string | null;
   /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
   canDelete?: boolean;
+  /** Server's verdict on whether this caller may download it. Never re-derived client-side. */
+  canDownload?: boolean;
   commentCount?: number;
 }
 
