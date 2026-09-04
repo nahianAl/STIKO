@@ -44,6 +44,14 @@
   snapshots/{projectId}/{portalId}/{uuid}.jpg
 ```
 
+### Deletion
+
+Deleting a file, version, package or project now removes its objects from the bucket too, via `deleteObjects` in `lib/s3.ts` — previously only the Neon rows went away, and the bucket kept growing forever. Cleanup runs after those rows are gone, never before: a storage failure at that point strands an object rather than turning a completed delete into an error response, and the reverse order risks the opposite failure — a file still listed with its bytes already gone.
+
+All four scopes gather their keys through the same helper, `storageKeysForFiles` in `lib/access.ts`, so none of them can quietly diverge on what "this file's objects" means. It walks four kinds of object: the upload itself, its optimized viewer variant, any annotation snapshot named in `comments.snapshot_url`, and any comment attachment named in `comments.attachments[].storageKey`. The last two matter because comments cascade with the file — once those rows are gone, nothing in the database names those objects, so they must be collected before the delete runs, not after.
+
+Objects orphaned by deletions made before this change are not recovered here; finding them would mean reasoning from bucket contents instead of the database.
+
 ---
 
 ## Data Flow
@@ -80,6 +88,8 @@ Client
   → POST /api/files/complete  (Vercel: writes FileRecord to Neon)
 ```
 
+Both steps are now authorized. Before this branch, neither `/api/files/upload` (the presign step above) nor `/api/files/complete` checked for a session at all — either would act for any caller who knew a version id. Both now require a session and `canUpload` on the version's package, and the storage key's project and package segments are derived from the version server-side rather than taken from the request body, so an uploader on one package cannot write objects under another's prefix.
+
 ### File Viewing Flow
 Files are served directly from S3 (public-read on the uploads prefix). Vercel is not in the streaming path.
 
@@ -103,6 +113,24 @@ Client composites snapshot + SVG markup (canvas, client-side)
 POST /api/comments  (Vercel)
   → INSERT into Neon comments with snapshotUrl, userId, position, content
 ```
+
+### Deletion Flow
+`canDeleteContent` in `lib/capabilities.ts` holds the whole policy and touches no database — it takes a role plus two booleans (own upload, version published) and returns yes or no, so it can be asserted by a test with no live connection. `getFileDeleteDecision` and `getVersionDeleteDecision` in `lib/access.ts` are its only callers: they resolve those facts from Neon and hand back the verdict together with the storage keys cleanup will need once the row is gone.
+
+Owners and coordinators may delete any file or version. An uploader may delete their own file only up to the moment its version publishes — deleting a file cascades every comment and markup on it, so this is the power to erase someone else's review work, not just tidy up one's own, and the window closes the instant anyone else could have opened the file. A version is never "own upload": one version can hold files from several uploaders, so only owners and coordinators may take down a whole version. Commenters and viewers never delete anything. There is no trash and no undo.
+
+Version numbers are never reused once a version is gone. They already appear in comments, notifications, verdicts and mail already sent, so closing the gap by renumbering would silently repoint all of those at different content — the gap is permanent instead.
+
+```
+DELETE /api/files/[id]     (Vercel: getFileDeleteDecision → Neon)
+DELETE /api/versions/[id]  (Vercel: getVersionDeleteDecision → Neon)
+  ← 404  no such row, or no access to its package
+  ← 403  caller can see the package, but canDeleteContent said no
+  → DELETE FROM files / versions   (Neon; comments and markups cascade)
+  → deleteObjects(storageKeys)     (lib/s3.ts, after the row — see S3 Bucket Structure)
+```
+
+A 404 covers "no such row" and "no access to its package" alike, so an id can never be used to confirm something exists behind a boundary the caller cannot cross; a 403 only appears once the caller can already see the package.
 
 ### Metadata Reads / Writes
 ```
@@ -200,6 +228,7 @@ Browser
 - **Local `/public/uploads`:** Replaced entirely by S3. `storageKey` in the files table becomes a full S3 object key.
 - **`/data/*.json` flat files:** Replaced entirely by Neon. The `lib/db.ts` helper is replaced by SQL queries via `@neondatabase/serverless`.
 - **Snapshot API route (`/api/snapshots`):** Currently writes to local disk. Replaced by presign → direct S3 upload flow.
+- **`005-file-deletion.sql`:** Adds `files.uploaded_by`, backfilled from `versions.created_by` for existing rows so the uploader-delete window has an owner to check against. Apply before deploying code that reads the column.
 
 ---
 
