@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capabilitiesFor, canDeleteContent, canDownloadFile } from '../../lib/capabilities.ts';
+import { capabilitiesFor, canDeleteContent, canDownloadFile, canSeeVersion } from '../../lib/capabilities.ts';
 
 // Who may reposition an object everyone else reviews. Kept explicit rather than
 // derived from canUpload: "may add a file" and "may change how everyone sees an
@@ -182,4 +182,27 @@ test('a commenter or viewer is denied even if isOwnUpload is somehow true', () =
       `${role} with a bogus own-upload claim`
     );
   }
+});
+
+// Version scoping — docs/superpowers/specs/2026-09-04-version-scoped-invites-design.md.
+// Trivial logic deliberately given its own home: the rule needs one place to be
+// read and one place to be asserted, because a dozen routes depend on it.
+
+test("'all' sees every version, including ones that did not exist yet", () => {
+  // The whole point of 'all' rather than an enumerated list: a version
+  // published tomorrow is covered without anyone updating a row.
+  assert.equal(canSeeVersion('all', 'v1'), true);
+  assert.equal(canSeeVersion('all', 'a-version-nobody-has-created'), true);
+});
+
+test('a list sees exactly its members', () => {
+  assert.equal(canSeeVersion(['v1', 'v2'], 'v1'), true);
+  assert.equal(canSeeVersion(['v1', 'v2'], 'v2'), true);
+  assert.equal(canSeeVersion(['v1', 'v2'], 'v3'), false);
+});
+
+test('an empty list sees nothing', () => {
+  // Reachable: deleting a version cascades its scope rows away, so someone
+  // scoped to one deleted version ends up here. Seeing nothing is correct.
+  assert.equal(canSeeVersion([], 'v1'), false);
 });
