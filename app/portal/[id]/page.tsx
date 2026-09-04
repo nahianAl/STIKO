@@ -1224,8 +1224,10 @@ export default function PortalPage() {
           versions it creates, and the top bar had the only other copy. */}
       <PortalTopBar project={project} portal={portal} portalId={portalId} />
 
-      {/* 3-Panel Layout */}
-      <div className={`flex-1 grid gap-3 overflow-hidden min-h-0 ${
+      {/* 3-Panel Layout. `relative` so the version detail drawer can sit beside
+          the rail and inherit this row's height, rather than pinning itself to
+          the window and starting above the panels. */}
+      <div className={`relative flex-1 grid gap-3 overflow-hidden min-h-0 ${
         sidebarCollapsed && commentsCollapsed ? 'grid-cols-[48px_1fr_48px]' :
         sidebarCollapsed ? 'grid-cols-[48px_1fr_340px]' :
         commentsCollapsed ? 'grid-cols-[272px_1fr_48px]' :
@@ -1441,22 +1443,27 @@ export default function PortalPage() {
             />
           }
         />
-      </div>
 
-      <VersionDetailDrawer
-        version={detailVersion}
-        isCurrent={!!detailVersion && detailVersion.versionNumber === maxVersionNumber}
-        files={files}
-        filesLoading={filesLoading}
-        briefGenerating={!!detailVersion && autoBriefBusy === detailVersion.id}
-        confirmOpen={!!fileToDelete || !!versionToDelete}
-        onClose={() => setDetailVersionId(null)}
-        onSelectFile={setSelectedFileId}
-        onSelectCitedComment={handleSelectCitedComment}
-        onDeleteFile={openFileDelete}
-        onDownloadFile={downloadFile}
-        onDeleteVersion={openVersionDelete}
-      />
+        {/* Inside the grid on purpose: it is positioned against this row, so it
+            lines up beside the rail and ends where the rail ends. */}
+        <VersionDetailDrawer
+          version={detailVersion}
+          isCurrent={!!detailVersion && detailVersion.versionNumber === maxVersionNumber}
+          files={files}
+          filesLoading={filesLoading}
+          briefGenerating={!!detailVersion && autoBriefBusy === detailVersion.id}
+          confirmOpen={!!fileToDelete || !!versionToDelete}
+          // The rail's width plus the grid's 12px gap, so the drawer's left
+          // edge meets the rail's right edge.
+          offsetLeft={(sidebarCollapsed ? 48 : 272) + 12}
+          onClose={() => setDetailVersionId(null)}
+          onSelectFile={setSelectedFileId}
+          onSelectCitedComment={handleSelectCitedComment}
+          onDeleteFile={openFileDelete}
+          onDownloadFile={downloadFile}
+          onDeleteVersion={openVersionDelete}
+        />
+      </div>
 
       <NewVersionDrawer
         isOpen={versionDrawerOpen}

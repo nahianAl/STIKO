@@ -26,6 +26,8 @@ export default function Drawer({
   footer,
   width = 452,
   closeOnEscape = true,
+  anchor = 'shell-right',
+  offsetLeft = 0,
   children,
 }: {
   isOpen: boolean;
@@ -34,6 +36,21 @@ export default function Drawer({
   subtitle?: string;
   footer?: React.ReactNode;
   width?: number;
+  /** Where the panel sits.
+   *
+   *  'shell-right' (the default, and what 2e specified) pins it to the shell's
+   *  right gutter and runs the full window height.
+   *
+   *  'inline' positions it inside the nearest positioned ancestor instead, so
+   *  it can sit beside a panel and match that panel's height exactly rather
+   *  than starting above it at the window's edge. The scrim stays fixed to the
+   *  viewport either way — a modal surface should not leave the header
+   *  clickable behind it. */
+  anchor?: 'shell-right' | 'inline';
+  /** Distance from the positioned ancestor's left edge. Only read when
+   *  `anchor` is 'inline'; the caller owns the arithmetic because only it
+   *  knows the width of whatever the drawer is sitting beside. */
+  offsetLeft?: number;
   /** Set to false while a confirm dialog is open above this drawer. Drawer and
    *  Modal both listen for Escape on `document`, and the drawer's listener is
    *  registered first (it mounts first) and so runs first — one Escape press
@@ -66,8 +83,12 @@ export default function Drawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="fixed bottom-3 right-3 top-3 z-[59] flex flex-col overflow-hidden rounded-sheet bg-white shadow-stiko-drawer"
-        style={{ width }}
+        className={`z-[59] flex flex-col overflow-hidden rounded-sheet bg-white shadow-stiko-drawer ${
+          anchor === 'inline'
+            ? 'absolute top-0 max-h-full'
+            : 'fixed bottom-3 right-3 top-3'
+        }`}
+        style={anchor === 'inline' ? { width, left: offsetLeft } : { width }}
       >
         <header className="flex items-start justify-between border-b border-stiko-border px-[22px] py-[18px]">
           <div>
@@ -94,7 +115,18 @@ export default function Drawer({
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-[22px] py-5">{children}</div>
+        {/* Anchored inline the panel is content-sized, so the body must NOT
+            claim the leftover space — `flex-1` would leave a white gap under a
+            short version, which is the whole point of sizing to content. It
+            keeps `min-h-0` so it can still shrink and scroll once the panel
+            reaches the row's height. Pinned to the shell it fills as before. */}
+        <div
+          className={`overflow-y-auto px-[22px] py-5 ${
+            anchor === 'inline' ? 'min-h-0' : 'flex-1'
+          }`}
+        >
+          {children}
+        </div>
 
         {footer && (
           <footer className="flex items-center justify-between gap-2 border-t border-stiko-border px-[22px] py-[14px]">

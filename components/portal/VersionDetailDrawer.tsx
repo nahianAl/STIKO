@@ -155,6 +155,7 @@ export default function VersionDetailDrawer({
   filesLoading,
   briefGenerating,
   confirmOpen,
+  offsetLeft,
   onClose,
   onSelectFile,
   onSelectCitedComment,
@@ -172,6 +173,10 @@ export default function VersionDetailDrawer({
   briefGenerating: boolean;
   /** True while a delete confirm is open above this drawer. */
   confirmOpen: boolean;
+  /** Where the panel's left edge sits, measured from the layout row it is
+   *  rendered into — the rail's width plus the grid gap. The page owns this
+   *  arithmetic because only it knows whether the rail is collapsed. */
+  offsetLeft: number;
   onClose: () => void;
   onSelectFile: (fileId: string) => void;
   onSelectCitedComment: (commentId: string, fileId: string) => void;
@@ -192,6 +197,10 @@ export default function VersionDetailDrawer({
       isOpen
       onClose={onClose}
       closeOnEscape={!confirmOpen}
+      // Beside the version rail rather than at the window's right edge, and
+      // bounded to the rail's own height instead of the full window.
+      anchor="inline"
+      offsetLeft={offsetLeft}
       title={`Version ${version.versionNumber}`}
       subtitle={versionSubtitle({
         isCurrent,
