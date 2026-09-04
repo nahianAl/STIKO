@@ -829,6 +829,22 @@ export default function PortalPage() {
     }
   }, [portalId]);
 
+  // The URL is minted per click rather than held on the row: it is presigned
+  // and short-lived, and a row rendered an hour ago would hand over a dead one.
+  const downloadFile = useCallback(async (file: FileRecord) => {
+    try {
+      const res = await fetch(`/api/files/${file.id}/download`);
+      if (!res.ok) {
+        toast('Could not download this file');
+        return;
+      }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch {
+      toast('Could not download this file');
+    }
+  }, [toast]);
+
   // Tag placement (image / video). Captures video timestamp when applicable.
   const handleCommentPlace = useCallback((percentX: number, percentY: number) => {
     const video = viewerAreaRef.current?.querySelector('video') as HTMLVideoElement | null;
@@ -1129,6 +1145,7 @@ export default function PortalPage() {
           loading={loading}
           onDeleteFile={openFileDelete}
           onDeleteVersion={openVersionDelete}
+          onDownloadFile={downloadFile}
         />
 
         {/* Center Panel: File Viewer with Drawing Tools & Markup Overlay */}
