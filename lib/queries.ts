@@ -56,6 +56,26 @@ export async function getHomeData(userId: string): Promise<{
       FROM versions v
       JOIN visible ON visible.id = v.portal_id
       WHERE v.published_at IS NOT NULL
+        -- "Latest" must mean latest the viewer may see (mirrors getPackageAccess),
+        -- or a scoped commenter/viewer would have the contents of a version they
+        -- were deliberately not given surfaced on the first screen they land on.
+        AND (
+          EXISTS (
+            SELECT 1 FROM participants pa
+            WHERE pa.portal_id = v.portal_id AND pa.user_id = ${userId}
+              AND (pa.all_versions OR pa.role = 'uploader')
+          )
+          OR EXISTS (
+            SELECT 1 FROM participant_versions pv
+            JOIN participants pa2 ON pa2.id = pv.participant_id
+            WHERE pa2.portal_id = v.portal_id AND pa2.user_id = ${userId}
+              AND pv.version_id = v.id
+          )
+          -- Project members see every version; the visible CTE already derived
+          -- this exact membership boolean via the same owner/project_members
+          -- join, so reuse it rather than re-deriving it here.
+          OR visible.is_member
+        )
       ORDER BY v.portal_id, v.version_number DESC
     )
     SELECT visible.id, visible.name, visible.tag, visible.project_id AS "projectId",
