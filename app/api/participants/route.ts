@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { portalId, email, role, note, shareLink } = await request.json();
+  const { portalId, email, role, note, shareLink, canDownload } = await request.json();
 
   // Asked for explicitly. Inferring "mint a public standing-access link" from a
   // missing email would mean any caller that dropped the field — a client
@@ -68,6 +68,11 @@ export async function POST(request: NextRequest) {
   // disagree. A share link is addressed to nobody even if an email came along
   // with the request.
   const recipient = isShareLink ? null : typed;
+
+  // A share link never carries download rights, whatever the body asked for.
+  // Enforced here rather than by omitting the control, because a link can be
+  // forwarded to anyone and the UI is not what protects this.
+  const grantsDownload = isShareLink ? false : canDownload === true;
 
   if (!portalId || !role) {
     return NextResponse.json(
@@ -96,10 +101,10 @@ export async function POST(request: NextRequest) {
 
   const rows = await sql`
     INSERT INTO invite_tokens
-      (id, token, portal_id, role, email, multi_use, expires_at, invited_by, note)
+      (id, token, portal_id, role, email, multi_use, expires_at, invited_by, note, can_download)
     VALUES (
       ${uuidv4()}, ${token}, ${portalId}, ${role}, ${recipient}, ${isShareLink},
-      ${expiresAt.toISOString()}, ${session.user.id}, ${note ?? null}
+      ${expiresAt.toISOString()}, ${session.user.id}, ${note ?? null}, ${grantsDownload}
     )
     RETURNING token
   `;

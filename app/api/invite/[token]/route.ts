@@ -158,8 +158,9 @@ export async function POST(
   }
 
   const joined = await sql`
-    INSERT INTO participants (id, portal_id, user_id, role)
-    VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role})
+    INSERT INTO participants (id, portal_id, user_id, role, can_download)
+    VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role},
+            ${invite.can_download === true})
     ON CONFLICT (portal_id, user_id) DO NOTHING
     RETURNING id
   `;
