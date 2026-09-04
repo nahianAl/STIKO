@@ -131,6 +131,67 @@ export interface DeleteDecision {
 }
 
 /**
+ * Every R2 object belonging to these files — the uploads themselves and
+ * everything hanging off their comments.
+ *
+ * Comments cascade when a file is deleted, so their snapshots and attachments
+ * become unreachable the moment the rows go: nothing left names those keys, and
+ * no later sweep can find them from the database. They have to be collected
+ * before the delete, alongside the files' own keys.
+ *
+ * snapshot_url holds a storage key only when it is not an external URL or an
+ * inline data URI — the same test app/api/comments/route.ts applies when
+ * deciding whether to presign it.
+ */
+export async function storageKeysForFiles(fileIds: string[]): Promise<string[]> {
+  if (fileIds.length === 0) return [];
+
+  const fileRows = await sql`
+    SELECT storage_key AS "storageKey",
+           converted_storage_key AS "convertedStorageKey"
+    FROM files WHERE id = ANY(${fileIds})
+  `;
+
+  const snapshotRows = await sql`
+    SELECT snapshot_url AS "snapshotUrl"
+    FROM comments
+    WHERE file_id = ANY(${fileIds})
+      AND snapshot_url IS NOT NULL
+      AND snapshot_url NOT LIKE 'http%'
+      AND snapshot_url NOT LIKE 'data:%'
+  `;
+
+  // The attachments column is a JSONB array of {storageKey, ...} objects. The
+  // jsonb_typeof guard is the same one app/api/files/url/route.ts uses: a row
+  // holding anything other than an array would otherwise abort the query.
+  const attachmentRows = await sql`
+    SELECT att->>'storageKey' AS "storageKey"
+    FROM comments c,
+         jsonb_array_elements(
+           CASE jsonb_typeof(c.attachments)
+             WHEN 'array' THEN c.attachments
+             ELSE '[]'::jsonb
+           END
+         ) AS att
+    WHERE c.file_id = ANY(${fileIds})
+  `;
+
+  const keys = [
+    ...fileRows.flatMap((r) => [r.storageKey, r.convertedStorageKey]),
+    ...snapshotRows.map((r) => r.snapshotUrl),
+    ...attachmentRows.map((r) => r.storageKey),
+  ];
+
+  // Deduplicated because a key deleted twice logs a spurious failure on the
+  // second attempt, and nothing guarantees two rows cannot name one object.
+  return Array.from(
+    new Set(
+      keys.filter((k): k is string => typeof k === 'string' && k.length > 0)
+    )
+  );
+}
+
+/**
  * May this user delete this file, and what does deleting it strand in storage?
  *
  * Returns null when the file does not exist OR the caller cannot see its
@@ -147,8 +208,6 @@ export async function getFileDeleteDecision(
   const rows = await sql`
     SELECT v.portal_id       AS "portalId",
            f.uploaded_by     AS "uploadedBy",
-           f.storage_key     AS "storageKey",
-           f.converted_storage_key AS "convertedStorageKey",
            v.published_at    AS "publishedAt"
     FROM files f
     JOIN versions v ON v.id = f.version_id
@@ -167,9 +226,7 @@ export async function getFileDeleteDecision(
       isPublished: row.publishedAt !== null,
     }),
     portalId: row.portalId as string,
-    storageKeys: [row.storageKey, row.convertedStorageKey].filter(
-      (k): k is string => typeof k === 'string' && k.length > 0
-    ),
+    storageKeys: await storageKeysForFiles([fileId]),
   };
 }
 
@@ -194,9 +251,7 @@ export async function getVersionDeleteDecision(
   if (!access) return null;
 
   const fileRows = await sql`
-    SELECT storage_key AS "storageKey",
-           converted_storage_key AS "convertedStorageKey"
-    FROM files WHERE version_id = ${versionId}
+    SELECT id FROM files WHERE version_id = ${versionId}
   `;
 
   return {
@@ -206,8 +261,6 @@ export async function getVersionDeleteDecision(
       isPublished: row.publishedAt !== null,
     }),
     portalId: row.portalId as string,
-    storageKeys: fileRows
-      .flatMap((f) => [f.storageKey, f.convertedStorageKey])
-      .filter((k): k is string => typeof k === 'string' && k.length > 0),
+    storageKeys: await storageKeysForFiles(fileRows.map((f) => f.id as string)),
   };
 }
