@@ -155,13 +155,13 @@ GET /api/files/[id]/download   (Vercel: getFileDownloadDecision → Neon)
 ### Version Scope
 A commenter or viewer invited to a package can be limited to specific versions rather than all of them. Owners, coordinators and uploaders are never scoped: an uploader's work builds on what came before, so narrowing their view would break the thing they're there to do.
 
-`canSeeVersion` in `lib/capabilities.ts` holds the rule and is pure — a scope and a version id in, yes/no out. `getVersionAccess` in `lib/access.ts` is the gate every version-keyed route calls, and `getFileAccess` resolves a file to its version and applies the same check, so `files`, `transform`, `download`, `url` and `comments` all inherit the scope without each route re-deriving it.
+`canSeeVersion` in `lib/capabilities.ts` holds the rule and is pure — a scope and a version id in, yes/no out. `getVersionAccess` in `lib/access.ts` gates the version-keyed routes, and `getFileAccess` resolves a file to its version and applies the same check for `files`, `transform`, `url` and `comments`. Deletion and download don't go through either: `getFileDeleteDecision`, `getVersionDeleteDecision` (see Deletion Flow) and `getFileDownloadDecision` (see Download Flow) resolve the file or version's scope and call `canSeeVersion` themselves, inside their own resolvers.
 
 A version outside the scope answers 404, the same 404 a nonexistent version gets — an id can't be used to confirm something exists behind a boundary the caller can't cross.
 
 `all_versions` on `participants` and `invite_tokens` covers versions published later; an explicit list does not. That is deliberate: a version published seconds ago cannot yet be in anyone's explicit list, so a new version reaches only the unscoped — which is also why publish notifies only participants with `all_versions = TRUE`. Notifying a scoped reviewer would leak by email exactly what the scope hides in the UI.
 
-**What scoping does not hide.** Version numbers are not renumbered per viewer, so someone scoped to V3 still sees the label "Version 3" and can infer that earlier versions exist. Scoping hides the content of other versions — their files, changelogs, comments, dates, who reviewed them — not the bare fact that the package has a history. Renumbering per viewer would contradict the existing rule that version numbers are never reassigned (see Deletion Flow), which exists because those numbers already appear in sent emails.
+**What scoping does not hide.** Version numbers are not renumbered per viewer, so someone scoped to V3 still sees the label "Version 3" and can infer that earlier versions exist. Scoping hides the content of other versions — their files, changelogs, comments, dates, who reviewed them — not the bare fact that the package has a history. Renumbering per viewer would contradict the existing rule that version numbers are never reassigned (see Deletion Flow), which exists because those numbers already appear in comments, notifications, verdicts and sent mail.
 
 ### Metadata Reads / Writes
 ```
