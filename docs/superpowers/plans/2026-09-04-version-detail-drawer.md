@@ -700,6 +700,7 @@ endpoint."
 
 **Files:**
 - Create: `components/portal/VersionDetailDrawer.tsx`
+- Modify: `components/portal/VersionBrief.tsx`
 
 **Interfaces:**
 - Consumes: `Version`, `FileRecord` from `@/lib/types` (Task 1); `versionSubtitle`, `changelogFallback`, `fileMetaLine` from `@/lib/versionDetail` (Task 2 — `uploaderLabel` and `formatFileSize` are reached through `fileMetaLine`, not imported here); `VersionBrief` from `@/components/portal/VersionBrief`; `Drawer` from `@/components/ui/Drawer`; `getFileChip` from `@/lib/fileChips`; `SkeletonBar` from `@/components/ui/Primitives`.
@@ -711,6 +712,8 @@ endpoint."
   isCurrent: boolean;
   files: FileRecord[];
   filesLoading: boolean;
+  /** True while the PAGE is auto-generating this version's brief. */
+  briefGenerating: boolean;
   onClose: () => void;
   onSelectFile: (fileId: string) => void;
   onSelectCitedComment: (commentId: string, fileId: string) => void;
@@ -719,6 +722,8 @@ endpoint."
   onDeleteVersion?: (version: Version) => void;
 }
 ```
+
+It also adds one optional prop to `VersionBrief`: `autoBusy?: boolean`.
 
 This task builds the component but does not render it anywhere. Task 5 wires it
 in. Its pure logic is already covered by Task 2's tests; `tsc` and lint are the
@@ -884,6 +889,7 @@ export default function VersionDetailDrawer({
   isCurrent,
   files,
   filesLoading,
+  briefGenerating,
   onClose,
   onSelectFile,
   onSelectCitedComment,
@@ -895,6 +901,10 @@ export default function VersionDetailDrawer({
   isCurrent: boolean;
   files: FileRecord[];
   filesLoading: boolean;
+  /** True while the page is auto-generating this version's brief. Passed
+   *  straight through so the Brief cannot offer a button that would fire a
+   *  second, concurrent call to a paid endpoint. */
+  briefGenerating: boolean;
   onClose: () => void;
   onSelectFile: (fileId: string) => void;
   onSelectCitedComment: (commentId: string, fileId: string) => void;
@@ -968,6 +978,7 @@ export default function VersionDetailDrawer({
         {/* Renders nothing below BRIEF_MIN_COMMENTS — no card, no placeholder. */}
         <VersionBrief
           versionId={version.id}
+          autoBusy={briefGenerating}
           onSelectComment={(commentId, fileId) => {
             onSelectCitedComment(commentId, fileId);
             onClose();
@@ -993,7 +1004,64 @@ Note the delete button is the last child of the scrolling body, **not** passed
 to `Drawer`'s `footer` prop. A pinned footer would keep a destructive control
 permanently on screen, which is the problem this whole change removes.
 
-- [ ] **Step 2: Verify**
+- [ ] **Step 2: Teach `VersionBrief` about the page's generation**
+
+Task 3 moved brief auto-generation onto the portal page. `VersionBrief`'s
+`busy` flag is local to itself, so it cannot see that generation, and its
+*Summarise* button would sit enabled during exactly the window the page is
+already generating — a second click firing a second concurrent call to a paid
+endpoint. The POST route only short-circuits when a brief **already exists**
+(`coveredCount !== null`), so with no brief yet, two concurrent posts are two
+real generations.
+
+In `components/portal/VersionBrief.tsx`, add the optional prop:
+
+```tsx
+export default function VersionBrief({
+  versionId,
+  autoBusy = false,
+  onSelectComment,
+}: {
+  versionId: string;
+  /** True while the PAGE is auto-generating this version's brief. The Brief's
+   *  own `busy` cannot see that, so without this the buttons below would offer
+   *  to start a second concurrent generation of the same version. */
+  autoBusy?: boolean;
+  onSelectComment: (commentId: string, fileId: string) => void;
+}) {
+```
+
+Then, so the panel picks up what the page generated rather than sitting on the
+`brief: null` its own GET returned:
+
+```tsx
+  // The page generates in the background and does not hand the result down.
+  // When its generation finishes, re-read — otherwise this keeps offering to
+  // summarise a version that now has a brief.
+  const wasAutoBusy = useRef(false);
+  useEffect(() => {
+    if (wasAutoBusy.current && !autoBusy) load();
+    wasAutoBusy.current = autoBusy;
+  }, [autoBusy, load]);
+```
+
+Finally, make both action buttons respect it. On the *Summarise* button in the
+no-brief state:
+
+```tsx
+            disabled={busy || autoBusy}
+```
+
+with its label reading `{busy || autoBusy ? 'Summarising…' : 'Summarise'}`, and
+on the *Refresh* button in the staleness row:
+
+```tsx
+                  disabled={busy || autoBusy}
+```
+
+with its label reading `{busy || autoBusy ? 'Refreshing…' : 'Refresh'}`.
+
+- [ ] **Step 3: Verify**
 
 ```bash
 npx tsc --noEmit
@@ -1005,10 +1073,10 @@ Expected: `tsc` clean, 347 tests passing, lint clean. `tsc` may report the
 component as unused — that is expected until Task 5 renders it. If lint fails on
 an unused import, remove that import rather than suppressing the rule.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add components/portal/VersionDetailDrawer.tsx
+git add components/portal/VersionDetailDrawer.tsx components/portal/VersionBrief.tsx
 git commit -m "feat: version detail drawer component
 
 Files with uploader, time, size, folder and comment count; the changelog the
@@ -1020,7 +1088,14 @@ Open state is derived from the version being resolvable rather than a separate
 boolean, so deleting the version closes the drawer with no extra bookkeeping.
 The delete button is the last item in the scrolling body rather than a pinned
 footer: pinning a destructive control keeps it permanently on screen, which is
-what this change exists to stop."
+what this change exists to stop.
+
+VersionBrief gains an autoBusy prop. Brief generation moved to the page, whose
+in-flight state the component cannot see, so its Summarise button would have
+sat enabled during exactly the window the page was already generating — and
+the POST route only short-circuits once a brief exists, so two concurrent
+calls would have been two real ones. It now disables during that window and
+re-reads when it ends."
 ```
 
 ---
@@ -1179,6 +1254,37 @@ In `app/portal/[id]/page.tsx`, beside the other `useState` declarations, add:
   const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
 ```
 
+And, immediately below it, the flag the drawer needs so its Brief cannot start
+a second concurrent generation of the version the page is already summarising:
+
+```tsx
+  // The version id currently being auto-summarised, or null. VersionBrief's own
+  // `busy` is local to itself and cannot see this, so without it the Brief's
+  // Summarise button sits enabled during exactly the window the page is already
+  // generating — and POST /api/versions/[id]/summary only short-circuits once a
+  // brief EXISTS, so two concurrent calls with no brief yet are two real ones.
+  const [autoBriefBusy, setAutoBriefBusy] = useState<string | null>(null);
+```
+
+Then set and clear it around the POST inside the auto-generate effect added in
+Task 3. Set it immediately before the `fetch(..., { method: 'POST' })`:
+
+```tsx
+        setAutoBriefBusy(target);
+```
+
+and clear it in a `finally` on that inner block, so an early `return`, a failed
+POST and a thrown error all release it:
+
+```tsx
+        } finally {
+          if (!cancelled) setAutoBriefBusy(null);
+        }
+```
+
+Read the effect before editing — the clear must be reached on every path that
+follows the POST, not only the success path.
+
 - [ ] **Step 7: Add the open handler**
 
 In the same file, immediately after `handleSelectVersion`, add:
@@ -1237,6 +1343,7 @@ And immediately before the existing `<NewVersionDrawer` element, add:
           isCurrent={!!detailVersion && detailVersion.versionNumber === maxVersionNumber}
           files={files}
           filesLoading={filesLoading}
+          briefGenerating={!!detailVersion && autoBriefBusy === detailVersion.id}
           onClose={() => setDetailVersionId(null)}
           onSelectFile={setSelectedFileId}
           onSelectCitedComment={handleSelectCitedComment}
