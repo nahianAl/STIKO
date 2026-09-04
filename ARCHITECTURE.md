@@ -135,6 +135,23 @@ DELETE /api/versions/[id]  (Vercel: getVersionDeleteDecision → Neon)
 
 A 404 covers both "no such row" and "no access to its portal", so an id can't confirm something exists behind a boundary the caller can't cross; 403 only appears once the caller can already see the portal.
 
+### Download Flow
+`canDownloadFile` in `lib/capabilities.ts` holds the rule, in the same pure role-plus-booleans shape as `canDeleteContent`. `getFileDeleteDecision`'s sibling, `getFileDownloadDecision` in `lib/access.ts`, resolves those booleans from Neon and returns the verdict together with `storage_key` — never `converted_storage_key`: a download is the file as the uploader supplied it, not the copy the viewer prefers.
+
+Owners and coordinators download anything, and an uploader always gets their own uploads back. Everyone else — including an uploader after someone else's file — needs `can_download` granted to them specifically. The grant is decided per person when they're invited and changeable afterwards from the portal's People page, so two commenters on the same portal can differ.
+
+Share links are unaddressed by design — a link can be forwarded to anyone — so the grant is not something their UI omits, it's something the server refuses: `POST /api/participants` forces `can_download` false whenever `shareLink` is true, regardless of what the request body asked for. The same false is what gets copied into `participants.can_download` when the link is redeemed, and it stays there until an owner or coordinator changes it from the People page.
+
+```
+GET /api/files/[id]/download   (Vercel: getFileDownloadDecision → Neon)
+  ← 401  no session
+  ← 404  no such file, or no access to its portal
+  ← 403  caller can see the portal, but canDownloadFile said no
+  → getDownloadPresignedUrl(storage_key)   Content-Disposition: attachment
+```
+
+**What this does not stop.** The grant gates the control and this endpoint, not the bytes. `ViewerContainer` fetches a presigned URL unconditionally, for `convertedStorageKey ?? storageKey` — the `isViewable` check runs after that fetch and only decides what gets rendered with the result. Only 9 of the 99 files in production have a converted variant, so for essentially every file that URL names the original object. Anyone who can view a file can therefore already save it from the browser's network tab, whatever `can_download` says. A real wall would mean proxying every view through the app server instead of straight from R2 — deliberately not done here.
+
 ### Metadata Reads / Writes
 ```
 All project / portal / version / comment / markup CRUD
@@ -232,6 +249,7 @@ Browser
 - **`/data/*.json` flat files:** Replaced entirely by Neon. The `lib/db.ts` helper is replaced by SQL queries via `@neondatabase/serverless`.
 - **Snapshot API route (`/api/snapshots`):** Currently writes to local disk. Replaced by presign → direct S3 upload flow.
 - **`005-file-deletion.sql`:** Adds `files.uploaded_by`, backfilled from `versions.created_by` for existing rows so the uploader-delete window has an owner to check against. Apply before deploying code that reads the column.
+- **`007-download-authorization.sql`:** Adds `can_download` to `participants` and `invite_tokens`, both defaulting false. Apply before deploying code that reads them.
 
 ---
 
