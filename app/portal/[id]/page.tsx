@@ -1414,7 +1414,6 @@ export default function PortalPage() {
         {/* Right Panel: Comments */}
         <CommentsPanel
           fileId={selectedFileId}
-          versionId={selectedVersionId}
           onCommentClick={handleCommentClick}
           activeCommentId={activeCommentId}
           refreshKey={commentsRefreshKey}
@@ -1422,7 +1421,6 @@ export default function PortalPage() {
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
           onViewImage={setViewportImage}
           onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
-          onSelectCitedComment={handleSelectCitedComment}
           composer={
             <CommentComposer
               text={composerText}

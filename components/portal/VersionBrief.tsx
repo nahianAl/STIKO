@@ -17,8 +17,8 @@ import {
  * of a brief), configured with no brief yet (offer to summarise), brief
  * current, and brief present-but-stale (show it, say how far behind it is).
  *
- * Collapsed by default. The digest beside the label is what makes that
- * acceptable — a bare "Brief / Show" row gives a reader no reason to open it.
+ * Expanded by default — this lives in a drawer someone opened deliberately.
+ * It can still be collapsed to a single digest line via the toggle.
  */
 
 interface Theme {
@@ -76,7 +76,12 @@ export default function VersionBrief({
   const [data, setData] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
+  // Expanded by default. It defaulted to collapsed when it lived in the comment
+  // panel, where it competed for space above every file's comments. It now has
+  // a drawer of its own that people open deliberately, so collapsed-by-default
+  // would mean two clicks to reach the thing they opened the drawer for. The
+  // toggle stays, so a long brief can still be folded to reach what is below it.
+  const [collapsed, setCollapsed] = useState(false);
   // Always the version currently on screen. Both load() and generate() capture
   // the version they were started for and compare against this after awaiting —
   // a response that arrives after the user has moved on must be discarded, not
