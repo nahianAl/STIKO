@@ -42,14 +42,16 @@
 ```
 {bucket}/
   uploads/{projectId}/{portalId}/{versionId}/{filename}
-  snapshots/{projectId}/{portalId}/{uuid}.jpg
+  snapshots/{uuid}.{ext}          # flat, no project/portal segment — see Deletion below
 ```
 
 ### Deletion
 
 Deleting a file, version, portal or project now removes its objects from the bucket too, via `deleteObjects` in `lib/s3.ts` — previously only the Neon rows went away, and the bucket kept growing forever. Cleanup runs after those rows are gone, never before: a storage failure at that point strands an object rather than turning a completed delete into an error response, and the reverse order risks the opposite failure — a file still listed with its bytes already gone.
 
-All four scopes gather their keys through the same helper, `storageKeysForFiles` in `lib/access.ts`, so none of them can quietly diverge on what "this file's objects" means. It walks four kinds of object: the upload itself, its optimized viewer variant, any annotation snapshot named in `comments.snapshot_url`, and any comment attachment named in `comments.attachments[].storageKey`. The last two matter because comments cascade with the file — once those rows are gone, nothing in the database names those objects, so they must be collected before the delete runs, not after.
+All four scopes gather their keys through the same helper, `storageKeysForFiles` in `lib/access.ts`, so none of them can quietly diverge on what "this file's objects" means. It collects two kinds of object: the upload itself and its optimized viewer variant.
+
+Annotation snapshots (`comments.snapshot_url`) and comment attachments (`comments.attachments[].storageKey`) also go unreachable once their file's comments cascade, but are deliberately **not** collected. Both namespaces are minted flat — `snapshots/{uuid}` and `comment-attachments/{uuid}`, no project or portal segment — and `/api/comments` stores whichever key the caller supplies, so collecting them would let a commenter name another package's object on their own comment and destroy it. They leak instead, as they did before deletion existed. Collection can resume once both namespaces carry a portal segment and the routes that mint them require a session — not before.
 
 Objects orphaned by deletions made before this change are not recovered here; finding them would mean reasoning from bucket contents instead of the database.
 

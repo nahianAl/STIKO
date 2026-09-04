@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { getUploadPresignedUrl, getPublicUrl } from '@/lib/s3';
-import { isOptimizableFilename, optimizedVariantKey } from '@/lib/storageKeys';
+import { isOptimizableFilename, optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
@@ -41,12 +41,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
   const fileId = uuidv4();
   // projectId and portalId come from the version, never from the body. Trusting
   // the caller's copy would let an authorized uploader on one package write
   // objects under a different package's prefix.
-  const storageKey = `uploads/${versionRows[0].projectId}/${versionRows[0].portalId}/${versionId}/${fileId}${ext}`;
+  const storageKey = uploadStorageKey({
+    projectId: versionRows[0].projectId,
+    portalId: versionRows[0].portalId,
+    versionId,
+    fileId,
+    filename,
+  });
 
   const presignedUrl = await getUploadPresignedUrl(storageKey, contentType);
 

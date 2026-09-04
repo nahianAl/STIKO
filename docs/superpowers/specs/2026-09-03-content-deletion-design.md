@@ -270,12 +270,14 @@ select button and the delete button as siblings.
 
 Two different confirms, deliberately.
 
-- **Owner or coordinator deleting published content** — the existing
-  `components/settings/DestructiveConfirm.tsx`, with an inventory of the files,
-  comments and markups that die with it. Matches package deletion.
-- **Uploader deleting their own draft file** — a plain `components/ui/Modal.tsx`
-  confirm. Nothing is published, nobody has commented, and the point is a fast
-  fix for a wrong upload.
+- **Anything would be destroyed alongside the file, or its version is
+  published** — the existing `components/settings/DestructiveConfirm.tsx`,
+  with an inventory of the files and comments that die with it. Matches
+  package deletion. Markups are not counted: the table is legacy and nothing
+  writes to it, so a count would only ever show zero.
+- **Neither holds** — a plain `components/ui/Modal.tsx` confirm. Nothing is
+  published, nobody has commented, and the point is a fast fix for a wrong
+  upload.
 
 `DestructiveConfirm` is **not** reused for the second case and **not** modified
 to make its typed name optional. Its header states its three rules — count what
@@ -284,10 +286,13 @@ every destructive confirm, and making the name optional would turn that rule
 into a default that each call site can quietly opt out of. Keeping the component
 strict means the strictness is guaranteed wherever it appears.
 
-The two cases genuinely differ: deleting a published file destroys other
-people's work, while deleting an unpublished one you uploaded a minute ago
-destroys only your own mistake. Requiring a filename to be typed for the second
-would train users to type past the first.
+The split is on stakes, not role or publish state alone: a draft can already
+carry other people's comments, because commenting is gated on `canComment` and
+never on whether the version is published. The two cases genuinely differ:
+destroying other people's work — a comment thread, or anything already
+published — earns the typed-name confirm; deleting an untouched draft you
+uploaded a minute ago destroys only your own mistake, and requiring a filename
+for that would train users to type past the first.
 
 Deletion is not offered as reversible anywhere, because it is not. Unlike
 package deletion, there is no archive alternative to point at.
@@ -316,7 +321,7 @@ deploy:
 | Risk | Mitigation |
 |---|---|
 | Migration not run before deploy — `GET /api/files` returns 500 for every user on every package, so every package renders as empty, and `/api/files/complete` returns 500 after the bytes are already in R2, so every upload fails at registration and strands its object | Deploy migration first; confirm `schema_migrations` before shipping code |
-| Owner deletes published version, destroying reviewer comments | Typed-name confirm with explicit comment and markup counts |
+| Owner deletes published version, destroying reviewer comments | Typed-name confirm with an explicit comment count (markups excluded — the table is unused) |
 | Backfill misattributes a file to the version creator | Bounded — only affects open drafts; owner can delete regardless |
 | R2 delete succeeds, DB delete fails | Impossible in this order; DB is deleted first |
 | Cascade reaches further than the confirm claims | Confirm counts are queried, not estimated |

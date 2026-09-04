@@ -528,6 +528,13 @@ export default function PortalPage() {
   const loadVersions = useCallback(async () => {
     try {
       const res = await fetch(`/api/versions?portalId=${portalId}`);
+      // A 401 or 403 returns a JSON error object, not an array. Without this
+      // it lands in setVersions and the sidebar's reduce throws during render,
+      // taking out the whole route — there is no error boundary above it.
+      if (!res.ok) {
+        setVersions([]);
+        return;
+      }
       const data: Version[] = await res.json();
       setVersions(data);
       if (data.length > 0) {
@@ -579,6 +586,12 @@ export default function PortalPage() {
     setFilesLoading(true);
     try {
       const res = await fetch(`/api/files?versionId=${versionId}`);
+      // Same failure shape as loadVersions: a 401/403 body is a JSON object,
+      // not an array, and would otherwise reach setFiles and blow up render.
+      if (!res.ok) {
+        setFiles([]);
+        return;
+      }
       const data: FileRecord[] = await res.json();
       setFiles(data);
       if (data.length > 0) {
