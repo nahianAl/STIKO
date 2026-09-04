@@ -58,6 +58,7 @@ interface Version {
   canDelete?: boolean;
   fileCount?: number;
   commentCount?: number;
+  markupCount?: number;
 }
 
 interface Participant {
@@ -755,6 +756,9 @@ export default function PortalPage() {
     if (selectedFileId === target.id) setSelectedFileId(null);
     toast('File deleted');
     if (selectedVersionId) fetchFiles(selectedVersionId);
+    // The version rail carries file and comment counts that the delete confirm
+    // reads, so a stale count here would overstate what the next delete costs.
+    await loadVersions();
   };
 
   const confirmDeleteVersion = async () => {
@@ -1037,6 +1041,13 @@ export default function PortalPage() {
     );
   };
 
+  // A file's stakes come from its version: once published, reviewers can have
+  // commented on it, so removing it destroys their work and not just the
+  // uploader's mistake.
+  const fileToDeleteIsPublished = Boolean(
+    versions.find((v) => v.id === selectedVersionId)?.publishedAt
+  );
+
   return (
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
@@ -1303,27 +1314,48 @@ export default function PortalPage() {
         }}
       />
 
-      {/* An uploader clearing their own unpublished file. Nothing is published
-          and nobody has commented, so a plain confirm is the honest weight. */}
-      <Modal
-        isOpen={Boolean(fileToDelete)}
-        onClose={() => setFileToDelete(null)}
-        title="Delete this file?"
-        subtitle={fileToDelete?.filename}
-        width={420}
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setFileToDelete(null)}>
-              Cancel
-            </Button>
-            <Button variant="danger" onClick={confirmDeleteFile}>Delete file</Button>
-          </>
-        }
-      >
-        <p className="text-[13px] text-stiko-secondary">
-          This removes the file and anything attached to it. It cannot be undone.
-        </p>
-      </Modal>
+      {/* Unpublished: nobody has seen it, so a plain confirm is the honest
+          weight. Requiring a typed filename here would train users to type
+          past the serious dialog below. */}
+      {fileToDelete && !fileToDeleteIsPublished && (
+        <Modal
+          isOpen
+          onClose={() => setFileToDelete(null)}
+          title="Delete this file?"
+          subtitle={fileToDelete.filename}
+          width={420}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setFileToDelete(null)}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={confirmDeleteFile}>Delete file</Button>
+            </>
+          }
+        >
+          <p className="text-[13px] text-stiko-secondary">
+            This removes the file and anything attached to it. It cannot be undone.
+          </p>
+        </Modal>
+      )}
+
+      {/* Published: reviewers can have built work on this file, so it gets the
+          same weight as deleting a whole version. */}
+      {fileToDelete && fileToDeleteIsPublished && (
+        <DestructiveConfirm
+          isOpen
+          onClose={() => setFileToDelete(null)}
+          onConfirm={confirmDeleteFile}
+          title="Delete this file?"
+          name={fileToDelete.filename}
+          consequence="This cannot be undone. Everyone loses this file and the review work on it, including people mid-review."
+          inventory={[
+            { label: 'Comments', value: fileToDelete.commentCount ?? 0, urgent: (fileToDelete.commentCount ?? 0) > 0 },
+            { label: 'Markups', value: fileToDelete.markupCount ?? 0, urgent: (fileToDelete.markupCount ?? 0) > 0 },
+          ]}
+          confirmLabel="Delete file"
+        />
+      )}
 
       {/* A whole version, with other people's review work on it. Full weight:
           typed name and a count of what dies. */}
@@ -1338,6 +1370,7 @@ export default function PortalPage() {
           inventory={[
             { label: 'Files', value: versionToDelete.fileCount ?? 0 },
             { label: 'Comments', value: versionToDelete.commentCount ?? 0, urgent: (versionToDelete.commentCount ?? 0) > 0 },
+            { label: 'Markups', value: versionToDelete.markupCount ?? 0, urgent: (versionToDelete.markupCount ?? 0) > 0 },
           ]}
           confirmLabel="Delete version"
         />

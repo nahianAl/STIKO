@@ -50,6 +50,26 @@ export async function GET(request: NextRequest) {
   `;
   const isPublished = publishedRows[0]?.publishedAt !== null;
 
+  // What a delete confirm has to be able to state. Counted here rather than in
+  // the client because the client can only see comments it has already loaded
+  // for the file it is looking at.
+  const counts = await sql`
+    SELECT f.id,
+           COUNT(DISTINCT c.id) AS "commentCount",
+           COUNT(DISTINCT m.id) AS "markupCount"
+    FROM files f
+    LEFT JOIN comments c ON c.file_id = f.id
+    LEFT JOIN markups m ON m.file_id = f.id
+    WHERE f.version_id = ${versionId}
+    GROUP BY f.id
+  `;
+  const countsById = new Map(
+    counts.map((c) => [
+      c.id as string,
+      { commentCount: Number(c.commentCount), markupCount: Number(c.markupCount) },
+    ])
+  );
+
   const files = rows.map((row) => {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
     return {
@@ -65,6 +85,8 @@ export async function GET(request: NextRequest) {
         isOwnUpload: row.uploadedBy === userId,
         isPublished,
       }),
+      commentCount: countsById.get(file.id as string)?.commentCount ?? 0,
+      markupCount: countsById.get(file.id as string)?.markupCount ?? 0,
     };
   });
 
