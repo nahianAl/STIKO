@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
 import { SkeletonBar } from '@/components/ui/Primitives';
+import type { ObjectTransform } from '@/lib/objectTransform';
 
 interface Version {
   id: string;
@@ -27,6 +28,8 @@ interface FileRecord {
   convertedStorageKey: string | null;
   conversionJobId: string | null;
   folderPath: string | null;
+  /** Where the object has been placed in the 3D viewer. Identity for non-3D files. */
+  transform: ObjectTransform;
   uploadedBy: string | null;
   /** Server's verdict on whether this caller may delete it. Never re-derived client-side. */
   canDelete?: boolean;
