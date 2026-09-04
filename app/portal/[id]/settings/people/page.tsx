@@ -161,6 +161,20 @@ export default function PackagePeople() {
     load();
   };
 
+  // Guards every call site below: unchecking "All versions" with nothing yet
+  // picked, or deselecting the last remaining version chip, both produce
+  // allVersions: false with an empty list — a scope that admits nothing,
+  // silently. Short-circuited here rather than sent to a route that now
+  // rejects it anyway.
+  const changeScopeGuarded = (
+    userId: string,
+    nextAllVersions: boolean,
+    nextVersionIds: string[]
+  ) => {
+    if (!nextAllVersions && nextVersionIds.length === 0) return;
+    changeScope(userId, nextAllVersions, nextVersionIds);
+  };
+
   // Two handles, because an invitation has two shapes. An email invite is keyed
   // on its recipient, like every other row in the people matrix. A share link
   // has no recipient, so the token is the only thing that identifies it.
@@ -314,7 +328,7 @@ export default function PackagePeople() {
                       <input
                         type="checkbox"
                         checked={p.allVersions !== false}
-                        onChange={(e) => changeScope(p.userId, e.target.checked, p.versionIds ?? [])}
+                        onChange={(e) => changeScopeGuarded(p.userId, e.target.checked, p.versionIds ?? [])}
                         className="h-[14px] w-[14px] accent-stiko-primary"
                       />
                       All versions
@@ -327,7 +341,7 @@ export default function PackagePeople() {
                             key={v.id}
                             type="button"
                             onClick={() =>
-                              changeScope(
+                              changeScopeGuarded(
                                 p.userId,
                                 false,
                                 on
@@ -431,7 +445,7 @@ export default function PackagePeople() {
                           <input
                             type="checkbox"
                             checked={p.allVersions !== false}
-                            onChange={(e) => changeScope(p.email!, e.target.checked, p.versionIds ?? [])}
+                            onChange={(e) => changeScopeGuarded(p.email!, e.target.checked, p.versionIds ?? [])}
                             className="h-[14px] w-[14px] accent-stiko-primary"
                           />
                           All versions
@@ -444,7 +458,7 @@ export default function PackagePeople() {
                                 key={v.id}
                                 type="button"
                                 onClick={() =>
-                                  changeScope(
+                                  changeScopeGuarded(
                                     p.email!,
                                     false,
                                     on

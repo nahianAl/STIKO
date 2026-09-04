@@ -125,6 +125,14 @@ export function AddPeopleModal({
 
   const notSelected = packages.filter((p) => !selection[p.id]);
 
+  // An empty scope admits nothing, silently — refused here rather than sent
+  // to a route that now rejects it anyway.
+  const hasEmptyScope = chosen.some((portalId) => {
+    const grant = selection[portalId];
+    const scopable = grant.role === 'commenter' || grant.role === 'viewer';
+    return scopable && !grant.allVersions && grant.versionIds.length === 0;
+  });
+
   return (
     <Modal
       isOpen={isOpen}
@@ -142,7 +150,7 @@ export function AddPeopleModal({
           </button>
           <Button
             onClick={send}
-            disabled={sending || parsed.length === 0 || chosen.length === 0}
+            disabled={sending || parsed.length === 0 || chosen.length === 0 || hasEmptyScope}
           >
             {sending ? 'Sending…' : 'Send invitation'}
           </Button>

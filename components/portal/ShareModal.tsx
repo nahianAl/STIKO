@@ -26,6 +26,12 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
   const [delivered, setDelivered] = useState(false);
   const [allVersions, setAllVersions] = useState(true);
   const [scopeIds, setScopeIds] = useState<string[]>([]);
+  // The link section gets its own scope state rather than sharing the email
+  // invite's: the two controls are presented as independent, so narrowing an
+  // email invite must not silently narrow a share link created afterwards
+  // without ever showing a scope control in that section.
+  const [linkAllVersions, setLinkAllVersions] = useState(true);
+  const [linkScopeIds, setLinkScopeIds] = useState<string[]>([]);
   const [versions, setVersions] = useState<{ id: string; versionNumber: number }[]>([]);
 
   useEffect(() => {
@@ -43,6 +49,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
       setError(null); setBusy(null); setCopied(null);
       setSentTo(null); setDelivered(false);
       setAllVersions(true); setScopeIds([]);
+      setLinkAllVersions(true); setLinkScopeIds([]);
     }
   }, [isOpen]);
 
@@ -110,12 +117,20 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
     try {
       // A share link may still carry a scope — unlike the download grant,
       // which is forced off for links, narrowing is safe on a forwardable
-      // link because it only ever grants less than the sender chose.
-      const result = await createInvite('', linkRole, false, allVersions, scopeIds);
+      // link because it only ever grants less than the sender chose. Its own
+      // state, not the email invite's — see linkAllVersions above.
+      const result = await createInvite('', linkRole, false, linkAllVersions, linkScopeIds);
       if (result) setShareLink(result.link);
       else setError('Could not create the link. Please try again.');
     } finally { setBusy(null); }
   };
+
+  const inviteScopable = inviteRole === 'commenter' || inviteRole === 'viewer';
+  // An empty scope admits nothing, silently — refused here rather than let
+  // through to a route that now rejects it anyway.
+  const inviteScopeEmpty = inviteScopable && !allVersions && scopeIds.length === 0;
+  const linkScopable = linkRole === 'commenter' || linkRole === 'viewer';
+  const linkScopeEmpty = linkScopable && !linkAllVersions && linkScopeIds.length === 0;
 
   const copy = (value: string, which: string) => {
     navigator.clipboard.writeText(value);
@@ -148,7 +163,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
             <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)} className={selectCls}>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
-            <button onClick={handleInvite} disabled={!email.trim() || busy === 'invite'} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
+            <button onClick={handleInvite} disabled={!email.trim() || busy === 'invite' || inviteScopeEmpty} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
               {busy === 'invite' ? '…' : 'Send'}
             </button>
           </div>
@@ -163,7 +178,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
             Can download files
           </label>
 
-          {(inviteRole === 'commenter' || inviteRole === 'viewer') && versions.length > 0 && (
+          {inviteScopable && versions.length > 0 && (
             <div className="mt-2">
               <span className="mb-[6px] block text-[12px] font-bold text-stiko-secondary">
                 Versions they can see
@@ -234,10 +249,53 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
             <select value={linkRole} onChange={(e) => setLinkRole(e.target.value as Role)} className={selectCls}>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
-            <button onClick={handleShareLink} disabled={busy === 'link'} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
+            <button onClick={handleShareLink} disabled={busy === 'link' || linkScopeEmpty} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
               {busy === 'link' ? '…' : 'Create link'}
             </button>
           </div>
+
+          {linkScopable && versions.length > 0 && (
+            <div className="mt-2">
+              <span className="mb-[6px] block text-[12px] font-bold text-stiko-secondary">
+                Versions they can see
+              </span>
+              <label className="flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
+                <input
+                  type="checkbox"
+                  checked={linkAllVersions}
+                  onChange={(e) => setLinkAllVersions(e.target.checked)}
+                  className="h-[15px] w-[15px] accent-stiko-primary"
+                />
+                All versions, including future ones
+              </label>
+              {!linkAllVersions && (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {versions.map((v) => {
+                    const on = linkScopeIds.includes(v.id);
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() =>
+                          setLinkScopeIds((prev) =>
+                            prev.includes(v.id) ? prev.filter((x) => x !== v.id) : [...prev, v.id]
+                          )
+                        }
+                        className={`rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${
+                          on
+                            ? 'bg-stiko-primary text-white'
+                            : 'bg-stiko-app text-stiko-secondary hover:text-stiko-ink'
+                        }`}
+                      >
+                        V{v.versionNumber}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {shareLink && linkRow(shareLink, 'link')}
           <p className="mt-1.5 text-[11px] text-stiko-faint">
             Anyone with the link can sign in and join as {linkRole}. It stays

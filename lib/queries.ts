@@ -100,9 +100,19 @@ export async function getHomeData(userId: string): Promise<{
   `;
 
   const packageIds = rows.map((r) => r.id as string);
+  // visible.is_member was already computed above, per portal, for this exact
+  // user — reused here rather than re-derived through a second join.
+  const memberPortalIds = rows
+    .filter((r) => r.isMember)
+    .map((r) => r.id as string);
 
   // Verdicts and people, fetched per-package but only for packages already
   // filtered to the visible set above.
+  //
+  // The status badge must not reflect verdict signal from a version a scoped
+  // commenter or viewer cannot see, so eligibility here mirrors the `latest`
+  // CTE above exactly: an unscoped-or-uploader participant, an explicit
+  // participant_versions row for that version, or project membership.
   const verdictRows = packageIds.length
     ? await sql`
         SELECT v.portal_id AS "portalId", vd.verdict
@@ -110,6 +120,20 @@ export async function getHomeData(userId: string): Promise<{
         JOIN versions v ON v.id = vd.version_id
         WHERE v.portal_id = ANY(${packageIds})
           AND v.published_at IS NOT NULL
+          AND (
+            EXISTS (
+              SELECT 1 FROM participants pa
+              WHERE pa.portal_id = v.portal_id AND pa.user_id = ${userId}
+                AND (pa.all_versions OR pa.role = 'uploader')
+            )
+            OR EXISTS (
+              SELECT 1 FROM participant_versions pv
+              JOIN participants pa2 ON pa2.id = pv.participant_id
+              WHERE pa2.portal_id = v.portal_id AND pa2.user_id = ${userId}
+                AND pv.version_id = v.id
+            )
+            OR v.portal_id = ANY(${memberPortalIds})
+          )
       `
     : [];
 

@@ -56,6 +56,16 @@ export async function POST(request: NextRequest) {
   const version = versionRows[0];
   if (!version) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  // Access is checked before the draft check, not after: answering "not
+  // published yet" for a version outside the caller's scope would let anyone
+  // signed in distinguish a real draft from one that doesn't exist — the same
+  // oracle this branch exists to close.
+  //
+  // 404 rather than 403: a version outside the caller's scope must look
+  // exactly like one that does not exist.
+  const access = await getVersionAccess(session.user.id, versionId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
   // A draft has not been sent to anyone, so there is nothing to have an opinion
   // about yet.
   if (!version.publishedAt) {
@@ -64,11 +74,6 @@ export async function POST(request: NextRequest) {
       { status: 409 }
     );
   }
-
-  // 404 rather than 403: a version outside the caller's scope must look
-  // exactly like one that does not exist.
-  const access = await getVersionAccess(session.user.id, versionId);
-  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   // A viewer can look but not weigh in — a verdict is a review action.
   if (!access.canComment) {
     return NextResponse.json(

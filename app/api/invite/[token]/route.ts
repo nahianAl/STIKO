@@ -184,28 +184,57 @@ export async function POST(
   // this, joined.length > 0 would also be true for a re-accepted addressed
   // invite that only changed the grant, and the notification below would fire
   // "accepted your invitation" a second time for someone who already had.
+  // role is deliberately not touched by this UPDATE (see the comment above),
+  // which means an existing uploader accepting a fresh commenter/viewer
+  // invitation must not pick up that invitation's scope either — an uploader
+  // with all_versions = false and scope rows is a state the spec says must
+  // never exist. So all_versions only ever takes the invitation's value when
+  // the row's role (after the conflict resolves) is one that can carry scope;
+  // otherwise it is forced back to TRUE.
   const joined = await sql`
     INSERT INTO participants (id, portal_id, user_id, role, can_download, all_versions)
     VALUES (${uuidv4()}, ${invite.portal_id}, ${session.user.id}, ${invite.role},
             ${invite.can_download === true}, ${invite.all_versions !== false})
     ON CONFLICT (portal_id, user_id) DO UPDATE
       SET can_download = EXCLUDED.can_download,
-          all_versions = EXCLUDED.all_versions
+          all_versions = CASE
+            WHEN participants.role IN ('commenter', 'viewer')
+            THEN EXCLUDED.all_versions
+            ELSE TRUE
+          END
       WHERE ${!invite.multi_use}
-    RETURNING id, (xmax = 0) AS "isNew"
+    RETURNING id, role, (xmax = 0) AS "isNew"
   `;
 
   const participantId = joined[0]?.id;
-  if (participantId && invite.all_versions === false) {
+  const resultingRole = joined[0]?.role as string | undefined;
+  const scopable = resultingRole === 'commenter' || resultingRole === 'viewer';
+  if (participantId && scopable && invite.all_versions === false) {
     // Replace rather than add: the invitation the owner just sent is the
-    // intended scope, not an increment on whatever was there before.
-    await sql`DELETE FROM participant_versions WHERE participant_id = ${participantId}`;
-    await sql`
-      INSERT INTO participant_versions (id, participant_id, version_id)
-      SELECT gen_random_uuid()::text, ${participantId}, version_id
+    // intended scope, not an increment on whatever was there before. Scope
+    // ids are minted with uuidv4() like everywhere else in the tree — the
+    // set-based SELECT-INSERT this replaced could not take a single
+    // pre-generated id, so the versions are fetched first and inserted one at
+    // a time instead.
+    const scopedVersions = await sql`
+      SELECT version_id AS "versionId"
       FROM invite_token_versions WHERE token_id = ${invite.id}
-      ON CONFLICT (participant_id, version_id) DO NOTHING
     `;
+    // Delete and insert run in one transaction: lib/db.ts's neon() client has
+    // no ambient transaction, so without this, an insert failing after the
+    // delete committed would leave the person with all_versions = false and no
+    // scope rows — seeing nothing at all until someone replays the same
+    // change. Same pattern as app/api/projects/[id]/route.ts.
+    await sql.transaction([
+      sql`DELETE FROM participant_versions WHERE participant_id = ${participantId}`,
+      ...scopedVersions.map(
+        (v) => sql`
+          INSERT INTO participant_versions (id, participant_id, version_id)
+          VALUES (${uuidv4()}, ${participantId}, ${v.versionId})
+          ON CONFLICT (participant_id, version_id) DO NOTHING
+        `
+      ),
+    ]);
   }
 
   // A share link is not consumed by the person who walks through it — stamping
@@ -238,14 +267,30 @@ export async function POST(
   // 04: land on the package's first file, never on the dashboard. Every role
   // goes to the same place — the old uploader-to-/submit split is gone now that
   // submitting is a drawer over the package (2e).
-  const firstFile = await sql`
-    SELECT f.id
-    FROM files f
-    JOIN versions v ON v.id = f.version_id
-    WHERE v.portal_id = ${invite.portal_id} AND v.published_at IS NOT NULL
-    ORDER BY v.version_number DESC, f.filename ASC
-    LIMIT 1
-  `;
+  //
+  // Scoped the same way the GET preview above is: a scoped invitee must not be
+  // redirected into a version outside their scope, so the candidate files come
+  // from the versions this token actually grants rather than the package's
+  // true latest.
+  const firstFile =
+    invite.all_versions === false
+      ? await sql`
+          SELECT f.id
+          FROM files f
+          JOIN versions v ON v.id = f.version_id
+          JOIN invite_token_versions itv ON itv.version_id = v.id
+          WHERE itv.token_id = ${invite.id} AND v.published_at IS NOT NULL
+          ORDER BY v.version_number DESC, f.filename ASC
+          LIMIT 1
+        `
+      : await sql`
+          SELECT f.id
+          FROM files f
+          JOIN versions v ON v.id = f.version_id
+          WHERE v.portal_id = ${invite.portal_id} AND v.published_at IS NOT NULL
+          ORDER BY v.version_number DESC, f.filename ASC
+          LIMIT 1
+        `;
 
   const redirectPath = firstFile[0]
     ? `/portal/${invite.portal_id}?file=${firstFile[0].id}`

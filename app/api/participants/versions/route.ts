@@ -36,6 +36,16 @@ export async function POST(request: NextRequest) {
     ? versionIds.filter((v) => typeof v === 'string')
     : [];
 
+  // An empty scope admits nothing — the person would see no version at all,
+  // with nothing in the response to say why. Refused here rather than left to
+  // resolve into a silent lockout.
+  if (!allVersions && ids.length === 0) {
+    return NextResponse.json(
+      { error: 'Choose at least one version, or allow all versions' },
+      { status: 400 }
+    );
+  }
+
   const access = await getPackageAccess(session.user.id, portalId);
   if (!access?.canManagePeople) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -50,20 +60,34 @@ export async function POST(request: NextRequest) {
         AND used_at IS NULL AND revoked_at IS NULL
       RETURNING id
     `;
+    // Symmetric with the accepted-participant branch below: a scope change
+    // against an invite that was just revoked or accepted must not report
+    // success having matched nothing.
+    if (tokens.length === 0) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
     for (const t of tokens) {
-      await sql`DELETE FROM invite_token_versions WHERE token_id = ${t.id}`;
-      if (!allVersions) {
-        for (const vId of ids) {
-          await sql`
-            INSERT INTO invite_token_versions (id, token_id, version_id)
-            SELECT ${uuidv4()}, ${t.id}, ${vId}
-            WHERE EXISTS (
-              SELECT 1 FROM versions WHERE id = ${vId} AND portal_id = ${portalId}
-            )
-            ON CONFLICT (token_id, version_id) DO NOTHING
-          `;
-        }
-      }
+      const inserts = allVersions
+        ? []
+        : ids.map(
+            (vId) => sql`
+              INSERT INTO invite_token_versions (id, token_id, version_id)
+              SELECT ${uuidv4()}, ${t.id}, ${vId}
+              WHERE EXISTS (
+                SELECT 1 FROM versions WHERE id = ${vId} AND portal_id = ${portalId}
+              )
+              ON CONFLICT (token_id, version_id) DO NOTHING
+            `
+          );
+      // Delete and insert in one transaction: lib/db.ts's neon() client has no
+      // ambient transaction, so without this an insert failing after the
+      // delete committed would leave all_versions = false with no scope rows —
+      // a silent lockout until someone replays the same change. Same pattern
+      // as app/api/projects/[id]/route.ts.
+      await sql.transaction([
+        sql`DELETE FROM invite_token_versions WHERE token_id = ${t.id}`,
+        ...inserts,
+      ]);
     }
     return NextResponse.json({ ok: true, updated: tokens.length });
   }
@@ -77,21 +101,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  await sql`DELETE FROM participant_versions WHERE participant_id = ${rows[0].id}`;
-  if (!allVersions) {
-    for (const vId of ids) {
-      // Checked against the package, so a caller cannot grant sight of a
-      // version belonging to somewhere else entirely.
-      await sql`
-        INSERT INTO participant_versions (id, participant_id, version_id)
-        SELECT ${uuidv4()}, ${rows[0].id}, ${vId}
-        WHERE EXISTS (
-          SELECT 1 FROM versions WHERE id = ${vId} AND portal_id = ${portalId}
-        )
-        ON CONFLICT (participant_id, version_id) DO NOTHING
-      `;
-    }
-  }
+  const inserts = allVersions
+    ? []
+    : ids.map(
+        // Checked against the package, so a caller cannot grant sight of a
+        // version belonging to somewhere else entirely.
+        (vId) => sql`
+          INSERT INTO participant_versions (id, participant_id, version_id)
+          SELECT ${uuidv4()}, ${rows[0].id}, ${vId}
+          WHERE EXISTS (
+            SELECT 1 FROM versions WHERE id = ${vId} AND portal_id = ${portalId}
+          )
+          ON CONFLICT (participant_id, version_id) DO NOTHING
+        `
+      );
+  // Delete and insert in one transaction — see the comment in the pending
+  // branch above.
+  await sql.transaction([
+    sql`DELETE FROM participant_versions WHERE participant_id = ${rows[0].id}`,
+    ...inserts,
+  ]);
 
   return NextResponse.json({ ok: true });
 }
