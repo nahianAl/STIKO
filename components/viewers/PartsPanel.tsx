@@ -45,6 +45,7 @@ export default function PartsPanel({
   effectiveColor,
   canColor,
   revealKey,
+  revealToken,
   onToggleVisibility,
   onSetColor,
   onHoverPart,
@@ -58,6 +59,15 @@ export default function PartsPanel({
   canColor: boolean;
   /** Set when a part is clicked in the viewport: open the panel and scroll that row into view. */
   revealKey: string | null;
+  /**
+   * Bumped by the caller on every viewport pick, even a repeat of the same `revealKey`. The
+   * open-and-expand effect below depends on this (not just `revealKey`) so that re-picking a
+   * part reopens a panel the user has since closed — `revealKey` alone doesn't change for a
+   * repeat pick, so an effect keyed on it only would never re-fire. The separate scroll effect
+   * further down stays keyed on `revealKey` itself, so a repeat pick into an already-open panel
+   * still doesn't force a redundant rescroll to a row already in view.
+   */
+  revealToken: number;
   onToggleVisibility: (key: string) => void;
   onSetColor: (key: string, color: string | null) => void;
   /** `null` on mouse-out. Drives the viewport highlight. */
@@ -112,6 +122,13 @@ export default function PartsPanel({
 
   const hidden = useMemo(() => new Set(hiddenParts), [hiddenParts]);
 
+  // The TOTAL part count, nested rows included — not `parts.length`, which is the top-level
+  // forest size alone and is 1 for essentially every nested model (a single root assembly with
+  // hundreds of parts underneath it still has exactly one top-level PartNode). Gating the count
+  // badge and the search input on `parts.length` made a 500-part STEP assembly show "Parts 1"
+  // and never offer the one documented way through an unbounded list.
+  const flatCount = useMemo(() => flattenParts(parts).length, [parts]);
+
   const rows = useMemo(() => {
     if (!query.trim()) return visibleRows(parts, collapsed);
     // Search flattens: a match three levels down should be reachable without expanding its
@@ -153,7 +170,12 @@ export default function PartsPanel({
       for (let i = 1; i < segments.length; i++) next.delete(segments.slice(0, i).join('/'));
       return next;
     });
-  }, [revealKey]);
+    // revealToken, not just revealKey: see this prop's own doc comment above. Re-running on a
+    // repeat key still calls setOpen(true)/expands ancestors, both idempotent when already
+    // true/expanded, so the only observable effect of a repeat pick while already open is
+    // clearing the search box — an acceptable, arguably desirable side effect of a deliberate
+    // "show me this part" action.
+  }, [revealKey, revealToken]);
 
   // Separate effect, and after the one above: the row only exists once its ancestors are
   // expanded, so the scroll has to happen on the render that follows.
@@ -164,6 +186,13 @@ export default function PartsPanel({
     listRef.current?.scrollTo({ top: Math.max(0, (index - 2) * ROW_HEIGHT) });
   }, [revealKey, open, rows]);
 
+  // `parts.length === 0` and `flatCount === 0` agree exactly (an empty forest has no rows either
+  // way), so this check is unaffected by which one it reads — kept as `parts` since that's what
+  // is actually absent. See this component's caller-facing docs (M7 in the final review) for why
+  // this stays a silent `null` rather than a "no separable parts" message: after the batching fix
+  // upstream, a legacy/OBJ/STL file that genuinely has no part information never gets ANY parts
+  // reported here in the first place, so showing an empty-state message on every old file would
+  // be noise with no action behind it. This return only ever fires for that case now.
   if (parts.length === 0) return null;
 
   // Windowed: a model can carry thousands of parts, and rendering a DOM row for each would
@@ -197,7 +226,7 @@ export default function PartsPanel({
     <div ref={rootRef} className="relative select-none">
       {open && (
         <div className="mb-1.5 w-72 overflow-hidden rounded-panel bg-white shadow-stiko-sheet border border-stiko-border">
-          {parts.length > MAX_VISIBLE_ROWS && (
+          {flatCount > MAX_VISIBLE_ROWS && (
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -295,7 +324,7 @@ export default function PartsPanel({
         className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs shadow-stiko-sheet border border-stiko-border"
       >
         Parts
-        <span className="text-stiko-muted">{parts.length}</span>
+        <span className="text-stiko-muted">{flatCount}</span>
       </button>
     </div>
   );

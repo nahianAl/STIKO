@@ -9,11 +9,22 @@ import { flattenParts, type PartNode } from './partTree.ts';
  * vertex-colour scheme — per-instance colour (setColorAt), per-instance visibility
  * (setVisibleAt) and per-instance picking (intersect.batchId) all native.
  *
- * The batch material is WHITE with vertexColors on, and each part's original colour is baked
- * in through setColorAt. The shader multiplies the batch colour into vColor
- * (color_vertex.glsl, USE_BATCHING_COLOR), so a white base makes setColorAt the entire colour
- * rather than a tint over one. That is also what lets materials differing only in colour
- * share a batch — which, in CAD exports, is nearly all of them.
+ * The batch material is WHITE, and each part's original colour is baked in through
+ * setColorAt — NOT through `vertexColors`. setColorAt writes into BatchedMesh's own internal
+ * colour texture, which the shader samples through `USE_BATCHING_COLOR`
+ * (WebGLPrograms.js:196 derives it from `object._colorsTexture !== null`, set the moment
+ * setColorAt is first called) — a path entirely independent of `material.vertexColors`. Per
+ * three r169's color_vertex.glsl, `USE_BATCHING_COLOR` alone already declares and initialises
+ * `vColor`; setting `vertexColors` on top of that additionally wraps the shader in
+ * `#ifdef USE_COLOR { vColor *= color; }`, which reads a `color` GEOMETRY attribute —
+ * `normalized()` below never adds one — so with no such attribute WebGL supplies the generic
+ * default `(0,0,0,1)`, `vColor` collapses to zero, and every batched model rendered solid
+ * black. `MeshStandardMaterial` has no `defaultAttributeValues` to fall back on, unlike some
+ * older material types, so there is nothing softening that zero. Leaving `vertexColors` unset
+ * (false) is what lets `USE_BATCHING_COLOR` alone make setColorAt the entire colour, exactly
+ * as intended — a white base times a solid batch colour, with no vertex-attribute multiply in
+ * the way. That is also what lets materials differing only in colour share a batch — which,
+ * in CAD exports, is nearly all of them.
  *
  * Never call BatchedMesh.optimize(): it can make instance ids stop matching indices
  * (BatchedMesh.js:780), and every id here is a durable handle held in `instances`.
@@ -37,12 +48,28 @@ export interface PartBatches {
  * source of truth for both: `materialUsesUv` decides whether a batch's geometry needs a uv
  * attribute at all, and appearanceKey folds the same properties into its key. Listing them
  * once means the two can never drift the way `needsUv` and appearanceKey used to.
+ *
+ * glTF's metallicRoughnessTexture (-> roughnessMap + metalnessMap), occlusionTexture (->
+ * aoMap), emissiveTexture (-> emissiveMap) and alphaMap are ordinary in GLB exports and sample
+ * uv exactly as much as `map`/`normalMap` do. Missing them here used to mean two materials
+ * differing only in, say, roughnessMap hashed to the same key and shared a batch cloned from
+ * whichever arrived first (silently losing one texture), AND `normalized()` stripped uv from
+ * both because `materialUsesUv` didn't know to look for it (every such map sampling texel
+ * (0,0) across the model).
  */
-const UV_MAP_KEYS = ['map', 'normalMap'] as const;
+const UV_MAP_KEYS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap'] as const;
 
 /**
  * Everything about a material EXCEPT its base colour. Two materials agreeing here share a
  * batch; anything else — a map, a different roughness, a different side — gets its own.
+ *
+ * `transparent` is listed on its own, separately from `opacity`: folding them into one
+ * expression (as `transparent ? opacity : 1`) used to make an opaque material (transparent
+ * false, opacity 1) and a nominally-transparent-but-fully-opaque one (transparent true,
+ * opacity 1) hash identically, even though one blends and the other doesn't — a real rendering
+ * difference silently discarded. Listing both `transparent` and the raw `opacity` keeps every
+ * combination distinct. `flatShading` and `alphaTest` are two more properties that change how a
+ * material actually renders and were previously ignored entirely.
  */
 function appearanceKey(material: THREE.Material): string {
   const standard = material as THREE.MeshStandardMaterial;
@@ -51,7 +78,10 @@ function appearanceKey(material: THREE.Material): string {
     standard.roughness ?? '',
     standard.metalness ?? '',
     material.side,
-    material.transparent ? standard.opacity : 1,
+    material.transparent,
+    standard.opacity,
+    standard.flatShading,
+    material.alphaTest,
     ...UV_MAP_KEYS.map((mapKey) => standard[mapKey]?.uuid ?? ''),
     standard.emissive?.getHexString() ?? '',
   ].join('|');
@@ -67,7 +97,19 @@ function materialUsesUv(material: THREE.Material): boolean {
 function batchMaterialFrom(source: THREE.Material): THREE.MeshStandardMaterial {
   const material = (source as THREE.MeshStandardMaterial).clone();
   material.color = new THREE.Color(0xffffff);
-  material.vertexColors = true;
+  // Unconditionally false — never left at whatever `.clone()` copied over. A source material
+  // that genuinely authored `vertexColors` (paired with a glTF COLOR_0 attribute) would
+  // otherwise carry the flag straight through the clone into the batch material, and
+  // `normalized()` never carries a `color` attribute onto the batch geometry (only
+  // position/normal/uv), so that flag would zero the surface exactly as the unconditional
+  // `vertexColors = true` bug above did. Known trade-off, not an oversight: a model whose
+  // baked-in vertex colours were its only source of colour loses them once batched — setColorAt
+  // still bakes each part's own `material.color` (see the header comment), so the part renders
+  // in its material's flat colour instead of its per-vertex gradient. Accepted because losing a
+  // rare cosmetic gradient is far better than the alternative (every such model going black),
+  // and because restoring it would mean carrying a genuine per-vertex COLOR_0 attribute through
+  // `normalized()` and the batch's shared geometry — real work, not attempted here.
+  material.vertexColors = false;
   return material;
 }
 

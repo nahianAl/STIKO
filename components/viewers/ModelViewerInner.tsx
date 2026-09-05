@@ -13,7 +13,7 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
-import { buildPartTree, collectDrawables, hasAuthoredColors, type PartNode } from '@/lib/model/partTree';
+import { buildPartTree, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
 import { autoColors } from '@/lib/model/autoColor';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
 import { framingForRadius } from '@/lib/cameraFraming';
@@ -116,9 +116,11 @@ export interface ModelViewerInnerProps {
   /**
    * Fired whenever the loaded model's part tree changes. Computed here, where the loaded
    * materials live, and reported upward — the panel's swatches must resolve colours the same
-   * way the viewport does, and it cannot see the materials itself.
+   * way the viewport does, and it cannot see the materials itself. `baseColors` is each part's
+   * own baked colour (first instance's, for a multi-instance part) — the panel's last-resort
+   * fallback, replacing a fixed grey that disagreed with whatever the viewport actually showed.
    */
-  onPartsLoaded?: (parts: PartNode[], authored: boolean) => void;
+  onPartsLoaded?: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   /** Fired when a part is clicked in the viewport (comment tool must be off). */
   onPartPick?: (key: string) => void;
 }
@@ -174,7 +176,7 @@ function Model({
   partColors: Record<string, string>;
   hiddenParts: string[];
   highlightedPart: string | null;
-  onPartsLoaded?: (parts: PartNode[], authored: boolean) => void;
+  onPartsLoaded?: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   /** Hands the batches to SceneInteraction so a click can be mapped back to a part. */
   onBatchesReady?: (batches: PartBatches | null) => void;
 }) {
@@ -207,7 +209,18 @@ function Model({
     makeDoubleSided(root);
   }, [root]);
 
-  const parts = useMemo(() => (root ? buildPartTree(root) : []), [root]);
+  // Whether the file's own import pipeline genuinely declared parts (a `stikoPart` marker
+  // somewhere in the tree), as opposed to `buildPartTree`'s unmarked fallback, which treats the
+  // scene root's direct children as one part each — true of almost every legacy upload, OBJ,
+  // DAE and 3DS file, and never a sign that the file was actually segmented. Batching, the Parts
+  // pill, and auto-colour must all key off THIS, not off `parts.length`: an unmarked file's
+  // fallback output is >=1 for essentially any file, so `parts.length` alone would wrongly
+  // route every legacy/OBJ/DAE/3DS upload through the batched-rendering path below, corrupting
+  // <Center precise> centring (and every comment pin measured against it), silently
+  // auto-colouring legacy models, and surfacing a Parts pill of meaningless `mesh_0`/`mesh_1`
+  // rows that persist colour writes against keys with no lasting meaning.
+  const marked = useMemo(() => (root ? hasMarkers(root) : false), [root]);
+  const parts = useMemo(() => (root && marked ? buildPartTree(root) : []), [root, marked]);
   // HAZARD, currently latent, not live: buildBatches allocates real GPU resources (BatchedMesh
   // buffers, materials) inside this render-phase useMemo, while disposal only happens in the
   // commit-phase cleanup below (`useEffect(() => () => batches?.dispose(), [batches])`). React
@@ -255,6 +268,28 @@ function Model({
   const authored = useMemo(() => (root ? hasAuthoredColors(root) : false), [root]);
   const automatic = useMemo(() => autoColors(parts, authored), [parts, authored]);
 
+  // What each part's own baked colour is — the same fallback the viewport itself reaches for
+  // (see the colour effect below: no override, no auto-colour -> the part keeps whatever colour
+  // the model gave it) — reported upward so the panel's swatch can fall back to it too instead
+  // of a fixed grey. Without this the panel had no way to agree with the viewport at all: a
+  // `PartNode` carries no colour, so `effectivePartColor` in page.tsx could only ever resolve to
+  // an override, an auto-colour, or BASE_GREY — never the part's real colour. A part with more
+  // than one instance (a rim with a steel body and a chrome lip, say) picks its FIRST instance's
+  // colour: the swatch is a single button and cannot show two colours at once, the same
+  // simplification the hover-highlight path below already makes for the override/auto-colour
+  // case.
+  const partBaseColors = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!batches) return map;
+    // .forEach, not for...of: this tsconfig has no `target`, so a for...of over a Map fails
+    // `next build` with TS2802 even though `npm test` passes.
+    batches.instances.forEach((instanceList, key) => {
+      const [first] = instanceList;
+      if (first) map.set(key, `#${first.baseColor.getHexString()}`);
+    });
+    return map;
+  }, [batches]);
+
   // Latched in refs rather than depended on directly. An inline arrow prop — which Task 9's
   // panel is expected to pass for onPartsLoaded — gets a new identity every parent render; if
   // that identity sat in an effect's deps, the loop would be parent re-render -> new arrow ->
@@ -276,8 +311,8 @@ function Model({
   useEffect(() => () => batches?.dispose(), [batches]);
 
   useEffect(() => {
-    onPartsLoadedRef.current?.(parts, authored);
-  }, [parts, authored]);
+    onPartsLoadedRef.current?.(parts, authored, partBaseColors);
+  }, [parts, authored, partBaseColors]);
 
   useEffect(() => {
     onBatchesReadyRef.current?.(batches);

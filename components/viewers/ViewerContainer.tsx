@@ -42,7 +42,7 @@ interface ViewerContainerProps {
   partColors: Record<string, string>;
   hiddenParts: string[];
   highlightedPart: string | null;
-  onPartsLoaded: (parts: PartNode[], authored: boolean) => void;
+  onPartsLoaded: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   onPartPick: (key: string) => void;
   // PDF annotation props
   activeTool?: ToolType;

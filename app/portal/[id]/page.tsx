@@ -281,6 +281,14 @@ export default function PortalPage() {
   const [partColors, setPartColors] = useState<Record<string, string>>({});
   const [hoveredPart, setHoveredPart] = useState<string | null>(null);
   const [revealPart, setRevealPart] = useState<string | null>(null);
+  // Bumped on every viewport pick, even a repeat of the same part — see handlePartPick's
+  // comment for why `revealPart` alone (unchanged when the key repeats) cannot do this job.
+  const [revealToken, setRevealToken] = useState(0);
+  // Each part's own baked colour, reported by the viewer (only place the loaded materials
+  // exist) via onPartsLoaded. The panel's swatch falls back to this — after an override and an
+  // auto-colour, before BASE_GREY — so it can agree with what the viewport actually shows for a
+  // part that has neither.
+  const [partBaseColors, setPartBaseColors] = useState<Map<string, string>>(new Map());
 
   // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
   // calls per second. The viewport must follow that live, but the server must not: one PATCH
@@ -336,6 +344,7 @@ export default function PortalPage() {
     setHiddenParts([]);
     setHoveredPart(null);
     setRevealPart(null);
+    setPartBaseColors(new Map());
   }, [selectedFileId]);
 
   // partColors syncs from the server data, so it deliberately stays keyed on
@@ -371,16 +380,24 @@ export default function PortalPage() {
     setPartColors(next);
   }, [selectedFile?.partColors, selectedFileId]);
 
-  const handlePartsLoaded = useCallback((next: PartNode[], nextAuthored: boolean) => {
+  const handlePartsLoaded = useCallback((next: PartNode[], nextAuthored: boolean, baseColors: Map<string, string>) => {
     setParts(next);
     setAuthored(nextAuthored);
+    setPartBaseColors(baseColors);
   }, []);
 
-  // Re-picking the same part is a no-op by design: the row is already open and scrolled to,
-  // so there is nothing for a second reveal to do. PartsPanel's reveal effect keys on the
-  // prop's VALUE, so setting the same key twice genuinely does nothing — that is intended,
-  // not an oversight to work around with a nonce.
-  const handlePartPick = useCallback((key: string) => setRevealPart(key), []);
+  // Re-picking the same part while the panel is already open and scrolled to it is a no-op by
+  // design: PartsPanel's scroll effect keys on `revealPart`'s VALUE, so setting the same key
+  // twice does not re-trigger a redundant rescroll. But REOPENING a panel the user has since
+  // closed is a different thing entirely, and `revealPart` alone cannot signal it — `open` is
+  // state PartsPanel owns internally, invisible up here, so a repeat key looks identical whether
+  // the panel is open or closed. `revealToken` exists purely to force that: it changes on every
+  // pick regardless of key, so PartsPanel's open-and-expand effect (which depends on it) always
+  // re-runs and always calls setOpen(true) — a no-op when already open, a real reopen when not.
+  const handlePartPick = useCallback((key: string) => {
+    setRevealPart(key);
+    setRevealToken((t) => t + 1);
+  }, []);
 
   const flushPartColor = useCallback(async () => {
     // Drain synchronously, before any await, so a second call into this same closure — e.g. the
@@ -483,12 +500,15 @@ export default function PortalPage() {
   }, []);
 
   // What the panel's pill shows: an override if there is one, else the auto-colour, else the
-  // neutral base. This must agree with the resolution order in ModelViewerInner's colour
-  // effect — a pill disagreeing with the viewport is worse than no pill.
+  // part's own base colour (reported by the viewer via onPartsLoaded), else the neutral base as
+  // a last resort for a part that hasn't reported one yet. This must agree with the resolution
+  // order in ModelViewerInner's colour effect — a pill disagreeing with the viewport is worse
+  // than no pill. `PartNode` itself carries no colour, so `partBaseColors` — not BASE_GREY — is
+  // what makes that agreement possible for a part with neither an override nor an auto-colour.
   const autoPartColors = useMemo(() => autoColors(parts, authored), [parts, authored]);
   const effectivePartColor = useCallback(
-    (key: string) => partColors[key] ?? autoPartColors.get(key) ?? BASE_GREY,
-    [partColors, autoPartColors]
+    (key: string) => partColors[key] ?? autoPartColors.get(key) ?? partBaseColors.get(key) ?? BASE_GREY,
+    [partColors, autoPartColors, partBaseColors]
   );
 
   const is3DFile = useMemo(() => {
@@ -1563,6 +1583,7 @@ export default function PortalPage() {
                   effectiveColor={effectivePartColor}
                   canColor={canTransform}
                   revealKey={revealPart}
+                  revealToken={revealToken}
                   onToggleVisibility={togglePartVisibility}
                   onSetColor={setPartColor}
                   onHoverPart={setHoveredPart}

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { buildPartTree, collectDrawables, flattenParts, hasAuthoredColors, PART_MARKER } from '../../lib/model/partTree.ts';
+import { buildPartTree, collectDrawables, flattenParts, hasAuthoredColors, hasMarkers, PART_MARKER } from '../../lib/model/partTree.ts';
 
 /** A mesh with `tris` triangles, so triangle-count ranking is testable. */
 function mesh(name, tris = 1) {
@@ -184,6 +184,29 @@ test('hasAuthoredColors is true when materials differ in colour', () => {
   brass.material = new THREE.MeshStandardMaterial({ color: 0xc8a05a });
   root.add(mesh('a'), brass);
   assert.equal(hasAuthoredColors(root), true);
+});
+
+// --- Critical finding 2: hasMarkers is the exported, single source of truth for "did this
+// file's own import pipeline genuinely declare parts" — the test a caller (ModelViewerInner)
+// must gate batching/the Parts pill/auto-colour on, INSTEAD of `buildPartTree(root).length`,
+// which is >=1 for practically any file via the unmarked fallback below and therefore cannot
+// tell a segmented file apart from a legacy one. ---
+
+test('hasMarkers is false for a tree with no stikoPart marker anywhere', () => {
+  const root = new THREE.Group();
+  root.add(mesh('mesh_0'), mesh('mesh_1'));
+  assert.equal(hasMarkers(root), false);
+  // buildPartTree's unmarked fallback still finds 2 parts here — hasMarkers is what tells a
+  // caller not to trust that as "this file was actually segmented."
+  assert.equal(buildPartTree(root).length, 2);
+});
+
+test('hasMarkers is true when any node under root carries the marker, however deeply nested', () => {
+  const rim = group('Rim', true, mesh('rim_geo'));
+  const wheel = group('Wheel_FL', false, rim);
+  const root = new THREE.Group();
+  root.add(wheel);
+  assert.equal(hasMarkers(root), true);
 });
 
 // --- Critical finding 2: buildBatches only ever sees isMesh objects, so LineSegments/Points

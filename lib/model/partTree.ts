@@ -155,8 +155,20 @@ function trianglesOf(mesh: THREE.Mesh): number {
   return Math.floor(count / 3);
 }
 
-/** True if any node under `root` carries the import marker. */
-function hasMarkers(root: THREE.Object3D): boolean {
+/**
+ * True if any node under `root` carries the import marker — i.e. `buildPartTree` will use its
+ * MARKED path (`totalPartsUnder`) rather than the unmarked fallback (scene root's direct
+ * children, one part each).
+ *
+ * Exported so a caller deciding whether to batch, show the Parts pill, or auto-colour can ask
+ * this directly instead of re-deriving it from `buildPartTree`'s own output. `parts.length` is
+ * NOT a substitute: the unmarked fallback below returns one PartNode per direct child of the
+ * scene root, which is >=1 for essentially any file (legacy uploads, OBJ, DAE, 3DS all included)
+ * — so gating on `parts.length` alone means those formats wrongly qualify as "this file has
+ * parts" too. `hasMarkers` is the one true test of "did the file's own import pipeline actually
+ * declare parts," independent of what shape `buildPartTree` falls back to when it didn't.
+ */
+export function hasMarkers(root: THREE.Object3D): boolean {
   let found = false;
   root.traverse((object) => {
     if (isBoundary(object)) found = true;

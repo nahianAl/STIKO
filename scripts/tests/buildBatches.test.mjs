@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt } from '../../lib/model/buildBatches.ts';
+import { buildPartTree, hasMarkers, PART_MARKER } from '../../lib/model/partTree.ts';
 
 function part(key, name, materials, tris = 2) {
   const meshes = materials.map((material) => {
@@ -44,12 +45,37 @@ test('each part original colour is baked into its instance', () => {
   assert.equal(instance.baseColor.getHexString(), 'c8a05a');
 });
 
-test('the batch material is white so setColorAt is the whole colour', () => {
+// Critical finding 1 (renders BLACK): this test used to assert `vertexColors === true`, pinning
+// the exact defect it now guards against. `USE_BATCHING_COLOR` alone (derived from
+// `object._colorsTexture !== null` the moment setColorAt is called) already declares and
+// initialises `vColor` in three r169's color_vertex.glsl — that is the ENTIRE path setColorAt
+// needs, and it has nothing to do with `material.vertexColors`. Setting `vertexColors` on top
+// additionally wraps the shader in `#ifdef USE_COLOR { vColor *= color; }`, which reads a
+// `color` GEOMETRY attribute that `normalized()` never adds (only position/normal/uv). With no
+// such attribute, WebGL supplies the generic default `(0,0,0,1)`, zeroing `vColor` and
+// blacking out every batched model. So `vertexColors` must stay false: setColorAt already
+// reaches the shader entirely through the batching-colour texture, independent of this flag.
+test('the batch material is white and vertexColors is off, so setColorAt alone is the whole colour', () => {
   const batches = buildBatches([part('0', 'Body', [grey()])]);
   const material = batches.meshes[0].material;
 
   assert.equal(material.color.getHexString(), 'ffffff');
-  assert.equal(material.vertexColors, true);
+  assert.equal(material.vertexColors, false);
+});
+
+// Critical finding 1, follow-on: a SOURCE material that genuinely authored vertexColors (paired
+// with a real glTF COLOR_0 attribute) must not carry that flag into the batch material either.
+// `.clone()` copies `vertexColors` verbatim, and `normalized()` drops any `color` attribute the
+// source geometry had — so without clearing the flag unconditionally, a model with real baked-in
+// vertex colours would black out its own batch exactly like the bug above, just triggered by the
+// source file instead of by buildBatches itself.
+test('a source material that authored vertexColors does not carry the flag into the batch material', () => {
+  const material = grey();
+  material.vertexColors = true;
+
+  const batches = buildBatches([part('0', 'Body', [material])]);
+
+  assert.equal(batches.meshes[0].material.vertexColors, false);
 });
 
 test('a part with two materials becomes two instances under one key', () => {
@@ -297,4 +323,143 @@ test('an invisible mesh is skipped while a visible sibling in the same part is s
   const batches = buildBatches([{ key: '0', name: 'Body', children: [], meshes: [visible, hidden], triangles: 4 }]);
 
   assert.equal(batches.instances.get('0').length, 1, 'only the visible mesh produced an instance');
+});
+
+// --- Important finding 2: UV_MAP_KEYS previously listed only `map` and `normalMap`. glTF's
+// metallicRoughnessTexture/occlusionTexture/emissiveTexture and alphaMap are ordinary in GLB
+// exports, sample uv exactly the same way, and were both silently folded into the same
+// appearanceKey as a plain material AND stripped of uv by normalized(). ---
+
+test('materials differing only in roughnessMap get separate batches', () => {
+  const a = grey();
+  a.roughnessMap = new THREE.Texture();
+  const b = grey();
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+test('materials differing only in metalnessMap get separate batches', () => {
+  const a = grey();
+  a.metalnessMap = new THREE.Texture();
+  const b = grey();
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+test('materials differing only in aoMap get separate batches', () => {
+  const a = grey();
+  a.aoMap = new THREE.Texture();
+  const b = grey();
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+test('materials differing only in emissiveMap get separate batches', () => {
+  const a = grey();
+  a.emissiveMap = new THREE.Texture();
+  const b = grey();
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+test('materials differing only in alphaMap get separate batches', () => {
+  const a = grey();
+  a.alphaMap = new THREE.Texture();
+  const b = grey();
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+test('an occlusion(aoMap)-only material keeps its UVs', () => {
+  const material = grey();
+  material.aoMap = new THREE.Texture();
+
+  const batches = buildBatches([part('0', 'Body', [material])]);
+
+  assert.ok(batches.meshes[0].geometry.getAttribute('uv'), 'uv attribute preserved for an aoMap material');
+});
+
+// --- Important finding 2, second half: appearanceKey folded {transparent: true, opacity: 1}
+// in with a plain opaque material (both reduced to the same "1" in `transparent ? opacity : 1`),
+// and ignored flatShading/alphaTest entirely. All four must be discriminators. ---
+
+test('a transparent material at opacity 1 gets its own batch, separate from a plain opaque one', () => {
+  const a = grey();
+  a.transparent = true;
+  a.opacity = 1;
+  const b = grey(); // transparent: false (default), opacity: 1 (default) — same visual opacity value
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2, 'transparent must be its own discriminator, not folded away by an opacity-1 shortcut');
+});
+
+test('materials differing in flatShading get separate batches', () => {
+  const a = grey();
+  a.flatShading = true;
+  const b = grey();
+  b.flatShading = false;
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+test('materials differing in alphaTest get separate batches', () => {
+  const a = grey();
+  a.alphaTest = 0.5;
+  const b = grey();
+  b.alphaTest = 0;
+
+  const batches = buildBatches([part('0', 'A', [a]), part('1', 'B', [b])]);
+  assert.equal(batches.meshes.length, 2);
+});
+
+// --- Critical finding 2: gating batching on `hasMarkers`, not on `buildPartTree`'s output
+// length. buildPartTree's UNMARKED fallback returns one PartNode per direct child of the scene
+// root — >=1 for essentially any file, legacy uploads/OBJ/DAE/3DS included — so a caller gating
+// on `parts.length` alone batches every such file. The fix gates on `hasMarkers(root)` instead,
+// computed independently of what buildPartTree falls back to. These tests pin the pattern
+// ModelViewerInner.tsx now follows: only call buildPartTree, and only ever hand its result to
+// buildBatches, when the tree is genuinely marked. ---
+
+function meshNamed(name) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(9), 3));
+  geometry.setIndex([0, 1, 2]);
+  const m = new THREE.Mesh(geometry, grey());
+  m.name = name;
+  m.updateMatrixWorld(true);
+  return m;
+}
+
+test('an unmarked (legacy) tree stays unbatched even though buildPartTree finds parts via its fallback', () => {
+  const root = new THREE.Group();
+  root.add(meshNamed('mesh_0'), meshNamed('mesh_1'));
+
+  assert.equal(hasMarkers(root), false, 'no stikoPart marker anywhere in this tree');
+  assert.equal(buildPartTree(root).length, 2, "buildPartTree's own fallback still finds 2 parts — that is its documented, tested behaviour");
+
+  // The gated pattern: only build/batch parts when the tree is genuinely marked.
+  const parts = hasMarkers(root) ? buildPartTree(root) : [];
+  assert.equal(buildBatches(parts), null, 'an unmarked tree must never reach buildBatches with anything to batch');
+});
+
+test('a marked tree batches normally under the same gated pattern', () => {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  body.userData[PART_MARKER] = true;
+  body.add(meshNamed('body_geo'));
+  root.add(body);
+
+  assert.equal(hasMarkers(root), true);
+
+  const parts = hasMarkers(root) ? buildPartTree(root) : [];
+  const batches = buildBatches(parts);
+  assert.notEqual(batches, null, 'a marked tree must still batch');
+  assert.equal(batches.instances.size, 1);
 });
