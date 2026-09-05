@@ -66,6 +66,8 @@ export interface FileRecord {
   /** Server's verdict on whether this caller may download it. Never re-derived client-side. */
   canDownload?: boolean;
   commentCount?: number;
+  /** Explicit per-part colour overrides, keyed by part key. Empty for files with no overrides. */
+  partColors?: Record<string, string>;
 }
 
 export interface CommentAttachment {

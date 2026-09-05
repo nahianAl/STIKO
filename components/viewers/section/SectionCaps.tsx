@@ -123,13 +123,14 @@ export default function SectionCaps({
     if (!model || !root) return;
 
     // Counted once here, when the caps for this plane set are (re)built — never per frame.
-    // Same filter as the proxy loop below: a SkinnedMesh or InstancedMesh contributes no
-    // proxy there, so it costs nothing and should not count against the ceiling either.
+    // Same filter as the proxy loop below: a SkinnedMesh, InstancedMesh or BatchedMesh
+    // contributes no proxy there, so it costs nothing and should not count against the ceiling
+    // either.
     let meshCount = 0;
     model.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh || !mesh.geometry) return;
-      if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh) return;
+      if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh || mesh instanceof THREE.BatchedMesh) return;
       meshCount++;
     });
 
@@ -183,18 +184,32 @@ export default function SectionCaps({
       model.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh || !mesh.geometry) return;
-        // SkinnedMesh and InstancedMesh both report isMesh === true, but the plain THREE.Mesh
-        // proxy built below cannot stand in for either: it has no skeleton to pose, so a
-        // SkinnedMesh posed away from bind pose would contribute its unskinned geometry, and it
-        // has no per-instance transforms, so an InstancedMesh would contribute one instance at
-        // the base transform instead of N. Either way the stencil mask would land somewhere the
-        // visible geometry isn't, and a cap would fill a region where there is nothing. Skip
-        // them so the failure mode is "no cap contribution from this mesh", not "a cap in the
-        // wrong place". This is not a live bug in the current pipeline — optimizeGlb.ts refuses
-        // documents requiring EXT_mesh_gpu_instancing and its fallback path uploads the
-        // original, so nothing produced today reaches here — it defends against an upload the
-        // pipeline happens to let through.
-        if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh) return;
+        // SkinnedMesh, InstancedMesh and BatchedMesh all report isMesh === true, but the plain
+        // THREE.Mesh proxy built below cannot stand in for any of them: it has no skeleton to
+        // pose, so a SkinnedMesh posed away from bind pose would contribute its unskinned
+        // geometry; it has no per-instance transforms, so an InstancedMesh would contribute one
+        // instance at the base transform instead of N. Either way the stencil mask would land
+        // somewhere the visible geometry isn't, and a cap would fill a region where there is
+        // nothing. Skip them so the failure mode is "no cap contribution from this mesh", not "a
+        // cap in the wrong place". This is not a live bug in the current pipeline for the first
+        // two — optimizeGlb.ts refuses documents requiring EXT_mesh_gpu_instancing and its
+        // fallback path uploads the original, so nothing produced today reaches here for
+        // InstancedMesh — it defends against an upload the pipeline happens to let through.
+        //
+        // BatchedMesh is different: the viewer's own batched-rendering path (ModelViewerInner's
+        // <Model>) produces one for every model with parts, so this exclusion is reached on
+        // every such model, not a defensive edge case. `mesh.geometry` on a BatchedMesh is the
+        // shared, merged buffer holding every part's vertices in that part's own LOCAL space —
+        // placement lives only in an internal matrix texture, applied per instance in the vertex
+        // shader via getMatrixAt, never baked into `.geometry`. A `new THREE.Mesh(mesh.geometry,
+        // stencilMaterial)` proxy copying a single `matrixWorld` (as the loop below does) would
+        // therefore draw every part's stencil contribution overlaid at its own raw local-space
+        // position under one transform — garbled geometry, not a slightly-wrong cap. Excluding
+        // it here keeps the graceful, already-documented "cuts render hollow" mode instead of
+        // building a wrong solid fill. A real fix needs one stencil proxy PER INSTANCE, built
+        // from getMatrixAt/getBoundingBoxAt the way BatchedMesh.raycast() does internally — a
+        // proper follow-up, not attempted here.
+        if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh || mesh instanceof THREE.BatchedMesh) return;
 
         for (const side of [THREE.BackSide, THREE.FrontSide] as const) {
           const material = new THREE.MeshBasicMaterial();

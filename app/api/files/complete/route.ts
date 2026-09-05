@@ -62,6 +62,14 @@ export async function POST(request: NextRequest) {
   }
 
   // Derived, never accepted from the caller — see the security note in this task.
+  //
+  // This is the other place in the codebase that assigns converted_storage_key (the other is
+  // the webhook's UPDATE, which also deletes any of this file's part_colors rows immediately
+  // afterward, in its own statement that tolerates its own failure — see the invariant note in
+  // lib/migrations/009-part-colors.sql). No such cleanup is needed here: fileId is a fresh
+  // uuidv4() minted by /api/files/upload for this INSERT alone, and part_colors.file_id is
+  // FK-constrained to an existing files row, so no part_colors row can already reference a file
+  // id that has not been inserted yet.
   const convertedStorageKey = hasOptimizedVariant ? optimizedVariantKey(storageKey) : null;
 
   // conversion_status stays NULL here on purpose. 'completed' means a CloudConvert job

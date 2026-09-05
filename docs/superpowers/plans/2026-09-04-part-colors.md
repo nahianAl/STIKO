@@ -845,6 +845,74 @@ test('part names survive — the regression this feature exists to fix', async (
   assert.equal(stats.after.parts, 6);
 });
 
+test('same-named siblings become one part, not one per material', async () => {
+  // What Rhino emits: one node per object AND per material, so a two-material rim is two
+  // sibling nodes both called "Rim".
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+  const result = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const topLevel = result.getRoot().listScenes()[0].listChildren();
+
+  assert.deepEqual(topLevel.map((n) => n.getName()).sort(), ['Rim', 'Tire']);
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+  assert.equal(rim.listChildren().length, 2, 'both material pieces live under the one Rim part');
+});
+
+test('a file that names nothing takes the unsegmented path and reports no parts', async () => {
+  // Three unnamed nodes sharing a material. There is no part information in this file, so
+  // the honest answer is "no separable parts" — and with nothing to protect, the old
+  // aggressive merge applies and all three collapse into one primitive.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  for (let i = 0; i < 3; i++) {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode('').setMesh(doc.createMesh('').addPrimitive(prim)));
+  }
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 0, 'nothing named means nothing to call a part');
+  assert.equal(stats.after.primitives, 1, 'and with no parts to protect, the old merge applies');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
+test('one named node among unnamed ones is enough to take the segmented path', async () => {
+  // The discriminator is "does anything carry a name", so a single named object must switch
+  // modes — otherwise a mostly-anonymous export would silently lose the one part it declared.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  ['', 'Bonnet', ''].forEach((name, i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 1, 'only the named node is a part');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
 test('a document built without our stamps still optimizes, and conserves its parts', async () => {
   // fragmentedGlb builds nodes the way a raw exporter would. Once optimizeGlb stamps every
   // geometry-carrying node (Step 8), these count as parts too — so the guarantee under test
@@ -858,7 +926,7 @@ test('a document built without our stamps still optimizes, and conserves its par
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts"`
+Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts|same-named|names nothing|named node among"`
 Expected: FAIL — `stats.before.parts` is `undefined`.
 
 - [ ] **Step 3: Count parts in `measure()`**
@@ -894,75 +962,108 @@ then add `parts,` to the returned object.
 Run: `npm test -- --test-name-pattern="parts survive"`
 Expected: FAIL — `stats.after.parts` is `0`, not `6`. `flatten()` and `join()` are still erasing the nodes.
 
-- [ ] **Step 5: Replace `flatten()` + `join()` with per-part merging**
+- [ ] **Step 5: Make the optimizer two-mode, keyed on whether the file names anything**
 
-In `lib/model/optimizeGlb.ts`, change the `@gltf-transform/functions` import: drop `flatten` and `join`, add `joinPrimitives`.
+**Why two modes.** The merge must not cross part boundaries, but merging *within* a part is
+only possible when a part owns several primitives on one mesh — and the real Rhino shape is
+one node → one mesh → one primitive per fragment, so an intra-mesh merge is a no-op there.
+Baking transforms to merge across sibling nodes is what `flatten()` does, and it cannot be
+scoped to a subtree.
 
-Replace the `doc.transform(...)` call and the comment above it with:
+The way out is the discriminator that was already implicit: **an unnamed node is not a
+meaningful part.** A file whose geometry nodes are all unnamed carries no semantic part
+information at all — the honest answer for it is "this model has no separable parts", exactly
+as the spec already says for STL and PLY. And a file with no parts has nothing to protect, so
+it can take the old aggressive path unchanged.
+
+Add this, replacing the removed `flatten()`/`join()` call:
 
 ```ts
-  // Order is load-bearing. weld() must precede the per-part merge, so co-located vertices are
-  // already indexed and merged by the time primitives are concatenated.
-  // One dedup, not two. The original ran a second pass because flatten() sat between them and
-  // exposed duplicates the first could not see; with flatten gone the second pass finds
-  // nothing and is pure cost.
-  await doc.transform(
-    dedup(),                        // merge identical accessors / materials / textures
-    weld(),                         // index and merge co-located vertices
-    prune({ keepLeaves: true })     // drop what the above orphaned; keepLeaves protects parts
-  );
+  /** A node contributes geometry if it or any descendant carries a mesh. */
+  const carriesGeometry = (node: Node): boolean =>
+    node.getMesh() !== null || node.listChildren().some(carriesGeometry);
 
-  // flatten() + join() used to live here. They collapsed the node hierarchy and merged every
-  // primitive sharing a material, taking a 7,995-primitive Rhino export to 26 draw calls —
-  // and erasing every part in the process. A synthetic six-part export came out the far side
-  // as two nodes with no names.
-  //
-  // Merging WITHIN each part instead keeps the win where it actually comes from. The Rhino
-  // file's fragmentation is intra-part: hundreds of two-triangle primitives per object. Those
-  // still merge. What no longer merges is one part into another, which is the whole point.
-  // Draw calls are no longer the concern they were either — the viewer batches parts at
-  // runtime with THREE.BatchedMesh, so the count here governs load time, not frame time.
-  //
-  // prune() above uses keepLeaves: true because a part node whose geometry has been merged
-  // into a sibling would otherwise be pruned as an empty leaf, silently losing a row from the
-  // parts panel.
-  for (const mesh of doc.getRoot().listMeshes()) {
-    const byMaterial = new Map<string, Primitive[]>();
-    for (const prim of mesh.listPrimitives()) {
-      // Mode as well as material: joinPrimitives cannot concatenate LINES into TRIANGLES, and
-      // CAD exports carry both. Normalisation above has already reduced these to LINES/TRIANGLES.
-      const key = `${prim.getMaterial()?.getName() ?? ''}#${prim.getMode()}`;
-      const group = byMaterial.get(key);
-      if (group) group.push(prim);
-      else byMaterial.set(key, [prim]);
-    }
+  // The discriminator. Named geometry nodes mean the exporter told us what the parts are;
+  // no named geometry node anywhere means it did not, and no amount of processing will
+  // invent that information.
+  const namesAnything = doc
+    .getRoot()
+    .listNodes()
+    .some((node) => node.getName() !== '' && carriesGeometry(node));
 
-    for (const group of byMaterial.values()) {
-      if (group.length < 2) continue;
-      // joinPrimitives throws when primitives are not compatible, and grouping by material
-      // does not guarantee they are — one CAD primitive may carry UVs where its neighbour
-      // does not. An uncaught throw here would abandon the WHOLE optimization (runOptimize
-      // reads any throw as "upload the original"), trading every other part's merge for one
-      // awkward group. Skip the group instead: those primitives stay unmerged, which is
-      // slower to load and completely correct.
-      let merged;
-      try {
-        merged = joinPrimitives(group);
-      } catch {
-        continue;
+  if (!namesAnything) {
+    // UNSEGMENTED MODE — byte-for-byte the pipeline that shipped before this feature. A file
+    // that names nothing gets exactly the optimization it always got, the viewer reports no
+    // parts, and the panel says so. This is also the path the 7,995-primitive Rhino reference
+    // file takes when its objects are unnamed, so its 26-draw-call result is preserved.
+    //
+    // Order is load-bearing: weld() must precede join(), or join() leaves a
+    // KHR_mesh_primitive_restart state that weld() refuses outright.
+    await doc.transform(
+      dedup(),
+      flatten(),
+      dedup(),
+      weld(),
+      join({ keepNamed: false }),
+      prune({ keepLeaves: false })
+    );
+  } else {
+    // SEGMENTED MODE — the file named its objects, so those names are the parts.
+    await doc.transform(
+      dedup(),                      // merge identical accessors / materials / textures
+      weld(),                       // index and merge co-located vertices
+      prune({ keepLeaves: true })   // keepLeaves so an emptied part node is not pruned away
+    );
+
+    // Merge the primitives a single mesh already holds, grouped by material and mode. This
+    // is where a part carrying several primitives collapses; it deliberately never reaches
+    // across nodes, because that is exactly what would fuse one part into another.
+    for (const mesh of doc.getRoot().listMeshes()) {
+      const groups = new Map<string, Primitive[]>();
+      for (const prim of mesh.listPrimitives()) {
+        // Mode as well as material: joinPrimitives cannot concatenate LINES into TRIANGLES,
+        // and CAD exports carry both. Normalisation above already reduced these to
+        // LINES / TRIANGLES.
+        const key = `${prim.getMaterial()?.getName() ?? ''}#${prim.getMode()}`;
+        const group = groups.get(key);
+        if (group) group.push(prim);
+        else groups.set(key, [prim]);
       }
-      // dispose() detaches each primitive from its mesh, which is the documented idiom.
-      for (const prim of group) prim.dispose();
-      mesh.addPrimitive(merged);
-    }
-  }
 
-  await doc.transform(prune({ keepLeaves: true }));
+      for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        // joinPrimitives throws when primitives are not compatible, and grouping by material
+        // does not guarantee they are — one CAD primitive may carry UVs where its neighbour
+        // does not. An uncaught throw would abandon the WHOLE optimization (runOptimize reads
+        // any throw as "upload the original"), trading every other part's merge for one
+        // awkward group. Skip the group instead: those primitives stay unmerged, which is
+        // slower to load and completely correct.
+        let merged;
+        try {
+          merged = joinPrimitives(group);
+        } catch {
+          continue;
+        }
+        // dispose() detaches each primitive from its mesh, which is the documented idiom.
+        for (const prim of group) prim.dispose();
+        mesh.addPrimitive(merged);
+      }
+    }
+
+    await doc.transform(prune({ keepLeaves: true }));
+  }
 ```
+
+Keep `flatten` and `join` in the `@gltf-transform/functions` import — unsegmented mode still
+uses both — and add `joinPrimitives`.
+
+The existing `listExtensionsRequired()` guard after this block stays exactly as it is. It
+matters more than ever now: unsegmented mode still runs `join()`, which is what could produce
+a primitive-restart document in the first place.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts"`
+Run: `npm test -- --test-name-pattern="parts survive|part names survive|conserves its parts|same-named|names nothing|named node among"`
 Expected: PASS — 3 passing tests.
 
 Run: `npm test`
@@ -979,20 +1080,70 @@ In `lib/model/runOptimize.ts`, in `prepareViewerVariantNow`, change the summary 
       `${Math.round(before.bytes / 1024)}KB → ${Math.round(after.bytes / 1024)}KB`,
 ```
 
-- [ ] **Step 8: Stamp parts on GLB import**
+- [ ] **Step 8: Stamp parts, before the mode branch**
 
-Files uploaded as GLB carry no `stikoPart` marker of their own. Add to `optimizeGlb.ts`, immediately after the primitive-mode normalisation loop and **before** `const before = measure(doc, input.byteLength);`:
+This must run **after** the mode normalisation loop and **before** `const before = measure(...)`,
+so that `namesAnything` in Step 5 sees the wrappers this creates and both `before` and `after`
+count parts on the same basis.
+
+Only NAMED nodes are stamped. An unnamed node is not a part — that is the discriminator the
+whole two-mode design rests on, and stamping unnamed fragments would put a 7,995-row list in
+the panel for a file that never told us what its objects are.
+
+Same-named siblings are ONE object, not several. Rhino emits one node per object AND per
+material, so a rim with a steel body and a chrome lip arrives as two sibling nodes both named
+"Rim". Stamping each would put the same physical part on two panel rows and let someone colour
+half a rim. Grouping them under one stamped wrapper recovers the object the modeller made. The
+wrapper carries an identity transform, so its children keep the world placement their own
+transforms give them — which is why the group is NOT reparented under its first member, whose
+transform would then compose onto its siblings.
 
 ```ts
-  // Stamp the exporter's own nodes as parts, before anything else runs. A node that carries
-  // geometry — directly or through descendants — is a part; a pure transform node is not.
-  // Read back from userData at load time (GLTFLoader copies extras verbatim), this is what
-  // lets the viewer rebuild a tree the exporter authored and we no longer destroy.
-  const carriesGeometry = (node: Node): boolean =>
-    node.getMesh() !== null || node.listChildren().some(carriesGeometry);
+  const carriesGeometryForStamp = (node: Node): boolean =>
+    node.getMesh() !== null || node.listChildren().some(carriesGeometryForStamp);
 
+  /** Parents whose children may need grouping: every scene, and every node. */
+  const parents: { list: () => Node[]; add: (n: Node) => void; remove: (n: Node) => void }[] = [
+    ...doc.getRoot().listScenes().map((scene) => ({
+      list: () => scene.listChildren(),
+      add: (n: Node) => { scene.addChild(n); },
+      remove: (n: Node) => { scene.removeChild(n); },
+    })),
+    ...doc.getRoot().listNodes().map((node) => ({
+      list: () => node.listChildren(),
+      add: (n: Node) => { node.addChild(n); },
+      remove: (n: Node) => { node.removeChild(n); },
+    })),
+  ];
+
+  for (const parent of parents) {
+    const byName = new Map<string, Node[]>();
+    for (const child of parent.list()) {
+      const name = child.getName();
+      // Unnamed nodes are not evidence of anything — grouping every unnamed sibling together
+      // would fuse unrelated geometry into one row.
+      if (!name || !carriesGeometryForStamp(child)) continue;
+      const group = byName.get(name);
+      if (group) group.push(child);
+      else byName.set(name, [child]);
+    }
+
+    for (const [name, group] of byName) {
+      if (group.length < 2) continue;
+      const wrapper = doc.createNode(name);
+      for (const child of group) {
+        parent.remove(child);
+        wrapper.addChild(child);
+      }
+      parent.add(wrapper);
+    }
+  }
+
+  // Named only. Wrappers created above are named, so they are stamped here too.
   for (const node of doc.getRoot().listNodes()) {
-    if (carriesGeometry(node)) node.setExtras({ ...node.getExtras(), [PART_MARKER]: true });
+    if (node.getName() !== '' && carriesGeometryForStamp(node)) {
+      node.setExtras({ ...node.getExtras(), [PART_MARKER]: true });
+    }
   }
 ```
 
@@ -2074,7 +2225,9 @@ In `app/portal/[id]/page.tsx`, beside the existing viewer state (`focalLength`, 
   }, []);
 
   // Re-picking the same part is a no-op by design: the row is already open and scrolled to,
-  // so there is nothing for a second reveal to do.
+  // so there is nothing for a second reveal to do. PartsPanel's reveal effect keys on the
+  // prop's VALUE, so setting the same key twice genuinely does nothing — that is intended,
+  // not an oversight to work around with a nonce.
   const handlePartPick = useCallback((key: string) => setRevealPart(key), []);
 ```
 
@@ -2089,12 +2242,34 @@ import type { PartNode } from '@/lib/model/partTree';
 - [ ] **Step 3: Write the colour handler**
 
 ```tsx
+  // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
+  // calls per second. The viewport must follow that live, but the server must not: one PATCH
+  // per pointermove would be a write storm against a row that only the last value matters for.
+  // So the two are split — state updates immediately, the write is trailing-debounced.
+  const colorWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingColorWrite = useRef<{ key: string; color: string | null } | null>(null);
+
+  const flushPartColor = useCallback(async () => {
+    const pending = pendingColorWrite.current;
+    const fileId = selectedFileId;
+    pendingColorWrite.current = null;
+    if (!pending || !fileId) return;
+
+    const response = await fetch(`/api/files/${fileId}/part-colors`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ partKey: pending.key, color: pending.color }),
+    }).catch(() => null);
+
+    // A rejected write must not leave the viewport showing a colour the server does not have.
+    // Reverting to the server's last known answer is the only state we can trust.
+    if (!response?.ok) setPartColors(selectedFile?.partColors ?? {});
+  }, [selectedFileId, selectedFile?.partColors]);
+
   const setPartColor = useCallback(
-    async (key: string, color: string | null) => {
+    (key: string, color: string | null) => {
       if (!selectedFileId) return;
 
-      // Optimistic: the viewport must respond to a colour drag immediately, and the picker
-      // emits on every pointermove. A failed write is reverted from the server's answer below.
       setPartColors((prev) => {
         const next = { ...prev };
         if (color === null) delete next[key];
@@ -2102,16 +2277,21 @@ import type { PartNode } from '@/lib/model/partTree';
         return next;
       });
 
-      const response = await fetch(`/api/files/${selectedFileId}/part-colors`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partKey: key, color }),
-      }).catch(() => null);
-
-      if (!response?.ok) setPartColors(selectedFile?.partColors ?? {});
+      pendingColorWrite.current = { key, color };
+      if (colorWriteTimer.current) clearTimeout(colorWriteTimer.current);
+      colorWriteTimer.current = setTimeout(flushPartColor, 400);
     },
-    [selectedFileId, selectedFile?.partColors]
+    [selectedFileId, flushPartColor]
   );
+
+  // A drag still in flight when the file changes or the page unmounts must still land — the
+  // user saw the colour applied, so dropping it silently would be a lie.
+  useEffect(() => () => {
+    if (colorWriteTimer.current) {
+      clearTimeout(colorWriteTimer.current);
+      void flushPartColor();
+    }
+  }, [flushPartColor]);
 
   const togglePartVisibility = useCallback((key: string) => {
     setHiddenParts((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
@@ -2152,7 +2332,13 @@ Replace the control row at line ~1329 with:
 
 Use whatever the surrounding code already calls the capability object — check the nearby Move/Rotate render condition and match it exactly rather than introducing a second name for the same thing.
 
-- [ ] **Step 5: Pass the viewer props**
+- [ ] **Step 5: Pass the viewer props, and flip them back to required**
+
+Task 7 left the five new props OPTIONAL on `ViewerContainerProps` with safe defaults, purely so
+the build stayed green while this task was outstanding. That removed the compile-time tripwire
+that forces the wiring to happen. Now that it has, **make `partColors`, `hiddenParts`,
+`highlightedPart`, `onPartsLoaded` and `onPartPick` required again** — a future refactor that
+drops one of them should fail the build, not silently ship a viewer with no colouring.
 
 At the `<ViewerContainer ... />` call site, add:
 

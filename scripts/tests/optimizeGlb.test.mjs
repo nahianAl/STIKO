@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Document, Primitive, WebIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { optimizeGlb } from '../../lib/model/optimizeGlb.ts';
+import { PART_MARKER } from '../../lib/model/partTree.ts';
 
 /**
  * A stand-in for what Rhino produces: one node, one mesh and one primitive per triangle,
@@ -250,5 +252,496 @@ test('line geometry index count is preserved exactly through the chain', async (
     stats.after.lineIndices,
     stats.before.lineIndices,
     'merging must not add restart sentinels or drop line indices'
+  );
+});
+
+/**
+ * What a CAD exporter emits: `partCount` named objects, each fragmented into
+ * `fragmentsPerPart` primitives, dealt `materialCount` materials round-robin. This is the
+ * shape that used to collapse to one primitive per material with every name erased.
+ */
+function fragmentedParts(partCount, fragmentsPerPart, materialCount = 2) {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = Array.from({ length: materialCount }, (_, m) =>
+    doc.createMaterial(`mat_${m}`).setBaseColorFactor([m / materialCount, 0.5, 0.5, 1])
+  );
+
+  for (let p = 0; p < partCount; p++) {
+    const mesh = doc.createMesh(`part_${p}`);
+    for (let f = 0; f < fragmentsPerPart; f++) {
+      const position = doc.createAccessor().setType('VEC3')
+        .setArray(new Float32Array([f, p, 0, f + 1, p, 0, f, p + 1, 0])).setBuffer(buffer);
+      mesh.addPrimitive(
+        doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[f % materialCount])
+      );
+    }
+    scene.addChild(doc.createNode(`part_${p}`).setMesh(mesh).setExtras({ [PART_MARKER]: true }));
+  }
+  return doc;
+}
+
+test('parts survive optimization while their fragments are merged away', async () => {
+  const input = await toArrayBuffer(fragmentedParts(6, 50, 2));
+
+  const { stats, buffer } = await optimizeGlb(input);
+
+  assert.equal(stats.before.parts, 6);
+  assert.equal(stats.after.parts, 6, 'six parts in, six parts out');
+  // 6 parts x 50 fragments = 300 primitives in; 6 parts x 2 materials = 12 out.
+  assert.equal(stats.before.primitives, 300);
+  assert.equal(stats.after.primitives, 12);
+  assert.equal(stats.after.triangles, stats.before.triangles);
+
+  const doc = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(buffer));
+  const nodes = doc.getRoot().listNodes().filter((n) => n.getExtras()[PART_MARKER] === true);
+  assert.equal(nodes.length, 6);
+  assert.deepEqual(nodes.map((n) => n.getName()).sort(), [
+    'part_0', 'part_1', 'part_2', 'part_3', 'part_4', 'part_5',
+  ]);
+});
+
+test('part names survive — the regression this feature exists to fix', async () => {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('SteelGrey').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Brass').setBaseColorFactor([0.7, 0.55, 0.2, 1]),
+  ];
+  ['Body', 'Flange_A', 'Flange_B', 'Bonnet', 'Stem', 'Handwheel'].forEach((name, i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[i % 2]);
+    scene.addChild(
+      doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim))
+        .setExtras({ [PART_MARKER]: true })
+    );
+  });
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  // Before this change: 6 nodes / 6 primitives in, 2 nodes / 2 primitives out.
+  assert.equal(stats.after.parts, 6);
+});
+
+test('same-named siblings become one part, not one per material', async () => {
+  // What Rhino emits: one node per object AND per material, so a two-material rim is two
+  // sibling nodes both called "Rim".
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+  const result = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const topLevel = result.getRoot().listScenes()[0].listChildren();
+
+  assert.deepEqual(topLevel.map((n) => n.getName()).sort(), ['Rim', 'Tire']);
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+  assert.equal(rim.listChildren().length, 2, 'both material pieces live under the one Rim part');
+});
+
+test('a file that names nothing takes the unsegmented path and reports no parts', async () => {
+  // Three unnamed nodes sharing a material. There is no part information in this file, so
+  // the honest answer is "no separable parts" — and with nothing to protect, the old
+  // aggressive merge applies and all three collapse into one primitive.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  for (let i = 0; i < 3; i++) {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode('').setMesh(doc.createMesh('').addPrimitive(prim)));
+  }
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 0, 'nothing named means nothing to call a part');
+  assert.equal(stats.after.primitives, 1, 'and with no parts to protect, the old merge applies');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
+test('a single named node among unnamed ones is not enough on its own to take the segmented path', async () => {
+  // Fix wave 1 / Finding 2: the discriminator is now `before.parts < 2`, not "does anything
+  // carry a name". A lone named node is indistinguishable, by count alone, from a single
+  // spuriously-stamped non-geometry ancestor (the RootNode case below) — there is exactly one
+  // thing to call a part either way, and a one-item list needs no protection from the
+  // aggressive merge. This test used to assert the opposite (segmented path, one part
+  // surviving); that was the same "any name at all flips modes" logic Finding 2 replaced.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  // D1 fix wave: the named node deliberately comes FIRST here, not last. join()'s merge
+  // destination is the first node in a same-material group, so with the named node first,
+  // it — not one of the unnamed siblings — is the node whose extras would survive a merge
+  // that doesn't clear PART_MARKER before running. Putting it last (as this fixture
+  // originally did) let both assertions below pass by fixture-ordering luck, pinning nothing
+  // about the actual behavior under test.
+  ['Bonnet', '', ''].forEach((name, i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.after.parts, 0, 'one part alone is nothing to differentiate, so the unsegmented path applies');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
+test('a document built without our stamps still optimizes, and conserves its parts', async () => {
+  // fragmentedGlb builds every node UNNAMED, exactly like fragments off an exporter that
+  // never told us any object's name — so optimizeGlb's stamping loop (only named nodes are
+  // stamped) marks none of them. before.parts and after.parts are both 0 here, so the
+  // `assert.equal` below is really 0 === 0: it does not prove parts survive stamping and
+  // merging, only that a document carrying none doesn't spontaneously acquire any. The real
+  // conservation guarantee — a stamped part surviving the merge — is covered by the
+  // `fragmentedParts` tests above; what this test actually adds is the primitive-count
+  // assertion right below: the old aggressive merge still applies to a fully anonymous file.
+  const { stats } = await optimizeGlb(await toArrayBuffer(fragmentedGlb(100, 2)));
+
+  assert.equal(stats.after.parts, stats.before.parts);
+  assert.ok(stats.after.primitives < stats.before.primitives, 'still merged');
+});
+
+// --- Fix wave 1 — findings from the task-4 review ---
+
+test('a single named non-geometry ancestor over unnamed fragments takes the unsegmented path', async () => {
+  // Fix wave 1 / Findings 2 & 3: the old discriminator was "does any named node carry
+  // geometry", and `carriesGeometry` recurses into children — so a single named ancestor with
+  // no mesh of its own (RootNode, Scene, a wrapper carrying the filename: exporters emit these
+  // constantly) still counted as "named geometry" and flipped the whole file to the segmented
+  // path. The merge is intra-mesh, so a RootNode over N unnamed leaf meshes would then merge
+  // NOTHING (each leaf keeps its own single-primitive mesh) and stamp to exactly one part,
+  // shipping bloated and gaining no part information. `before.parts < 2` fixes this: RootNode
+  // is the only stamped node, before.parts is 1, and the aggressive unsegmented path applies.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+  const root = doc.createNode('RootNode');
+  for (let i = 0; i < 5; i++) {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    root.addChild(doc.createNode('').setMesh(doc.createMesh('').addPrimitive(prim)));
+  }
+  scene.addChild(root);
+
+  const { stats } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.before.parts, 1, 'sanity: only RootNode is named, so only it gets stamped');
+  assert.equal(stats.after.parts, 0, 'one ancestor is nothing to differentiate, so the unsegmented path applies');
+  assert.equal(stats.after.primitives, 1, 'the five leaf primitives must actually merge, not ship unmerged');
+  assert.equal(stats.after.triangles, stats.before.triangles);
+});
+
+test('same-name grouping stamps the wrapper, not the children it absorbs', async () => {
+  // Fix wave 1 / Finding 4: "same-named siblings become one part" above only asserts names and
+  // child count, which stays green even under the double-stamping bug a previous wave fixed —
+  // wrapper AND its absorbed children all carrying PART_MARKER, which makes partTree.ts treat
+  // the wrapper's own children as nested part boundaries: a "Rim" row whose own children are
+  // two more rows also called "Rim". Assert directly on which nodes carry the marker.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const { buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+  const result = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const topLevel = result.getRoot().listScenes()[0].listChildren();
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+
+  assert.equal(rim.getExtras()[PART_MARKER], true, 'the wrapper must carry the marker');
+  assert.equal(rim.listChildren().length, 2, 'sanity: both material pieces still live under the wrapper');
+  rim.listChildren().forEach((child) => {
+    assert.notEqual(
+      child.getExtras()[PART_MARKER],
+      true,
+      'an absorbed child must not also carry the marker — that would double-stamp one physical part'
+    );
+  });
+});
+
+test('two distinct unnamed materials on one mesh merge to two primitives, not one and not zero', async () => {
+  // Fix wave 1 / Finding 1: the merge used to group primitives by material NAME
+  // (`material.getName() ?? ''`), so two distinct but both-unnamed materials collided on the
+  // same '' key. joinPrimitives then validates by material IDENTITY, throws on the mismatch,
+  // and the per-group try/catch skips the whole group — silently merging nothing, for exactly
+  // the shape this repo's own fragmentedGlb fixture treats as normal (unnamed materials).
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+
+  // Two distinct, deliberately UNNAMED materials.
+  const materialA = doc.createMaterial().setBaseColorFactor([0.2, 0.2, 0.8, 1]);
+  const materialB = doc.createMaterial().setBaseColorFactor([0.8, 0.2, 0.2, 1]);
+
+  const mesh = doc.createMesh('Widget');
+  for (let i = 0; i < 4; i++) {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    mesh.addPrimitive(
+      doc.createPrimitive().setAttribute('POSITION', position)
+        .setMaterial(i % 2 === 0 ? materialA : materialB)
+    );
+  }
+  scene.addChild(doc.createNode('Widget').setMesh(mesh).setExtras({ [PART_MARKER]: true }));
+
+  // A second part purely so before.parts >= 2 and the segmented path — where the per-mesh
+  // material grouping under test actually runs — is the one taken.
+  const decoyPosition = doc.createAccessor().setType('VEC3')
+    .setArray(new Float32Array([50, 0, 0, 51, 0, 0, 50, 1, 0])).setBuffer(buffer);
+  scene.addChild(
+    doc.createNode('Decoy')
+      .setMesh(doc.createMesh('Decoy').addPrimitive(
+        doc.createPrimitive().setAttribute('POSITION', decoyPosition).setMaterial(materialA)
+      ))
+      .setExtras({ [PART_MARKER]: true })
+  );
+
+  const { stats, buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.before.parts, 2, 'sanity: two named parts should take the segmented path');
+
+  const reread = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const widget = reread.getRoot().listNodes().find((n) => n.getName() === 'Widget');
+  assert.ok(widget, 'the Widget part must survive');
+  assert.equal(
+    widget.getMesh().listPrimitives().length,
+    2,
+    'expected one merged primitive per distinct unnamed material — not one (wrong merge) or four (no merge)'
+  );
+});
+
+test('primitive mode is part of the merge key — LINES and TRIANGLES under one material stay separate', async () => {
+  // Fix wave 1 / Finding 4: no existing fixture puts two primitive modes under one material in
+  // one mesh, so deleting `#${prim.getMode()}` from the grouping key failed nothing. Assert the
+  // LINES and TRIANGLES groups merge independently, and that line indices are conserved (not
+  // silently dropped by a failed, or worse a corrupting, mixed-mode joinPrimitives call).
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+
+  const mesh = doc.createMesh('Frame');
+  for (let i = 0; i < 2; i++) {
+    const triPosition = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    mesh.addPrimitive(doc.createPrimitive().setAttribute('POSITION', triPosition).setMaterial(material));
+
+    // A genuine 2-point line segment, offset so it shares no vertex with the triangles.
+    const x = 100 + i * 10;
+    const linePosition = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([x, 0, 0, x + 1, 0, 0])).setBuffer(buffer);
+    mesh.addPrimitive(
+      doc.createPrimitive().setMode(Primitive.Mode.LINES)
+        .setAttribute('POSITION', linePosition).setMaterial(material)
+    );
+  }
+  scene.addChild(doc.createNode('Frame').setMesh(mesh).setExtras({ [PART_MARKER]: true }));
+
+  // Decoy part purely so before.parts >= 2 and the segmented path is the one taken.
+  const decoyPosition = doc.createAccessor().setType('VEC3')
+    .setArray(new Float32Array([50, 0, 0, 51, 0, 0, 50, 1, 0])).setBuffer(buffer);
+  scene.addChild(
+    doc.createNode('Decoy')
+      .setMesh(doc.createMesh('Decoy').addPrimitive(
+        doc.createPrimitive().setAttribute('POSITION', decoyPosition).setMaterial(material)
+      ))
+      .setExtras({ [PART_MARKER]: true })
+  );
+
+  const { stats, buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.before.parts, 2, 'sanity: two named parts should take the segmented path');
+  assert.ok(stats.before.lineIndices > 0, 'sanity: the input must actually carry line geometry');
+  assert.equal(
+    stats.after.lineIndices,
+    stats.before.lineIndices,
+    'line indices must be conserved, not dropped by a failed mixed-mode merge'
+  );
+
+  const reread = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  const frame = reread.getRoot().listNodes().find((n) => n.getName() === 'Frame');
+  const modes = frame.getMesh().listPrimitives().map((p) => p.getMode()).sort();
+  assert.deepEqual(
+    modes,
+    [Primitive.Mode.LINES, Primitive.Mode.TRIANGLES],
+    'expected one merged LINES primitive and one merged TRIANGLES primitive, not a mixed-mode merge'
+  );
+});
+
+test('LINE_STRIP survives the segmented path with triangles, line indices and parts all conserved', async () => {
+  // Fix wave 1 / Finding 4: no test sends line geometry down the segmented path — the
+  // fragmentedLineGlb tests above only exercise the unsegmented path (unnamed nodes), yet a
+  // named CAD file with LINE_STRIPs (construction/dimension lines) is the reference file's
+  // actual shape, and a line-geometry blind spot is exactly how the original
+  // KHR_mesh_primitive_restart regression shipped in the first place.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+
+  ['Body', 'Bracket'].forEach((name, p) => {
+    const mesh = doc.createMesh(name);
+    for (let i = 0; i < 2; i++) {
+      const triPosition = doc.createAccessor().setType('VEC3')
+        .setArray(new Float32Array([p * 10 + i, 0, 0, p * 10 + i + 1, 0, 0, p * 10 + i, 1, 0]))
+        .setBuffer(buffer);
+      mesh.addPrimitive(doc.createPrimitive().setAttribute('POSITION', triPosition).setMaterial(material));
+
+      // A real 4-vertex construction-line polyline, offset clear of the triangles and of the
+      // other part's lines.
+      const x = 1000 + p * 100 + i * 10;
+      const linePosition = doc.createAccessor().setType('VEC3')
+        .setArray(new Float32Array([x, 0, 0, x + 1, 0, 0, x + 1, 1, 0, x + 2, 1, 0]))
+        .setBuffer(buffer);
+      mesh.addPrimitive(
+        doc.createPrimitive().setMode(Primitive.Mode.LINE_STRIP)
+          .setAttribute('POSITION', linePosition).setMaterial(material)
+      );
+    }
+    scene.addChild(doc.createNode(name).setMesh(mesh).setExtras({ [PART_MARKER]: true }));
+  });
+
+  const { stats, buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.before.parts, 2, 'sanity: two named parts should take the segmented path');
+  assert.ok(stats.before.lineIndices > 0, 'sanity: the input must actually carry line geometry');
+
+  assert.equal(stats.after.triangles, stats.before.triangles, 'triangles must be conserved');
+  assert.equal(stats.after.lineIndices, stats.before.lineIndices, 'line indices must be conserved');
+  assert.equal(stats.after.parts, stats.before.parts, 'parts must be conserved');
+
+  const reread = await new WebIO().readBinary(new Uint8Array(out));
+  assert.equal(
+    reread.getRoot().listExtensionsRequired().length,
+    0,
+    'no required extension may be declared'
+  );
+});
+
+// --- Fix wave 2 — findings from a second review pass ---
+
+test('re-optimizing an already-optimized GLB does not nest wrappers or add spurious parts', async () => {
+  // Finding D2: the same-name grouping loop takes candidate parents from listNodes(), which
+  // on a second pass includes the wrapper the FIRST pass already built for two same-named
+  // siblings — and that wrapper's own children are still both named "Rim". Without a guard
+  // against that, grouping wraps them again on every re-optimization: Rim > Rim > (Rim, Rim)
+  // after pass 2, one more nesting level and one more spurious part after pass 3, and so on —
+  // exactly the "same physical part on two rows" failure the wrapper exists to prevent, one
+  // level deeper each time. Reachable whenever a user re-uploads a previously-optimized GLB as
+  // a new version, which is an entirely ordinary thing to do.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const materials = [
+    doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]),
+    doc.createMaterial('Chrome').setBaseColorFactor([0.9, 0.9, 0.92, 1]),
+  ];
+  [['Rim', 0], ['Rim', 1], ['Tire', 0]].forEach(([name, m], i) => {
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([i, 0, 0, i + 1, 0, 0, i, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(materials[m]);
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(prim)));
+  });
+
+  const pass1 = await optimizeGlb(await toArrayBuffer(doc));
+  const pass2 = await optimizeGlb(pass1.buffer);
+  const pass3 = await optimizeGlb(pass2.buffer);
+
+  assert.equal(pass1.stats.after.parts, 2, 'sanity: one Rim wrapper, one Tire, after the first pass');
+  assert.equal(pass2.stats.after.parts, pass1.stats.after.parts, 'part count must not grow on re-optimization');
+  assert.equal(pass3.stats.after.parts, pass1.stats.after.parts, 'part count must stay stable across repeated passes');
+
+  const reread = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(pass3.buffer));
+  const topLevel = reread.getRoot().listScenes()[0].listChildren();
+  assert.deepEqual(topLevel.map((n) => n.getName()).sort(), ['Rim', 'Tire'], 'top level shape must stay the same');
+
+  const rim = topLevel.find((n) => n.getName() === 'Rim');
+  assert.equal(rim.listChildren().length, 2, 'the Rim wrapper must not gain an extra nesting level');
+  rim.listChildren().forEach((child) => {
+    assert.equal(child.getName(), 'Rim', 'sanity: still both material pieces');
+    assert.equal(
+      child.listChildren().length,
+      0,
+      'no nested Rim > Rim wrapper may appear — that is the exact bug under test'
+    );
+  });
+});
+
+test('repeated identical parts share a mesh after dedup, and triangles are still conserved', async () => {
+  // Finding D3: segmented mode runs dedup() without a following flatten(). dedup() merges
+  // byte-identical MESHES, so N identically-shaped parts at different transforms — repeated
+  // fasteners, an entirely ordinary CAD shape — end up as N nodes all referencing one shared
+  // Mesh object. measure() used to walk listMeshes(), which after that merge returns the
+  // shared mesh exactly once, so its triangles were counted once instead of once per node that
+  // actually places it in the scene. Every bolt below still renders correctly — this is a
+  // measurement bug, not data loss — but the lossless guarantee is the entire point of this
+  // file, and it would wrongly report that 3 of the 4 bolts' triangles vanished.
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Steel').setBaseColorFactor([0.6, 0.6, 0.62, 1]);
+
+  for (let i = 0; i < 4; i++) {
+    // Byte-identical LOCAL geometry for all four bolts — only the node's translation differs
+    // — so dedup() has every reason to merge the four meshes into one shared Mesh object.
+    const position = doc.createAccessor().setType('VEC3')
+      .setArray(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])).setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute('POSITION', position).setMaterial(material);
+    scene.addChild(
+      doc.createNode(`Bolt_${i}`)
+        .setTranslation([i * 10, 0, 0])
+        .setMesh(doc.createMesh(`Bolt_${i}`).addPrimitive(prim))
+        .setExtras({ [PART_MARKER]: true })
+    );
+  }
+
+  const { stats, buffer: out } = await optimizeGlb(await toArrayBuffer(doc));
+
+  assert.equal(stats.before.parts, 4, 'sanity: four named parts should take the segmented path');
+  assert.equal(stats.before.triangles, 4, 'sanity: four single-triangle bolts');
+  assert.equal(
+    stats.after.triangles,
+    stats.before.triangles,
+    'triangles must be conserved even though dedup() merges the four bolts onto one shared mesh'
+  );
+
+  const reread = await new WebIO().registerExtensions(ALL_EXTENSIONS).readBinary(new Uint8Array(out));
+  assert.equal(
+    reread.getRoot().listMeshes().length,
+    1,
+    'sanity: the bug under test only reproduces once the four bolts actually share one mesh'
+  );
+  assert.equal(
+    reread.getRoot().listNodes().filter((n) => n.getMesh() !== null).length,
+    4,
+    'sanity: all four nodes still reference that one shared mesh'
   );
 });

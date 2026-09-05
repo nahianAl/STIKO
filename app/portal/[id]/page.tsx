@@ -21,6 +21,9 @@ import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import type { Comment, FileRecord, Version } from '@/lib/types';
+import PartsPanel from '@/components/viewers/PartsPanel';
+import { autoColors, BASE_GREY } from '@/lib/model/autoColor';
+import { cascadeToDescendants, type PartNode } from '@/lib/model/partTree';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
@@ -266,6 +269,271 @@ export default function PortalPage() {
   const [sectionActive, setSectionActive] = useState(false);
   const [sectionSlots, setSectionSlots] = useState<SectionSlots>(emptySlots);
   const [selectedPlane, setSelectedPlane] = useState<PlaneId | null>(null);
+
+  const [parts, setParts] = useState<PartNode[]>([]);
+  // Reported by the viewer, which is the only place the loaded materials exist. The panel
+  // needs it so its swatches resolve colours exactly as the viewport does.
+  const [authored, setAuthored] = useState(false);
+  // Session-only, and reset whenever the viewer shows a different file — a part key means
+  // nothing across models, so carrying the set over would hide arbitrary geometry.
+  const [hiddenParts, setHiddenParts] = useState<string[]>([]);
+  // Mirrors the server so the viewport updates on click rather than after a refetch.
+  const [partColors, setPartColors] = useState<Record<string, string>>({});
+  const [hoveredPart, setHoveredPart] = useState<string | null>(null);
+  const [revealPart, setRevealPart] = useState<string | null>(null);
+  // Bumped on every viewport pick, even a repeat of the same part — see handlePartPick's
+  // comment for why `revealPart` alone (unchanged when the key repeats) cannot do this job.
+  const [revealToken, setRevealToken] = useState(0);
+  // Each part's own baked colour, reported by the viewer (only place the loaded materials
+  // exist) via onPartsLoaded. The panel's swatch falls back to this — after an override and an
+  // auto-colour, before BASE_GREY — so it can agree with what the viewport actually shows for a
+  // part that has neither.
+  const [partBaseColors, setPartBaseColors] = useState<Map<string, string>>(new Map());
+
+  // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
+  // calls per second. The viewport must follow that live, but the server must not: one PATCH
+  // per pointermove would be a write storm against a row that only the last value matters for.
+  // So the two are split — state updates immediately, the write is trailing-debounced.
+  //
+  // One pending write per PART, not a single shared slot: writes for different parts are
+  // independent rows on the server and must not displace one another. PartsPanel's swatch
+  // onClick (`setPicking(picking === part.key ? null : part.key)`) can move straight from part
+  // A to part B with no close step, so colouring A, then colouring B inside the same 400ms
+  // window, is ordinary use, not an edge case. Only repeated writes for the SAME part collapse
+  // to the last value — that collapsing is the whole point of the debounce.
+  //
+  // Every entry (in either map below) is tagged with the file id it belongs to, captured at the
+  // moment the user set it — not read fresh later — so nothing downstream needs to guess which
+  // file a queued or in-flight write was actually meant for, even after the user has since
+  // switched files. Part keys are plain index paths that collide across models by construction,
+  // so that tag is what keeps a stale write from ever landing on the wrong model.
+  //
+  // pendingColorWrites: queued locally, waiting out the debounce, not yet sent.
+  // inFlightColorWrites: handed off to flushPartColor and now on the wire, awaiting a response.
+  // A key lives in at most one of these at a time; flushPartColor moves it from the first to the
+  // second the moment it starts sending, and out of the second once that request settles. The
+  // partColors-resync effect below reads both, to avoid clobbering a colour that is not yet
+  // confirmed by the server, whichever of the two states it is currently in.
+  const colorWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingColorWrites = useRef<Map<string, { fileId: string; color: string | null }>>(new Map());
+  const inFlightColorWrites = useRef<Map<string, { fileId: string; color: string | null }>>(new Map());
+  // Mirrors selectedFileId for reads from inside an already-in-flight async callback, whose own
+  // closure over selectedFileId is frozen at whatever render created it and cannot see a later
+  // switch. Updated every render (not gated on an effect) so it is never one commit behind.
+  const currentFileIdRef = useRef(selectedFileId);
+  currentFileIdRef.current = selectedFileId;
+
+  // Session-only part state resets on a genuine file switch — keyed on selectedFileId ALONE.
+  // selectedFile is recomputed by files.find(...) every render, and fetchFiles replaces
+  // `files` with brand-new objects from a fresh res.json() whenever ANY file in the version
+  // changes, including a delete of a file OTHER than the one on screen. Keying this reset on
+  // selectedFile?.partColors too (as it used to be, bundled with the effect below) reran it on
+  // every such refetch and wiped hiddenParts/parts/authored/hoveredPart/revealPart for the file
+  // still being viewed. Because ModelErrorBoundary's key does not change for an unrelated
+  // file's delete, the model never remounts to refire onPartsLoaded, so parts stayed empty and
+  // PartsPanel rendered null — the whole panel vanished until the user reselected the file.
+  //
+  // Does NOT touch pendingColorWrites/inFlightColorWrites: those are now self-scoped by the
+  // fileId tagged onto each entry (see the declarations above), so there is nothing to clear
+  // here on a file switch — a stale entry for the file being left simply never matches the
+  // newly selected file's id wherever it is read, and flushPartColor drains and sends it
+  // regardless, independent of whether this effect has run yet.
+  useEffect(() => {
+    setParts([]);
+    setAuthored(false);
+    setHiddenParts([]);
+    setHoveredPart(null);
+    setRevealPart(null);
+    setPartBaseColors(new Map());
+  }, [selectedFileId]);
+
+  // partColors syncs from the server data, so it deliberately stays keyed on
+  // selectedFile?.partColors — a refetch (e.g. an unrelated file's delete) SHOULD bring newly
+  // saved colours down. That much is correct and desirable on its own.
+  //
+  // The risk is a resync landing mid-drag: without a guard, it would overwrite `partColors`
+  // wholesale with whatever the server last durably had, discarding a colour the user is
+  // actively setting but that has not reached the server yet. A key is "not yet confirmed" for
+  // two different reasons now — still waiting out the debounce (pendingColorWrites) or already
+  // sent and awaiting a response (inFlightColorWrites), since flushPartColor drains the former
+  // into the latter synchronously the moment it starts a send (see its own comment). Both are
+  // checked here, each filtered to the file currently on screen — a leftover entry for a file
+  // the user has since left is never layered onto the one now showing.
+  useEffect(() => {
+    const serverColors = selectedFile?.partColors ?? {};
+    const unconfirmed = new Map<string, string | null>();
+    pendingColorWrites.current.forEach((entry, key) => {
+      if (entry.fileId === selectedFileId) unconfirmed.set(key, entry.color);
+    });
+    inFlightColorWrites.current.forEach((entry, key) => {
+      if (entry.fileId === selectedFileId) unconfirmed.set(key, entry.color);
+    });
+    if (unconfirmed.size === 0) {
+      setPartColors(serverColors);
+      return;
+    }
+    const next = { ...serverColors };
+    unconfirmed.forEach((color, key) => {
+      if (color === null) delete next[key];
+      else next[key] = color;
+    });
+    setPartColors(next);
+  }, [selectedFile?.partColors, selectedFileId]);
+
+  const handlePartsLoaded = useCallback((next: PartNode[], nextAuthored: boolean, baseColors: Map<string, string>) => {
+    setParts(next);
+    setAuthored(nextAuthored);
+    setPartBaseColors(baseColors);
+  }, []);
+
+  // Re-picking the same part while the panel is already open and scrolled to it is a no-op by
+  // design: PartsPanel's scroll effect keys on `revealPart`'s VALUE, so setting the same key
+  // twice does not re-trigger a redundant rescroll. But REOPENING a panel the user has since
+  // closed is a different thing entirely, and `revealPart` alone cannot signal it — `open` is
+  // state PartsPanel owns internally, invisible up here, so a repeat key looks identical whether
+  // the panel is open or closed. `revealToken` exists purely to force that: it changes on every
+  // pick regardless of key, so PartsPanel's open-and-expand effect (which depends on it) always
+  // re-runs and always calls setOpen(true) — a no-op when already open, a real reopen when not.
+  const handlePartPick = useCallback((key: string) => {
+    setRevealPart(key);
+    setRevealToken((t) => t + 1);
+  }, []);
+
+  const flushPartColor = useCallback(async () => {
+    // Drain synchronously, before any await, so a second call into this same closure — e.g. the
+    // switch/unmount cleanup below firing right after the debounce timer already fired it once
+    // — finds nothing left to send. The map being emptied is a plain, immediate side effect of
+    // calling this function at all: correctness no longer depends on which effect fires when,
+    // only on this drain happening before the first await, which it always does. A later write
+    // to the same key is then just a fresh, independent .set() with its own timer.
+    //
+    // .forEach(), not for...of / spread — this tsconfig has no `target`, and iterating a Map
+    // directly fails `next build` with TS2802 even though `npm test` passes.
+    const entries: [string, { fileId: string; color: string | null }][] = [];
+    pendingColorWrites.current.forEach((entry, key) => entries.push([key, entry]));
+    pendingColorWrites.current.clear();
+    if (entries.length === 0) return;
+
+    // Now on the wire. pendingColorWrites was just emptied above, so it can no longer tell the
+    // partColors-resync effect which keys are unconfirmed — this map picks up that job for the
+    // window between "request sent" and "request settled".
+    entries.forEach(([key, entry]) => inFlightColorWrites.current.set(key, entry));
+
+    const results = await Promise.all(
+      entries.map(([key, { fileId, color }]) =>
+        fetch(`/api/files/${fileId}/part-colors`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ partKey: key, color }),
+        })
+          .then((res) => ({ key, fileId, ok: res.ok }))
+          .catch(() => ({ key, fileId, ok: false }))
+      )
+    );
+
+    // Every entry sent in this batch is settled one way or another now — but delete only if the
+    // map still holds THIS CALL's own entry object for the key, not merely a matching key. Two
+    // flushes for the same part can overlap on the wire: colour K, wait out the debounce (flush
+    // #1 sends and puts ITS OWN {fileId, color} object into inFlightColorWrites), colour K again
+    // before #1 settles (a fresh setPartColor call queues a NEW, distinct object, and flush #2
+    // later overwrites the map's entry for K with THAT object while #1 is still in flight). If #1
+    // then settles first and deleted by key alone, it would erase #2's still-in-flight marker —
+    // and a partColors-resync effect landing in that exact window would see K as fully
+    // confirmed, sync in whatever the server last durably had (at best #1's value), and revert
+    // the viewport away from the user's most recent action while #2's request is still pending.
+    // Comparing the object reference this call captured against whatever the map holds NOW means
+    // a newer flush's entry is left untouched — it gets deleted only by ITS OWN settling.
+    entries.forEach(([key, entry]) => {
+      if (inFlightColorWrites.current.get(key) === entry) inFlightColorWrites.current.delete(key);
+    });
+
+    // A rejected write must not leave the viewport showing a colour the server does not have —
+    // but only for the key(s) that actually failed. A sibling key in the same batch that
+    // succeeded is already durably saved on the server and must not be undone alongside it.
+    // Also scoped to whichever file is CURRENTLY on screen (via the live ref, not this closure's
+    // own possibly-stale selectedFile): if the user has since switched away from the file this
+    // failed write belongs to, that file's colours are no longer what `partColors` shows, and
+    // reverting into it here would misapply one file's colour onto an unrelated part of another
+    // — part keys are plain index paths that collide across models by construction.
+    const failed = results.filter((r) => !r.ok && r.fileId === currentFileIdRef.current);
+    if (failed.length > 0) {
+      const serverColors = selectedFile?.partColors ?? {};
+      setPartColors((prev) => {
+        const next = { ...prev };
+        failed.forEach(({ key }) => {
+          if (key in serverColors) next[key] = serverColors[key];
+          else delete next[key];
+        });
+        return next;
+      });
+    }
+    // selectedFileId itself is unused in this body (each entry already carries its own fileId,
+    // and the failure-revert's "is this still the current file" check uses the live ref instead)
+    // but stays in this dependency list so this closure gets a new identity on EVERY file
+    // switch, even one between two files that happen to share the same (absent) partColors
+    // reference — that identity change is what the switch/unmount effect below keys on to flush
+    // an outgoing file's pending write on the way out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFileId, selectedFile?.partColors]);
+
+  const setPartColor = useCallback(
+    (key: string, color: string | null) => {
+      if (!selectedFileId) return;
+
+      setPartColors((prev) => {
+        const next = { ...prev };
+        if (color === null) delete next[key];
+        else next[key] = color;
+        return next;
+      });
+
+      // Repeated writes for the SAME part collapse to the last value — the whole point of the
+      // debounce. Writes for a DIFFERENT part are a separate entry in the map and do not evict
+      // whatever is already pending for that other part. Tagged with the file id at the moment
+      // it is set (not read fresh later), so every later stage knows which file this entry
+      // belongs to even after the user has since switched files.
+      pendingColorWrites.current.set(key, { fileId: selectedFileId, color });
+      if (colorWriteTimer.current) clearTimeout(colorWriteTimer.current);
+      colorWriteTimer.current = setTimeout(flushPartColor, 400);
+    },
+    [selectedFileId, flushPartColor]
+  );
+
+  // A drag still in flight when the file changes or the page unmounts must still land — the
+  // user saw the colour applied, so dropping it silently would be a lie.
+  useEffect(() => () => {
+    if (colorWriteTimer.current) {
+      clearTimeout(colorWriteTimer.current);
+      void flushPartColor();
+    }
+  }, [flushPartColor]);
+
+  const togglePartVisibility = useCallback((key: string) => {
+    setHiddenParts((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }, []);
+
+  // What the panel's pill shows: an override if there is one, else the auto-colour, else the
+  // part's own base colour (reported by the viewer via onPartsLoaded), else the neutral base as
+  // a last resort for a part that hasn't reported one yet. This must agree with the resolution
+  // order in ModelViewerInner's colour effect — a pill disagreeing with the viewport is worse
+  // than no pill. `PartNode` itself carries no colour, so `partBaseColors` — not BASE_GREY — is
+  // what makes that agreement possible for a part with neither an override nor an auto-colour.
+  //
+  // Cascaded through `cascadeToDescendants`, the SAME function and the SAME combined
+  // override-or-auto-colour source ModelViewerInner's colour effect resolves through — an
+  // assembly row's colour pill is expected to recolour its whole subtree, which means a child
+  // row nested under a coloured (or auto-coloured) assembly must show that inherited colour on
+  // its OWN swatch too, not just in the viewport. Resolving both through one shared function is
+  // what keeps them unable to disagree, rather than two independent cascades that could drift.
+  const autoPartColors = useMemo(() => autoColors(parts, authored), [parts, authored]);
+  const cascadedPartColors = useMemo(
+    () => cascadeToDescendants(parts, (key) => partColors[key] ?? autoPartColors.get(key)),
+    [parts, partColors, autoPartColors]
+  );
+  const effectivePartColor = useCallback(
+    (key: string) => cascadedPartColors.get(key) ?? partBaseColors.get(key) ?? BASE_GREY,
+    [cascadedPartColors, partBaseColors]
+  );
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
@@ -1197,6 +1465,11 @@ export default function PortalPage() {
             onObjectCreated={() => setActiveTool('pointer')}
             onSelectionChange={handleSelectionChange}
             onReady={handleViewerReady}
+            partColors={partColors}
+            hiddenParts={hiddenParts}
+            highlightedPart={hoveredPart}
+            onPartsLoaded={handlePartsLoaded}
+            onPartPick={handlePartPick}
           />
         </div>
       </>
@@ -1327,6 +1600,18 @@ export default function PortalPage() {
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <div className="absolute bottom-3 left-3 z-20 flex items-end gap-2">
                 <FocalLengthControl value={focalLength} onChange={setFocalLength} />
+                <PartsPanel
+                  parts={parts}
+                  hiddenParts={hiddenParts}
+                  partColors={partColors}
+                  effectiveColor={effectivePartColor}
+                  canColor={canTransform}
+                  revealKey={revealPart}
+                  revealToken={revealToken}
+                  onToggleVisibility={togglePartVisibility}
+                  onSetColor={setPartColor}
+                  onHoverPart={setHoveredPart}
+                />
               </div>
             )}
 

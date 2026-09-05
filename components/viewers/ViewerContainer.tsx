@@ -5,6 +5,7 @@ import { FileRecord } from '@/lib/types';
 import type { Comment } from '@/lib/types';
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { PlaneId, SectionSlots } from '@/lib/crossSection';
+import type { PartNode } from '@/lib/model/partTree';
 import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
@@ -36,6 +37,13 @@ interface ViewerContainerProps {
   sectionSlots?: SectionSlots;
   selectedPlane?: PlaneId | null;
   onSelectPlane?: (id: PlaneId | null) => void;
+  // Per-part colour props. Required, matching ModelViewerInner: a caller that forgets one of
+  // these should fail to build rather than silently ship a viewer with no colouring opinion.
+  partColors: Record<string, string>;
+  hiddenParts: string[];
+  highlightedPart: string | null;
+  onPartsLoaded: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
+  onPartPick: (key: string) => void;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -75,6 +83,7 @@ function getExtension(filename: string): string {
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
+  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -160,7 +169,27 @@ export default function ViewerContainer({
       // that gate silently. It also closes the single-frame window where stale
       // fallback content could otherwise show before the url-fetch effect fires.
       <ModelErrorBoundary key={viewerKey} onReady={onReady}>
-        <ModelViewer url={url} commentToolActive={commentToolActive} onSceneClick={onSceneClick} worldPins={worldPins} onPinPositionsUpdate={onPinPositionsUpdate} handleRef={modelViewerRef} transform={transform} transformMode={transformMode} onTransformCommit={onTransformCommit} focalLength={focalLength} sectionSlots={sectionSlots} selectedPlane={selectedPlane} onSelectPlane={onSelectPlane} onReady={onReady} />
+        <ModelViewer
+          url={url}
+          commentToolActive={commentToolActive}
+          onSceneClick={onSceneClick}
+          worldPins={worldPins}
+          onPinPositionsUpdate={onPinPositionsUpdate}
+          handleRef={modelViewerRef}
+          transform={transform}
+          transformMode={transformMode}
+          onTransformCommit={onTransformCommit}
+          focalLength={focalLength}
+          sectionSlots={sectionSlots}
+          selectedPlane={selectedPlane}
+          onSelectPlane={onSelectPlane}
+          onReady={onReady}
+          partColors={partColors}
+          hiddenParts={hiddenParts}
+          highlightedPart={highlightedPart}
+          onPartsLoaded={onPartsLoaded}
+          onPartPick={onPartPick}
+        />
       </ModelErrorBoundary>
     );
   }
