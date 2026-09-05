@@ -144,9 +144,23 @@ export async function buildGlbDocument(result: OcctResult): Promise<Uint8Array> 
   /**
    * An OCCT node becomes one glTF node carrying its own meshes and its children.
    *
-   * A node owning several meshes gets them as child nodes rather than as several primitives
-   * on one mesh: the panel must be able to show "Rim" as one row, and buildPartTree already
-   * treats unmarked children as geometry belonging to their nearest marked ancestor.
+   * A node owning exactly one mesh attaches it directly, so the tree has no pass-through row
+   * between the part and its geometry. A node owning SEVERAL meshes gives each one its own
+   * marked child node instead: occt-import-js's own docs describe a node's `meshes` array as
+   * "indices of the meshes in the meshes array for this node", and OCCT emits one mesh per
+   * SOLID — each with its own name and its own colour; a solid with several differently
+   * coloured faces still comes back as a single mesh, coloured per-face via `brep_faces`. So
+   * several meshes on one OCCT node are several distinct solids, not fragments of one object,
+   * and each is a part in its own right, nested under the node that owns them (which stays a
+   * part itself whether or not it owns any mesh directly).
+   *
+   * This is deliberately NOT glTF's own multi-primitive convention, where several primitives
+   * under one mesh are facets of the SAME object (e.g. a rim split across a steel and a chrome
+   * material) — that assumption is what this branch used to encode, unmarking every mesh past
+   * the first so buildPartTree would fold them back into one part. It was wrong for OCCT, and
+   * measured wrong on a real 13 MB customer STEP file: 11 meshes on `result.root` collapsed
+   * into a single "Document" row, making the whole per-part colouring feature useless for that
+   * file. Do not restore the old unmarking; see the "several parts" test below.
    */
   const buildNode = (occt: OcctNode, fallbackName: string): Node => {
     const own = occt.meshes ?? [];
@@ -164,6 +178,14 @@ export async function buildGlbDocument(result: OcctResult): Promise<Uint8Array> 
     // of every node beneath it. Part keys are the primary key for saved colours, so widening
     // or narrowing this condition later would silently reassign saved colours on any file
     // that gets reprocessed through this pipeline.
+    //
+    // The same consequence follows from the multi-mesh branch below: marking each of a node's
+    // several meshes as its own part (rather than folding them into the parent, as this file
+    // used to) changes which key belongs to which solid for any node with more than one mesh.
+    // That's fine right now — the per-part-colour feature has never shipped, so no
+    // `part_colors` row anywhere is keyed against the old (collapsed) numbering — but it would
+    // not be fine once real rows exist. Do not casually reshape buildNode's output after that
+    // point without a migration for existing keys.
     if (!occt.name && own.length === 0 && kids.length === 1) {
       return buildNode(kids[0], fallbackName);
     }
@@ -177,10 +199,13 @@ export async function buildGlbDocument(result: OcctResult): Promise<Uint8Array> 
       node.setMesh(meshNode.getMesh());
       meshNode.dispose();
     } else {
-      for (const index of own) {
-        // Unmarked on purpose: these are this part's geometry, not parts of their own.
-        node.addChild(nodeForMesh(index).setExtras({}));
-      }
+      own.forEach((index) => {
+        // Marked (nodeForMesh already stamps PART_MARKER): each mesh is its own solid, hence
+        // its own part. See buildNode's own doc comment above for why several meshes on one
+        // OCCT node are several distinct parts, not fragments of a single object the way
+        // several primitives under one glTF mesh would be.
+        node.addChild(nodeForMesh(index));
+      });
     }
 
     kids.forEach((child, i) => node.addChild(buildNode(child, `node_${i}`)));

@@ -300,12 +300,25 @@ test('the collapse guard does not fire when the node has zero children', async (
   assert.deepEqual(childNames(carNode), ['node_0', 'Wheel']);
 });
 
-test('a node owning several meshes reads back as one part with both meshes, end to end through GLTFLoader', async () => {
-  // This is the whole point of the feature: a wheel rim split across two materials must be a
-  // single row in the parts panel, not two. Every other test in this file gives a node zero
-  // or one mesh; this is the only one that exercises the multi-mesh path, and it does so all
-  // the way through the same GLTFLoader the viewer itself uses (see lib/STEPLoader.ts), not
-  // just at the glTF-document level.
+test('a node owning several meshes reads back as several parts, one per mesh, end to end through GLTFLoader', async () => {
+  // This test used to assert the OPPOSITE of what's below: that two meshes on one node
+  // collapsed into a single part. That was wrong, and it is exactly the defect measured on a
+  // real 13 MB customer STEP file, where 11 meshes on `result.root` collapsed into one
+  // "Document" row and the whole per-part colouring feature became useless.
+  //
+  // The old assertion borrowed glTF's own convention: several PRIMITIVES under one MESH are
+  // facets of the SAME object (e.g. a rim split across a steel material and a chrome material
+  // — still one part, "Rim", with one mesh and two primitives). occt-import-js is not that
+  // shape. Its own docs describe a node's `meshes` array as "indices of the meshes in the
+  // meshes array for this node", and OCCT emits one MESH per SOLID — each carrying its own
+  // name and its own colour. A single solid with several differently-coloured faces is still
+  // ONE mesh (coloured per-face via `brep_faces`), so there is no OCCT case where "several
+  // meshes on a node" means "one object, multiple facets" the way glTF's multi-primitive mesh
+  // does. It only ever means "several distinct solids," and each must be its own addressable
+  // part — which is what the parts panel needs an 11-solid assembly to look like.
+  //
+  // Do not "fix" this test back to `parts.length === 1` with both meshes on it: that would
+  // silently restore the collapse this whole fix exists to remove.
   const fake = {
     success: true,
     root: { name: 'Rim', meshes: [0, 1], children: [] },
@@ -318,8 +331,54 @@ test('a node owning several meshes reads back as one part with both meshes, end 
 
   const parts = buildPartTree(gltf.scene);
 
-  assert.equal(parts.length, 1, 'the two meshes must collapse into one part, not two');
+  assert.equal(parts.length, 1, 'the assembly node itself is still a single top-level part');
   assert.equal(parts[0].name, 'Rim');
-  assert.equal(parts[0].meshes.length, 2);
-  assert.deepEqual(parts[0].meshes.map((m) => m.name).sort(), ['rim_chrome', 'rim_steel']);
+  assert.equal(parts[0].meshes.length, 0, 'the assembly row owns no geometry directly');
+  assert.equal(
+    parts[0].children.length,
+    2,
+    'each solid must become its own child part, not merge into the parent'
+  );
+  assert.deepEqual(
+    parts[0].children.map((c) => c.name).sort(),
+    ['rim_chrome', 'rim_steel']
+  );
+  assert.ok(
+    parts[0].children.every((c) => c.meshes.length === 1),
+    'each child part owns exactly its own solid'
+  );
+});
+
+test('a root node owning many meshes with no children becomes an assembly part with one child per mesh (the measured customer-file shape)', async () => {
+  // Measured directly on a real 13 MB customer STEP file: OCCT returned `result.root` with 11
+  // meshes and zero children — no intermediate assembly structure at all, everything flat on
+  // the root. Before the fix this collapsed to a single "Document" row; the fix must turn it
+  // into "Document" plus eleven addressable child parts, one per solid.
+  const meshCount = 11;
+  const meshes = Array.from({ length: meshCount }, (_, i) => triangleMesh(`solid_${i}`));
+  const fake = {
+    success: true,
+    root: { name: 'Document', meshes: meshes.map((_, i) => i), children: [] },
+    meshes,
+  };
+
+  const glb = await buildGlbFromResult(fake);
+  const arrayBuffer = glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+  const gltf = await new GLTFLoader().parseAsync(arrayBuffer, '');
+
+  const parts = buildPartTree(gltf.scene);
+
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0].name, 'Document');
+  assert.equal(parts[0].meshes.length, 0, 'the assembly row owns no geometry directly');
+  assert.equal(
+    parts[0].children.length,
+    meshCount,
+    'every one of the 11 solids must be its own addressable part'
+  );
+  assert.ok(parts[0].children.every((c) => c.meshes.length === 1));
+  assert.deepEqual(
+    parts[0].children.map((c) => c.name).sort(),
+    meshes.map((m) => m.name).sort()
+  );
 });
