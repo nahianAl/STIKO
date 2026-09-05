@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { buildPartTree, collectDrawables, flattenParts, hasAuthoredColors, hasMarkers, PART_MARKER } from '../../lib/model/partTree.ts';
+import { buildPartTree, cascadeToDescendants, collectDrawables, flattenParts, hasAuthoredColors, hasMarkers, PART_MARKER } from '../../lib/model/partTree.ts';
 
 /** A mesh with `tris` triangles, so triangle-count ranking is testable. */
 function mesh(name, tris = 1) {
@@ -322,6 +322,106 @@ test('the wrapped clone shares geometry and material with the source rather than
   assert.notEqual(clone, line, 'the clone is a distinct object from the source');
   assert.equal(clone.geometry, line.geometry);
   assert.equal(clone.material, line.material);
+});
+
+// --- Important finding 1: assembly rows in the Parts panel were completely inert. `makePart`
+// gives an assembly node `meshes: []` whenever all its geometry lives under nested boundaries —
+// the ordinary shape of a STEP assembly or a named-group GLB — so a colour or hidden setting on
+// that node's key never matched anything in `batches.instances` (which only ever holds keys for
+// parts owning meshes directly), and nothing happened. `cascadeToDescendants` is the fix: a
+// part's own explicit value always wins, and a part with none inherits its nearest ancestor's.
+// These tests exercise the pure resolution logic directly, without a browser. ---
+
+/** A plain PartNode fixture with no meshes — cascadeToDescendants never looks at that field. */
+function node(key, children = []) {
+  return { key, name: '', children, meshes: [], triangles: 0 };
+}
+
+test('a value set on an assembly cascades to every descendant with no value of its own', () => {
+  const tree = [node('0', [node('0/0'), node('0/1', [node('0/1/0')])])];
+
+  const resolved = cascadeToDescendants(tree, (key) => (key === '0' ? 'red' : undefined));
+
+  assert.equal(resolved.get('0'), 'red');
+  assert.equal(resolved.get('0/0'), 'red');
+  assert.equal(resolved.get('0/1'), 'red');
+  assert.equal(resolved.get('0/1/0'), 'red', 'cascades through an unset intermediate node too');
+});
+
+test("a descendant's own explicit value wins over its ancestor's", () => {
+  const tree = [node('0', [node('0/0'), node('0/1')])];
+
+  const resolved = cascadeToDescendants(tree, (key) => {
+    if (key === '0') return 'red';
+    if (key === '0/1') return 'blue';
+    return undefined;
+  });
+
+  assert.equal(resolved.get('0'), 'red');
+  assert.equal(resolved.get('0/0'), 'red', 'inherits the ancestor, having none of its own');
+  assert.equal(resolved.get('0/1'), 'blue', 'its own explicit value beats the inherited one');
+});
+
+test('a middle ancestor overriding the top one changes what its own descendants inherit', () => {
+  const tree = [node('0', [node('0/0', [node('0/0/0')])])];
+
+  const resolved = cascadeToDescendants(tree, (key) => {
+    if (key === '0') return 'red';
+    if (key === '0/0') return 'blue';
+    return undefined;
+  });
+
+  // The grandchild inherits the NEAREST ancestor's resolved value (blue), not the root's (red) —
+  // precedence must not skip a level just because an intermediate node itself inherited rather
+  // than set its own value from nothing.
+  assert.equal(resolved.get('0/0/0'), 'blue');
+});
+
+test('a part with no explicit value anywhere in its own ancestry is absent from the map', () => {
+  const tree = [node('0', [node('0/0')]), node('1')];
+
+  const resolved = cascadeToDescendants(tree, (key) => (key === '0' ? 'red' : undefined));
+
+  assert.equal(resolved.has('1'), false, 'no override anywhere above or on this part');
+  assert.equal(resolved.get('1'), undefined);
+});
+
+test('a value on one branch does not leak into a sibling branch', () => {
+  const tree = [node('0', [node('0/0')]), node('1', [node('1/0')])];
+
+  const resolved = cascadeToDescendants(tree, (key) => (key === '0' ? 'red' : undefined));
+
+  assert.equal(resolved.get('0/0'), 'red');
+  assert.equal(resolved.has('1'), false);
+  assert.equal(resolved.has('1/0'), false, "part 1's subtree never inherits part 0's value");
+});
+
+test('cascadeToDescendants works for boolean values, matching the hidden-parts use case', () => {
+  const tree = [node('0', [node('0/0'), node('0/1')])];
+
+  const resolved = cascadeToDescendants(tree, (key) => {
+    if (key === '0') return true;
+    if (key === '0/1') return false; // an explicit "not hidden", if a caller ever produces one
+    return undefined;
+  });
+
+  assert.equal(resolved.get('0'), true);
+  assert.equal(resolved.get('0/0'), true, 'inherits the hidden ancestor');
+  assert.equal(resolved.get('0/1'), false, "its own explicit false beats the ancestor's true");
+});
+
+test('an empty tree resolves to an empty map', () => {
+  assert.deepEqual(cascadeToDescendants([], () => 'red'), new Map());
+});
+
+test('a flat tree with no children is unaffected — every value is its own', () => {
+  const tree = [node('0'), node('1'), node('2')];
+
+  const resolved = cascadeToDescendants(tree, (key) => (key === '1' ? 'red' : undefined));
+
+  assert.equal(resolved.get('1'), 'red');
+  assert.equal(resolved.has('0'), false);
+  assert.equal(resolved.has('2'), false);
 });
 
 test('collectDrawables also finds a Sprite, wrapped the same way as Line/Points', () => {

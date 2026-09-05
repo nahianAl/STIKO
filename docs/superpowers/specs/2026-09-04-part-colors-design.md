@@ -251,8 +251,11 @@ displace it per part.
 **Existing uploads will show no parts.** Their stored GLB was flattened and joined at upload
 time; the hierarchy is not in the bytes any more. The untouched original is still in S3 beside
 it, but that is the 7,995-primitive version, slow to parse — loading it silently would trade a
-visible feature for an invisible stall. Legacy files therefore render as they do today and the
-panel states that this file has no separable parts. Re-uploading produces parts.
+visible feature for an invisible stall. Legacy files therefore render as they do today, and the
+Parts panel renders nothing for them — not a "this file has no separable parts" message. That is
+a deliberate simplification made once batching started gating on `hasMarkers`, not an oversight:
+a legacy/OBJ/STL upload is the common case here, not the exception, and a permanent notice on
+every one of them would be noise with no action behind it. Re-uploading produces parts.
 
 **STL and PLY will never have parts.** They are single geometries. This is a property of the
 formats, not a limitation to be worked around.

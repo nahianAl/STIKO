@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { flattenParts, type PartNode } from '@/lib/model/partTree';
+import { cascadeToDescendants, flattenParts, type PartNode } from '@/lib/model/partTree';
 import ColorPickerPopover from '@/components/markup/ColorPickerPopover';
 
 /**
@@ -121,6 +121,23 @@ export default function PartsPanel({
   }, [open, picking]);
 
   const hidden = useMemo(() => new Set(hiddenParts), [hiddenParts]);
+
+  // Hiding (or colouring — see `effectiveColor`, a prop already resolved this way by the
+  // caller) an assembly row must read as hiding its whole subtree, per the spec's Panel section.
+  // `hiddenParts` only ever names the exact row whose eye was clicked, so a child nested under a
+  // hidden assembly is never itself in this set — without cascading, its own row would show the
+  // OPEN eye even though the viewport (ModelViewerInner runs the identical cascade over the same
+  // `hiddenParts`) has it invisible, the panel-vs-viewport disagreement this whole feature exists
+  // to avoid. `cascadeToDescendants` resolves that: a row inherits its nearest hidden ancestor's
+  // state unless it carries its own explicit entry (its own eye was clicked directly), which
+  // always wins. An assembly row's OWN eye reflects only ITS OWN entry — clicking it toggles
+  // exactly that key (see `onToggleVisibility` below), never a summary of mixed descendant
+  // states, which keeps every row's eye meaning the same thing: "is THIS key explicitly hidden,
+  // or does it inherit hidden from somewhere above it."
+  const cascadedHidden = useMemo(
+    () => cascadeToDescendants(parts, (key) => (hidden.has(key) ? true : undefined)),
+    [parts, hidden]
+  );
 
   // The TOTAL part count, nested rows included — not `parts.length`, which is the top-level
   // forest size alone and is 1 for essentially every nested model (a single root assembly with
@@ -246,7 +263,7 @@ export default function PartsPanel({
                 is actually in the DOM. */}
             <div style={{ height: first * ROW_HEIGHT }} />
             {windowed.map(({ part, depth }) => {
-              const isHidden = hidden.has(part.key);
+              const isHidden = cascadedHidden.get(part.key) ?? false;
               return (
                 <div
                   key={part.key}

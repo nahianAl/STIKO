@@ -12,9 +12,18 @@ import * as THREE from 'three';
  * 1. `userData.stikoPart`, stamped into glTF node `extras` by our import pipeline and copied
  *    into userData by GLTFLoader (GLTFLoader.js:2306). This is authoritative and nests.
  * 2. No marker anywhere — a legacy upload, or a format that never passes through our import
- *    (OBJ, DAE, 3DS). Then the direct children of the scene root are the parts and nothing
- *    nests. This is a fallback, not a guess dressed up as structure: where a file has no
- *    hierarchy at all the answer is genuinely "one part", and the panel says so.
+ *    (OBJ, DAE, 3DS). `buildPartTree` falls back to treating the direct children of the scene
+ *    root as one part each, and nothing nests. This fallback is real, tested behaviour — not a
+ *    guess dressed up as structure — but it is no longer exercised in production: the only
+ *    caller (`ModelViewerInner.tsx`) asks `hasMarkers(root)` first and substitutes an empty
+ *    part list outright when it is false, so a legacy upload never actually reaches this
+ *    branch on screen. `PartsPanel` then renders nothing for such a file — not a "no separable
+ *    parts" message — because a legacy/OBJ/STL upload is the common case, not the exception,
+ *    and a permanent notice on every one of them would be noise with no action behind it (see
+ *    `PartsPanel`'s own comment on its `parts.length === 0` return). The fallback stays exported
+ *    and tested here for a caller that wants "one part per top-level child" without that
+ *    production gate — a future caller, or a test exercising `buildPartTree` directly — rather
+ *    than being deleted outright.
  *
  * Pure: no rendering, no DOM, no React. Unit-tested under `node --test`.
  */
@@ -277,6 +286,55 @@ export function flattenParts(parts: PartNode[]): PartNode[] {
   };
   walk(parts);
   return out;
+}
+
+/**
+ * Resolves a value that cascades from an assembly row down to every descendant that carries no
+ * value of its own — "eye and colour pill on an assembly row apply to its whole subtree," per
+ * the design spec's Panel section. A part's own explicit value always wins over anything
+ * inherited from an ancestor; a part with no explicit value anywhere in its own ancestry is
+ * absent from the returned map (callers read that as "nothing to apply here", the same meaning
+ * `undefined` already carries at every call site this feeds).
+ *
+ * `flattenParts` already visits every parent before its children (see its own doc comment), so
+ * a single left-to-right pass over that order — looking up each node's own value via
+ * `ownValue`, falling back to its parent's ALREADY-RESOLVED value when it has none — gives
+ * correct precedence outright. There is no second pass to reconcile a child that turns out to
+ * have (or not have) its own value, because by the time a child is visited its parent's entry in
+ * `resolved` is already final: nothing visited after a node can change what that node resolved
+ * to. The one piece of bookkeeping `flattenParts`'s flat output does not carry is which node is
+ * whose parent, so this builds that lookup once, up front, straight off `PartNode.children`
+ * (cheap: one pass over the same tree, no different from `flattenParts`'s own walk).
+ *
+ * Generic and free of any notion of colour or visibility specifically — `ownValue` supplies the
+ * meaning (a hex string, a `true` for "hidden"), and this function only ever moves it downward.
+ */
+export function cascadeToDescendants<T>(
+  parts: PartNode[],
+  ownValue: (key: string) => T | undefined,
+): Map<string, T> {
+  const parentOf = new Map<string, string | null>();
+  const indexParents = (nodes: PartNode[], parentKey: string | null) => {
+    nodes.forEach((node) => {
+      parentOf.set(node.key, parentKey);
+      indexParents(node.children, node.key);
+    });
+  };
+  indexParents(parts, null);
+
+  const resolved = new Map<string, T>();
+  flattenParts(parts).forEach((part) => {
+    const explicit = ownValue(part.key);
+    if (explicit !== undefined) {
+      resolved.set(part.key, explicit);
+      return;
+    }
+    const parentKey = parentOf.get(part.key) ?? null;
+    if (parentKey === null) return;
+    const inherited = resolved.get(parentKey);
+    if (inherited !== undefined) resolved.set(part.key, inherited);
+  });
+  return resolved;
 }
 
 /**

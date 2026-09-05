@@ -23,7 +23,7 @@ import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import type { Comment, FileRecord, Version } from '@/lib/types';
 import PartsPanel from '@/components/viewers/PartsPanel';
 import { autoColors, BASE_GREY } from '@/lib/model/autoColor';
-import type { PartNode } from '@/lib/model/partTree';
+import { cascadeToDescendants, type PartNode } from '@/lib/model/partTree';
 import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
@@ -431,8 +431,21 @@ export default function PortalPage() {
       )
     );
 
-    // Every entry sent in this batch is settled one way or another now.
-    entries.forEach(([key]) => inFlightColorWrites.current.delete(key));
+    // Every entry sent in this batch is settled one way or another now — but delete only if the
+    // map still holds THIS CALL's own entry object for the key, not merely a matching key. Two
+    // flushes for the same part can overlap on the wire: colour K, wait out the debounce (flush
+    // #1 sends and puts ITS OWN {fileId, color} object into inFlightColorWrites), colour K again
+    // before #1 settles (a fresh setPartColor call queues a NEW, distinct object, and flush #2
+    // later overwrites the map's entry for K with THAT object while #1 is still in flight). If #1
+    // then settles first and deleted by key alone, it would erase #2's still-in-flight marker —
+    // and a partColors-resync effect landing in that exact window would see K as fully
+    // confirmed, sync in whatever the server last durably had (at best #1's value), and revert
+    // the viewport away from the user's most recent action while #2's request is still pending.
+    // Comparing the object reference this call captured against whatever the map holds NOW means
+    // a newer flush's entry is left untouched — it gets deleted only by ITS OWN settling.
+    entries.forEach(([key, entry]) => {
+      if (inFlightColorWrites.current.get(key) === entry) inFlightColorWrites.current.delete(key);
+    });
 
     // A rejected write must not leave the viewport showing a colour the server does not have —
     // but only for the key(s) that actually failed. A sibling key in the same batch that
@@ -505,10 +518,21 @@ export default function PortalPage() {
   // order in ModelViewerInner's colour effect — a pill disagreeing with the viewport is worse
   // than no pill. `PartNode` itself carries no colour, so `partBaseColors` — not BASE_GREY — is
   // what makes that agreement possible for a part with neither an override nor an auto-colour.
+  //
+  // Cascaded through `cascadeToDescendants`, the SAME function and the SAME combined
+  // override-or-auto-colour source ModelViewerInner's colour effect resolves through — an
+  // assembly row's colour pill is expected to recolour its whole subtree, which means a child
+  // row nested under a coloured (or auto-coloured) assembly must show that inherited colour on
+  // its OWN swatch too, not just in the viewport. Resolving both through one shared function is
+  // what keeps them unable to disagree, rather than two independent cascades that could drift.
   const autoPartColors = useMemo(() => autoColors(parts, authored), [parts, authored]);
+  const cascadedPartColors = useMemo(
+    () => cascadeToDescendants(parts, (key) => partColors[key] ?? autoPartColors.get(key)),
+    [parts, partColors, autoPartColors]
+  );
   const effectivePartColor = useCallback(
-    (key: string) => partColors[key] ?? autoPartColors.get(key) ?? partBaseColors.get(key) ?? BASE_GREY,
-    [partColors, autoPartColors, partBaseColors]
+    (key: string) => cascadedPartColors.get(key) ?? partBaseColors.get(key) ?? BASE_GREY,
+    [cascadedPartColors, partBaseColors]
   );
 
   const is3DFile = useMemo(() => {

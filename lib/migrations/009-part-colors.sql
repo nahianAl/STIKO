@@ -14,8 +14,9 @@
 -- This also holds for a file whose converted_storage_key changes after the fact — a STEP
 -- upload whose client-side tessellation failed is coloured against the STEPLoader/stepToGlb
 -- tree, and a later CloudConvert conversion replaces it with an unrelated tree under the
--- same file id. Every place that assigns converted_storage_key must delete this file's
--- part_colors rows in the same operation; see the deletion (and its own comment) beside the
+-- same file id. Every place that assigns converted_storage_key must attempt to delete this
+-- file's part_colors rows immediately alongside it — NOT necessarily in the same transaction;
+-- see the deletion (and its own comment, and why it tolerates its own failure) beside the
 -- UPDATE in app/api/conversions/webhook/route.ts.
 CREATE TABLE IF NOT EXISTS part_colors (
   id TEXT PRIMARY KEY,

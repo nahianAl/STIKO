@@ -13,7 +13,7 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
-import { buildPartTree, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
+import { buildPartTree, cascadeToDescendants, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
 import { autoColors } from '@/lib/model/autoColor';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
 import { framingForRadius } from '@/lib/cameraFraming';
@@ -253,7 +253,14 @@ function Model({
   // re-run of this memo, since nothing distinguishes "not yet baked" from "already baked" on the
   // mutated node. See collectDrawables' own doc comment in partTree.ts for the full reasoning —
   // this call is intentionally this thin.
-  const drawables = useMemo(() => (root ? collectDrawables(root) : []), [root]);
+  //
+  // Gated on `marked`, the same signal batching itself gates on, not merely on `root` being
+  // present. An unmarked (legacy/OBJ/DAE/3DS) model always takes the `<primitive object={root ??
+  // data} />` branch below, which renders `root` itself — lines and points included — so this
+  // memo's output is unconditionally discarded for every such file. Before this gate, a
+  // 551-LINE_STRIP reference file paid for 551 wasted `Group` + clone allocations on every load
+  // even though nothing downstream ever read them.
+  const drawables = useMemo(() => (root && marked ? collectDrawables(root) : []), [root, marked]);
   // No dispose effect alongside this one, unlike `batches` below — and deliberately so, not an
   // oversight. `batches.dispose()` frees GPU buffers `buildBatches` allocated (BatchedMesh
   // geometry/material owned outright by the batch). Every wrapper here shares its geometry and
@@ -333,12 +340,29 @@ function Model({
   // Highlight is a lightened version of what the part would otherwise be, not a fixed colour —
   // a fixed highlight over an already-similar part is invisible, which is the one case the
   // highlight exists for.
+  //
+  // Both `partColors` and `automatic` are keyed by whatever part the user or the auto-colour
+  // ranking actually named — which, for a STEP assembly or any named-group GLB, is very often
+  // an ASSEMBLY node whose own `meshes` is empty (`makePart` gives it none when every one of its
+  // triangles lives under a nested boundary; see partTree.ts). `batches.instances` only ever
+  // holds keys for parts that own geometry directly, so an assembly's key never appears there at
+  // all — reading `partColors[key] ?? automatic.get(key)` per INSTANCE key, as this used to,
+  // silently did nothing for exactly the rows the spec requires to work ("colour pill on an
+  // assembly row applies to its whole subtree"). `cascadeToDescendants` resolves this once,
+  // outside the per-instance loop: a leaf that has no colour of its own inherits its nearest
+  // coloured ancestor's, while a leaf that DOES have its own override or auto-colour keeps it
+  // regardless of any ancestor. Folding `automatic` into the same cascade as `partColors` is
+  // deliberate, not incidental — an auto-coloured top-level assembly has exactly the same
+  // "applies to the whole subtree" shape as a user override, and the two must resolve through
+  // one precedence chain or a leaf could inherit an auto-colour past an override sitting between
+  // it and the ranked ancestor.
   useEffect(() => {
     if (!batches) return;
+    const cascadedColors = cascadeToDescendants(parts, (key) => partColors[key] ?? automatic.get(key));
     // .forEach, not for...of: this repo's tsconfig has no `target`, so a for...of over a
     // Map/Set passes `npm test` (ts-node) but fails `next build` with TS2802.
     batches.instances.forEach((instanceList, key) => {
-      const hex = partColors[key] ?? automatic.get(key);
+      const hex = cascadedColors.get(key);
       const base = hex ? new THREE.Color(hex) : null;
       if (key !== highlightedPart) {
         applyPartColor(batches, key, base);
@@ -360,15 +384,28 @@ function Model({
         instance.mesh.setColorAt(instance.instanceId, instance.baseColor.clone().lerp(new THREE.Color(0xffffff), 0.45));
       });
     });
-  }, [batches, partColors, automatic, highlightedPart]);
+  }, [batches, parts, partColors, automatic, highlightedPart]);
 
+  // Same cascade problem as colour, and the same fix: `hiddenParts` names whatever row the eye
+  // was clicked on, which for an assembly row is a key `batches.instances` never holds (no
+  // meshes of its own). Without cascading, hiding an assembly did nothing at all — the exact
+  // failure described in the spec. A part inherits its nearest hidden ancestor's hidden-ness
+  // only when it carries no explicit entry of its own; toggling a specific descendant's OWN eye
+  // still adds/removes exactly that descendant's key (see `togglePartVisibility` in
+  // app/portal/[id]/page.tsx, unchanged), so an explicitly-hidden descendant stays hidden even
+  // after its ancestor is later shown again, and an explicitly-hidden descendant is what "a
+  // descendant's own explicit setting must win over its ancestor's" means here: there is no
+  // separate "explicitly shown" state to invent, since a key's mere ABSENCE from `hiddenParts`
+  // already means "visible unless an ancestor says otherwise", which is exactly the fallback
+  // this cascade produces for it.
   useEffect(() => {
     if (!batches) return;
     const hidden = new Set(hiddenParts);
+    const cascadedHidden = cascadeToDescendants(parts, (key) => (hidden.has(key) ? true : undefined));
     batches.instances.forEach((_instances, key) => {
-      applyPartVisibility(batches, key, !hidden.has(key));
+      applyPartVisibility(batches, key, !cascadedHidden.get(key));
     });
-  }, [batches, hiddenParts]);
+  }, [batches, parts, hiddenParts]);
 
   if (ext === '.stl' || ext === '.ply') {
     const geometry = data as THREE.BufferGeometry;
@@ -610,6 +647,23 @@ const VIEW_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
  * a url change remounts this component, and the callback it captures was created in the same
  * parent render as the <Model> whose geometry it is about to measure. See the note on
  * `handleMeasured` in ModelViewerInner for why the pairing matters.
+ *
+ * The key ALSO carries whether the model is currently batched, which is what makes this
+ * component's single measurement land on the right side of `<Center precise={!batches}>`
+ * flipping mid-load. `batches` is state in ModelViewerInner, set from a passive effect inside
+ * <Model> — so on the FIRST commit of a batched model, that state is still null (it always
+ * starts that way), `<Center precise={!batches}>` is therefore `precise={true}` even though the
+ * BatchedMesh is already attached that same commit, and Center's layout effect positions the
+ * model using the WRONG (per-vertex, local-space) offset the big comment on `precise` documents.
+ * A SECOND commit follows once `setBatches` lands, where `precise` is finally `false` and Center
+ * repositions correctly — but this component was mounted on the FIRST commit (the url has not
+ * changed, so nothing remounted it), its `useEffect` has empty deps, and it therefore already
+ * ran, once, against the wrong first-commit offset, forever. Folding `batches` into this key
+ * forces an actual remount the moment it flips from null to non-null, so the fresh instance's
+ * one-shot effect runs against the corrected, second-commit positioning instead. A model that
+ * never batches (legacy/STL/PLY, or a marked tree with nothing left to batch) never sees this
+ * key change at all — `batches` stays null for its whole life — so its measurement, and every
+ * comment pin stored against it, is unaffected.
  */
 function MeasureModel({
   targetRef,
@@ -993,7 +1047,16 @@ export default function ModelViewerInner({
               ))}
           </group>
           <ApplyFocalLength focalLength={focalLength} />
-          <MeasureModel key={`measure-${url}`} targetRef={modelRef} transformRef={transformRef} onMeasured={handleMeasured} />
+          {/* `batches` in the key, not just `url` — see MeasureModel's own doc comment for why
+              a model whose <Center precise> flips from true to false mid-load needs an actual
+              remount to be measured against the corrected offset rather than the first commit's
+              wrong one. */}
+          <MeasureModel
+            key={`measure-${url}-${batches ? 'batched' : 'unbatched'}`}
+            targetRef={modelRef}
+            transformRef={transformRef}
+            onMeasured={handleMeasured}
+          />
           {bounds && <FitCameraToModel bounds={bounds} />}
           {bounds && (
             <ViewerNavigation
