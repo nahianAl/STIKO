@@ -34,10 +34,23 @@ export const MAX_AUTO_COLORED = ACCENTS.length;
 export function autoColors(parts: PartNode[], authored: boolean): Map<string, string> {
   const colors = new Map<string, string>();
   if (authored) return colors;
-  // One assembly means nothing to differentiate FROM, so colour would only mislead.
-  if (parts.length < 2) return colors;
 
-  const ranked = [...parts].sort(
+  // A lone top-level part is "nothing to differentiate FROM" only when it truly has no
+  // substructure. stepToGlb wraps an entire STEP assembly in one stamped root node
+  // (buildNode(result.root, 'root')), and any GLB with a single named top-level assembly —
+  // the ordinary shape of a real export — does the same; buildPartTree then hands back
+  // exactly one top-level PartNode even though the interesting structure sits one level
+  // down. Descend through such wrappers — repeatedly, since a doubly-wrapped root is
+  // possible — until there is something to actually rank, or until the sole part genuinely
+  // has no children, which stays correctly grey.
+  let candidates = parts;
+  while (candidates.length === 1 && candidates[0].children.length > 0) {
+    candidates = candidates[0].children;
+  }
+  // One assembly means nothing to differentiate FROM, so colour would only mislead.
+  if (candidates.length < 2) return colors;
+
+  const ranked = [...candidates].sort(
     (a, b) => b.triangles - a.triangles || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
   );
 

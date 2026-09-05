@@ -10,6 +10,13 @@
 -- part_key is an index path into the model's node hierarchy ("0/2/1"), stable
 -- only because an uploaded file's bytes never change. Re-optimizing a stored
 -- file would renumber every part and silently reassign every colour here.
+--
+-- This also holds for a file whose converted_storage_key changes after the fact — a STEP
+-- upload whose client-side tessellation failed is coloured against the STEPLoader/stepToGlb
+-- tree, and a later CloudConvert conversion replaces it with an unrelated tree under the
+-- same file id. Every place that assigns converted_storage_key must delete this file's
+-- part_colors rows in the same operation; see the deletion (and its own comment) beside the
+-- UPDATE in app/api/conversions/webhook/route.ts.
 CREATE TABLE IF NOT EXISTS part_colors (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,

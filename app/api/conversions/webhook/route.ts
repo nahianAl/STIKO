@@ -50,11 +50,26 @@ export async function POST(request: NextRequest) {
 
       await uploadFromUrl(outputFile.url, convertedKey, 'model/gltf-binary');
 
-      await sql`
-        UPDATE files
-        SET conversion_status = 'completed', converted_storage_key = ${convertedKey}
-        WHERE id = ${fileId}
-      `;
+      // part_colors.part_key is an index path into a specific node hierarchy, stable only
+      // because an uploaded file's bytes never change (see the invariant note in
+      // lib/migrations/009-part-colors.sql). converted_storage_key is about to start
+      // pointing at CloudConvert's own GLB — a node hierarchy that has nothing to do with
+      // whatever tree produced this file's saved colours (e.g. the client-side
+      // STEPLoader/stepToGlb tree used while conversion was pending or had previously
+      // failed). Any part_colors rows already saved for this file describe positions in a
+      // tree that is about to stop existing; left in place they would silently reattach to
+      // arbitrary parts of the new one. Dropped in the same transaction as the key change,
+      // so no reader ever observes the new key with the old file's colours still attached.
+      await sql.transaction([
+        sql`
+          UPDATE files
+          SET conversion_status = 'completed', converted_storage_key = ${convertedKey}
+          WHERE id = ${fileId}
+        `,
+        sql`
+          DELETE FROM part_colors WHERE file_id = ${fileId}
+        `,
+      ]);
     } catch (err) {
       console.error('Failed to process conversion result for', fileId, err);
       await sql`
