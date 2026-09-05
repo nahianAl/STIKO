@@ -282,14 +282,78 @@ export default function PortalPage() {
   const [hoveredPart, setHoveredPart] = useState<string | null>(null);
   const [revealPart, setRevealPart] = useState<string | null>(null);
 
+  // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
+  // calls per second. The viewport must follow that live, but the server must not: one PATCH
+  // per pointermove would be a write storm against a row that only the last value matters for.
+  // So the two are split — state updates immediately, the write is trailing-debounced.
+  //
+  // One pending write per PART, not a single shared slot: writes for different parts are
+  // independent rows on the server and must not displace one another. PartsPanel's swatch
+  // onClick (`setPicking(picking === part.key ? null : part.key)`) can move straight from part
+  // A to part B with no close step, so colouring A, then colouring B inside the same 400ms
+  // window, is ordinary use, not an edge case. Only repeated writes for the SAME part collapse
+  // to the last value — that collapsing is the whole point of the debounce. Declared ahead of
+  // the two effects below because the partColors-resync effect reads it too, to avoid
+  // clobbering a colour still in flight — see that effect's comment.
+  const colorWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingColorWrites = useRef<Map<string, string | null>>(new Map());
+
+  // Session-only part state resets on a genuine file switch — keyed on selectedFileId ALONE.
+  // selectedFile is recomputed by files.find(...) every render, and fetchFiles replaces
+  // `files` with brand-new objects from a fresh res.json() whenever ANY file in the version
+  // changes, including a delete of a file OTHER than the one on screen. Keying this reset on
+  // selectedFile?.partColors too (as it used to be, bundled with the effect below) reran it on
+  // every such refetch and wiped hiddenParts/parts/authored/hoveredPart/revealPart for the file
+  // still being viewed. Because ModelErrorBoundary's key does not change for an unrelated
+  // file's delete, the model never remounts to refire onPartsLoaded, so parts stayed empty and
+  // PartsPanel rendered null — the whole panel vanished until the user reselected the file.
+  //
+  // Also clears any not-yet-sent colour writes: a genuine file switch means whatever was
+  // pending belongs to the file being LEFT, not the one being entered, and by this point it
+  // has already been handed off — the unmount/file-switch flush effect below (keyed on
+  // flushPartColor, which itself depends on selectedFileId) runs its cleanup before this
+  // effect's body on the same commit, so it has already synchronously read any pending entries
+  // into its own outgoing request before this clear runs. Leaving them in place instead would
+  // let the resync effect below merge a colour meant for the OLD file onto the NEW one — part
+  // keys are plain index paths that collide across models by construction (see PartsPanel's
+  // own note on this), so that would misapply a stale colour to an unrelated part.
   useEffect(() => {
     setParts([]);
     setAuthored(false);
     setHiddenParts([]);
     setHoveredPart(null);
     setRevealPart(null);
-    setPartColors(selectedFile?.partColors ?? {});
-  }, [selectedFileId, selectedFile?.partColors]);
+    pendingColorWrites.current.clear();
+  }, [selectedFileId]);
+
+  // partColors syncs from the server data, so it deliberately stays keyed on
+  // selectedFile?.partColors — a refetch (e.g. the very same unrelated-file-delete refetch the
+  // effect above no longer reacts to) SHOULD bring newly saved colours down. That much is
+  // correct and desirable on its own.
+  //
+  // The risk in splitting this out is a resync landing mid-drag: without a guard, it would
+  // overwrite `partColors` wholesale with whatever the server last durably had, discarding a
+  // colour the user is actively setting but that has not reached the server yet. That is
+  // exactly what pendingColorWrites (above) tracks — every key whose local value is not yet
+  // confirmed, because it is still waiting out the debounce or its PATCH is on the wire (see
+  // flushPartColor: an entry is only removed from the map once its own request settles). So
+  // any such key is layered back on top of the freshly-fetched server colours here, meaning a
+  // resync can only ever fill in colours the user has NOT touched recently — it can never
+  // clobber one still in flight. (Pending entries cannot belong to a DIFFERENT file at this
+  // point either — the effect above clears the map on every genuine file switch.)
+  useEffect(() => {
+    const serverColors = selectedFile?.partColors ?? {};
+    if (pendingColorWrites.current.size === 0) {
+      setPartColors(serverColors);
+      return;
+    }
+    const next = { ...serverColors };
+    pendingColorWrites.current.forEach((color, key) => {
+      if (color === null) delete next[key];
+      else next[key] = color;
+    });
+    setPartColors(next);
+  }, [selectedFile?.partColors]);
 
   const handlePartsLoaded = useCallback((next: PartNode[], nextAuthored: boolean) => {
     setParts(next);
@@ -302,28 +366,41 @@ export default function PortalPage() {
   // not an oversight to work around with a nonce.
   const handlePartPick = useCallback((key: string) => setRevealPart(key), []);
 
-  // ColorPickerPopover emits on EVERY pointermove of a saturation or hue drag — dozens of
-  // calls per second. The viewport must follow that live, but the server must not: one PATCH
-  // per pointermove would be a write storm against a row that only the last value matters for.
-  // So the two are split — state updates immediately, the write is trailing-debounced.
-  const colorWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingColorWrite = useRef<{ key: string; color: string | null } | null>(null);
-
   const flushPartColor = useCallback(async () => {
-    const pending = pendingColorWrite.current;
     const fileId = selectedFileId;
-    pendingColorWrite.current = null;
-    if (!pending || !fileId) return;
+    // .forEach(), not for...of / spread — this tsconfig has no `target`, and iterating a Map
+    // directly fails `next build` with TS2802 even though `npm test` passes.
+    const entries: [string, string | null][] = [];
+    pendingColorWrites.current.forEach((color, key) => entries.push([key, color]));
+    if (entries.length === 0 || !fileId) return;
 
-    const response = await fetch(`/api/files/${fileId}/part-colors`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ partKey: pending.key, color: pending.color }),
-    }).catch(() => null);
+    const outcomes = await Promise.all(
+      entries.map(([key, color]) =>
+        fetch(`/api/files/${fileId}/part-colors`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ partKey: key, color }),
+        })
+          .then((res) => res.ok)
+          .catch(() => false)
+      )
+    );
+
+    // Every entry sent in this batch is settled one way or another now: drop it from the
+    // pending map so the partColors-resync effect above stops treating it as unconfirmed —
+    // unless a newer value was queued for that same key while this batch was still on the
+    // wire, in which case THAT value is what is actually still pending and must survive.
+    entries.forEach(([key, color]) => {
+      if (pendingColorWrites.current.get(key) === color) pendingColorWrites.current.delete(key);
+    });
 
     // A rejected write must not leave the viewport showing a colour the server does not have.
-    // Reverting to the server's last known answer is the only state we can trust.
-    if (!response?.ok) setPartColors(selectedFile?.partColors ?? {});
+    // Several parts can be in flight at once here; reverting the WHOLE map to the server's
+    // last known state on any single failure is a deliberate simplification rather than
+    // rolling back only the failed key(s) — the server is the only source of truth we can
+    // trust, and trying to be surgical about which key(s) to revert risks landing on a value
+    // that merely LOOKS plausible rather than one actually confirmed by the server.
+    if (outcomes.some((ok) => !ok)) setPartColors(selectedFile?.partColors ?? {});
   }, [selectedFileId, selectedFile?.partColors]);
 
   const setPartColor = useCallback(
@@ -337,7 +414,10 @@ export default function PortalPage() {
         return next;
       });
 
-      pendingColorWrite.current = { key, color };
+      // Repeated writes for the SAME part collapse to the last value — the whole point of the
+      // debounce. Writes for a DIFFERENT part are a separate entry in the map and do not evict
+      // whatever is already pending for that other part.
+      pendingColorWrites.current.set(key, color);
       if (colorWriteTimer.current) clearTimeout(colorWriteTimer.current);
       colorWriteTimer.current = setTimeout(flushPartColor, 400);
     },
