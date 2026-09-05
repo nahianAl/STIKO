@@ -126,8 +126,17 @@ interface PartNode {
 ### 3. Render — `BatchedMesh`
 
 At load, group parts by material appearance and build one `THREE.BatchedMesh` per group via
-`addGeometry` / `addInstance`. Each batch material is set to white with `vertexColors: true`,
-and each part's original colour is baked in through `setColorAt`.
+`addGeometry` / `addInstance`. Each batch material is set to white with **`vertexColors` left
+off**, and each part's original colour is baked in through `setColorAt`.
+
+> **Corrected during implementation.** This section originally specified `vertexColors: true`.
+> That is wrong and renders every batched model **black**: the vertex prefix defines `USE_COLOR`
+> from `vertexColors` alone (`WebGLProgram.js:632`), which declares `attribute vec3 color` and
+> runs `vColor *= color` — but the batched geometry never carries a `color` attribute, so it
+> reads WebGL's generic default `(0,0,0,1)` and zeroes the surface. `USE_BATCHING_COLOR` is
+> derived automatically from `_colorsTexture !== null` and *already* declares and initialises
+> `vColor` on its own (`color_vertex.glsl`). Neither `BatchedMesh` nor `InstancedMesh` sets
+> `vertexColors` anywhere in three — the per-instance colour path deliberately does not use it.
 
 **"Material appearance" means every property of a material except its base colour** —
 roughness, metalness, any map, `side`, transparency, `opacity`. Two materials differing only
