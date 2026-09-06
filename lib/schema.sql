@@ -6,11 +6,17 @@ CREATE TABLE IF NOT EXISTS users (
   email_verified TIMESTAMPTZ,
   image TEXT,
   password_hash TEXT,
+  workos_user_id TEXT,
   job_title TEXT,
   company TEXT,
   email_paused_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_workos_user_id_key
+  ON users (workos_user_id) WHERE workos_user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
+  ON users (lower(email));
 
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
