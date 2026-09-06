@@ -17,16 +17,23 @@ export const s3 = new S3Client({
 
 export const BUCKET = process.env.R2_BUCKET_NAME;
 
-// Generate a presigned URL for a direct client → R2 PUT upload
+// Generate a presigned URL for a direct client → R2 PUT upload.
+//
+// When contentLength is given it is signed into the URL, so the client cannot
+// PUT a body of a different size than the one the server approved. Without it
+// the size check is advisory only: the caller declares a size, gets a URL, and
+// could then upload anything.
 export async function getUploadPresignedUrl(
   storageKey: string,
   contentType: string,
-  expiresIn = 300 // 5 minutes
+  expiresIn = 300, // 5 minutes
+  contentLength?: number
 ): Promise<string> {
   const command = new PutObjectCommand({
     Bucket: BUCKET,
     Key: storageKey,
     ContentType: contentType,
+    ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
   });
   return getSignedUrl(s3, command, { expiresIn });
 }
