@@ -18,8 +18,7 @@
  * Deliberately a narrow deny-list rather than an allow-list. The comment
  * attachment input (components/portal/CommentsPanel.tsx) has no `accept`
  * attribute — arbitrary documents are the feature — so an allow-list here would
- * break it. lib/snapshotUpload.ts can afford a strict allow-list because it
- * stores only viewport captures.
+ * break it. Annotation snapshots come through this same route as image/jpeg.
  */
 export const BLOCKED_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'text/html',

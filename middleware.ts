@@ -22,11 +22,12 @@ const PUBLIC_PATHS = [
   '/api/auth',
   '/api/conversions/webhook',
   '/api/files',
+  // PREFIX MATCH — this also exempts /api/comments/attachments, which mints
+  // presigned R2 write URLs. That subroute had no auth() call of its own for a
+  // long time precisely because this line silently covered it. Anything added
+  // under /api/comments/ inherits this exemption and must call auth() itself and
+  // return a JSON 401, never rely on middleware.
   '/api/comments',
-  // Listed here so an unauthenticated POST gets the route's own JSON 401 rather
-  // than a 307 to /login — fetch follows redirects, and the caller would read the
-  // resulting HTML 200 as a successful upload. The route calls auth() itself.
-  '/api/snapshots',
   // Every handler under here — GET/POST /api/versions, and the [id], publish,
   // changelog-draft and summary routes — calls auth() itself and returns a
   // JSON 401. Without this exemption, an expired session made DELETE

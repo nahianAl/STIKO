@@ -109,9 +109,11 @@ Video / image / PDF / GLB streamed directly from S3
 ### Comment + Snapshot Flow
 ```
 Client composites snapshot + SVG markup (canvas, client-side)
-  → POST /api/snapshots/presign  (Vercel: generates S3 presigned PUT URL)
-  → PUT {presignedUrl}           (direct to S3)
-  ← S3 URL
+  → POST /api/comments/attachments  (Vercel: generates R2 presigned PUT URL;
+                                     requires a session, and signs the declared
+                                     size into the URL so R2 enforces the cap)
+  → PUT {presignedUrl}              (direct to R2)
+  ← storageKey
 
 POST /api/comments  (Vercel)
   → INSERT into Neon comments with snapshotUrl, userId, position, content
@@ -242,10 +244,10 @@ Browser
   │     → PUT directly to S3     client → S3
   │     → /api/files/complete    Vercel → Neon
   │
-  ├── Snapshot uploads
-  │     → /api/snapshots/presign Vercel → S3 presigned URL
-  │     → PUT directly to S3     client → S3
-  │     → snapshotUrl saved in   Neon comments
+  ├── Snapshot + attachment uploads
+  │     → /api/comments/attachments  Vercel → R2 presigned URL
+  │     → PUT directly to R2         client → R2
+  │     → snapshotUrl saved in       Neon comments
   │
   └── File viewing / streaming
         → public S3 URLs         direct, no Vercel in path
@@ -258,7 +260,7 @@ Browser
 - **Existing data:** Start fresh. No migration of test JSON data.
 - **Local `/public/uploads`:** Replaced entirely by S3. `storageKey` in the files table becomes a full S3 object key.
 - **`/data/*.json` flat files:** Replaced entirely by Neon. The `lib/db.ts` helper is replaced by SQL queries via `@neondatabase/serverless`.
-- **Snapshot API route (`/api/snapshots`):** Currently writes to local disk. Replaced by presign → direct S3 upload flow.
+- **Snapshot API route (`/api/snapshots`):** Deleted 2026-09-05. It had no callers — annotation snapshots go through `/api/comments/attachments` like any other attachment. Stored `snapshots/{uuid}` objects from before the switch remain in the bucket and are still referenced by `comments.snapshot_url`; only the route that minted new ones is gone.
 - **`005-file-deletion.sql`:** Adds `files.uploaded_by`, backfilled from `versions.created_by` for existing rows so the uploader-delete window has an owner to check against. Apply before deploying code that reads the column.
 - **`007-download-authorization.sql`:** Adds `can_download` to `participants` and `invite_tokens`, both defaulting false. Apply before deploying code that reads them.
 - **`008-version-scoped-invites.sql`:** Adds `all_versions` to `participants` and `invite_tokens`, both defaulting true, plus the `participant_versions` and `invite_token_versions` join tables. Apply before deploying code that reads them.
