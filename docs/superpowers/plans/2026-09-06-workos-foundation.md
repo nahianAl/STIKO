@@ -137,13 +137,21 @@ In `lib/schema.sql`, in the `users` table definition, add the column after `pass
 Then, immediately after the closing `);` of the `users` table, add:
 
 ```sql
+-- The column above is only created on a FRESH database. scripts/migrate.mjs
+-- applies this file before any migration, so on an existing database the
+-- CREATE TABLE above is a no-op and the indexes below would fail with
+-- 42703 (column does not exist) — taking the whole migration run down before
+-- 010 ever applies. Same mirror-the-migration pattern as
+-- ai_summaries_enabled further down this file.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS workos_user_id TEXT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS users_workos_user_id_key
   ON users (workos_user_id) WHERE workos_user_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
   ON users (lower(email));
 ```
 
-A fresh database must end up identical to a migrated one, or local development diverges from production in exactly the way that hides bugs.
+A fresh database must end up identical to a migrated one, or local development diverges from production in exactly the way that hides bugs. The `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` is what makes that true on an existing database too: `scripts/migrate.mjs` applies this file before any migration file, so on production the `CREATE TABLE IF NOT EXISTS users` above is a no-op and `workos_user_id` would never be added without it — and the indexes right after it would fail with `42703` before migration 010 ever runs.
 
 - [ ] **Step 3: Confirm the index can build, before applying anything**
 
@@ -511,6 +519,9 @@ async function main() {
     const email = u.email.toLowerCase();
     const { firstName, lastName } = splitName(u.name);
 
+    let workosUserId = null;
+    let createdNow = false;
+
     try {
       const workosUser = await workos.userManagement.createUser({
         email,
@@ -524,10 +535,8 @@ async function main() {
           ? { passwordHash: u.password_hash, passwordHashType: 'bcrypt' }
           : {}),
       });
-
-      await sql`UPDATE users SET workos_user_id = ${workosUser.id} WHERE id = ${u.id}`;
-      created++;
-      console.log(`  ✓ created ${email}`);
+      workosUserId = workosUser.id;
+      createdNow = true;
     } catch (err) {
       // A re-run after a partial failure, or an address someone already claimed
       // in WorkOS directly. Adopt it rather than failing the whole run: the
@@ -547,14 +556,38 @@ async function main() {
         existing = null;
       }
 
-      if (existing) {
-        await sql`UPDATE users SET workos_user_id = ${existing.id} WHERE id = ${u.id}`;
+      // Adopt ONLY an exact address match. The email filter's semantics are not
+      // a contract: if it ever prefix-matches, gets renamed, or is ignored, the
+      // first result could be a different person — and since Plan 2 resolves
+      // sign-in by workos_user_id, linking the wrong one is account takeover.
+      if (existing && existing.email?.toLowerCase() === email) {
+        workosUserId = existing.id;
+      } else {
+        const message = err?.message ?? String(err);
+        failures.push({ email, message });
+        console.log(`  ✗ ${email} — ${message}`);
+        continue;
+      }
+    }
+
+    // The write-back is its own step. A WorkOS user exists by this point either
+    // way, so a failure here is "created but not linked" — not a creation
+    // failure — and the operator needs the id to finish it by hand. Keeping it
+    // inside the catch above would also run this UPDATE twice on a re-entry,
+    // the second time outside any try, killing the run before the summary.
+    try {
+      await sql`UPDATE users SET workos_user_id = ${workosUserId} WHERE id = ${u.id}`;
+      if (createdNow) {
+        created++;
+        console.log(`  ✓ created ${email}`);
+      } else {
         adopted++;
         console.log(`  ✓ adopted existing ${email}`);
-      } else {
-        failures.push({ email, message: err.message });
-        console.log(`  ✗ ${email} — ${err.message}`);
       }
+    } catch (err) {
+      const message = `WorkOS user ${workosUserId} exists but the local link was not written: ${err?.message ?? String(err)}`;
+      failures.push({ email, message });
+      console.log(`  ✗ ${email} — ${message}`);
     }
   }
 
@@ -570,7 +603,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`\nImport failed: ${err.message}`);
+  console.error(`\nImport failed: ${err?.message ?? String(err)}`);
   process.exit(1);
 });
 ```

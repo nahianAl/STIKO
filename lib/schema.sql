@@ -13,6 +13,14 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- The column above is only created on a FRESH database. scripts/migrate.mjs
+-- applies this file before any migration, so on an existing database the
+-- CREATE TABLE above is a no-op and the indexes below would fail with
+-- 42703 (column does not exist) — taking the whole migration run down before
+-- 010 ever applies. Same mirror-the-migration pattern as
+-- ai_summaries_enabled further down this file.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS workos_user_id TEXT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS users_workos_user_id_key
   ON users (workos_user_id) WHERE workos_user_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key

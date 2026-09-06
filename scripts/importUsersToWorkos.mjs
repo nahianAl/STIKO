@@ -82,6 +82,9 @@ async function main() {
     const email = u.email.toLowerCase();
     const { firstName, lastName } = splitName(u.name);
 
+    let workosUserId = null;
+    let createdNow = false;
+
     try {
       const workosUser = await workos.userManagement.createUser({
         email,
@@ -95,10 +98,8 @@ async function main() {
           ? { passwordHash: u.password_hash, passwordHashType: 'bcrypt' }
           : {}),
       });
-
-      await sql`UPDATE users SET workos_user_id = ${workosUser.id} WHERE id = ${u.id}`;
-      created++;
-      console.log(`  ✓ created ${email}`);
+      workosUserId = workosUser.id;
+      createdNow = true;
     } catch (err) {
       // A re-run after a partial failure, or an address someone already claimed
       // in WorkOS directly. Adopt it rather than failing the whole run: the
@@ -118,14 +119,38 @@ async function main() {
         existing = null;
       }
 
-      if (existing) {
-        await sql`UPDATE users SET workos_user_id = ${existing.id} WHERE id = ${u.id}`;
+      // Adopt ONLY an exact address match. The email filter's semantics are not
+      // a contract: if it ever prefix-matches, gets renamed, or is ignored, the
+      // first result could be a different person — and since Plan 2 resolves
+      // sign-in by workos_user_id, linking the wrong one is account takeover.
+      if (existing && existing.email?.toLowerCase() === email) {
+        workosUserId = existing.id;
+      } else {
+        const message = err?.message ?? String(err);
+        failures.push({ email, message });
+        console.log(`  ✗ ${email} — ${message}`);
+        continue;
+      }
+    }
+
+    // The write-back is its own step. A WorkOS user exists by this point either
+    // way, so a failure here is "created but not linked" — not a creation
+    // failure — and the operator needs the id to finish it by hand. Keeping it
+    // inside the catch above would also run this UPDATE twice on a re-entry,
+    // the second time outside any try, killing the run before the summary.
+    try {
+      await sql`UPDATE users SET workos_user_id = ${workosUserId} WHERE id = ${u.id}`;
+      if (createdNow) {
+        created++;
+        console.log(`  ✓ created ${email}`);
+      } else {
         adopted++;
         console.log(`  ✓ adopted existing ${email}`);
-      } else {
-        failures.push({ email, message: err.message });
-        console.log(`  ✗ ${email} — ${err.message}`);
       }
+    } catch (err) {
+      const message = `WorkOS user ${workosUserId} exists but the local link was not written: ${err?.message ?? String(err)}`;
+      failures.push({ email, message });
+      console.log(`  ✗ ${email} — ${message}`);
     }
   }
 
@@ -141,6 +166,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`\nImport failed: ${err.message}`);
+  console.error(`\nImport failed: ${err?.message ?? String(err)}`);
   process.exit(1);
 });
