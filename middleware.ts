@@ -23,6 +23,9 @@ const PUBLIC_PATHS = [
   '/api/conversions/webhook',
   '/api/files',
   '/api/comments',
+  // Listed here so an unauthenticated POST gets the route's own JSON 401 rather
+  // than a 307 to /login — fetch follows redirects, and the caller would read the
+  // resulting HTML 200 as a successful upload. The route calls auth() itself.
   '/api/snapshots',
   // Every handler under here — GET/POST /api/versions, and the [id], publish,
   // changelog-draft and summary routes — calls auth() itself and returns a
