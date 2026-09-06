@@ -153,7 +153,15 @@ Run this against production first. It is read-only:
 npm run migrate -- --dry
 ```
 
-That lists what would run without touching anything. Then check for case duplicates — if this returns any rows, **stop** and merge those accounts before continuing:
+**Note what `--dry` does and does not tell you.** It skips the `schema_migrations` lookup, so it prints *every* migration as "would run", not just the outstanding ones. To see what is actually pending, query directly:
+
+```sql
+SELECT name FROM schema_migrations ORDER BY name;
+```
+
+Verified 2026-09-06: `001` through `009` are applied, `010` is the only outstanding one, and `users.workos_user_id` does not yet exist.
+
+Then check for case duplicates — if this returns any rows, **stop** and merge those accounts before continuing:
 
 ```sql
 SELECT lower(email) AS addr, count(*), array_agg(email) AS variants
@@ -166,7 +174,7 @@ FROM users GROUP BY 1 HAVING count(*) > 1;
 npm run migrate
 ```
 
-Expected: `lib/migrations/010-workos-auth.sql — 4 statement(s)` followed by four ✓ lines.
+Expected: `lib/migrations/010-workos-auth.sql — 3 statement(s)` followed by three ✓ lines. (One `ALTER TABLE`, two `CREATE UNIQUE INDEX` — the runner splits on `;` after stripping `--` comments.)
 
 - [ ] **Step 5: Verify it landed**
 
