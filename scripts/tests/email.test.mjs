@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newVersionEmail } from '../../lib/email.ts';
+import { newVersionEmail, emailFrom } from '../../lib/email.ts';
 
 const BASE = {
   publisherName: 'Dana',
@@ -54,4 +54,57 @@ test('the body keeps a blank line before the review link either way', () => {
 
   assert.match(withNote.body, /\n\nReview it here:/);
   assert.match(without.body, /\n\nReview it here:/);
+});
+
+// EMAIL_FROM used to default to 'Stiko <noreply@stiko.app>'. stiko.app is not a
+// domain Stiko owns and does not resolve, so that default silently broke every
+// email in the product whenever the variable went missing — and password resets
+// discard the delivery result, so nobody found out.
+test('emailFrom refuses to invent a sender', () => {
+  const saved = process.env.EMAIL_FROM;
+  try {
+    for (const value of [undefined, '', '   ']) {
+      if (value === undefined) delete process.env.EMAIL_FROM;
+      else process.env.EMAIL_FROM = value;
+
+      assert.throws(() => emailFrom(), /EMAIL_FROM must be configured/, `value=${JSON.stringify(value)}`);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.EMAIL_FROM;
+    else process.env.EMAIL_FROM = saved;
+  }
+});
+
+test('emailFrom returns the configured sender, trimmed', () => {
+  const saved = process.env.EMAIL_FROM;
+  try {
+    process.env.EMAIL_FROM = '  Stiko <noreply@stiko.design>  ';
+    assert.equal(emailFrom(), 'Stiko <noreply@stiko.design>');
+  } finally {
+    if (saved === undefined) delete process.env.EMAIL_FROM;
+    else process.env.EMAIL_FROM = saved;
+  }
+});
+
+test('sendEmail reports undelivered rather than throwing when the sender is missing', async () => {
+  // sendEmail's callers rely on an EmailResult, never a thrown error:
+  // app/api/participants/route.ts surfaces result.delivered to the invite UI.
+  // Making emailFrom throw must not turn that into a 500.
+  const savedFrom = process.env.EMAIL_FROM;
+  const savedKey = process.env.RESEND_API_KEY;
+  try {
+    delete process.env.EMAIL_FROM;
+    process.env.RESEND_API_KEY = 'test-key-never-used';
+
+    const { sendEmail } = await import('../../lib/email.ts');
+    const result = await sendEmail({ to: 'a@b.com', subject: 's', body: 'b' });
+
+    assert.equal(result.delivered, false);
+    assert.match(result.reason, /sender/i);
+  } finally {
+    if (savedFrom === undefined) delete process.env.EMAIL_FROM;
+    else process.env.EMAIL_FROM = savedFrom;
+    if (savedKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = savedKey;
+  }
 });
