@@ -91,22 +91,59 @@ This is Bug 1 from the redesign spec — "signup discards the invitation" — wi
 
 A consequence worth stating plainly: **Google sign-in cannot be in-place.** OAuth always leaves the page. Screen `2a` keeps its embedded email+password form via AuthKit's headless User Management APIs, but a "Continue with Google" button on that same card round-trips. Returning from Google must land the user on the package's first file, exactly as `2a` requires — never the dashboard.
 
+## Domain split
+
+Stiko's marketing site is built in Wix and is owned by the distribution/growth function, which requires the ability to publish without an engineering deploy. That requirement is legitimate and is met in full by splitting the domain rather than by relocating the marketing site.
+
+**Observed state on 2026-09-05** (via `dig`):
+
+```
+stiko.design       →  216.198.79.1           (Vercel — the app)
+www.stiko.design   →  ...vercel-dns-017.com  (Vercel — the app)
+app.stiko.design   →  does not exist
+nameservers        →  pdns1/pdns2.registrar-servers.com  (Namecheap)
+```
+
+Both the apex and `www` currently serve the application. The Wix landing page is not on the domain at all, so it contributes nothing to the domain's search authority and anyone sent to stiko.design meets a login form.
+
+**Target state:**
+
+```
+stiko.design       →  Wix     (growth owns outright)
+www.stiko.design   →  Wix
+app.stiko.design   →  Vercel  (engineering owns outright)
+```
+
+Neither party can break the other, and the apex accrues backlinks and search authority where marketing needs it.
+
+**The DNS zone stays at Namecheap.** Wix will offer to take over the nameservers during setup; this must be declined. Point only the apex and `www` at Wix using A/CNAME records. Moving the zone to Wix would put marketing in control of DNS for the application and for email — including the Resend records that outbound mail depends on — and every future subdomain, certificate and mail record would route through them.
+
+This is a **prerequisite, not a follow-up**. WorkOS callback URLs are registered against a specific hostname, and the OAuth round trip is already the highest-risk part of this migration. The app must be on its final hostname before WorkOS is configured, so the redirect URIs are registered once.
+
+Because nothing in the codebase hardcodes a domain — every outbound link resolves through `NEXTAUTH_URL` in `lib/appUrl.ts` — the application move is an environment variable, a DNS record and a WorkOS redirect URI. It is not a refactor.
+
+Three consequences that are not free:
+
+1. **Links already sent by email break.** Invitations, password resets and new-version notifications all carry the current host. Invites expire in 14 days and reset tokens in 1 hour, so the exposure is self-limiting, but `/invite/*`, `/portal/*` and `/reset-password/*` need 301 redirects on the Wix side for roughly a month. Wix's redirect manager has limited pattern support; confirm it can express these before relying on it.
+2. **Analytics now cross a domain boundary.** The funnel from marketing page to signup spans two hosts and needs deliberate cross-domain configuration. This is the part of the split growth will actually feel, so it should be raised with them before the cutover rather than after they notice the funnel is broken.
+3. **The Wix site needs a "Sign in" button** pointing at `app.stiko.design`. That is a Wix-side edit and it is the entire handoff between the two properties.
+
 ## Routing
 
 ### Root route
 
-Today `/` is the authenticated app home and `middleware.ts` bounces logged-out visitors to `/login?callbackUrl=/`. A stranger's first impression of stiko.design is a bare sign-in form.
+With marketing on the apex, the application's root is `app.stiko.design/` and its behaviour is unchanged from today: logged out goes to `/login`, logged in renders the packages home. Middleware keeps forcing `/` to login.
 
-`/` becomes conditional: **marketing landing when logged out, packages home when logged in.** No routes move, no internal links change, and middleware stops forcing `/` to login. The cost is that `/` cannot be fully static, since it checks the session.
+**No marketing page is built in Next.js and no conditional root is required.** An earlier draft of this design had `/` render a landing page when logged out; the domain split removes that scope entirely.
 
-The landing page's **content and design are out of scope for this spec** — see Out of scope. This work ships a structural stub at the correct route with the correct session behaviour.
+`/login` gains a link back to `https://stiko.design` so a visitor who arrives at the app by mistake has somewhere to go.
 
 ### Destinations
 
 | Situation | Destination |
 |---|---|
-| Logged out at `/` | Marketing landing (stub) |
-| Logged in at `/` | Packages home, unchanged |
+| Logged out at `app.stiko.design/` | `/login`, unchanged |
+| Logged in at `app.stiko.design/` | Packages home, unchanged |
 | Sign in, no `callbackUrl` | `/` packages home |
 | Sign in from an invite | Package's first file — never the dashboard, per spec `2a` |
 | Sign in from a public `/portal/[id]` | Back to that same package view |
@@ -151,6 +188,8 @@ Deliberately preserved: **share links remain exempt by design.** They are a diff
 
 There is no staging environment. Production is the only environment, so every phase must be independently reversible.
 
+**Phase 0 — domain move.** Stand up `app.stiko.design` in Vercel, set `NEXTAUTH_URL` to `https://app.stiko.design`, and verify outbound email links resolve before pointing the apex at Wix. Only then hand apex and `www` to Wix, keeping the zone at Namecheap. Rollback is a DNS change. This must complete before WorkOS is configured, so callback URLs are registered against the final hostname exactly once.
+
 **Phase 1 — additive schema.** Apply `010-workos-auth.sql`. No behaviour change. Reversible by dropping the column and indexes. Note that `lower(email)` index creation will fail loudly if duplicate-by-case accounts exist; resolve that data before proceeding.
 
 **Phase 2 — import users.** Idempotent script reading `users` and creating WorkOS users with their existing bcrypt hashes, writing `workos_user_id` back. WorkOS accepts bcrypt on user creation and via the Update User API, so **no user is forced to reset their password**. Re-runnable; no user-visible change.
@@ -163,7 +202,7 @@ Migrations in this project are applied manually and have been forgotten twice. C
 
 ## Out of scope
 
-- **Marketing landing page content and design.** Routing and session behaviour only. The redesign spec also excluded it (`stiko_handoff/README.md`), so this remains a genuine open gap — it needs its own brainstorm.
+- **The marketing site, entirely.** It stays in Wix, on the apex, owned by growth. Engineering builds no landing page and holds no marketing content. The redesign spec also excluded it (`stiko_handoff/README.md`); the domain split is what closes that gap, not a Next.js page.
 - **Rate limiting on Stiko's own API routes.** WorkOS covers auth endpoints. The residual is deferred again, knowingly.
 - **SAML, SCIM and audit logs.** Available on WorkOS and the reason it was chosen, but not configured until a customer asks. No speculative work.
 - **WorkOS Organizations.** Stiko keeps its own tenancy model.
@@ -175,13 +214,14 @@ Migrations in this project are applied manually and have been forgotten twice. C
 2. **`lower(email)` index fails on existing duplicates.** Surfaces in Phase 1, before anything is user-visible. Good place for it to fail.
 3. **`auth()` shape drift.** If the replacement's return shape diverges from NextAuth's, failures will be scattered across many route handlers rather than concentrated. Keeping the exported signature identical is the mitigation.
 4. **Forgot-password root cause is still unconfirmed.** See below.
+5. **Emailed links break at the domain move.** Every invitation, reset and notification already sent points at the old host. Self-limiting given the 14-day and 1-hour expiries, but it needs Wix-side 301s and it lands on users rather than on us, so it will be reported as "the link is broken" rather than diagnosed.
 
 ## Unresolved: the current forgot-password symptom
 
 The one auth problem observed in practice. Three candidate causes, not yet distinguished, and this should be diagnosed rather than assumed fixed by the migration:
 
 1. **Email casing.** `lib/auth.ts:26` matches `WHERE email = ${email}` exactly; `app/api/auth/forgot-password/route.ts:17` matches `lower(email)`. The reset genuinely succeeds and the subsequent sign-in still fails. Reads to a user as "password recovery is broken." **Leading suspect**, and closed by this migration.
-2. **`EMAIL_FROM` defaults to `noreply@stiko.app`** (`lib/email.ts:31`) — a different domain from stiko.design. If Resend has stiko.design verified and not stiko.app, sends are rejected or land in spam.
+2. **`EMAIL_FROM` defaults to `noreply@stiko.app`** (`lib/email.ts:31`). DNS on 2026-09-05 confirms the verified Resend sending domain is **stiko.design** — `send.stiko.design` carries an SPF record and `resend._domainkey.stiko.design` is configured — while **`stiko.app` does not resolve at all**. So the fallback address is on a domain that does not exist and cannot be verified: any deploy that loses `EMAIL_FROM` silently breaks every email in the product. Invitations would surface that via `emailDelivered`; password resets would not. **Set `EMAIL_FROM` explicitly and delete the fallback** rather than leaving a default that fails silently.
 3. **Silent failure.** `forgot-password/route.ts:47` discards `sendEmail`'s `delivered` flag and returns `{ok: true}` regardless. The invite path checks it and surfaces it to the UI (`api/participants/route.ts:207`), which is why broken invites would have been noticed and broken resets would not.
 
 Cause 2 is independent of this migration and worth checking immediately. Cause 3 is worth fixing regardless, because without it there is no way to know how often this happens.
