@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { canRedeemInvite } from '@/lib/inviteBinding';
 
 /**
  * GET — validate a token and return everything screen 2a needs to show the
@@ -149,6 +150,30 @@ export async function POST(
   }
   if (new Date(invite.expires_at as string) < new Date()) {
     return NextResponse.json({ error: 'expired' }, { status: 410 });
+  }
+
+  // An addressed invitation is not a bearer token. Without this, a forwarded link
+  // admitted whoever opened it first, as the invited role. The address is read
+  // from the database rather than from the session, because the session's shape
+  // is about to change under the WorkOS migration and users.email is the value
+  // the invitation was actually addressed against.
+  const meRows = await sql`SELECT email FROM users WHERE id = ${session.user.id}`;
+  const myEmail = meRows[0]?.email as string | undefined;
+  if (!myEmail) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const redemption = canRedeemInvite({
+    inviteEmail: (invite.email as string | null) ?? null,
+    multiUse: invite.multi_use === true,
+    signedInEmail: myEmail,
+  });
+
+  if (!redemption.ok) {
+    // The invited address is deliberately NOT returned. Screen 3o names the
+    // address the visitor is signed in as — which they already know — and never
+    // discloses who the invitation was for.
+    return NextResponse.json({ error: 'wrong_account' }, { status: 403 });
   }
 
   // Single use has to be enforced HERE, not just recorded. used_at was written

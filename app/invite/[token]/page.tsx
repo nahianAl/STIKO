@@ -82,6 +82,13 @@ export default function InvitePage() {
         expired: 'This invitation has expired. Ask for a new one.',
         revoked: 'This invitation was revoked.',
         not_found: 'This invitation no longer exists.',
+        // Spec screen 3o. The overwhelmingly common cause is being signed in as
+        // the wrong work identity, so name the account the visitor is actually
+        // using — a generic 403 leaves them stuck with no idea why. The address
+        // the invitation was sent to is deliberately never shown.
+        wrong_account:
+          `This invitation was sent to a different address. You're signed in as ` +
+          `${session?.user?.email ?? 'another account'} — use Switch below to change accounts.`,
       };
       setError(SAID[data.error] ?? 'Could not accept this invitation');
       setAccepting(false);
