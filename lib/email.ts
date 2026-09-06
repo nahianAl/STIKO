@@ -28,7 +28,30 @@ export interface EmailResult {
   reason?: string;
 }
 
-const FROM = process.env.EMAIL_FROM ?? 'Stiko <noreply@stiko.app>';
+/**
+ * The sender address for outbound mail.
+ *
+ * Deliberately has no fallback. The previous default was
+ * `Stiko <noreply@stiko.app>` — a domain Stiko does not own and which does not
+ * resolve — so a deploy that lost EMAIL_FROM sent every message from an address
+ * Resend cannot verify. Invitations surfaced that through `delivered`; password
+ * resets discarded it and told the user to check their inbox.
+ *
+ * Same contract as lib/appUrl.ts: configuration is mandatory, and a missing
+ * value fails loudly rather than producing something plausible that never lands.
+ *
+ * Must be on the Resend-verified domain, which is stiko.design.
+ */
+export function emailFrom(): string {
+  const from = process.env.EMAIL_FROM;
+  if (!from || !from.trim()) {
+    throw new Error(
+      'EMAIL_FROM must be configured before Stiko can send email, ' +
+        'and must be on the Resend-verified domain (stiko.design).'
+    );
+  }
+  return from.trim();
+}
 
 export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -43,6 +66,18 @@ export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
     return { delivered: false, reason: 'No email provider configured' };
   }
 
+  // emailFrom throws by design, but sendEmail's contract is to return a result.
+  // app/api/participants/route.ts reads result.delivered to tell the invite UI
+  // whether mail actually left; letting this escape would turn a misconfiguration
+  // into a 500 on a route that otherwise degrades honestly.
+  let from: string;
+  try {
+    from = emailFrom();
+  } catch (err) {
+    console.error('[email] no sender configured', err);
+    return { delivered: false, reason: 'No sender address configured' };
+  }
+
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -51,7 +86,7 @@ export async function sendEmail(message: EmailMessage): Promise<EmailResult> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: FROM,
+        from,
         to: [message.to],
         subject: message.subject,
         text: message.body,

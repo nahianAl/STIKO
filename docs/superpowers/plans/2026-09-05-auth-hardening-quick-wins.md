@@ -698,3 +698,485 @@ Deferred to the WorkOS migration plan, deliberately, so this batch stays shippab
 - Rate limiting, MFA, session revocation, email verification, password policy — all bought with the provider.
 - The email-casing bug itself. Task 3 works around it with a case-insensitive comparison; the permanent fix is the `lower(email)` unique index in the migration's Phase 1.
 - The `forgot-password` route discarding `sendEmail`'s `delivered` flag. Task 1 removes the silent-failure *cause*; surfacing delivery failures to the user is a UI change that belongs with the auth rework.
+
+---
+
+# Addendum: Tasks 4 and 5
+
+Added 2026-09-05 after the whole-branch review, which found that Task 2 hardened a route with no callers while the live upload path was left open, and that Task 3's case-insensitive comparison is bypassable through case-sensitive signup. Both findings were verified independently before this addendum was written.
+
+### Task 4: Authenticate and bound the live attachment upload
+
+`app/api/comments/attachments/route.ts` mints a presigned R2 PUT URL from `filename` and `contentType` supplied by the caller. It has **no `auth()` call at all**, no size limit, and no content-type restriction. It is exempt from middleware because `'/api/comments'` in `PUBLIC_PATHS` is a prefix match that also covers `/api/comments/attachments`.
+
+This is the live path: `lib/uploadAttachment.ts:5` calls it, and both `components/portal/CommentsPanel.tsx:123` and `app/portal/[id]/page.tsx:1296,1316` use it. `/api/snapshots`, hardened in Task 2, has no callers — `ARCHITECTURE.md:259` records it as legacy.
+
+Anyone on the internet can currently mint unlimited write URLs into the bucket. That is the defect this task closes.
+
+**Deliberate scope limits, so this does not become a functional regression:**
+
+- The file input in `components/portal/CommentsPanel.tsx:224-229` has **no `accept` attribute**. Comment attachments are arbitrary files by design — drawings, PDFs, spreadsheets. **Do not impose an image-only allow-list**; it would break the feature. Reject only the types that are dangerous *because a browser renders them*.
+- R2 serves objects from the bucket's own host, not `stiko.design`, so stored HTML is XSS against the bucket origin rather than a user's Stiko session. That is why the type rule here is narrow while `lib/snapshotUpload.ts` is a strict allow-list: that route stores only viewport captures and can afford to be strict.
+
+**Files:**
+- Create: `lib/attachmentUpload.ts`
+- Create: `scripts/tests/attachmentUpload.test.mjs`
+- Modify: `app/api/comments/attachments/route.ts` (whole file)
+- Modify: `lib/uploadAttachment.ts` (send `size`, and surface failures)
+- Modify: `lib/s3.ts` (`getUploadPresignedUrl` takes an optional `contentLength`)
+
+**Interfaces:**
+- Consumes: nothing from Tasks 1-3.
+- Produces: `validateAttachmentRequest(input: unknown): AttachmentValidation`, where `AttachmentValidation` is `{ ok: true; filename: string; contentType: string; size: number; extension: string }` or `{ ok: false; reason: 'malformed' | 'unsupported_type' | 'too_large' }`. Also exports `MAX_ATTACHMENT_BYTES: number` and `BLOCKED_CONTENT_TYPES: ReadonlySet<string>`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `scripts/tests/attachmentUpload.test.mjs`:
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  validateAttachmentRequest,
+  MAX_ATTACHMENT_BYTES,
+} from '../../lib/attachmentUpload.ts';
+
+const ok = (over) => ({
+  filename: 'section-detail.pdf',
+  contentType: 'application/pdf',
+  size: 1024,
+  ...over,
+});
+
+test('a normal document attachment is accepted', () => {
+  const result = validateAttachmentRequest(ok());
+
+  assert.equal(result.ok, true);
+  assert.equal(result.contentType, 'application/pdf');
+  assert.equal(result.size, 1024);
+  assert.equal(result.extension, '.pdf');
+});
+
+// Comment attachments are arbitrary files by design — the file input carries no
+// `accept` attribute. An image-only allow-list here would delete the feature.
+test('arbitrary document types stay allowed', () => {
+  for (const contentType of [
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/plain',
+    'application/zip',
+    'model/step',
+  ]) {
+    const result = validateAttachmentRequest(ok({ contentType }));
+    assert.equal(result.ok, true, contentType);
+  }
+});
+
+// Narrow deny-list: only the types dangerous because a browser renders them.
+test('browser-rendering types are refused', () => {
+  for (const contentType of [
+    'text/html',
+    'image/svg+xml',
+    'application/xhtml+xml',
+    'TEXT/HTML',
+    'text/html; charset=utf-8',
+  ]) {
+    const result = validateAttachmentRequest(ok({ contentType }));
+    assert.equal(result.ok, false, contentType);
+    assert.equal(result.reason, 'unsupported_type', contentType);
+  }
+});
+
+test('an oversized attachment is refused', () => {
+  const result = validateAttachmentRequest(ok({ size: MAX_ATTACHMENT_BYTES + 1 }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'too_large');
+});
+
+test('a size exactly at the cap is accepted', () => {
+  const result = validateAttachmentRequest(ok({ size: MAX_ATTACHMENT_BYTES }));
+  assert.equal(result.ok, true);
+});
+
+test('a missing, non-numeric, zero or negative size is malformed', () => {
+  // The declared size is what bounds the presigned URL. Without it there is no
+  // cap at all, so it must be required rather than defaulted.
+  for (const size of [undefined, null, '1024', 0, -1, 1.5, NaN, Infinity]) {
+    const result = validateAttachmentRequest(ok({ size }));
+    assert.equal(result.ok, false, String(size));
+    assert.equal(result.reason, 'malformed', String(size));
+  }
+});
+
+test('a missing or non-string filename or contentType is malformed', () => {
+  for (const over of [
+    { filename: undefined },
+    { filename: '' },
+    { filename: 42 },
+    { contentType: undefined },
+    { contentType: '' },
+    { contentType: 99 },
+  ]) {
+    const result = validateAttachmentRequest(ok(over));
+    assert.equal(result.ok, false, JSON.stringify(over));
+    assert.equal(result.reason, 'malformed', JSON.stringify(over));
+  }
+});
+
+test('a non-object input is malformed', () => {
+  for (const input of [null, undefined, 'x', 42, []]) {
+    const result = validateAttachmentRequest(input);
+    assert.equal(result.ok, false, JSON.stringify(input));
+    assert.equal(result.reason, 'malformed', JSON.stringify(input));
+  }
+});
+
+test('the extension is derived from the filename and never invented', () => {
+  assert.equal(validateAttachmentRequest(ok({ filename: 'a.PDF' })).extension, '.PDF');
+  assert.equal(validateAttachmentRequest(ok({ filename: 'no-extension' })).extension, '');
+  assert.equal(validateAttachmentRequest(ok({ filename: 'a.b.c' })).extension, '.c');
+});
+
+// The storage key is built from this extension. A path separator or a space in
+// it would let the caller steer the object outside its namespace.
+test('a filename cannot smuggle a path segment through the extension', () => {
+  for (const filename of ['a.pdf/../../evil', 'a./../x', 'a. x']) {
+    const result = validateAttachmentRequest(ok({ filename }));
+    if (result.ok) {
+      assert.ok(!result.extension.includes('/'), filename);
+      assert.ok(!result.extension.includes('\\'), filename);
+      assert.ok(!result.extension.includes(' '), filename);
+    }
+  }
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npm test -- --test-name-pattern="attachment"`
+
+Expected: FAIL — `Cannot find module '../../lib/attachmentUpload.ts'`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `lib/attachmentUpload.ts`:
+
+```ts
+/**
+ * Validation and bounds for comment attachment uploads.
+ *
+ * The route this serves used to mint a presigned R2 PUT URL from a filename and
+ * content type supplied by anyone at all — no auth() call, no size limit, no
+ * type restriction. It is exempt from middleware because '/api/comments' in
+ * PUBLIC_PATHS is a prefix match that also covers '/api/comments/attachments'.
+ * That made it an unauthenticated, unmetered write into the bucket.
+ *
+ * Kept out of the route so it can be tested: this project's runner
+ * (`node --test scripts/tests/*.mjs`) cannot exercise a Next.js route handler.
+ */
+
+/**
+ * Types refused because a browser RENDERS them, which would make a stored file
+ * an XSS payload on whatever origin serves it.
+ *
+ * Deliberately a narrow deny-list rather than an allow-list. The comment
+ * attachment input (components/portal/CommentsPanel.tsx) has no `accept`
+ * attribute — arbitrary documents are the feature — so an allow-list here would
+ * break it. lib/snapshotUpload.ts can afford a strict allow-list because it
+ * stores only viewport captures.
+ */
+export const BLOCKED_CONTENT_TYPES: ReadonlySet<string> = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+  'application/xml',
+  'text/xml',
+]);
+
+/** 25 MB. Comfortably above a large drawing PDF or a phone photo. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+export type AttachmentValidation =
+  | { ok: true; filename: string; contentType: string; size: number; extension: string }
+  | { ok: false; reason: 'malformed' | 'unsupported_type' | 'too_large' };
+
+export function validateAttachmentRequest(input: unknown): AttachmentValidation {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, reason: 'malformed' };
+  }
+
+  const { filename, contentType, size } = input as Record<string, unknown>;
+
+  if (typeof filename !== 'string' || !filename) return { ok: false, reason: 'malformed' };
+  if (typeof contentType !== 'string' || !contentType) return { ok: false, reason: 'malformed' };
+
+  // Required, not defaulted: the declared size is what bounds the presigned URL,
+  // so accepting a request without one would leave no cap at all.
+  if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) {
+    return { ok: false, reason: 'malformed' };
+  }
+
+  // Compare on the bare media type: 'text/html; charset=utf-8' is still HTML,
+  // and casing is not significant in a media type.
+  const bare = contentType.split(';')[0].trim().toLowerCase();
+  if (BLOCKED_CONTENT_TYPES.has(bare)) return { ok: false, reason: 'unsupported_type' };
+
+  if (size > MAX_ATTACHMENT_BYTES) return { ok: false, reason: 'too_large' };
+
+  // The storage key is built from this, so it must not be able to carry a path
+  // segment out of the namespace.
+  const dot = filename.lastIndexOf('.');
+  const raw = dot === -1 ? '' : filename.slice(dot);
+  const extension = /[/\\ ]/.test(raw) ? '' : raw;
+
+  return { ok: true, filename, contentType, size, extension };
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `npm test`
+
+Expected: PASS, all files.
+
+- [ ] **Step 5: Let the presigner carry a length**
+
+In `lib/s3.ts`, change `getUploadPresignedUrl` to accept an optional length:
+
+```ts
+// Generate a presigned URL for a direct client → R2 PUT upload.
+//
+// When contentLength is given it is signed into the URL, so the client cannot
+// PUT a body of a different size than the one the server approved. Without it
+// the size check is advisory only: the caller declares a size, gets a URL, and
+// could then upload anything.
+export async function getUploadPresignedUrl(
+  storageKey: string,
+  contentType: string,
+  expiresIn = 300, // 5 minutes
+  contentLength?: number
+): Promise<string> {
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: storageKey,
+    ContentType: contentType,
+    ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
+  });
+  return getSignedUrl(s3, command, { expiresIn });
+}
+```
+
+- [ ] **Step 6: Verify the length is actually signed, and report what you find**
+
+This is a verification step, not an assumption. Run this and read the output:
+
+```bash
+node --input-type=module -e "
+process.env.R2_ACCESS_KEY_ID='test';
+process.env.R2_SECRET_ACCESS_KEY='test';
+process.env.R2_ENDPOINT_URL='https://example.r2.cloudflarestorage.com';
+process.env.R2_BUCKET_NAME='b';
+const { getUploadPresignedUrl } = await import('./lib/s3.ts');
+const url = await getUploadPresignedUrl('k', 'application/pdf', 300, 1234);
+const signed = new URL(url).searchParams.get('X-Amz-SignedHeaders');
+console.log('SignedHeaders:', signed);
+console.log('content-length signed:', String(signed).includes('content-length'));
+"
+```
+
+Record the exact output in your report.
+
+- If `content-length signed: true`, the cap is enforced by R2 — say so.
+- If `false`, the cap is **advisory only**: a client could request a small size and then PUT a large body. Report status **DONE_WITH_CONCERNS** and say so plainly. Do not attempt to redesign the upload flow to fix it; that is a larger decision than this task.
+
+Either way the `auth()` call and the type rule still stand, and they are the substance of this fix.
+
+- [ ] **Step 7: Wire the route**
+
+Replace the whole of `app/api/comments/attachments/route.ts` with:
+
+```ts
+import { NextRequest, NextResponse } from 'next/server';
+import { v4 as uuidv4 } from 'uuid';
+import { auth } from '@/lib/auth';
+import { getUploadPresignedUrl } from '@/lib/s3';
+import { validateAttachmentRequest } from '@/lib/attachmentUpload';
+
+export async function POST(request: NextRequest) {
+  // This route had no auth() call at all, and middleware does not cover it:
+  // '/api/comments' in PUBLIC_PATHS is a prefix match, so this path inherited
+  // the exemption meant for the comments API. Anyone on the internet could mint
+  // unlimited presigned write URLs into the bucket.
+  //
+  // It stays under that exemption and returns JSON rather than redirecting, for
+  // the same reason as /api/versions: fetch follows a 307 to /login and reads
+  // the resulting HTML 200 as success.
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const validated = validateAttachmentRequest(await request.json());
+  if (!validated.ok) {
+    const status = validated.reason === 'too_large' ? 413 : 400;
+    const message = {
+      malformed: 'filename, contentType and a positive integer size are required',
+      unsupported_type: 'That file type cannot be attached',
+      too_large: 'Attachment is too large',
+    }[validated.reason];
+
+    return NextResponse.json({ error: message }, { status });
+  }
+
+  const storageKey = `comment-attachments/${uuidv4()}${validated.extension}`;
+
+  const presignedUrl = await getUploadPresignedUrl(
+    storageKey,
+    validated.contentType,
+    300,
+    validated.size
+  );
+
+  return NextResponse.json({ presignedUrl, storageKey }, { status: 200 });
+}
+```
+
+- [ ] **Step 8: Send the size from the client, and surface failures**
+
+In `lib/uploadAttachment.ts`, change the presign request body from:
+
+```ts
+    body: JSON.stringify({ filename: file.name, contentType: file.type }),
+```
+
+to:
+
+```ts
+    // The server signs this length into the presigned URL, so it must match the
+    // body actually PUT below.
+    body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+```
+
+Then make failures visible. The existing code destructures the response without checking it, so a 401 or 413 yields `presignedUrl: undefined` and a confusing downstream error. Immediately after the presign `fetch`, before the destructure, add:
+
+```ts
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Could not prepare the upload (${res.status})`);
+  }
+```
+
+And change the PUT from `await fetch(presignedUrl, {...})` to capture and check its response:
+
+```ts
+  const put = await fetch(presignedUrl, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': file.type },
+  });
+
+  if (!put.ok) {
+    throw new Error(`Upload failed (${put.status})`);
+  }
+```
+
+- [ ] **Step 9: Verify the build compiles**
+
+Run: `npm run build`
+
+Expected: build completes.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add lib/attachmentUpload.ts scripts/tests/attachmentUpload.test.mjs app/api/comments/attachments/route.ts lib/uploadAttachment.ts lib/s3.ts
+git commit -m "fix: authenticate and bound the live comment attachment upload"
+```
+
+Use this full commit message body:
+
+```
+/api/comments/attachments minted a presigned R2 PUT URL from a caller-supplied
+filename and content type with no auth() call, no size limit and no type
+restriction. Middleware did not cover it: '/api/comments' in PUBLIC_PATHS is a
+prefix match that also matched this path. Anyone on the internet could mint
+unlimited write URLs into the bucket.
+
+This is the live upload path - lib/uploadAttachment.ts calls it from both the
+comments panel and the annotation flow. /api/snapshots, hardened earlier in
+this branch, has no callers and ARCHITECTURE.md records it as legacy.
+
+The type rule is a narrow deny-list, not an allow-list: the attachment input
+has no accept attribute and arbitrary documents are the feature. Only types a
+browser renders are refused. The declared size is signed into the presigned URL
+so the client cannot PUT a larger body than the server approved.
+```
+
+---
+
+### Task 5: Match email case-insensitively at signup
+
+`app/api/auth/signup/route.ts:13` checks `WHERE email = ${email}`, which is case-sensitive in Postgres. `app/api/auth/forgot-password/route.ts:17` already matches `lower(email)`.
+
+On its own that is a duplicate-account hygiene problem. Combined with Task 3 it becomes an authorization bypass: `canRedeemInvite` compares addresses case-insensitively, so someone holding a forwarded invitation addressed to `dana@co.com` can register `DANA@co.com` — a distinct row, since signup's check is case-sensitive — sign in, and redeem it. The invited address is not secret; `GET /api/invite/[token]` is public and returns it.
+
+This does not close the bypass entirely — without email verification an attacker can still register the exact address if it is unregistered, which is deferred to the WorkOS migration. It closes the path that works against recipients who **already have an account**, which is the one Task 3 opened.
+
+**Files:**
+- Modify: `app/api/auth/signup/route.ts:13`
+
+**Interfaces:**
+- Consumes: nothing. Produces: nothing. A one-line query change.
+
+- [ ] **Step 1: Make the change**
+
+In `app/api/auth/signup/route.ts`, replace:
+
+```ts
+  const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
+```
+
+with:
+
+```ts
+  // Case-insensitive, matching app/api/auth/forgot-password/route.ts. A
+  // case-sensitive check let DANA@co.com be registered alongside dana@co.com as
+  // a separate account — which, since lib/inviteBinding.ts compares addresses
+  // case-insensitively, was enough to redeem an invitation addressed to the
+  // other one. The permanent fix is the lower(email) unique index in the WorkOS
+  // migration; this closes the hole until that lands.
+  const existing = await sql`SELECT id FROM users WHERE lower(email) = lower(${email})`;
+```
+
+- [ ] **Step 2: Verify the suite and build still pass**
+
+Run: `npm test && npm run build`
+
+Expected: PASS and a completed build. No test covers this route — it is a database query in a route handler, which this project's runner cannot exercise. Do not add a test framework to cover it.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add app/api/auth/signup/route.ts
+git commit -m "fix: match email case-insensitively when checking for an existing account"
+```
+
+Use this full commit message body:
+
+```
+signup checked email equality case-sensitively while forgot-password already
+matched lower(email). That let DANA@co.com exist as a separate account from
+dana@co.com.
+
+Combined with the invitation binding added earlier in this branch - which
+compares addresses case-insensitively - that was an authorization bypass: a
+forwarded invitation addressed to dana@co.com could be redeemed by registering
+the same address in a different case. The invited address is not secret; the
+public GET on the invite token returns it.
+
+The permanent fix is the lower(email) unique index in the WorkOS migration,
+which is now a deploy-ordering dependency rather than cleanup.
+```

@@ -5,15 +5,27 @@ export async function uploadFile(file: File): Promise<CommentAttachment> {
   const res = await fetch('/api/comments/attachments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename: file.name, contentType: file.type }),
+    // The server signs this length into the presigned URL, so it must match the
+    // body actually PUT below.
+    body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
   });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Could not prepare the upload (${res.status})`);
+  }
+
   const { presignedUrl, storageKey } = await res.json();
 
-  await fetch(presignedUrl, {
+  const put = await fetch(presignedUrl, {
     method: 'PUT',
     body: file,
     headers: { 'Content-Type': file.type },
   });
+
+  if (!put.ok) {
+    throw new Error(`Upload failed (${put.status})`);
+  }
 
   return { storageKey, filename: file.name, contentType: file.type, size: file.size };
 }
