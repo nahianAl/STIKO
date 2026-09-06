@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "migrate": "node scripts/migrate.mjs",
+    "import-users": "node scripts/importUsersToWorkos.mjs",
     "test": "node --test scripts/tests/*.mjs",
     "postinstall": "mkdir -p public && cp node_modules/occt-import-js/dist/occt-import-js.wasm public/occt-import-js.wasm"
   },
@@ -22,6 +23,7 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@types/bcryptjs": "^2.4.6",
+    "@workos-inc/node": "^10.13.0",
     "bcryptjs": "^3.0.3",
     "camera-controls": "^2.10.1",
     "konva": "^10.2.3",
