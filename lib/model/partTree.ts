@@ -84,7 +84,11 @@ function isDrawable(object: THREE.Object3D): boolean {
  *
  * Why a wrapper around a CLONE, rather than returning the drawable found in `root` (baked or
  * not): `root` is `useLoader`'s cached tree, kept alive across mounts by `suspend-react` with no
- * lifespan and no `useLoader.clear()` call anywhere in this repo. A caller that reparents the
+ * lifespan of its own. `lib/model/modelCache.ts` now DOES call `useLoader.clear()` (plus explicit
+ * `dispose()` of geometries/materials/textures), but only for entries that are not the active
+ * model — the one currently mounted, and therefore the only one whose clones could be live. That
+ * scoping is exactly what keeps the clone-sharing hazard below unreachable: eviction never touches
+ * `root` while anything cloned from it is still mounted. A caller that reparents the
  * returned object — `<primitive object={x}>` calls `Object3D.add`, which detaches `x` from
  * whatever it was previously attached to — would tear the drawable out of `root` on the first
  * mount, so a second mount resolving to the same cache entry would traverse a `root` that no

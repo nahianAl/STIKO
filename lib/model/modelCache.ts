@@ -55,16 +55,25 @@ export function selectEvictions(
   let overBudget = false;
 
   ordered.forEach((entry, index) => {
+    // Coerce defensively: file_size is a Postgres BIGINT, and pg-types parses int8 as
+    // a JS STRING (no default numeric parser for OID 20, unlike int4/int2). If a raw
+    // DB value ever reaches this function uncoerced, `retained += entry.bytes` would
+    // silently become string concatenation — "01048576010485760..." — and the
+    // `retained + entry.bytes > budgetBytes` comparison would be true for every entry
+    // past minRetained, collapsing the whole budget to ~2 survivors. The real fix is
+    // coercing at the API boundary (see app/api/files/route.ts); this is belt-and-braces
+    // so a future caller that skips that boundary cannot silently disable the budget.
+    const bytes = Number(entry.bytes);
     if (index < minRetained) {
-      retained += entry.bytes;
+      retained += bytes;
       return;
     }
-    if (overBudget || retained + entry.bytes > budgetBytes) {
+    if (overBudget || retained + bytes > budgetBytes) {
       overBudget = true;
       evict.push(entry.url);
       return;
     }
-    retained += entry.bytes;
+    retained += bytes;
   });
 
   return evict;
@@ -172,7 +181,12 @@ let useCounter = 0;
  * root would leak the old one's GPU memory.
  */
 export function registerModel({ url, loader, root, bytes, clearLoaderCache }: RegisterArgs): void {
-  registry.set(url, { loader, root, bytes, lastUsed: ++useCounter });
+  // Coerce here too, not only in selectEvictions: file_size is a BIGINT and pg-types
+  // parses it as a string, so a future caller that passes a raw DB value straight
+  // through (skipping the Number(...) coercion at the API boundary) must not be able
+  // to silently disable the budget by storing a string that concatenates instead of
+  // summing.
+  registry.set(url, { loader, root, bytes: Number(bytes), lastUsed: ++useCounter });
 
   const entries: CacheEntry[] = Array.from(registry.entries()).map(([entryUrl, entry]) => ({
     url: entryUrl,

@@ -52,7 +52,16 @@ export async function getUploadPresignedUrl(
 // expiresIn is deliberately TWICE the window. A URL minted at the last second of a
 // window is still being handed out then, so anything shorter would 403 while in use.
 // The floor on remaining life is therefore exactly URL_WINDOW_MS — the same one hour
-// the unquantized version guaranteed, so revocation timing does not get weaker.
+// the unquantized version guaranteed, so availability does not get worse.
+//
+// Revocation is a different property, and it DOES get weaker: it is governed by the
+// ceiling, not the floor, and the ceiling doubles. A URL minted at the start of a
+// window is valid for the full 2h, where the unquantized version capped every URL at
+// 1h. This app has per-version invites and download authorization, so pulling
+// someone's access now can leave a working URL for up to twice as long — and because
+// the URL is byte-identical for every authorized caller within the window, a leaked
+// link is effectively a shared capability for that long. Accepted deliberately, for
+// the caching win described above; not a free property.
 //
 // Deliberately NOT folded into getDownloadPresignedUrl: that function also serves
 // comment snapshots, comment attachments, conversion retries and the download route.
@@ -66,7 +75,11 @@ export async function getViewerPresignedUrl(storageKey: string): Promise<string>
     // bucket — none of which carries a Cache-Control of its own. `private` because
     // these URLs are authorized per user and no shared cache should ever hold one.
     // `immutable` is honest: an upload key carries a fresh fileId per upload and is
-    // never overwritten in place.
+    // never overwritten in place. This route (`/api/files/url`) also hands out
+    // signed URLs for annotation-snapshot and comment-attachment keys, which are
+    // equally safe to call immutable — both are UUID-derived and never overwritten
+    // in place either. Anyone adding a caller for a key that CAN be overwritten in
+    // place must not reuse `immutable` unmodified.
     ResponseCacheControl: `private, max-age=${URL_WINDOW_MS / 1000}, immutable`,
   });
   return getSignedUrl(s3, command, {

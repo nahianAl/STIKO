@@ -69,6 +69,23 @@ test('the budget and floor are overridable', () => {
   assert.deepEqual(selectEvictions(entries, 'a', 15 * MB, 1), ['b', 'c']);
 });
 
+test('string byte counts from the BIGINT column do not defeat the budget', () => {
+  // file_size is BIGINT, and pg-types parses int8 as a STRING. Passed through
+  // unconverted, `retained += entry.bytes` concatenates instead of adding, the
+  // running total becomes nonsense, and every entry past MIN_RETAINED is evicted —
+  // silently collapsing a 300MB LRU to 2 entries. Fixtures elsewhere in this file
+  // author their own numbers and cannot catch that.
+  const asStrings = [
+    { url: 'a', bytes: String(10 * MB), lastUsed: 5 },
+    { url: 'b', bytes: String(10 * MB), lastUsed: 4 },
+    { url: 'c', bytes: String(10 * MB), lastUsed: 3 },
+    { url: 'd', bytes: String(10 * MB), lastUsed: 2 },
+    { url: 'e', bytes: String(10 * MB), lastUsed: 1 },
+  ];
+  // 50MB total, far under the 300MB budget: nothing should be evicted.
+  assert.deepEqual(selectEvictions(asStrings, 'a'), []);
+});
+
 /** A model whose disposals are observable. three fires a 'dispose' event on each. */
 function fakeModel(fired) {
   const geometry = new THREE.BufferGeometry();

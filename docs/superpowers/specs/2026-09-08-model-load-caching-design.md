@@ -70,7 +70,12 @@ deliberately not here.
 
 ### 1. Cache identity
 
-`getDownloadPresignedUrl` in `lib/s3.ts` gains a **quantized signing date**. The
+A **new** `getViewerPresignedUrl` function is added to `lib/s3.ts`, rather than
+changing `getDownloadPresignedUrl` in place. `getDownloadPresignedUrl` is deliberately
+left untouched: it also serves comment snapshots, comment attachments, conversion
+retries and the download route, none of which wants a stable URL, and the download
+route varies `ResponseContentDisposition` per request, which would defeat stability
+outright. `getViewerPresignedUrl` gains a **quantized signing date**. The
 signing timestamp is floored to the wall-clock hour and passed as
 `signingDate`, with `expiresIn` raised to 7200:
 
@@ -164,9 +169,11 @@ that look like an auth bug rather than a config one.
 
 Unit:
 
-- `getDownloadPresignedUrl` returns an identical URL for the same key twice in one
+- `getViewerPresignedUrl` returns an identical URL for the same key twice in one
   window, and a different one across a boundary. Clock injected, no wall-clock
-  dependence.
+  dependence. `getDownloadPresignedUrl` is out of scope for this test — it is
+  deliberately unchanged (see "Cache identity" above) and keeps signing fresh on
+  every call.
 - The signed URL always carries at least `URL_WINDOW_MS` of remaining life.
 - Eviction selects the coldest entries, never the active one, and always leaves at
   least two.
