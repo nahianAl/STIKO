@@ -647,6 +647,24 @@ test('disposeTree survives a root with no geometry or material', () => {
   assert.doesNotThrow(() => disposeTree(new THREE.Group()));
 });
 
+test('disposeTree unwraps the GLTF/Collada wrapper, which has no traverse of its own', () => {
+  // GLTFLoader resolves to { scene, scenes, animations, cameras, asset, parser,
+  // userData } — a plain object with neither traverse() nor dispose(). Passed
+  // straight through, it frees NOTHING. This is the most important disposal case
+  // in the app: every optimized viewer variant is written as .glb.
+  const fired = [];
+  const geometry = new THREE.BufferGeometry();
+  const material = new THREE.MeshBasicMaterial();
+  geometry.addEventListener('dispose', () => fired.push('geometry'));
+  material.addEventListener('dispose', () => fired.push('material'));
+  const scene = new THREE.Group();
+  scene.add(new THREE.Mesh(geometry, material));
+
+  disposeTree({ scene, scenes: [scene], animations: [], asset: {}, userData: {} });
+
+  assert.deepEqual(fired.sort(), ['geometry', 'material']);
+});
+
 test('disposeTree releases a bare BufferGeometry, which STL and PLY loaders return', () => {
   // STLLoader and PLYLoader resolve to a BufferGeometry, not an Object3D: it has
   // dispose() but no traverse(), so it takes the early-return branch. A THREE.Group
@@ -775,11 +793,25 @@ interface TraversableRoot {
  */
 export function disposeTree(root: unknown): void {
   const node = root as TraversableRoot;
-  if (typeof node?.traverse !== 'function') {
-    node?.dispose?.();
+
+  // Three shapes reach here, and the middle one is easy to miss:
+  //   - OBJLoader        -> an Object3D, which has traverse()
+  //   - STL / PLY        -> a bare BufferGeometry: dispose() but no traverse()
+  //   - GLTF / Collada   -> a plain WRAPPER, { scene, scenes, animations, ... },
+  //                         which has NEITHER traverse() NOR dispose()
+  //
+  // Without the unwrap below, the wrapper takes the early return, calls a dispose()
+  // that does not exist, and frees NOTHING — for GLB, which is the format every
+  // optimized variant is written as. ModelViewerInner already unwraps `.scene` the
+  // same way when it derives the renderable root.
+  const wrapped = (node as { scene?: TraversableRoot })?.scene;
+  const target = typeof node?.traverse === 'function' ? node : (wrapped ?? node);
+
+  if (typeof target?.traverse !== 'function') {
+    target?.dispose?.();
     return;
   }
-  node.traverse((child) => {
+  target.traverse((child) => {
     child.geometry?.dispose?.();
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const material of materials) {
@@ -870,7 +902,7 @@ export function resetModelCacheForTests(): void {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test scripts/tests/modelCache.test.mjs`
-Expected: PASS, 17 tests.
+Expected: PASS, 18 tests.
 
 - [ ] **Step 5: Commit**
 
