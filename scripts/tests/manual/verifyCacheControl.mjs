@@ -47,8 +47,11 @@ const got = res.headers.get('cache-control');
 console.log('key         :', target.Key);
 console.log('status      :', res.status, '(206 expected)');
 console.log('cache-control:', got ?? '(absent)');
+// Gate on the status as well as the header. A 200 here would mean the Range never
+// engaged, so the run just pulled a whole object and proved something other than what
+// it claims to test — and a verdict that reads PASS on it would be lying.
 console.log(
-  got === 'private, max-age=3600, immutable'
+  res.status === 206 && got === 'private, max-age=3600, immutable'
     ? '\nPASS — R2 honours the override. Task 3 is safe to implement.'
-    : '\nFAIL — R2 did not echo the override. STOP and revisit the spec.'
+    : '\nFAIL — R2 did not echo the override, or the Range did not engage. STOP and revisit the spec.'
 );
