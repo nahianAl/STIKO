@@ -88,8 +88,12 @@ interface TraversableRoot {
  * JS objects can be collected, but geometries, materials and textures hold GPU
  * allocations that only dispose() frees.
  *
- * STL and PLY loaders return a bare BufferGeometry rather than an Object3D, which
- * has a dispose() but no traverse() — hence both branches.
+ * Three shapes arrive here, and the dispatch below handles each:
+ *   - OBJLoader returns an Object3D, which has traverse()
+ *   - STL and PLY return a bare BufferGeometry: dispose(), but no traverse()
+ *   - GLTF and Collada return a plain wrapper with NEITHER, so it must be unwrapped
+ *     to .scene first. Missing that case frees nothing for GLB, which is the format
+ *     every optimized variant is written as.
  */
 export function disposeTree(root: unknown): void {
   const node = root as TraversableRoot;
