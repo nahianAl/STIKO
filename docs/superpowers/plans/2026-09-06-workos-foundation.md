@@ -35,8 +35,9 @@ Confirmed decision: apex and `www` to Wix, app to Vercel, DNS zone stays at Name
 1. Vercel → Stiko project → Settings → Domains → add `app.stiko.design`. Vercel gives you a CNAME target.
 2. Namecheap → Advanced DNS → add `CNAME  app  →  <the target Vercel gave you>`.
 3. Wait for `app.stiko.design` to serve the app, then in Vercel set `NEXTAUTH_URL=https://app.stiko.design` for Production and redeploy. Outbound email links come from this and nothing else (`lib/appUrl.ts`).
-4. Only then point apex and `www` at Wix, using the A/CNAME records Wix gives you. **Decline Wix's offer to take over the nameservers** — keeping the zone at Namecheap is what keeps `app.` and your `MX` records out of a website builder's dashboard.
-5. Ask your growth lead to add 301 redirects on the Wix side for `/invite/*`, `/portal/*` and `/reset-password/*` → the same path on `app.stiko.design`, and to keep them for about a month. Invitations expire in 14 days and reset tokens in 1 hour, so the exposure is self-limiting.
+4. **Add `https://app.stiko.design` to the R2 bucket's CORS allow-list** — Cloudflare → R2 → `stiko-uploads` → Settings → CORS Policy. The browser uploads to and loads models from R2 directly over presigned URLs, so R2 sees the app's origin and rejects any host not on this list. Miss this and every upload and every 3D model load fails on the new domain with a CORS preflight error while the rest of the app looks fine. The app's own R2 token is object-scoped and cannot change this — it must be done in the dashboard.
+5. Only then point apex and `www` at Wix, using the A/CNAME records Wix gives you. **Decline Wix's offer to take over the nameservers** — keeping the zone at Namecheap is what keeps `app.` and your `MX` records out of a website builder's dashboard.
+6. Ask your growth lead to add 301 redirects on the Wix side for `/invite/*`, `/portal/*` and `/reset-password/*` → the same path on `app.stiko.design`, and to keep them for about a month. Invitations expire in 14 days and reset tokens in 1 hour, so the exposure is self-limiting.
 
 **Rollback:** point the apex back at Vercel. It is a DNS change.
 
