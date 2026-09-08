@@ -327,7 +327,7 @@ to:
 
 ```typescript
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { URL_WINDOW_MS, signingWindowStart } from './urlWindow';
+import { URL_WINDOW_MS, signingWindowStart } from './urlWindow.ts';
 ```
 
 - [ ] **Step 4: Add the function**
