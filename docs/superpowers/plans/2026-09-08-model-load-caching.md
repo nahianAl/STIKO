@@ -466,10 +466,17 @@ test('the coldest entries go once the budget is blown', () => {
 });
 
 test('once over budget, every colder entry goes — no cherry-picking a small one', () => {
-  // Without ordered eviction, the 1MB 'd' would survive because it happens to fit
-  // after 'c' is dropped. That makes retention depend on size rather than recency
-  // and is exactly the surprise this asserts against.
-  const entries = [e('a', 150, 4), e('b', 150, 3), e('c', 150, 2), e('d', 1, 1)];
+  // The fixture must leave real HEADROOM after the minRetained cutoff, or it cannot
+  // tell the two algorithms apart. a+b retain 200MB of the 300MB budget, leaving
+  // 100MB free. 'c' at 150MB does not fit, so it trips the cascade. 'd' at 50MB
+  // WOULD fit in that headroom, so a "keep whatever still fits" implementation
+  // retains it and returns ['c']; only the strictly-ordered cascade returns
+  // ['c','d'].
+  //
+  // An earlier fixture here used 150/150/150/1 MB, where a+b came to EXACTLY the
+  // budget. With zero headroom both algorithms return ['c','d'], so the test passed
+  // against the very regression it existed to catch.
+  const entries = [e('a', 100, 4), e('b', 100, 3), e('c', 150, 2), e('d', 50, 1)];
   assert.deepEqual(selectEvictions(entries, 'a'), ['c', 'd']);
 });
 
