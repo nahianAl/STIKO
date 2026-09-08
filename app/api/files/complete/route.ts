@@ -90,5 +90,8 @@ export async function POST(request: NextRequest) {
               created_at AS "createdAt"
   `;
 
-  return NextResponse.json(rows[0], { status: 201 });
+  const file = rows[0];
+  // file_size is BIGINT; pg-types parses it as a string (see the note in
+  // app/api/files/route.ts), so it must be coerced to a number here too.
+  return NextResponse.json({ ...file, fileSize: Number(file.fileSize) }, { status: 201 });
 }

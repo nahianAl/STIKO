@@ -99,6 +99,14 @@ export async function GET(request: NextRequest) {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
     return {
       ...file,
+      // file_size is BIGINT, and the Neon driver's pg-types defaults parse int8 (OID
+      // 20) as a JS STRING, not a number — there is no default numeric parser for it,
+      // unlike int4/int2. Left uncoerced, `FileRecord.fileSize: number` (lib/types.ts)
+      // is a lie: `lib/model/modelCache.ts` sums `bytes` to enforce its 300MB LRU
+      // budget, and `retained += entry.bytes` silently becomes string concatenation,
+      // collapsing the cache to ~2 entries. Number(...), not a SQL ::int cast — int4
+      // caps at ~2.1GB, well under files this app actually stores.
+      fileSize: Number(file.fileSize),
       transform: {
         position: [positionX, positionY, positionZ],
         rotation: [rotationX, rotationY, rotationZ],

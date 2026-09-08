@@ -29,8 +29,11 @@ export async function GET(
            created_at AS "createdAt"
     FROM files WHERE id = ${params.id}
   `;
-  if (!rows[0]) return NextResponse.json({ error: 'File not found' }, { status: 404 });
-  return NextResponse.json(rows[0]);
+  const file = rows[0];
+  if (!file) return NextResponse.json({ error: 'File not found' }, { status: 404 });
+  // file_size is BIGINT; pg-types parses it as a string (see the note in
+  // app/api/files/route.ts), so it must be coerced to a number here too.
+  return NextResponse.json({ ...file, fileSize: Number(file.fileSize) });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDownloadPresignedUrl } from '@/lib/s3';
+import { getViewerPresignedUrl } from '@/lib/s3';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getFileAccess } from '@/lib/access';
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
   const access = await getFileAccess(session.user.id, located.fileId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const url = await getDownloadPresignedUrl(storageKey);
+  const url = await getViewerPresignedUrl(storageKey);
   return NextResponse.json({ url });
 }
 

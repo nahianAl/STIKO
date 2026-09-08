@@ -171,6 +171,7 @@ export default function ViewerContainer({
       <ModelErrorBoundary key={viewerKey} onReady={onReady}>
         <ModelViewer
           url={url}
+          bytes={file.fileSize}
           commentToolActive={commentToolActive}
           onSceneClick={onSceneClick}
           worldPins={worldPins}

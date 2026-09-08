@@ -22,6 +22,7 @@ import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
 import { cuttingPlaneIds, defaultPoseFor, emptySlots, isClipped, type ModelBox, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { boundsForUrl, type MeasuredModel } from '@/lib/modelMeasurement';
+import { registerModel } from '@/lib/model/modelCache';
 import ViewGizmo from './ViewGizmo';
 import TransformGizmo from './TransformGizmo';
 import SceneGround from './SceneGround';
@@ -82,6 +83,15 @@ export interface ModelViewerHandle {
 
 export interface ModelViewerInnerProps {
   url: string;
+  /**
+   * Source size of the file being displayed, for the model cache's eviction budget.
+   *
+   * This is the ORIGINAL's size while the viewer may be loading a smaller optimized
+   * variant, so it overestimates. That is the safe direction — the budget evicts
+   * sooner than strictly necessary — and it avoids both a schema change and threading
+   * a byte count back out of the loader.
+   */
+  bytes: number;
   commentToolActive?: boolean;
   onSceneClick?: (worldPoint: { x: number; y: number; z: number }, screenPercent: { x: number; y: number }) => void;
   worldPins?: WorldPin[];
@@ -166,6 +176,7 @@ function getLoaderForExt(ext: string) {
 
 function Model({
   url,
+  bytes,
   partColors,
   hiddenParts,
   highlightedPart,
@@ -173,6 +184,7 @@ function Model({
   onBatchesReady,
 }: {
   url: string;
+  bytes: number;
   partColors: Record<string, string>;
   hiddenParts: string[];
   highlightedPart: string | null;
@@ -184,6 +196,22 @@ function Model({
   const LoaderClass = getLoaderForExt(ext);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = useLoader(LoaderClass as any, url);
+
+  // Register with the bounded cache the moment the parse resolves. useLoader keeps
+  // this tree alive forever on its own — no lifespan, and nothing in this repo used
+  // to clear it — so without this every model opened stays resident for the life of
+  // the tab. Re-running on the same url merely refreshes recency.
+  useEffect(() => {
+    registerModel({
+      url,
+      loader: LoaderClass,
+      root: data,
+      bytes,
+      clearLoaderCache: (loader, cachedUrl) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        useLoader.clear(loader as any, cachedUrl),
+    });
+  }, [url, LoaderClass, data, bytes]);
 
   // For PLY, compute vertex normals once
   useMemo(() => {
@@ -808,6 +836,7 @@ function FitCameraToModel({ bounds }: { bounds: ModelBounds }) {
 
 export default function ModelViewerInner({
   url,
+  bytes,
   commentToolActive = false,
   onSceneClick,
   worldPins = [],
@@ -1015,6 +1044,7 @@ export default function ModelViewerInner({
               >
                 <Model
                   url={url}
+                  bytes={bytes}
                   partColors={partColors}
                   hiddenParts={hiddenParts}
                   highlightedPart={highlightedPart}
