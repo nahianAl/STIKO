@@ -92,6 +92,24 @@ test('disposeTree survives a root with no geometry or material', () => {
   assert.doesNotThrow(() => disposeTree(new THREE.Group()));
 });
 
+test('disposeTree unwraps the GLTF/Collada wrapper, which has no traverse of its own', () => {
+  // GLTFLoader resolves to { scene, scenes, animations, cameras, asset, parser,
+  // userData } — a plain object with neither traverse() nor dispose(). Passed
+  // straight through, it frees NOTHING. This is the most important disposal case
+  // in the app: every optimized viewer variant is written as .glb.
+  const fired = [];
+  const geometry = new THREE.BufferGeometry();
+  const material = new THREE.MeshBasicMaterial();
+  geometry.addEventListener('dispose', () => fired.push('geometry'));
+  material.addEventListener('dispose', () => fired.push('material'));
+  const scene = new THREE.Group();
+  scene.add(new THREE.Mesh(geometry, material));
+
+  disposeTree({ scene, scenes: [scene], animations: [], asset: {}, userData: {} });
+
+  assert.deepEqual(fired.sort(), ['geometry', 'material']);
+});
+
 test('disposeTree releases a bare BufferGeometry, which STL and PLY loaders return', () => {
   // STLLoader and PLYLoader resolve to a BufferGeometry, not an Object3D: it has
   // dispose() but no traverse(), so it takes the early-return branch. A THREE.Group

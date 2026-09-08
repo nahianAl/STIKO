@@ -93,11 +93,25 @@ interface TraversableRoot {
  */
 export function disposeTree(root: unknown): void {
   const node = root as TraversableRoot;
-  if (typeof node?.traverse !== 'function') {
-    node?.dispose?.();
+
+  // Three shapes reach here, and the middle one is easy to miss:
+  //   - OBJLoader        -> an Object3D, which has traverse()
+  //   - STL / PLY        -> a bare BufferGeometry: dispose() but no traverse()
+  //   - GLTF / Collada   -> a plain WRAPPER, { scene, scenes, animations, ... },
+  //                         which has NEITHER traverse() NOR dispose()
+  //
+  // Without the unwrap below, the wrapper takes the early return, calls a dispose()
+  // that does not exist, and frees NOTHING — for GLB, which is the format every
+  // optimized variant is written as. ModelViewerInner already unwraps `.scene` the
+  // same way when it derives the renderable root.
+  const wrapped = (node as { scene?: TraversableRoot })?.scene;
+  const target = typeof node?.traverse === 'function' ? node : (wrapped ?? node);
+
+  if (typeof target?.traverse !== 'function') {
+    target?.dispose?.();
     return;
   }
-  node.traverse((child) => {
+  target.traverse((child) => {
     child.geometry?.dispose?.();
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const material of materials) {
