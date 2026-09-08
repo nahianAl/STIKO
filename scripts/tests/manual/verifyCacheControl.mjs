@@ -39,11 +39,13 @@ const url = await getSignedUrl(
   { expiresIn: 300 }
 );
 
-// HEAD, not GET: the header is what is under test, and the object may be 90 MB.
-const res = await fetch(url, { method: 'HEAD' });
+// Range GET, not HEAD: SigV4 signs the HTTP method, so HEAD on a GET-signed URL is a
+// signature mismatch (403). Range: bytes=0-0 reads one byte over GET, keeping the
+// signature valid while avoiding the full 90 MB object.
+const res = await fetch(url, { headers: { Range: 'bytes=0-0' } });
 const got = res.headers.get('cache-control');
 console.log('key         :', target.Key);
-console.log('status      :', res.status);
+console.log('status      :', res.status, '(206 expected)');
 console.log('cache-control:', got ?? '(absent)');
 console.log(
   got === 'private, max-age=3600, immutable'
