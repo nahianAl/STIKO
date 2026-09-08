@@ -76,11 +76,15 @@ const url = await getSignedUrl(
   { expiresIn: 300 }
 );
 
-// HEAD, not GET: the header is what is under test, and the object may be 90 MB.
-const res = await fetch(url, { method: 'HEAD' });
+// A Range GET, not a HEAD: SigV4 signs the HTTP METHOD, so a HEAD against a URL
+// presigned for GET is a signature mismatch and 403s — which looks exactly like
+// "R2 rejected the override" and is not. Extra REQUEST headers are fine, because
+// a presigned URL signs only `host` (X-Amz-SignedHeaders=host), so Range costs
+// one byte instead of downloading a 90 MB object.
+const res = await fetch(url, { headers: { Range: 'bytes=0-0' } });
 const got = res.headers.get('cache-control');
 console.log('key         :', target.Key);
-console.log('status      :', res.status);
+console.log('status      :', res.status, '(206 expected — Range request)');
 console.log('cache-control:', got ?? '(absent)');
 console.log(
   got === 'private, max-age=3600, immutable'
@@ -93,7 +97,9 @@ console.log(
 
 Run: `mkdir -p scripts/tests/manual && node scripts/tests/manual/verifyCacheControl.mjs`
 
-Expected: `status: 200` and `cache-control: private, max-age=3600, immutable`, ending in `PASS`.
+Expected: `status: 206` (partial content, because of the Range header) and `cache-control: private, max-age=3600, immutable`, ending in `PASS`.
+
+A `403` here means the request method does not match what the URL was signed for — not that R2 rejected the override.
 
 If it prints `FAIL`, stop. Do not continue to Task 3 — the design's cache-control half needs rethinking, and the plan should be revised before writing any more code.
 
