@@ -91,8 +91,21 @@ for a different key.
 
 `expiresIn: 7200` against a 1-hour window guarantees **at least 3600s of remaining
 life** on any URL handed out — exactly today's guarantee. The cost is that the
-worst-case lifetime of a leaked URL goes from 1h to 2h. The minimum is unchanged,
-which is the number that matters for revocation.
+worst-case lifetime of a leaked URL goes from 1h to 2h.
+
+Be precise about which number matters for what, because it is easy to get backwards.
+The **floor** (unchanged at 1h) is an availability property: it guarantees a URL still
+works for as long as it may be handed out. **Revocation is governed by the ceiling**,
+and the ceiling doubles — after access is withdrawn, an already-issued URL keeps
+working for up to 2h instead of 1h. The URL is also byte-identical for every
+authorized user, so a link leaked in a screenshot or a log is a shared capability for
+that window rather than a per-user one.
+
+Accepted deliberately: this app's threat model already tolerated an hour, invites and
+download authorization gate the *issuing* of URLs rather than the bytes (see
+`2026-09-04-download-authorization-design.md`, which makes the same point), and the
+alternative — per-user sliding windows — reintroduces exactly the key churn this spec
+exists to remove.
 
 The command also sets `ResponseCacheControl: 'private, max-age=3600, immutable'`.
 This is a signed query parameter, so it is deterministic and does not disturb URL
