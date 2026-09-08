@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectEvictions, BUDGET_BYTES, MIN_RETAINED } from '../../lib/model/modelCache.ts';
+import * as THREE from 'three';
+import {
+  registerModel,
+  disposeTree,
+  resetModelCacheForTests,
+} from '../../lib/model/modelCache.ts';
 
 const MB = 1024 * 1024;
 const e = (url, mb, lastUsed) => ({ url, bytes: mb * MB, lastUsed });
@@ -61,4 +67,108 @@ test('a single model larger than the whole budget is still retained while active
 test('the budget and floor are overridable', () => {
   const entries = [e('a', 10, 3), e('b', 10, 2), e('c', 10, 1)];
   assert.deepEqual(selectEvictions(entries, 'a', 15 * MB, 1), ['b', 'c']);
+});
+
+/** A model whose disposals are observable. three fires a 'dispose' event on each. */
+function fakeModel(fired) {
+  const geometry = new THREE.BufferGeometry();
+  const texture = new THREE.Texture();
+  const material = new THREE.MeshStandardMaterial({ map: texture });
+  geometry.addEventListener('dispose', () => fired.push('geometry'));
+  material.addEventListener('dispose', () => fired.push('material'));
+  texture.addEventListener('dispose', () => fired.push('texture'));
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(geometry, material));
+  return root;
+}
+
+test('disposeTree releases geometry, material and texture', () => {
+  const fired = [];
+  disposeTree(fakeModel(fired));
+  assert.deepEqual(fired.sort(), ['geometry', 'material', 'texture']);
+});
+
+test('disposeTree survives a root with no geometry or material', () => {
+  assert.doesNotThrow(() => disposeTree(new THREE.Group()));
+});
+
+test('disposeTree handles an array of materials', () => {
+  const fired = [];
+  const geometry = new THREE.BufferGeometry();
+  const a = new THREE.MeshBasicMaterial();
+  const b = new THREE.MeshBasicMaterial();
+  a.addEventListener('dispose', () => fired.push('a'));
+  b.addEventListener('dispose', () => fired.push('b'));
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(geometry, [a, b]));
+  disposeTree(root);
+  assert.deepEqual(fired.sort(), ['a', 'b']);
+});
+
+test('registering under budget evicts and disposes nothing', () => {
+  resetModelCacheForTests();
+  const cleared = [];
+  const fired = [];
+  for (const url of ['a', 'b', 'c']) {
+    registerModel({
+      url,
+      loader: 'GLTFLoader',
+      root: fakeModel(fired),
+      bytes: 10 * MB,
+      clearLoaderCache: (loader, u) => cleared.push(u),
+    });
+  }
+  assert.deepEqual(cleared, []);
+  assert.deepEqual(fired, []);
+});
+
+test('registering over budget clears and disposes the coldest', () => {
+  resetModelCacheForTests();
+  const cleared = [];
+  const fired = [];
+  for (const url of ['a', 'b', 'c', 'd']) {
+    registerModel({
+      url,
+      loader: 'GLTFLoader',
+      root: fakeModel(fired),
+      bytes: 100 * MB,
+      clearLoaderCache: (loader, u) => cleared.push(u),
+    });
+  }
+  // On registering 'd': a,b,c,d = 400MB. Newest three fit in 300MB; 'a' does not.
+  assert.deepEqual(cleared, ['a']);
+  assert.deepEqual(fired.sort(), ['geometry', 'material', 'texture']);
+});
+
+test('re-registering an existing url refreshes it instead of duplicating it', () => {
+  resetModelCacheForTests();
+  const cleared = [];
+  const fired = [];
+  const reg = (url) =>
+    registerModel({
+      url,
+      loader: 'GLTFLoader',
+      root: fakeModel(fired),
+      bytes: 100 * MB,
+      clearLoaderCache: (loader, u) => cleared.push(u),
+    });
+  // a -> b -> c -> a. The revisit to 'a' makes it the newest, so the next
+  // registration must drop 'b', the coldest — not 'a'.
+  reg('a'); reg('b'); reg('c'); reg('a'); reg('d');
+  assert.ok(!cleared.includes('a'), 'a was revisited and must not be evicted');
+  assert.deepEqual(cleared, ['b']);
+});
+
+test('the model just registered is never the one evicted', () => {
+  resetModelCacheForTests();
+  const cleared = [];
+  const fired = [];
+  registerModel({
+    url: 'huge',
+    loader: 'GLTFLoader',
+    root: fakeModel(fired),
+    bytes: 900 * MB,
+    clearLoaderCache: (loader, u) => cleared.push(u),
+  });
+  assert.deepEqual(cleared, []);
 });
