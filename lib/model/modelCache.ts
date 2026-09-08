@@ -144,8 +144,14 @@ let useCounter = 0;
 /**
  * Record a freshly loaded model and evict whatever no longer fits.
  *
- * Safe to call on every render: re-registering a url refreshes its recency and
- * replaces nothing, so the model on screen is never disposed out from under itself.
+ * Safe to call on every render: re-registering a url refreshes its recency in place
+ * rather than adding a second entry, and the just-registered url is pinned against
+ * eviction, so the model on screen is never disposed out from under itself.
+ *
+ * Note it DOES replace the stored root/bytes/loader for that url. That is harmless
+ * only because the caller re-registers with useLoader's cached value for the same
+ * url, which is the same object reference; a caller that passed a genuinely different
+ * root would leak the old one's GPU memory.
  */
 export function registerModel({ url, loader, root, bytes, clearLoaderCache }: RegisterArgs): void {
   registry.set(url, { loader, root, bytes, lastUsed: ++useCounter });

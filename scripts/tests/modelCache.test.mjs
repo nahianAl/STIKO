@@ -92,6 +92,19 @@ test('disposeTree survives a root with no geometry or material', () => {
   assert.doesNotThrow(() => disposeTree(new THREE.Group()));
 });
 
+test('disposeTree releases a bare BufferGeometry, which STL and PLY loaders return', () => {
+  // STLLoader and PLYLoader resolve to a BufferGeometry, not an Object3D: it has
+  // dispose() but no traverse(), so it takes the early-return branch. A THREE.Group
+  // does NOT cover this — a Group has traverse() and never reaches that path. Without
+  // a test here, deleting the branch frees nothing on exactly the heaviest files in
+  // the bucket, where .stl runs to 94 MB.
+  let fired = false;
+  const geometry = new THREE.BufferGeometry();
+  geometry.addEventListener('dispose', () => { fired = true; });
+  disposeTree(geometry);
+  assert.ok(fired, 'a bare BufferGeometry must be disposed');
+});
+
 test('disposeTree handles an array of materials', () => {
   const fired = [];
   const geometry = new THREE.BufferGeometry();
