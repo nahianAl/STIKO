@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
+import { messageForStatus } from '@/lib/submitErrors';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
 import { getInitials } from '@/lib/initials';
@@ -107,6 +108,7 @@ function CommentForm({
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (autoFocus) textInputRef.current?.focus();
@@ -115,6 +117,7 @@ function CommentForm({
   const handleSubmit = async () => {
     if (!text.trim() && pendingFiles.length === 0) return;
     setSubmitting(true);
+    setError(null);
     try {
       // Upload attachments
       let attachments: CommentAttachment[] = [];
@@ -124,7 +127,7 @@ function CommentForm({
         setUploading(false);
       }
 
-      await fetch('/api/comments', {
+      const res = await fetch('/api/comments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -135,11 +138,22 @@ function CommentForm({
           attachments,
         }),
       });
+      // fetch only rejects on a NETWORK failure, so without this an expired
+      // session (401), a view-only role (403) or a server error all resolved
+      // normally and fell through to the clears below — wiping the user's words
+      // and their attachments while the UI reported success. /api/comments is in
+      // PUBLIC_PATHS, so an expired session is not even redirected; it returns a
+      // JSON 401 that sails straight through.
+      if (!res.ok) throw new Error(messageForStatus(res.status));
+
       setText('');
       setPendingFiles([]);
       onSubmitted();
     } catch (err) {
       console.error('Failed to post comment:', err);
+      // Deliberately does NOT clear text or pendingFiles: whatever the user wrote
+      // stays on screen so they can send it again.
+      setError(err instanceof Error ? err.message : 'Could not post your comment.');
     } finally {
       setSubmitting(false);
       setUploading(false);
@@ -194,6 +208,13 @@ function CommentForm({
             </div>
           ))}
         </div>
+      )}
+
+      {/* A failed post keeps the user's text and attachments; this says why. */}
+      {error && (
+        <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600">
+          {error}
+        </p>
       )}
 
       {/* Input row */}

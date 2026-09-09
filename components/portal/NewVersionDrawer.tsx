@@ -132,7 +132,15 @@ export function NewVersionDrawer({
         setDraftVersionId(versionId);
       }
 
-      const ok = await upload.start(files, { versionId, projectId, portalId });
+      // start() resets EVERY item to 'pending' and re-uploads the whole array, and
+      // each upload mints a fresh fileId server-side — so calling it a second time
+      // after a partial failure registered all the already-successful files AGAIN,
+      // showing reviewers every file twice and orphaning the first copies. Once a
+      // batch exists, only the failed members may be re-run.
+      const started = upload.items.length > 0;
+      const ok = started
+        ? await upload.retryFailed()
+        : await upload.start(files, { versionId, projectId, portalId });
       if (!ok) {
         setError(
           'Some files didn’t upload. Retry them — nothing is published until they all land.'
@@ -186,7 +194,11 @@ export function NewVersionDrawer({
             Save as draft
           </Button>
           <Button onClick={publish} disabled={busy}>
-            {busy ? 'Publishing…' : `Publish version ${nextVersionNumber}`}
+            {busy
+              ? 'Publishing…'
+              : upload.anyFailed
+                ? 'Retry failed files'
+                : `Publish version ${nextVersionNumber}`}
           </Button>
         </>
       }
@@ -201,10 +213,14 @@ export function NewVersionDrawer({
                 key={item.path}
                 item={item}
                 onRetry={async (path) => {
+                  // Deliberately does NOT auto-publish here. `upload` is a fresh
+                  // object literal per render, so the old `upload.allDone` check
+                  // read a boolean frozen at a render where this row was 'failed'
+                  // — necessarily false, so the branch was dead. Clearing the
+                  // banner and letting the footer button re-render live is what
+                  // actually works; the footer reads current state every render.
                   const ok = await upload.retry(path);
-                  if (ok && upload.allDone && draftVersionId) {
-                    await finishPublish(draftVersionId);
-                  }
+                  if (ok) setError(null);
                 }}
               />
             ))}

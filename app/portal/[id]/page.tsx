@@ -20,6 +20,7 @@ import TransformTools from '@/components/viewers/TransformTools';
 import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
+import { messageForStatus } from '@/lib/submitErrors';
 import type { Comment, FileRecord, Version } from '@/lib/types';
 import PartsPanel from '@/components/viewers/PartsPanel';
 import { autoColors, BASE_GREY } from '@/lib/model/autoColor';
@@ -209,6 +210,8 @@ export default function PortalPage() {
   const [composerText, setComposerText] = useState('');
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
   const [submittingComposer, setSubmittingComposer] = useState(false);
+  // A failed post keeps the user's text, attachments and pin; this says why.
+  const [composerError, setComposerError] = useState<string | null>(null);
   const [tagging, setTagging] = useState(false);
   const [pendingTag, setPendingTag] = useState<{
     xPosition?: number; yPosition?: number;
@@ -1230,11 +1233,12 @@ export default function PortalPage() {
     if (!selectedFileId) return;
     if (!composerText.trim() && composerFiles.length === 0 && !pendingTag) return;
     setSubmittingComposer(true);
+    setComposerError(null);
     try {
       const attachments = composerFiles.length > 0
         ? await Promise.all(composerFiles.map(uploadFile))
         : [];
-      await fetch('/api/comments', {
+      const res = await fetch('/api/comments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1252,6 +1256,13 @@ export default function PortalPage() {
           attachments,
         }),
       });
+      // fetch only rejects on a NETWORK failure, so without this an expired session
+      // (401), a view-only role (403) or a server error all resolved normally and
+      // fell through to the clears below — discarding the user's text, their
+      // attachments AND the pin they placed, while the UI reported success. On a 3D
+      // annotation that is the most expensive thing in the product to redo.
+      if (!res.ok) throw new Error(messageForStatus(res.status));
+
       setComposerText('');
       setComposerFiles([]);
       setPendingTag(null);
@@ -1260,6 +1271,11 @@ export default function PortalPage() {
       await fetchComments();
     } catch (err) {
       console.error('Failed to post comment:', err);
+      // Deliberately clears nothing: the text, the attachments and the pin all
+      // survive so the user can send again without redoing the markup.
+      setComposerError(
+        err instanceof Error ? err.message : 'Could not post your comment.'
+      );
     } finally {
       setSubmittingComposer(false);
     }
@@ -1713,6 +1729,12 @@ export default function PortalPage() {
           onViewImage={setViewportImage}
           onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
           composer={
+            <>
+              {composerError && (
+                <p className="mb-2 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600">
+                  {composerError}
+                </p>
+              )}
             <CommentComposer
               text={composerText}
               onTextChange={setComposerText}
@@ -1726,6 +1748,7 @@ export default function PortalPage() {
               submitting={submittingComposer}
               inputRef={composerInputRef}
             />
+            </>
           }
         />
 
