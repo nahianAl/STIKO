@@ -53,7 +53,22 @@ export async function POST(request: NextRequest) {
     filename,
   });
 
-  const presignedUrl = await getUploadPresignedUrl(storageKey, contentType);
+  // One hour, not the 300s default. Three reasons, and the asymmetry with the
+  // variant below used to run the wrong way round — the ORIGINAL is the larger
+  // object and the one that takes longest to send.
+  //
+  //   1. lib/useUpload.ts now retries a dropped PUT up to MAX_UPLOAD_ATTEMPTS
+  //      times against THIS SAME url, and both the backoff and the restarted
+  //      transfers spend its lifetime.
+  //   2. A large file on a slow uplink can exceed five minutes on its own.
+  //   3. An expired url fails as 403, which the retry policy correctly refuses to
+  //      retry — so too short a window converts a recoverable blip into a hard
+  //      failure, which is exactly the bug this is fixing.
+  //
+  // Widening this is not a widening of authority: the key is derived server-side
+  // from the version, the caller was already authorized for canUpload above, and
+  // the url can write that one object and nothing else.
+  const presignedUrl = await getUploadPresignedUrl(storageKey, contentType, 3600);
 
   // The optimized variant is presigned HERE, in the same call, rather than in a later
   // round trip. The server has just minted the id and built the original key, so it can
@@ -87,12 +102,11 @@ export async function POST(request: NextRequest) {
     storageKey,
     publicUrl: getPublicUrl(storageKey),
     variantPresignedUrl: variantStorageKey
-      ? // Longer than the original's default 5-minute expiry: the variant PUT only happens
-        // after the original PUT completes AND optimization finishes (up to 120s — see
-        // TIMEOUT_MS in lib/model/runOptimize.ts), so a large original upload alone can eat
-        // most of a 5-minute window before the variant URL is ever used. A short expiry here
-        // would 403 the variant PUT for exactly the biggest files, and useUpload.ts swallows
-        // that failure as a silent downgrade.
+      ? // Same hour as the original above, and it needs every bit of it: this PUT only
+        // happens after the original PUT completes — retries included — AND after
+        // optimization finishes (up to 120s, see TIMEOUT_MS in lib/model/runOptimize.ts).
+        // A short expiry would 403 the variant PUT for exactly the biggest files, and
+        // useUpload.ts swallows that failure as a silent downgrade.
         await getUploadPresignedUrl(variantStorageKey, 'model/gltf-binary', 3600)
       : null,
   });

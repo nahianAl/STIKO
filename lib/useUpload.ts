@@ -4,6 +4,11 @@ import { useCallback, useRef, useState } from 'react';
 import type { FileWithPath } from '@/components/ui/FileDropzone';
 import type { UploadItem } from '@/components/ui/UploadProgress';
 import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptimize';
+import {
+  MAX_UPLOAD_ATTEMPTS,
+  isRetriableUploadFailure,
+  retryDelayMs,
+} from '@/lib/uploadRetry';
 
 /**
  * Parallel, per-file upload with progress and retry — gap #12.
@@ -15,6 +20,87 @@ import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptim
 
 /** Enough to saturate a connection without starving the browser's socket pool. */
 const CONCURRENCY = 4;
+
+/** A failure carrying the HTTP status, or null when no response ever arrived. */
+interface UploadAttemptError extends Error {
+  status: number | null;
+}
+
+/**
+ * One PUT attempt straight to R2.
+ *
+ * XHR rather than fetch: fetch still has no upload progress event.
+ */
+function putOnce(
+  url: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      const err = new Error(`Upload failed (${xhr.status})`) as UploadAttemptError;
+      err.status = xhr.status;
+      reject(err);
+    };
+    // No HTTP response ever arrived — a connection reset, a dropped VPN, a proxy
+    // closing the socket. xhr.status is 0 here, which is precisely the case
+    // isRetriableUploadFailure treats as worth another go.
+    xhr.onerror = () => {
+      const err = new Error('Upload failed') as UploadAttemptError;
+      err.status = null;
+      reject(err);
+    };
+    xhr.send(file);
+  });
+}
+
+/**
+ * PUT with bounded retries.
+ *
+ * The browser uploads directly to R2, so anything between the two can reset the
+ * connection — flaky wifi, a VPN, a corporate proxy doing TLS inspection, a
+ * laptop suspending. This used to reject on the first `xhr.onerror`, so a single
+ * blip permanently failed an upload that would have succeeded immediately after.
+ * Observed 2026-09-08: a 23MB GLB failed three times with ERR_CONNECTION_RESET
+ * for one user while uploading in 14 seconds from another network.
+ *
+ * The same presigned URL is reused across attempts. That is why the backoff is
+ * capped and why the URL is minted with a generous expiry — the waiting spends
+ * the URL's lifetime, and retrying against an expired one would turn a retriable
+ * reset into a certain 403.
+ */
+async function putWithRetry(
+  url: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await putOnce(url, file, onProgress);
+      return;
+    } catch (err) {
+      const status = (err as UploadAttemptError).status ?? null;
+      const lastAttempt = attempt >= MAX_UPLOAD_ATTEMPTS - 1;
+      if (lastAttempt || !isRetriableUploadFailure(status)) throw err;
+
+      console.warn(
+        `Upload of ${file.name} failed (${status ?? 'network error'}); ` +
+          `retrying, attempt ${attempt + 2} of ${MAX_UPLOAD_ATTEMPTS}`
+      );
+      // The retry restarts the transfer from zero, so the bar must too rather
+      // than appearing stuck at wherever the dropped attempt reached.
+      onProgress(0);
+      await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
+    }
+  }
+}
 
 export function useUpload() {
   const [items, setItems] = useState<UploadItem[]>([]);
@@ -55,28 +141,9 @@ export function useUpload() {
         if (!presignRes.ok) throw new Error('Could not get an upload URL');
         const { fileId, presignedUrl, storageKey, variantPresignedUrl } = await presignRes.json();
 
-        // XHR rather than fetch: fetch still has no upload progress event.
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', presignedUrl);
-          xhr.setRequestHeader(
-            'Content-Type',
-            entry.file.type || 'application/octet-stream'
-          );
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              patch(entry.path, {
-                progress: Math.round((e.loaded / e.total) * 100),
-              });
-            }
-          };
-          xhr.onload = () =>
-            xhr.status >= 200 && xhr.status < 300
-              ? resolve()
-              : reject(new Error(`Upload failed (${xhr.status})`));
-          xhr.onerror = () => reject(new Error('Upload failed'));
-          xhr.send(entry.file);
-        });
+        await putWithRetry(presignedUrl, entry.file, (progress) =>
+          patch(entry.path, { progress })
+        );
 
         // Optimization happens AFTER the original is safely in S3, so a failure here can
         // never cost the upload. The original is what the uploader downloads; the
