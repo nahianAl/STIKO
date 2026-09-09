@@ -2,8 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_UPLOAD_ATTEMPTS,
+  REQUEST_TIMEOUT_MS,
+  STALL_TIMEOUT_MS,
   isRetriableUploadFailure,
   retryDelayMs,
+  shouldAbortForStall,
 } from '../../lib/uploadRetry.ts';
 
 test('a network-level failure has no status and is retriable', () => {
@@ -52,4 +55,41 @@ test('there is more than one attempt, and not an unbounded number', () => {
   // spinning long past the point the user should be told it failed.
   assert.ok(MAX_UPLOAD_ATTEMPTS >= 3, 'need at least a couple of retries');
   assert.ok(MAX_UPLOAD_ATTEMPTS <= 5, 'not unbounded');
+});
+
+test('a transfer that is still moving is never aborted', () => {
+  assert.equal(shouldAbortForStall(0), false);
+  assert.equal(shouldAbortForStall(1_000), false);
+  assert.equal(shouldAbortForStall(STALL_TIMEOUT_MS - 1), false);
+});
+
+test('a transfer with no progress past the threshold is aborted', () => {
+  assert.equal(shouldAbortForStall(STALL_TIMEOUT_MS), true);
+  assert.equal(shouldAbortForStall(STALL_TIMEOUT_MS + 1), true);
+});
+
+test('the stall threshold is generous enough for a slow but live transfer', () => {
+  // This is a STALL detector, not a total timeout: a legitimately slow multi-GB
+  // upload emits progress events throughout and must never trip it. Anything
+  // under ~30s would risk aborting a live transfer on a congested link.
+  assert.ok(STALL_TIMEOUT_MS >= 30_000, 'too aggressive for a slow connection');
+  assert.ok(STALL_TIMEOUT_MS <= 180_000, 'so long the user gives up first');
+});
+
+test('the JSON request timeout is much shorter than the stall threshold', () => {
+  // presign and complete are small same-origin requests. A flat timeout is right
+  // for them, and it must be well under the stall threshold or a wedged JSON
+  // call would outlive a wedged multi-gigabyte upload.
+  assert.ok(REQUEST_TIMEOUT_MS > 0);
+  assert.ok(
+    REQUEST_TIMEOUT_MS < STALL_TIMEOUT_MS,
+    'a small JSON POST should give up sooner than a file transfer'
+  );
+});
+
+test('an aborted stall is retriable, which is the point of aborting it', () => {
+  // The watchdog rejects with status null. If that were not retriable, aborting a
+  // stall would convert an infinite hang into an instant permanent failure —
+  // strictly worse than the bug it replaces.
+  assert.equal(isRetriableUploadFailure(null), true);
 });

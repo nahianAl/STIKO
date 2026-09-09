@@ -65,3 +65,32 @@ export function retryDelayMs(attempt: number): number {
   const exponential = BASE_DELAY_MS * 2 ** Math.max(0, attempt);
   return Math.min(exponential, MAX_DELAY_MS);
 }
+
+/**
+ * How long a transfer may emit NO progress before we give up on it.
+ *
+ * This is a STALL detector, deliberately not a total timeout. A legitimately slow
+ * multi-gigabyte upload can run for an hour and must not be killed for it — but it
+ * emits progress events throughout. A socket that has been black-holed emits
+ * nothing at all, and before this existed that produced an XHR which never fired
+ * `onload` or `onerror`, so its promise never settled and `putWithRetry` never got
+ * a rejection to react to. One such file wedged the entire batch permanently: no
+ * error, no failed state, and no retry button, because the button only renders for
+ * `state === 'failed'`.
+ *
+ * Aborting converts that hang into an ordinary retriable failure.
+ */
+export const STALL_TIMEOUT_MS = 60_000;
+
+/**
+ * Flat timeout for the small JSON requests either side of the transfer (presign
+ * and complete). They are same-origin and tiny, so a total timeout is appropriate
+ * where it would be wrong for the file PUT. Kept well under STALL_TIMEOUT_MS: a
+ * wedged JSON POST should never outlive a wedged multi-gigabyte upload.
+ */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** Has this transfer gone quiet for long enough to abandon? */
+export function shouldAbortForStall(msSinceLastProgress: number): boolean {
+  return msSinceLastProgress >= STALL_TIMEOUT_MS;
+}

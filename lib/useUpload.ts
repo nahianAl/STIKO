@@ -6,8 +6,10 @@ import type { UploadItem } from '@/components/ui/UploadProgress';
 import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptimize';
 import {
   MAX_UPLOAD_ATTEMPTS,
+  REQUEST_TIMEOUT_MS,
   isRetriableUploadFailure,
   retryDelayMs,
+  shouldAbortForStall,
 } from '@/lib/uploadRetry';
 
 /**
@@ -38,25 +40,53 @@ function putOnce(
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+
+    // A black-holed socket fires neither onload nor onerror, so without this the
+    // promise never settles and putWithRetry never gets a rejection to react to.
+    // One such file used to wedge the whole batch forever — no error, no failed
+    // state, and no retry button, since that only renders for state === 'failed'.
+    let lastProgressAt = Date.now();
+    let settled = false;
+    const watchdog = setInterval(() => {
+      // abort() fires onabort below, which rejects as retriable — so a stall
+      // becomes an ordinary retry rather than either a hang or a hard failure.
+      if (shouldAbortForStall(Date.now() - lastProgressAt)) xhr.abort();
+    }, 5_000);
+
+    /** Settle exactly once and always stop the watchdog. */
+    const settle = (act: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(watchdog);
+      act();
+    };
+
+    const failWith = (message: string, status: number | null) => {
+      const err = new Error(message) as UploadAttemptError;
+      err.status = status;
+      reject(err);
+    };
+
     xhr.open('PUT', url);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      lastProgressAt = Date.now();
+      // e.total is 0 for a zero-byte file, and 0/0 renders as "NaN%".
+      if (e.lengthComputable && e.total > 0) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
     };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) return resolve();
-      const err = new Error(`Upload failed (${xhr.status})`) as UploadAttemptError;
-      err.status = xhr.status;
-      reject(err);
-    };
+    xhr.onload = () =>
+      settle(() => {
+        if (xhr.status >= 200 && xhr.status < 300) return resolve();
+        failWith(`Upload failed (${xhr.status})`, xhr.status);
+      });
     // No HTTP response ever arrived — a connection reset, a dropped VPN, a proxy
     // closing the socket. xhr.status is 0 here, which is precisely the case
     // isRetriableUploadFailure treats as worth another go.
-    xhr.onerror = () => {
-      const err = new Error('Upload failed') as UploadAttemptError;
-      err.status = null;
-      reject(err);
-    };
+    xhr.onerror = () => settle(() => failWith('Upload failed', null));
+    xhr.onabort = () =>
+      settle(() => failWith('Upload stalled and was restarted', null));
     xhr.send(file);
   });
 }
@@ -113,6 +143,12 @@ export function useUpload() {
     portalId: string;
   } | null>(null);
 
+  // Mirrors `items` so retryFailed can read the CURRENT states from inside an
+  // async callback, rather than a copy frozen at whatever render created it —
+  // the same reason filesRef exists.
+  const itemsRef = useRef<UploadItem[]>([]);
+  itemsRef.current = items;
+
   const patch = useCallback((path: string, next: Partial<UploadItem>) => {
     setItems((prev) =>
       prev.map((i) => (i.path === path ? { ...i, ...next } : i))
@@ -129,6 +165,9 @@ export function useUpload() {
       try {
         const presignRes = await fetch('/api/files/upload', {
           method: 'POST',
+          // Small same-origin JSON. A flat timeout is right here, where it would be
+          // wrong for the file PUT — see the note on STALL_TIMEOUT_MS.
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             versionId: ctx.versionId,
@@ -195,6 +234,7 @@ export function useUpload() {
 
         const completeRes = await fetch('/api/files/complete', {
           method: 'POST',
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             fileId,
@@ -220,6 +260,29 @@ export function useUpload() {
     [patch]
   );
 
+  /** Run entries through the bounded pool. Resolves true only if all succeeded. */
+  const runPool = useCallback(
+    async (entries: FileWithPath[]): Promise<boolean> => {
+      const queue = [...entries];
+      const results: boolean[] = [];
+
+      const worker = async () => {
+        for (;;) {
+          const next = queue.shift();
+          if (!next) return;
+          results.push(await uploadOne(next));
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker)
+      );
+
+      return results.every(Boolean);
+    },
+    [uploadOne]
+  );
+
   /** Upload everything in a bounded pool. Resolves true only if all succeeded. */
   const start = useCallback(
     async (
@@ -239,25 +302,28 @@ export function useUpload() {
         }))
       );
 
-      const queue = [...files];
-      const results: boolean[] = [];
-
-      const worker = async () => {
-        for (;;) {
-          const next = queue.shift();
-          if (!next) return;
-          results.push(await uploadOne(next));
-        }
-      };
-
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker)
-      );
-
-      return results.every(Boolean);
+      return runPool(files);
     },
-    [uploadOne]
+    [runPool]
   );
+
+  /**
+   * Re-run ONLY the files that failed.
+   *
+   * The reason this exists rather than calling start() again: start() resets every
+   * item to 'pending' and re-uploads the whole array, so recovering from one failure
+   * in a batch of twenty re-sent all twenty — and since each upload mints a fresh
+   * fileId server-side, the nineteen that had already succeeded were registered a
+   * SECOND time. Reviewers saw every file twice and the first copies were orphaned.
+   */
+  const retryFailed = useCallback(async (): Promise<boolean> => {
+    const failed = itemsRef.current
+      .filter((i) => i.state === 'failed')
+      .map((i) => filesRef.current.get(i.path))
+      .filter((f): f is FileWithPath => Boolean(f));
+    if (failed.length === 0) return true;
+    return runPool(failed);
+  }, [runPool]);
 
   /** Retry one failed file without restarting the batch. */
   const retry = useCallback(
@@ -279,5 +345,5 @@ export function useUpload() {
   const anyFailed = items.some((i) => i.state === 'failed');
   const doneCount = items.filter((i) => i.state === 'done').length;
 
-  return { items, start, retry, reset, allDone, anyFailed, doneCount };
+  return { items, start, retry, retryFailed, reset, allDone, anyFailed, doneCount };
 }

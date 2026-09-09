@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
@@ -47,6 +47,10 @@ function NewPackage() {
   const [phase, setPhase] = useState<'compose' | 'uploading'>('compose');
   const [error, setError] = useState<string | null>(null);
   // Held so a retry that succeeds can still publish the draft it belongs to.
+  // Mirrors `draft` so the catch in create() can see a draft created earlier in
+  // its own run — the closure's copy of the state is frozen at the render that
+  // created it and would still read null.
+  const draftRef = useRef<{ portalId: string; versionId: string } | null>(null);
   const [draft, setDraft] = useState<{
     portalId: string;
     versionId: string;
@@ -121,6 +125,7 @@ function NewPackage() {
       if (!versionRes.ok) throw new Error('Could not start the version');
       const version = await versionRes.json();
       setDraft({ portalId: pkg.id, versionId: version.id });
+      draftRef.current = { portalId: pkg.id, versionId: version.id };
 
       // 4. Upload every file in parallel.
       const ok = await upload.start(files, {
@@ -142,7 +147,15 @@ function NewPackage() {
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Something went wrong');
-      setPhase('compose');
+
+      // Only fall back to compose when there is nothing to recover. Once a draft
+      // exists, every byte may already be in R2 and every row in Postgres — and
+      // the "Publish and open" recovery button lives inside the `uploading`
+      // branch, so dropping to compose UNMOUNTED the one control that could
+      // finish the job. The only remaining action then rebuilt a second project,
+      // package and version and re-uploaded everything, stranding the first as an
+      // unpublished phantom. Staying put keeps the recovery button on screen.
+      if (!draftRef.current) setPhase('compose');
     }
   };
 
