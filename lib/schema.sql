@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   job_title TEXT,
   company TEXT,
+  plan TEXT NOT NULL DEFAULT 'free',
   email_paused_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
