@@ -16,8 +16,17 @@
 - Tier limits, exact: **Free** = `2 * 1024 ** 3` bytes, `2` projects. **Standard** = `100 * 1024 ** 3` bytes, unlimited projects (`maxProjects: null`).
 - Binary units throughout (1 GB = 1024³), matching the base the existing `formatSize` already uses.
 - **This is a readout. Do not add enforcement anywhere.** No upload is blocked, no project creation is blocked. An account may legitimately be over either limit.
-- Every colour must come from `tailwind.config.ts`. Do not invent hex values.
+- Every colour must be a value that already exists in `tailwind.config.ts`. Inline hex
+  constants are fine where a runtime-computed inline style needs one (the codebase
+  already does this in `ROLE_TEXT_COLOR` and `UploadProgress`), but the hex must match a
+  token in that file and name it in a comment. Do not invent new colours.
 - **Neon's HTTP driver returns `BIGINT` and `NUMERIC` aggregates as strings.** Every `SUM(...)` and `COUNT(*)` read in this plan must be wrapped in `Number()` in JS. Skipping this yields string concatenation (`"0" + "0"` → `"00"`), not addition.
+- **Never source `.env.local` from the shell.** `. .env.local` has no slash, so zsh
+  searches `PATH`, and the unquoted connection string's `?` gets glob-expanded and the
+  whole `DATABASE_URL` echoed on failure — that is how the database password leaked into
+  a transcript on 2026-09-04. Use `node --env-file=.env.local …`. Never print
+  `DATABASE_URL`, `process.env`, or any R2 secret.
+- `npm run dev` needs no env plumbing — Next.js loads `.env.local` itself.
 - Never run `git add -A` in this repo. Three long-lived untracked directories (`stiko_handoff/`, `design_handoff_portal_view/`, `design_handoff_brief_section/`) will be swept into the commit. Always `git add` explicit paths.
 
 ---
@@ -101,7 +110,7 @@ test('usageFraction survives junk input', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="tier|plan|usageFraction"`
+Run: `node --test --test-name-pattern="tier|plan|usageFraction" scripts/tests/plans.test.mjs`
 
 Expected: FAIL — `Cannot find module` for `lib/plans.ts`.
 
@@ -179,7 +188,7 @@ export function usageFraction(used: number, limit: number | null): number | null
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npm test -- --test-name-pattern="tier|plan|usageFraction"`
+Run: `node --test --test-name-pattern="tier|plan|usageFraction" scripts/tests/plans.test.mjs`
 
 Expected: PASS — 7 tests.
 
@@ -245,7 +254,7 @@ test('formatBytes survives junk input', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="formatBytes"`
+Run: `node --test --test-name-pattern="formatBytes" scripts/tests/design.test.mjs`
 
 Expected: FAIL — `formatBytes is not a function` (or an import error).
 
@@ -288,7 +297,7 @@ export function formatBytes(bytes: number): string {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npm test -- --test-name-pattern="formatBytes"`
+Run: `node --test --test-name-pattern="formatBytes" scripts/tests/design.test.mjs`
 
 Expected: PASS — 5 tests.
 
@@ -346,7 +355,7 @@ git commit -m "feat: add shared formatBytes helper"
 ### Task 3: Schema — the plan column
 
 **Files:**
-- Create: `lib/migrations/010-plans.sql`
+- Create: `lib/migrations/011-plans.sql`
 - Modify: `lib/schema.sql` (the `users` CREATE TABLE block, after `company TEXT,`)
 
 **Interfaces:**
@@ -356,7 +365,7 @@ git commit -m "feat: add shared formatBytes helper"
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- lib/migrations/010-plans.sql
+-- lib/migrations/011-plans.sql
 --
 -- Subscription tier per user (2026-09-11). Mirrored in lib/schema.sql.
 --
@@ -385,10 +394,10 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run migrate -- --dry
+node --env-file=.env.local scripts/migrate.mjs --dry
 ```
 
-Expected: output listing `010-plans.sql` as outstanding, and touching nothing.
+Expected: output listing `011-plans.sql` as outstanding, and touching nothing.
 
 - [ ] **Step 4: Apply the migration**
 
@@ -396,10 +405,10 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run migrate
+node --env-file=.env.local scripts/migrate.mjs
 ```
 
-Expected: `010-plans.sql` applied, recorded in `schema_migrations`.
+Expected: `011-plans.sql` applied, recorded in `schema_migrations`.
 
 - [ ] **Step 5: Confirm the column exists and every user has a tier**
 
@@ -407,7 +416,7 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`SELECT plan, COUNT(*) AS n FROM users GROUP BY plan\`.then(r => console.log(r));
@@ -419,7 +428,7 @@ Expected: one row, `{ plan: 'free', n: '<your user count>' }`. No NULLs.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add lib/migrations/010-plans.sql lib/schema.sql
+git add lib/migrations/011-plans.sql lib/schema.sql
 git commit -m "feat: add users.plan column"
 ```
 
@@ -568,7 +577,7 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node --experimental-strip-types -e "
+node --env-file=.env.local --experimental-strip-types -e "
 import('./lib/queries.ts').then(async (m) => {
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(process.env.DATABASE_URL);
@@ -589,7 +598,7 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 (async () => {
@@ -616,7 +625,7 @@ throwaway row you delete immediately.
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 (async () => {
@@ -655,7 +664,7 @@ Confirm the row came back unchanged:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\\`SELECT id, attachments FROM comments LIMIT 1\\`.then(r => console.log(r[0]));
@@ -743,7 +752,7 @@ Start the dev server in one terminal:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run dev
+npm run dev
 ```
 
 In a second terminal, confirm it rejects an unauthenticated call:
@@ -1255,7 +1264,7 @@ Nothing so far proves this renders. Per `docs/superpowers/specs` precedent, a fe
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run dev
+npm run dev
 ```
 
 - [ ] **Step 2: Check the default state**
@@ -1268,7 +1277,7 @@ Expected: a 300px popover. Plan badge reads **FREE**. A storage bar with a "Proj
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'standard' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1284,7 +1293,7 @@ Expected: badge reads **STANDARD**, storage limit reads 100 GB, and the projects
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'free' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1298,7 +1307,7 @@ If the account holds under 2 GB, temporarily lower the Free limit in `lib/plans.
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'enterprise' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1312,7 +1321,7 @@ Expected: badge falls back to **FREE**, the menu renders normally, and the dev-s
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'free' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1344,7 +1353,7 @@ The migration must land **before** the code, or `/api/me/usage` selects a column
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run migrate
+node --env-file=.env.local scripts/migrate.mjs
 ```
 
 Rollback is to revert the code. The column is additive with a default and is harmless if left in place.
