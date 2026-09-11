@@ -172,7 +172,13 @@ const BYTE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
  */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024) {
+    const roundedBytes = Math.round(bytes);
+    // Same carry as every other unit below: 1023.6 rounds to 1024 B, which
+    // must read as 1 KB rather than printing 1024 of the smallest unit.
+    if (roundedBytes < 1024) return `${roundedBytes} B`;
+    return `1 ${BYTE_UNITS[0]}`;
+  }
 
   let value = bytes / 1024;
   let unit = 0;

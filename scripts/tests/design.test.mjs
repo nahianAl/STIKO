@@ -126,6 +126,12 @@ test('formatBytes carries rather than printing 1024 of a unit', () => {
   assert.equal(formatBytes(1023.9 * 1024 ** 2), '1 GB');
 });
 
+test('formatBytes carries out of the bytes unit too', () => {
+  // 1023.6 bytes rounds to 1024 B, which should read as 1 KB, same as every
+  // other unit boundary above it.
+  assert.equal(formatBytes(1023.6), '1 KB');
+});
+
 test('formatBytes survives junk input', () => {
   assert.equal(formatBytes(-1), '0 B');
   assert.equal(formatBytes(Number.NaN), '0 B');
