@@ -98,12 +98,20 @@ export default function ProjectPeopleDrawer({
         footer={
           canManage ? (
             <div className="flex items-center gap-2">
-              <Button fullWidth onClick={() => setAddOpen(true)}>
-                Add people
-              </Button>
+              {/* Access in this product is granted per package, so with no
+                  packages there is nowhere for "Add people" to send someone —
+                  the modal it opens would show an empty list and a permanently
+                  disabled send button. */}
+              {packages.length > 0 && (
+                <Button fullWidth onClick={() => setAddOpen(true)}>
+                  Add people
+                </Button>
+              )}
               <Link
                 href={`/project/${project.id}`}
-                className="shrink-0 rounded-[10px] border-[1.5px] border-stiko-border-strong px-[14px] py-2 text-[12.5px] font-bold text-stiko-secondary transition duration-150 hover:bg-stiko-app"
+                className={`shrink-0 rounded-[10px] border-[1.5px] border-stiko-border-strong px-[14px] py-2 text-center text-[12.5px] font-bold text-stiko-secondary transition duration-150 hover:bg-stiko-app ${
+                  packages.length === 0 ? 'w-full' : ''
+                }`}
               >
                 Access matrix
               </Link>
@@ -136,6 +144,8 @@ export default function ProjectPeopleDrawer({
           {people.length === 0 && (
             <p className="px-[10px] py-4 text-[12.5px] text-stiko-muted">
               Nobody else is on this project&apos;s packages yet.
+              {packages.length === 0 &&
+                ' People are invited to packages, so this project needs one first.'}
             </p>
           )}
 
