@@ -35,14 +35,21 @@ const TRASH_COLOR = '#A2A7B8'; // stiko.faint
 const OVER_COLOR = '#FF6B6B'; // note.red-accent
 
 /**
- * Raw bytes/storageBytes ratio, deliberately not clamped to 0–1 — see the
- * comment at its call site. Guards the two ways this can go wrong: a
- * zero/negative denominator (division by zero or a sign flip) and a
- * non-finite result, both of which are bad input rather than a legitimately
- * huge ratio, so they're floored to 0 rather than poisoning the segment.
+ * Raw bytes/storageBytes ratio, deliberately not clamped to 0–1 here — see
+ * the comment at the call site for how the two segments get normalized
+ * together before reaching Meter. Mirrors usageFraction()'s handling of
+ * degenerate input: a non-finite or non-positive `bytes` is bad input, not a
+ * legitimately empty segment, so it's floored to 0; a non-finite or
+ * non-positive `storageBytes` (division by zero, a sign flip, or a broken
+ * limit) can't produce a real ratio, so any positive usage against it is
+ * treated as completely full (1) rather than empty — otherwise the bar would
+ * render blank while its over-quota alarm fires. A non-finite division
+ * result (e.g. overflow) is likewise floored to 0 rather than left to
+ * poison the segment.
  */
 function storageRatio(bytes: number, storageBytes: number): number {
-  if (!(storageBytes > 0)) return 0;
+  if (!Number.isFinite(bytes) || bytes <= 0) return 0;
+  if (!Number.isFinite(storageBytes) || storageBytes <= 0) return 1;
   const ratio = bytes / storageBytes;
   return Number.isFinite(ratio) ? ratio : 0;
 }
@@ -82,14 +89,21 @@ export default function UsageMeters({
   const { plan, storage, projects } = usage;
 
   const overStorage = storage.totalBytes > plan.storageBytes;
-  // Unclamped ratios, unlike usageFraction() elsewhere in this file: Meter
-  // scales segments down proportionally only when their fractions collectively
-  // overflow the track, so feeding it the true (possibly >1) ratios is what
-  // lets the bar fill exactly full while preserving the projects/trash split.
-  // Two pre-clamped 0-1 fractions could never sum past 1, so overflow could
-  // never trigger.
-  const projectShare = storageRatio(storage.projectBytes, plan.storageBytes);
-  const trashShare = storageRatio(storage.trashBytes, plan.storageBytes);
+  // Meter clamps each segment to 0–1 *before* summing and renormalizing, so
+  // handing it a raw ratio that individually exceeds 1 would clamp that
+  // segment down first and distort the split against the other one — not
+  // what we want when the true byte proportion is known right here. So the
+  // normalizing happens in this component instead: compute the true
+  // (possibly >1) ratios, and if together they overflow the track, scale
+  // both down by the same factor so each is individually ≤ 1 and they sum to
+  // exactly 1. That preserves the real projects/trash byte proportion all
+  // the way to Meter, whose own per-segment clamp is then a no-op.
+  const rawProjectShare = storageRatio(storage.projectBytes, plan.storageBytes);
+  const rawTrashShare = storageRatio(storage.trashBytes, plan.storageBytes);
+  const shareSum = rawProjectShare + rawTrashShare;
+  const shareScale = shareSum > 1 ? 1 / shareSum : 1;
+  const projectShare = rawProjectShare * shareScale;
+  const trashShare = rawTrashShare * shareScale;
 
   // Same variable feeds both the bar segment and the legend dot below, so the
   // two can never disagree about what colour "Projects" is drawn in.
