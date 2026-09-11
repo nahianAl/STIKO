@@ -993,6 +993,50 @@ Insert after the `const packages: PackageCard[] = rows.map(...)` block (after `l
   const projects = Array.from(projectsById.values());
 ```
 
+**Step 5b — also return projects that have no visible package.** The `visible` CTE selects
+`FROM portals`, so a project with zero visible packages produces no rows and would never reach
+the payload — which would make the Task 5 "New project" flow create a project and show nothing.
+Add this query after `mentionRows`:
+
+```typescript
+  const emptyProjectRows = await sql`
+    SELECT DISTINCT pr.id, pr.name, pr.created_at,
+           (pr.owner_id = ${userId}) AS "ownedByMe",
+           owner.name AS "ownerName",
+           pm.role AS "memberRole"
+    FROM projects pr
+    LEFT JOIN users owner ON owner.id = pr.owner_id
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE pr.archived_at IS NULL
+      AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL)
+    ORDER BY pr.created_at DESC
+  `;
+```
+
+and merge it after the `rows` loop, before `Array.from`:
+
+```typescript
+  for (const r of emptyProjectRows) {
+    const id = r.id as string;
+    if (projectsById.has(id)) continue;
+    projectsById.set(id, {
+      id,
+      name: r.name as string,
+      ownedByMe: Boolean(r.ownedByMe),
+      createdByName: (r.ownerName as string) ?? null,
+      myRole: deriveMyRole({
+        ownedByMe: Boolean(r.ownedByMe),
+        memberRole: (r.memberRole as string) ?? null,
+        participantRoles: [],
+      }),
+    });
+  }
+```
+
+Scoped to owner-or-member on purpose, matching `GET /api/projects`: a guest is a participant on
+*packages*, so a project with no package they can see is not theirs to know about.
+
 Then change the return statement (currently `lib/queries.ts:230`) from:
 
 ```typescript

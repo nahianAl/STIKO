@@ -99,6 +99,13 @@ export interface ProjectSummary {
 
 `/api/home` returns `{ packages, projects, disclosure, isGuestOnly }`.
 
+`projects` is NOT derived from `packages` alone. The `visible` CTE selects `FROM portals`, so a
+project with no visible package produces no row; a second query returns projects the viewer owns
+or coordinates, and the two are merged. Without it "New project" would create a project and show
+nothing — the empty card is the whole point of that flow. That second query is scoped
+owner-or-member, matching `GET /api/projects`: a guest is a participant on *packages*, so a
+project with no package they can see is not theirs to know about.
+
 `/api/notifications` GET gains `pr.id AS "projectId", pr.name AS "projectName"` via one
 `LEFT JOIN projects pr ON pr.id = po.project_id`. `NotificationRow` grows two optional fields;
 `NotificationTray` is untouched. `LIMIT 50` stays — the rail is a feed, not an archive.
