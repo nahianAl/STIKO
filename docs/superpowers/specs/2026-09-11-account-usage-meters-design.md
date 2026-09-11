@@ -85,7 +85,7 @@ export const PLANS: Record<PlanId, Plan> = {
   standard: { id: 'standard', label: 'Standard', storageBytes: 100 * 1024 ** 3, maxProjects: null },
 };
 
-export const DEFAULT_PLAN: PlanId = 'free';
+export const DEFAULT_PLAN_ID: PlanId = 'free';
 
 /** Always returns a valid plan. Unknown or null resolves to Free. */
 export function planFor(value: string | null | undefined): Plan;
