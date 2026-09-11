@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { FileChip } from './Primitives';
+import { formatBytes } from '@/lib/design';
 
 export type UploadState = 'pending' | 'uploading' | 'optimizing' | 'done' | 'failed';
 
@@ -14,11 +15,6 @@ export interface UploadItem {
   state: UploadState;
   /** 2e: a file that supersedes an existing one carries a REPLACES V4 chip. */
   replacesVersion?: number | null;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
 /**
@@ -79,7 +75,7 @@ export function UploadProgressRow({
           )}
           {(item.state === 'uploading' || item.state === 'pending') && (
             <span className="text-stiko-muted">
-              {item.progress}% · {formatSize(item.bytes)}
+              {item.progress}% · {formatBytes(item.bytes)}
             </span>
           )}
         </div>

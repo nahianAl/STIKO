@@ -16,8 +16,17 @@
 - Tier limits, exact: **Free** = `2 * 1024 ** 3` bytes, `2` projects. **Standard** = `100 * 1024 ** 3` bytes, unlimited projects (`maxProjects: null`).
 - Binary units throughout (1 GB = 1024³), matching the base the existing `formatSize` already uses.
 - **This is a readout. Do not add enforcement anywhere.** No upload is blocked, no project creation is blocked. An account may legitimately be over either limit.
-- Every colour must come from `tailwind.config.ts`. Do not invent hex values.
+- Every colour must be a value that already exists in `tailwind.config.ts`. Inline hex
+  constants are fine where a runtime-computed inline style needs one (the codebase
+  already does this in `ROLE_TEXT_COLOR` and `UploadProgress`), but the hex must match a
+  token in that file and name it in a comment. Do not invent new colours.
 - **Neon's HTTP driver returns `BIGINT` and `NUMERIC` aggregates as strings.** Every `SUM(...)` and `COUNT(*)` read in this plan must be wrapped in `Number()` in JS. Skipping this yields string concatenation (`"0" + "0"` → `"00"`), not addition.
+- **Never source `.env.local` from the shell.** `. .env.local` has no slash, so zsh
+  searches `PATH`, and the unquoted connection string's `?` gets glob-expanded and the
+  whole `DATABASE_URL` echoed on failure — that is how the database password leaked into
+  a transcript on 2026-09-04. Use `node --env-file=.env.local …`. Never print
+  `DATABASE_URL`, `process.env`, or any R2 secret.
+- `npm run dev` needs no env plumbing — Next.js loads `.env.local` itself.
 - Never run `git add -A` in this repo. Three long-lived untracked directories (`stiko_handoff/`, `design_handoff_portal_view/`, `design_handoff_brief_section/`) will be swept into the commit. Always `git add` explicit paths.
 
 ---
@@ -101,7 +110,7 @@ test('usageFraction survives junk input', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="tier|plan|usageFraction"`
+Run: `node --test --test-name-pattern="tier|plan|usageFraction" scripts/tests/plans.test.mjs`
 
 Expected: FAIL — `Cannot find module` for `lib/plans.ts`.
 
@@ -179,7 +188,7 @@ export function usageFraction(used: number, limit: number | null): number | null
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npm test -- --test-name-pattern="tier|plan|usageFraction"`
+Run: `node --test --test-name-pattern="tier|plan|usageFraction" scripts/tests/plans.test.mjs`
 
 Expected: PASS — 7 tests.
 
@@ -245,7 +254,7 @@ test('formatBytes survives junk input', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm test -- --test-name-pattern="formatBytes"`
+Run: `node --test --test-name-pattern="formatBytes" scripts/tests/design.test.mjs`
 
 Expected: FAIL — `formatBytes is not a function` (or an import error).
 
@@ -288,7 +297,7 @@ export function formatBytes(bytes: number): string {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npm test -- --test-name-pattern="formatBytes"`
+Run: `node --test --test-name-pattern="formatBytes" scripts/tests/design.test.mjs`
 
 Expected: PASS — 5 tests.
 
@@ -346,7 +355,7 @@ git commit -m "feat: add shared formatBytes helper"
 ### Task 3: Schema — the plan column
 
 **Files:**
-- Create: `lib/migrations/010-plans.sql`
+- Create: `lib/migrations/011-plans.sql`
 - Modify: `lib/schema.sql` (the `users` CREATE TABLE block, after `company TEXT,`)
 
 **Interfaces:**
@@ -356,7 +365,7 @@ git commit -m "feat: add shared formatBytes helper"
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- lib/migrations/010-plans.sql
+-- lib/migrations/011-plans.sql
 --
 -- Subscription tier per user (2026-09-11). Mirrored in lib/schema.sql.
 --
@@ -371,12 +380,24 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
 
 - [ ] **Step 2: Mirror it in schema.sql**
 
-In `lib/schema.sql`, inside `CREATE TABLE IF NOT EXISTS users`, add the column after `company TEXT,`:
+In `lib/schema.sql`, add a **standalone `ALTER`** after the `users` table's
+closing `);` — NOT a column inside the `CREATE TABLE` block.
+
+`scripts/migrate.mjs` applies `schema.sql` first, unconditionally, and
+`CREATE TABLE IF NOT EXISTS` is a whole-statement no-op against an existing
+database: Postgres skips the entire statement rather than diffing columns. A
+column added inside the block therefore never lands on any existing database.
+This repo has already shipped that exact bug on this exact table — see commit
+`94d27e9` on `workos-foundation`, which fixed it for `workos_user_id`.
+
+Follow the `ai_summaries_enabled` precedent already in `schema.sql`:
 
 ```sql
-  company TEXT,
-  plan TEXT NOT NULL DEFAULT 'free',
-  email_paused_until TIMESTAMPTZ,
+-- Subscription tier (2026-09-11). Mirrored in lib/migrations/011-plans.sql.
+-- An ALTER rather than a column in the CREATE TABLE above, because that
+-- statement is a no-op once the table exists — this is what actually adds the
+-- column to an existing database.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
 ```
 
 - [ ] **Step 3: Dry-run the migration**
@@ -385,10 +406,10 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run migrate -- --dry
+node --env-file=.env.local scripts/migrate.mjs --dry
 ```
 
-Expected: output listing `010-plans.sql` as outstanding, and touching nothing.
+Expected: output listing `011-plans.sql` as outstanding, and touching nothing.
 
 - [ ] **Step 4: Apply the migration**
 
@@ -396,10 +417,10 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run migrate
+node --env-file=.env.local scripts/migrate.mjs
 ```
 
-Expected: `010-plans.sql` applied, recorded in `schema_migrations`.
+Expected: `011-plans.sql` applied, recorded in `schema_migrations`.
 
 - [ ] **Step 5: Confirm the column exists and every user has a tier**
 
@@ -407,7 +428,7 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`SELECT plan, COUNT(*) AS n FROM users GROUP BY plan\`.then(r => console.log(r));
@@ -419,7 +440,7 @@ Expected: one row, `{ plan: 'free', n: '<your user count>' }`. No NULLs.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add lib/migrations/010-plans.sql lib/schema.sql
+git add lib/migrations/011-plans.sql lib/schema.sql
 git commit -m "feat: add users.plan column"
 ```
 
@@ -568,7 +589,7 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node --experimental-strip-types -e "
+node --env-file=.env.local --experimental-strip-types -e "
 import('./lib/queries.ts').then(async (m) => {
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(process.env.DATABASE_URL);
@@ -589,7 +610,7 @@ Run:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 (async () => {
@@ -610,59 +631,51 @@ Expected: a number at or just below the `projectBytes` from Step 3 — equal if 
 
 - [ ] **Step 5: Prove the JSONB guards hold**
 
-The two guards in the query exist because `jsonb_array_elements` *raises* on a
-non-array rather than returning nothing. This is the step that proves it, on a
-throwaway row you delete immediately.
+The two guards exist because `jsonb_array_elements` *raises* on a non-array
+rather than returning nothing. This proves them against every malformed shape
+at once — as a pure `SELECT` over literal values, touching no table and writing
+nothing. (An earlier draft of this step mutated a real `comments` row and
+restored it; against a production database with no staging, a failure between
+those two writes would have destroyed a real comment's attachments.)
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
-(async () => {
-  const [c] = await sql\\`SELECT id, attachments FROM comments LIMIT 1\\`;
-  if (!c) { console.log('no comments to test against — skip'); return; }
-  const original = JSON.stringify(c.attachments ?? []);
-  for (const bad of [null, '{}', '\"scalar\"', '[{\"filename\":\"x\"}]', '[{\"size\":\"12\"}]']) {
-    await sql\\`UPDATE comments SET attachments = \\${bad}::jsonb WHERE id = \\${c.id}\\`;
-    const r = await sql\\`
-      SELECT COALESCE(SUM(
-        CASE WHEN jsonb_typeof(att->'size') = 'number'
-             THEN (att->>'size')::numeric ELSE 0 END
-      ), 0) AS bytes
-      FROM comments cm
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(cm.attachments) = 'array'
-             THEN cm.attachments ELSE '[]'::jsonb END
-      ) AS att
-      WHERE cm.id = \\${c.id}\\`;
-    console.log('ok', String(bad).slice(0, 24), '->', r[0]?.bytes ?? 0);
-  }
-  await sql\\`UPDATE comments SET attachments = \\${original}::jsonb WHERE id = \\${c.id}\\`;
-  console.log('restored');
-})().catch(e => { console.error('GUARD FAILED:', e.message); process.exit(1); });
+sql\`
+  SELECT t.label,
+         COALESCE(SUM(
+           CASE WHEN jsonb_typeof(att->'size') = 'number'
+                THEN (att->>'size')::numeric ELSE 0 END
+         ), 0) AS bytes
+  FROM (VALUES
+    ('null column',  NULL::jsonb),
+    ('object',       '{}'::jsonb),
+    ('bare scalar',  '\"str\"'::jsonb),
+    ('missing size', '[{\"filename\":\"x\"}]'::jsonb),
+    ('string size',  '[{\"size\":\"12\"}]'::jsonb),
+    ('float size',   '[{\"size\":12.5}]'::jsonb),
+    ('good',         '[{\"size\":12},{\"size\":30}]'::jsonb)
+  ) AS t(label, attachments)
+  LEFT JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(t.attachments) = 'array'
+         THEN t.attachments ELSE '[]'::jsonb END
+  ) AS att ON TRUE
+  GROUP BY t.label ORDER BY t.label
+\`.then(r => r.forEach(x => console.log('  ', x.label, '->', x.bytes)))
+ .catch(e => { console.error('GUARD FAILED:', e.message); process.exit(1); });
 "
 ```
 
-Expected: five `ok` lines, then `restored`. Each case returns `0` without raising —
-a NULL column, an object, a bare scalar, a missing `size`, and a string `size`.
+Expected: seven rows, no error. `good -> 42`, `float size -> 12.5`, and every
+other case `-> 0`.
 
-**Hard gate:** any `GUARD FAILED` output means the guards in Step 1 were altered
-or dropped. Restore them before continuing; this exact shape 500s the account
-menu on real data otherwise.
-
-Confirm the row came back unchanged:
-
-```bash
-cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
-const { neon } = require('@neondatabase/serverless');
-const sql = neon(process.env.DATABASE_URL);
-sql\\`SELECT id, attachments FROM comments LIMIT 1\\`.then(r => console.log(r[0]));
-"
-```
-
-Expected: the original `attachments` value, not `null` and not `{}`.
+**Hard gate:** any `GUARD FAILED` output means a guard was altered or dropped.
+The `bare scalar` and `object` cases are the ones that raise without the
+`CASE`; `string size` is the one that raises without the `jsonb_typeof` check
+on `att->'size'`. Restore the guards before continuing — this exact shape 500s
+the account menu on real data otherwise.
 
 - [ ] **Step 6: Commit**
 
@@ -743,7 +756,7 @@ Start the dev server in one terminal:
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run dev
+npm run dev
 ```
 
 In a second terminal, confirm it rejects an unauthenticated call:
@@ -1255,7 +1268,7 @@ Nothing so far proves this renders. Per `docs/superpowers/specs` precedent, a fe
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run dev
+npm run dev
 ```
 
 - [ ] **Step 2: Check the default state**
@@ -1268,7 +1281,7 @@ Expected: a 300px popover. Plan badge reads **FREE**. A storage bar with a "Proj
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'standard' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1284,7 +1297,7 @@ Expected: badge reads **STANDARD**, storage limit reads 100 GB, and the projects
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'free' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1298,7 +1311,7 @@ If the account holds under 2 GB, temporarily lower the Free limit in `lib/plans.
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'enterprise' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1312,7 +1325,7 @@ Expected: badge falls back to **FREE**, the menu renders normally, and the dev-s
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`UPDATE users SET plan = 'free' WHERE email = 'muhammadalnahian@gmail.com'\`
@@ -1344,7 +1357,7 @@ The migration must land **before** the code, or `/api/me/usage` selects a column
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
-set -a && . .env.local && set +a && npm run migrate
+node --env-file=.env.local scripts/migrate.mjs
 ```
 
 Rollback is to revert the code. The column is additive with a default and is harmless if left in place.

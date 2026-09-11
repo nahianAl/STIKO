@@ -9,6 +9,7 @@ import {
   fileChip,
   derivePackageName,
   relativeTime,
+  formatBytes,
 } from '../../lib/design.ts';
 
 test('every note has a pastel, a paired text colour and an accent', () => {
@@ -97,4 +98,42 @@ test('relative time reads the way the screens write it', () => {
 
 test('an unparseable timestamp renders as nothing, not "NaN ago"', () => {
   assert.equal(relativeTime('not a date'), '');
+});
+
+test('formatBytes covers each unit boundary', () => {
+  assert.equal(formatBytes(0), '0 B');
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(1024), '1 KB');
+  assert.equal(formatBytes(1536), '1.5 KB');
+  assert.equal(formatBytes(1024 ** 2), '1 MB');
+  assert.equal(formatBytes(1024 ** 3), '1 GB');
+  assert.equal(formatBytes(1024 ** 4), '1 TB');
+});
+
+test('formatBytes never shows a trailing .0', () => {
+  // A plan limit has to read "2 GB", not "2.0 GB".
+  assert.equal(formatBytes(2 * 1024 ** 3), '2 GB');
+  assert.equal(formatBytes(100 * 1024 ** 3), '100 GB');
+});
+
+test('formatBytes keeps one decimal below 100 and drops it above', () => {
+  assert.equal(formatBytes(1.44 * 1024 ** 3), '1.4 GB');
+  assert.equal(formatBytes(101.6 * 1024 ** 2), '102 MB');
+});
+
+test('formatBytes carries rather than printing 1024 of a unit', () => {
+  // 1023.9 MB rounds to 1024 MB, which should read as 1 GB.
+  assert.equal(formatBytes(1023.9 * 1024 ** 2), '1 GB');
+});
+
+test('formatBytes carries out of the bytes unit too', () => {
+  // 1023.6 bytes rounds to 1024 B, which should read as 1 KB, same as every
+  // other unit boundary above it.
+  assert.equal(formatBytes(1023.6), '1 KB');
+});
+
+test('formatBytes survives junk input', () => {
+  assert.equal(formatBytes(-1), '0 B');
+  assert.equal(formatBytes(Number.NaN), '0 B');
+  assert.equal(formatBytes(Number.POSITIVE_INFINITY), '0 B');
 });

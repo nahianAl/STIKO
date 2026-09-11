@@ -1,0 +1,11 @@
+-- lib/migrations/011-plans.sql
+--
+-- Subscription tier per user (2026-09-11). Mirrored in lib/schema.sql.
+--
+-- No CHECK constraint, deliberately. The catalogue of tiers lives in
+-- lib/plans.ts, and a CHECK here would force a migration every time a tier is
+-- added or renamed. planFor() resolves anything unrecognised to Free and warns
+-- to the server log, which is what makes a mistyped UPDATE findable.
+--
+-- Nothing enforces the limits this implies. The column drives a readout only.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
