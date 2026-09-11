@@ -164,3 +164,69 @@ export function homeStats(packages: PackageCard[]): {
     inReview: packages.filter((p) => p.status === 'in_review').length,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Activity rail                                                              */
+/* -------------------------------------------------------------------------- */
+
+export type ActivityBadge = 'MENTION' | 'ACTION' | 'NEW' | null;
+
+export interface ActivityAccent {
+  badge: ActivityBadge;
+  /** 3px left border. Null means the row renders a TRANSPARENT border, so
+   *  baselines line up with the accented rows beside it. */
+  border: string | null;
+  bg: string | null;
+}
+
+const PLAIN: ActivityAccent = { badge: null, border: null, bg: null };
+
+const ACCENTS: Record<string, ActivityAccent> = {
+  mention: { badge: 'MENTION', border: '#FF6B6B', bg: '#F6F8FE' },
+  changes_requested: { badge: 'ACTION', border: '#FF6B6B', bg: '#F6F8FE' },
+  new_version: { badge: 'NEW', border: '#FFCF2E', bg: '#F6F8FE' },
+};
+
+/** Unknown types degrade to plain — the CHECK constraint can outrun this map. */
+export function activityAccent(type: string): ActivityAccent {
+  return ACCENTS[type] ?? PLAIN;
+}
+
+const DAY = 86_400_000;
+
+function startOfLocalDay(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * Recency buckets for the feed. Generic over `{ createdAt }` so lib/ does not
+ * have to import a type that lives in a component.
+ */
+export function groupActivity<T extends { createdAt: string }>(
+  rows: T[],
+  now: number = Date.now()
+): { label: string; items: T[] }[] {
+  const today = startOfLocalDay(now);
+  const buckets: { label: string; items: T[] }[] = [
+    { label: 'Today', items: [] },
+    { label: 'Yesterday', items: [] },
+    { label: 'Earlier this week', items: [] },
+    { label: 'Earlier', items: [] },
+  ];
+
+  for (const row of [...rows].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+  )) {
+    const t = Date.parse(row.createdAt);
+    // A future timestamp (clock skew between Neon and the browser is real)
+    // belongs in Today, not nowhere.
+    if (Number.isNaN(t) || t >= today) buckets[0].items.push(row);
+    else if (t >= today - DAY) buckets[1].items.push(row);
+    else if (t >= today - 7 * DAY) buckets[2].items.push(row);
+    else buckets[3].items.push(row);
+  }
+
+  return buckets.filter((b) => b.items.length > 0);
+}
