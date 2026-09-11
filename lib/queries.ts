@@ -1,6 +1,7 @@
 import { sql } from '@/lib/db';
 import { deriveStatus, type VersionStatus, type Verdict } from '@/lib/status';
 import type { DisclosureState } from '@/lib/disclosure';
+import { planFor, type Plan } from '@/lib/plans';
 
 /**
  * Aggregate reads for the redesigned screens.
@@ -227,4 +228,111 @@ export async function getHomeData(userId: string): Promise<{
   };
 
   return { packages, disclosure, isGuestOnly };
+}
+
+export interface AccountUsage {
+  plan: Plan;
+  storage: {
+    projectBytes: number;
+    trashBytes: number;
+    totalBytes: number;
+  };
+  projects: {
+    count: number;
+    max: number | null;
+  };
+}
+
+/**
+ * What this account is using, against what its plan allows.
+ *
+ * Scoped throughout to projects the user OWNS. Projects they were invited into
+ * belong to whoever owns them, and counting those here would bill two
+ * coordinators for the same bytes.
+ *
+ * What counts, and why:
+ *   - Files in archived packages DO count. The bytes are still in S3, and
+ *     archiving is not deleting.
+ *   - Files in unpublished drafts DO count, for the same reason.
+ *   - Converted derivatives (files.converted_storage_key) do NOT. No byte size
+ *     is recorded for them anywhere, and they are bytes the product generated
+ *     rather than bytes the user uploaded.
+ *   - Markup snapshots (comments.snapshot_url) do NOT, same reason.
+ *
+ * So the figure is smaller than the true S3 footprint, on purpose: the number
+ * on screen should be one the user can act on by deleting their own content.
+ *
+ * The project COUNT excludes archived projects while the byte total includes
+ * archived packages. That asymmetry is intentional — "how much space am I
+ * using" and "how many of my projects are in the way" are different questions.
+ * Nothing writes projects.archived_at today; the filter is there so the count
+ * stays right when project archiving arrives.
+ */
+export async function getAccountUsage(userId: string): Promise<AccountUsage> {
+  const rows = await sql`
+    WITH owned_files AS (
+      SELECT f.id, f.file_size
+      FROM files f
+      JOIN versions v ON v.id = f.version_id
+      JOIN portals po ON po.id = v.portal_id
+      JOIN projects pr ON pr.id = po.project_id
+      WHERE pr.owner_id = ${userId}
+    ),
+    file_bytes AS (
+      SELECT COALESCE(SUM(file_size), 0) AS bytes FROM owned_files
+    ),
+    attachment_bytes AS (
+      -- Two hazards here, both of which raise rather than return NULL:
+      --   jsonb_array_elements() throws on a non-array, and comments.attachments
+      --   is nullable with a '[]' default, so a NULL or a scalar is possible.
+      --   The CASE normalises those to an empty array before the function sees
+      --   them; a WHERE would be applied too late to help.
+      --   ::numeric, not ::bigint, because a JSONB number need not be an
+      --   integer and '1234.5'::bigint is an error.
+      SELECT COALESCE(SUM(
+        CASE WHEN jsonb_typeof(att->'size') = 'number'
+             THEN (att->>'size')::numeric
+             ELSE 0 END
+      ), 0) AS bytes
+      FROM comments c
+      JOIN owned_files f ON f.id = c.file_id
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(c.attachments) = 'array'
+             THEN c.attachments
+             ELSE '[]'::jsonb END
+      ) AS att
+    )
+    SELECT (SELECT bytes FROM file_bytes) AS "fileBytes",
+           (SELECT bytes FROM attachment_bytes) AS "attachmentBytes",
+           (SELECT COUNT(*) FROM projects
+             WHERE owner_id = ${userId} AND archived_at IS NULL) AS "projectCount",
+           (SELECT plan FROM users WHERE id = ${userId}) AS "planId"
+  `;
+
+  const row = rows[0] ?? {};
+
+  // The HTTP driver returns BIGINT and NUMERIC aggregates as strings. Without
+  // Number() these concatenate instead of adding.
+  const projectBytes =
+    Number(row.fileBytes ?? 0) + Number(row.attachmentBytes ?? 0);
+
+  // Trash does not exist yet, so this is a real zero rather than a placeholder.
+  // When it ships, this becomes the same sum over soft-deleted rows and nothing
+  // downstream changes.
+  const trashBytes = 0;
+
+  const plan = planFor(row.planId ?? null);
+
+  return {
+    plan,
+    storage: {
+      projectBytes,
+      trashBytes,
+      totalBytes: projectBytes + trashBytes,
+    },
+    projects: {
+      count: Number(row.projectCount ?? 0),
+      max: plan.maxProjects,
+    },
+  };
 }
