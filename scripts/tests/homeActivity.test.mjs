@@ -32,6 +32,19 @@ test('an unknown notification type degrades to plain, not to a crash', () => {
   assert.deepEqual(activityAccent('something_new'), { badge: null, border: null, bg: null });
 });
 
+test('a type colliding with Object.prototype still degrades to plain', () => {
+  // A bare object lookup resolves these to inherited functions, which are
+  // truthy, so `?? PLAIN` would never fire and a function object would reach
+  // the component as an accent.
+  for (const type of ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__']) {
+    assert.deepEqual(
+      activityAccent(type),
+      { badge: null, border: null, bg: null },
+      type
+    );
+  }
+});
+
 /* ----------------------------------------------------------------- group -- */
 
 const NOW = Date.parse('2026-09-11T15:00:00Z');
@@ -79,4 +92,12 @@ test('a future timestamp lands in Today rather than vanishing', () => {
   // silently drop a row out of every bucket.
   const groups = groupActivity([at('2026-09-11T23:59:00Z')], NOW);
   assert.deepEqual(groups.map((g) => g.label), ['Today']);
+});
+
+test('an unparseable timestamp lands in Today rather than being dropped', () => {
+  // Losing a row because a date failed to parse is worse than putting it at
+  // the top: the row is the only record that something happened.
+  const groups = groupActivity([{ createdAt: 'not-a-date' }], NOW);
+  assert.deepEqual(groups.map((g) => g.label), ['Today']);
+  assert.equal(groups[0].items.length, 1);
 });

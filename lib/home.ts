@@ -187,9 +187,16 @@ const ACCENTS: Record<string, ActivityAccent> = {
   new_version: { badge: 'NEW', border: '#FFCF2E', bg: '#F6F8FE' },
 };
 
-/** Unknown types degrade to plain — the CHECK constraint can outrun this map. */
+/**
+ * Unknown types degrade to plain — the CHECK constraint can outrun this map.
+ *
+ * The own-property guard is load-bearing, not defensive dressing: a bare
+ * `ACCENTS[type]` resolves inherited keys like "constructor" and "toString" to
+ * truthy values from Object.prototype, so `?? PLAIN` would never fire and a
+ * function object would reach the component as an accent.
+ */
 export function activityAccent(type: string): ActivityAccent {
-  return ACCENTS[type] ?? PLAIN;
+  return Object.hasOwn(ACCENTS, type) ? ACCENTS[type] : PLAIN;
 }
 
 const DAY = 86_400_000;
