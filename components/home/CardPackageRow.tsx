@@ -1,9 +1,10 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { StatusChip } from '@/components/ui/Primitives';
+import { AttentionPill, StatusChip } from '@/components/ui/Primitives';
 import { STATUS_ACCENT } from '@/lib/status';
 import { relativeTime } from '@/lib/design';
+import { needsYou } from '@/lib/home';
 import type { PackageCard } from '@/lib/queries';
 
 /**
@@ -34,6 +35,20 @@ export function CardPackageRow({ pkg }: { pkg: PackageCard }) {
         ? `${pkg.fileCount} ${pkg.fileCount === 1 ? 'file' : 'files'}`
         : 'empty';
 
+  // Tied to the same predicate the header subline counts with, so the row and
+  // the count can never disagree. Solid pill because 01's rule is that solid
+  // means a fact about YOU; the outlined StatusChip beside it is a fact about
+  // the work.
+  const attention = !needsYou(pkg)
+    ? null
+    : pkg.mentions > 0
+      ? {
+          label: `${pkg.mentions} mention${pkg.mentions === 1 ? '' : 's'}`,
+          bg: '#FFE2E2',
+          fg: '#B23A52',
+        }
+      : { label: 'New version', bg: '#FFFCCE', fg: '#7A5E00' };
+
   return (
     <button
       onClick={() => router.push(`/portal/${pkg.id}`)}
@@ -45,9 +60,20 @@ export function CardPackageRow({ pkg }: { pkg: PackageCard }) {
           <span className="truncate text-[13px] font-bold text-stiko-ink">
             {pkg.name}
           </span>
-          <span className="shrink-0">
-            <StatusChip status={pkg.status} />
-          </span>
+          {pkg.versionNumber != null && (
+            <span className="shrink-0">
+              <StatusChip status={pkg.status} />
+            </span>
+          )}
+          {attention && (
+            <span className="shrink-0">
+              <AttentionPill
+                label={attention.label}
+                bg={attention.bg}
+                fg={attention.fg}
+              />
+            </span>
+          )}
         </span>
         <span className="mt-[3px] block truncate text-[11px] text-stiko-muted">
           {meta}

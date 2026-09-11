@@ -98,7 +98,12 @@ export default function Home() {
     () => groupProjects(packages, projects),
     [packages, projects]
   );
-  const visible = useMemo(() => filterGroups(groups, filter), [groups, filter]);
+  const visible = useMemo(() => {
+    // The pills unmount when there is nothing to filter; without this the last
+    // selection would keep filtering a grid the user can no longer unfilter.
+    const active = showFilterRow(groups) ? filter : 'all';
+    return filterGroups(groups, active);
+  }, [groups, filter]);
 
   const newPackage = () => router.push('/new');
 
@@ -184,10 +189,11 @@ export default function Home() {
     );
   }
 
-  const needsYouCount = packages.filter(needsYou).length;
+  const visiblePackages = visible.flatMap((g) => g.packages);
+  const needsYouCount = visiblePackages.filter(needsYou).length;
   const subline = [
-    `${groups.length} ${groups.length === 1 ? 'project' : 'projects'}`,
-    `${packages.length} ${packages.length === 1 ? 'package' : 'packages'}`,
+    `${visible.length} ${visible.length === 1 ? 'project' : 'projects'}`,
+    `${visiblePackages.length} ${visiblePackages.length === 1 ? 'package' : 'packages'}`,
     needsYouCount > 0 ? `${needsYouCount} need you` : null,
   ]
     .filter(Boolean)
@@ -225,7 +231,7 @@ export default function Home() {
                       className={`rounded-[9px] border-[1.5px] px-[11px] py-[6px] text-[12px] font-bold transition duration-150 ${
                         filter === key
                           ? 'border-stiko-border-strong bg-white text-stiko-ink'
-                          : 'border-transparent bg-transparent text-stiko-muted'
+                          : 'border-transparent bg-transparent text-stiko-muted hover:text-stiko-ink'
                       }`}
                     >
                       {label}
@@ -240,7 +246,7 @@ export default function Home() {
 
               <button
                 onClick={() => setNewProjectOpen(true)}
-                className="flex items-center gap-[6px] rounded-[10px] bg-gradient-to-br from-[#8094F5] to-[#5B60FF] px-[14px] py-2 text-[12.5px] font-bold text-white shadow-stiko-primary transition duration-150"
+                className="flex items-center gap-[6px] rounded-[10px] bg-gradient-to-br from-[#8094F5] to-[#5B60FF] px-[14px] py-2 text-[12.5px] font-bold text-white shadow-stiko-primary transition duration-150 hover:brightness-[1.04]"
               >
                 <svg
                   className="h-[13px] w-[13px]"

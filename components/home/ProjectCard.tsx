@@ -27,6 +27,12 @@ export default function ProjectCard({
     ? 'Created by you'
     : `Created by ${project.createdByName ?? 'someone else'}`;
 
+  // `myRole` is display-only everywhere else, but `coordinator` is the
+  // exception: participants.role is CHECK-constrained to
+  // viewer|commenter|uploader, so a `coordinator` value can only have come
+  // from a project_members row, which makes it a genuine project-level grant.
+  const canManage = project.ownedByMe || project.myRole === 'coordinator';
+
   return (
     <section
       className="overflow-hidden rounded-panel border border-stiko-sheet bg-white shadow-stiko-card"
@@ -35,12 +41,18 @@ export default function ProjectCard({
       <header className="flex items-start justify-between gap-3 px-4 pb-[13px] pt-[15px]">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <Link
-              href={`/project/${project.id}`}
-              className="truncate text-[16px] font-extrabold tracking-heading text-stiko-ink transition duration-150 hover:text-stiko-primary"
-            >
-              {project.name}
-            </Link>
+            {canManage ? (
+              <Link
+                href={`/project/${project.id}`}
+                className="truncate text-[16px] font-extrabold tracking-heading text-stiko-ink transition duration-150 hover:text-stiko-primary"
+              >
+                {project.name}
+              </Link>
+            ) : (
+              <span className="truncate text-[16px] font-extrabold tracking-heading text-stiko-ink">
+                {project.name}
+              </span>
+            )}
             <OwnershipChip
               ownedByMe={project.ownedByMe}
               myRole={project.myRole}
@@ -78,23 +90,25 @@ export default function ProjectCard({
           <CardPackageRow key={pkg.id} pkg={pkg} />
         ))}
 
-        <button
-          type="button"
-          onClick={() => router.push(`/new?project=${project.id}`)}
-          className="flex w-full items-center justify-center gap-[6px] rounded-[11px] border-[1.5px] border-dashed border-stiko-border-strong p-2 text-[11.5px] font-bold text-stiko-muted transition duration-150 hover:border-stiko-primary hover:text-stiko-primary"
-        >
-          <svg
-            className="h-3 w-3"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2.8}
-            strokeLinecap="round"
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => router.push(`/new?project=${project.id}`)}
+            className="flex w-full items-center justify-center gap-[6px] rounded-[11px] border-[1.5px] border-dashed border-stiko-border-strong p-2 text-[11.5px] font-bold text-stiko-muted transition duration-150 hover:border-stiko-primary hover:text-stiko-primary"
           >
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          Add a package
-        </button>
+            <svg
+              className="h-3 w-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2.8}
+              strokeLinecap="round"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Add a package
+          </button>
+        )}
       </div>
     </section>
   );
