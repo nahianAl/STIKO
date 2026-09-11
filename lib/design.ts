@@ -160,3 +160,34 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   if (months < 12) return `${months}mo ago`;
   return `${Math.round(months / 12)}y ago`;
 }
+
+const BYTE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
+
+/**
+ * Human byte size, in the terse form the meters and upload rows use.
+ *
+ * Binary units (1 GB = 1024^3), matching the plan limits in lib/plans.ts, so
+ * an account exactly at its limit reads "2 / 2 GB" with no rounding artefact.
+ * One decimal below 100, none above, and never a trailing ".0".
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+
+  let rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  // Rounding can push a value up into the next unit — 1023.9 MB rounds to
+  // 1024 MB, which must read as 1 GB.
+  if (rounded >= 1024 && unit < BYTE_UNITS.length - 1) {
+    rounded = 1;
+    unit += 1;
+  }
+
+  return `${rounded} ${BYTE_UNITS[unit]}`;
+}
