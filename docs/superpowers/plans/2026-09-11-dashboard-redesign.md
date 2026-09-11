@@ -390,21 +390,33 @@ test('the filter splits owned from invited', () => {
   assert.deepEqual(filterGroups(groups, 'shared').map((g) => g.project.id), ['proj2']);
 });
 
-test('the filter row is hidden when there is nothing to filter', () => {
+test('the filter row needs both an owned and an invited project', () => {
   const oneOwned = groupProjects([pkg()], [proj()]);
   assert.equal(showFilterRow(oneOwned), false);
 
+  // Two owned, none invited: "Shared with me" could never match anything.
   const twoOwned = groupProjects(
     [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
     [proj(), proj({ id: 'proj2', name: 'Other' })]
   );
-  assert.equal(showFilterRow(twoOwned), true);
+  assert.equal(showFilterRow(twoOwned), false);
 
-  const mixed = groupProjects(
-    [pkg()],
-    [proj({ ownedByMe: false, myRole: 'commenter' })]
+  // A pure guest across two projects: "Owned by me" could never match.
+  const twoInvited = groupProjects(
+    [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
+    [
+      proj({ ownedByMe: false, myRole: 'commenter' }),
+      proj({ id: 'proj2', name: 'Other', ownedByMe: false, myRole: 'viewer' }),
+    ]
   );
-  assert.equal(showFilterRow(mixed), false);
+  assert.equal(showFilterRow(twoInvited), false);
+
+  // One of each is the only shape where all three buttons mean something.
+  const mixed = groupProjects(
+    [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
+    [proj(), proj({ id: 'proj2', name: 'Other', ownedByMe: false, myRole: 'commenter' })]
+  );
+  assert.equal(showFilterRow(mixed), true);
 });
 
 /* ----------------------------------------------------------------- stats -- */
@@ -570,9 +582,15 @@ export function filterGroups(
   return groups.filter((g) => g.project.ownedByMe === wantOwned);
 }
 
-/** 03's ladder: never render a control with nothing to control. */
+/**
+ * 03's ladder: never render a control with nothing to control.
+ *
+ * Both an owned and an invited project must exist. With only owned projects
+ * "Shared with me" can never match; with only invited ones "Owned by me" can
+ * never match — and a row carrying a permanently empty button is exactly the
+ * dead control the ladder exists to remove.
+ */
 export function showFilterRow(groups: ProjectGroup[]): boolean {
-  if (groups.length >= 2) return true;
   const owned = groups.filter((g) => g.project.ownedByMe).length;
   return owned >= 1 && groups.length - owned >= 1;
 }
@@ -603,7 +621,7 @@ export function homeStats(packages: PackageCard[]): {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test scripts/tests/home.test.mjs`
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Commit**
 
