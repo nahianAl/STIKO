@@ -13,7 +13,7 @@
 - **No database migration.** No schema change of any kind. If a task seems to need one, stop and raise it.
 - **Tests are `node --test` over pure `lib/` modules.** Run with `npm test`. The repo has **no React testing library** and 527 passing pure-logic tests. Follow that pattern: `lib/` gets TDD, components are verified in the browser (Task 10). Do **not** add a component test framework.
 - **Tests import `.ts` directly** (`import { x } from '../../lib/x.ts'`) and run under Node's native type stripping. Node v25.9.0 is in use.
-- **`lib/` modules that are unit-tested MUST use relative imports, never the `@/` alias.** Node's resolver has no knowledge of `tsconfig.json` paths, so `import { NOTES } from '@/lib/design'` inside a tested module fails with `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'`. Verified against this repo on 2026-09-11. Every currently-tested module (`lib/status.ts`, `lib/design.ts`, `lib/capabilities.ts`, `lib/brief.ts`) uses relative paths for exactly this reason. Components and route handlers go through webpack and may keep using `@/`.
+- **A VALUE import between unit-tested `lib/` modules must be relative AND carry an explicit `.ts` extension** — `import { NOTES } from './design.ts'`. Two separate failures otherwise, both verified empirically against this repo on 2026-09-11: the `@/` alias gives `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'` because Node's resolver knows nothing of `tsconfig.json` paths, and an extensionless relative path gives `ERR_MODULE_NOT_FOUND: Cannot find module '.../lib/design'` because Node's ESM resolver does no extension guessing. `lib/s3.ts` and `lib/storageKeys.ts` already import siblings this way. `tsconfig.json` already sets `allowImportingTsExtensions: true` and `moduleResolution: bundler`, so `tsc` and webpack both accept it. Components and route handlers are not run by `node --test` and may keep using `@/`.
 - **A type-only import is erased, and that is load-bearing.** `lib/home.ts` imports types from `lib/queries.ts`, which imports `lib/db` and throws at module load without `DATABASE_URL`. Writing `import type { ... }` means the test never loads it. Writing a plain `import` would make every `lib/home.ts` test require a database.
 - **Use Tailwind tokens for colour where one exists.** Two exceptions match what the codebase already does: a value passed as an inline `style` (how `StatusChip` and `RolePill` render colours that come from a TS map), and the primary gradient's arbitrary-value classes `from-[#8094F5] to-[#5B60FF]`, which `Button.tsx` and `Shell.tsx` already spell exactly that way. Every token exists in `tailwind.config.ts` except `shadow-stiko-card`, added in Task 6.
 - **Never `git add -A` in this repo.** Four long-lived untracked directories (`design_handoff_*`, `stiko_handoff/`) get swept into unrelated commits. Stage files by exact path.
@@ -436,12 +436,12 @@ Expected: FAIL — `Cannot find module` for `lib/home.ts`.
 Create `lib/home.ts`:
 
 ```typescript
-import { highestRole, ROLE_RANK, type ProjectRole } from './roles';
+import { highestRole, ROLE_RANK, type ProjectRole } from './roles.ts';
 // `import type` is load-bearing: lib/queries.ts imports lib/db, which throws at
 // module load without DATABASE_URL. A type-only import is erased, so the unit
 // tests never pull a database connection in. Do not turn this into a plain
 // import.
-import type { PackageCard, ProjectSummary } from './queries';
+import type { PackageCard, ProjectSummary } from './queries.ts';
 
 /**
  * Every derivation the home screen needs, as pure functions over the payload
