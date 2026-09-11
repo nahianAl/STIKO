@@ -154,21 +154,33 @@ test('the filter splits owned from invited', () => {
   assert.deepEqual(filterGroups(groups, 'shared').map((g) => g.project.id), ['proj2']);
 });
 
-test('the filter row is hidden when there is nothing to filter', () => {
+test('the filter row needs both an owned and an invited project', () => {
   const oneOwned = groupProjects([pkg()], [proj()]);
   assert.equal(showFilterRow(oneOwned), false);
 
+  // Two owned, none invited: "Shared with me" could never match anything.
   const twoOwned = groupProjects(
     [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
     [proj(), proj({ id: 'proj2', name: 'Other' })]
   );
-  assert.equal(showFilterRow(twoOwned), true);
+  assert.equal(showFilterRow(twoOwned), false);
 
-  const mixed = groupProjects(
-    [pkg()],
-    [proj({ ownedByMe: false, myRole: 'commenter' })]
+  // A pure guest across two projects: "Owned by me" could never match.
+  const twoInvited = groupProjects(
+    [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
+    [
+      proj({ ownedByMe: false, myRole: 'commenter' }),
+      proj({ id: 'proj2', name: 'Other', ownedByMe: false, myRole: 'viewer' }),
+    ]
   );
-  assert.equal(showFilterRow(mixed), false);
+  assert.equal(showFilterRow(twoInvited), false);
+
+  // One of each is the only shape where all three buttons mean something.
+  const mixed = groupProjects(
+    [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
+    [proj(), proj({ id: 'proj2', name: 'Other', ownedByMe: false, myRole: 'commenter' })]
+  );
+  assert.equal(showFilterRow(mixed), true);
 });
 
 /* ----------------------------------------------------------------- stats -- */

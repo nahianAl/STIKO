@@ -132,9 +132,15 @@ export function filterGroups(
   return groups.filter((g) => g.project.ownedByMe === wantOwned);
 }
 
-/** 03's ladder: never render a control with nothing to control. */
+/**
+ * 03's ladder: never render a control with nothing to control.
+ *
+ * Both an owned and an invited project must exist. With only owned projects
+ * "Shared with me" can never match; with only invited ones "Owned by me" can
+ * never match — and a row carrying a permanently empty button is exactly the
+ * dead control the ladder exists to remove.
+ */
 export function showFilterRow(groups: ProjectGroup[]): boolean {
-  if (groups.length >= 2) return true;
   const owned = groups.filter((g) => g.project.ownedByMe).length;
   return owned >= 1 && groups.length - owned >= 1;
 }
