@@ -380,12 +380,24 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
 
 - [ ] **Step 2: Mirror it in schema.sql**
 
-In `lib/schema.sql`, inside `CREATE TABLE IF NOT EXISTS users`, add the column after `company TEXT,`:
+In `lib/schema.sql`, add a **standalone `ALTER`** after the `users` table's
+closing `);` — NOT a column inside the `CREATE TABLE` block.
+
+`scripts/migrate.mjs` applies `schema.sql` first, unconditionally, and
+`CREATE TABLE IF NOT EXISTS` is a whole-statement no-op against an existing
+database: Postgres skips the entire statement rather than diffing columns. A
+column added inside the block therefore never lands on any existing database.
+This repo has already shipped that exact bug on this exact table — see commit
+`94d27e9` on `workos-foundation`, which fixed it for `workos_user_id`.
+
+Follow the `ai_summaries_enabled` precedent already in `schema.sql`:
 
 ```sql
-  company TEXT,
-  plan TEXT NOT NULL DEFAULT 'free',
-  email_paused_until TIMESTAMPTZ,
+-- Subscription tier (2026-09-11). Mirrored in lib/migrations/011-plans.sql.
+-- An ALTER rather than a column in the CREATE TABLE above, because that
+-- statement is a no-op once the table exists — this is what actually adds the
+-- column to an existing database.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
 ```
 
 - [ ] **Step 3: Dry-run the migration**
@@ -619,59 +631,51 @@ Expected: a number at or just below the `projectBytes` from Step 3 — equal if 
 
 - [ ] **Step 5: Prove the JSONB guards hold**
 
-The two guards in the query exist because `jsonb_array_elements` *raises* on a
-non-array rather than returning nothing. This is the step that proves it, on a
-throwaway row you delete immediately.
+The two guards exist because `jsonb_array_elements` *raises* on a non-array
+rather than returning nothing. This proves them against every malformed shape
+at once — as a pure `SELECT` over literal values, touching no table and writing
+nothing. (An earlier draft of this step mutated a real `comments` row and
+restored it; against a production database with no staging, a failure between
+those two writes would have destroyed a real comment's attachments.)
 
 ```bash
 cd /Users/user/Desktop/STIKO-main
 node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
-(async () => {
-  const [c] = await sql\\`SELECT id, attachments FROM comments LIMIT 1\\`;
-  if (!c) { console.log('no comments to test against — skip'); return; }
-  const original = JSON.stringify(c.attachments ?? []);
-  for (const bad of [null, '{}', '\"scalar\"', '[{\"filename\":\"x\"}]', '[{\"size\":\"12\"}]']) {
-    await sql\\`UPDATE comments SET attachments = \\${bad}::jsonb WHERE id = \\${c.id}\\`;
-    const r = await sql\\`
-      SELECT COALESCE(SUM(
-        CASE WHEN jsonb_typeof(att->'size') = 'number'
-             THEN (att->>'size')::numeric ELSE 0 END
-      ), 0) AS bytes
-      FROM comments cm
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(cm.attachments) = 'array'
-             THEN cm.attachments ELSE '[]'::jsonb END
-      ) AS att
-      WHERE cm.id = \\${c.id}\\`;
-    console.log('ok', String(bad).slice(0, 24), '->', r[0]?.bytes ?? 0);
-  }
-  await sql\\`UPDATE comments SET attachments = \\${original}::jsonb WHERE id = \\${c.id}\\`;
-  console.log('restored');
-})().catch(e => { console.error('GUARD FAILED:', e.message); process.exit(1); });
+sql\`
+  SELECT t.label,
+         COALESCE(SUM(
+           CASE WHEN jsonb_typeof(att->'size') = 'number'
+                THEN (att->>'size')::numeric ELSE 0 END
+         ), 0) AS bytes
+  FROM (VALUES
+    ('null column',  NULL::jsonb),
+    ('object',       '{}'::jsonb),
+    ('bare scalar',  '\"str\"'::jsonb),
+    ('missing size', '[{\"filename\":\"x\"}]'::jsonb),
+    ('string size',  '[{\"size\":\"12\"}]'::jsonb),
+    ('float size',   '[{\"size\":12.5}]'::jsonb),
+    ('good',         '[{\"size\":12},{\"size\":30}]'::jsonb)
+  ) AS t(label, attachments)
+  LEFT JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(t.attachments) = 'array'
+         THEN t.attachments ELSE '[]'::jsonb END
+  ) AS att ON TRUE
+  GROUP BY t.label ORDER BY t.label
+\`.then(r => r.forEach(x => console.log('  ', x.label, '->', x.bytes)))
+ .catch(e => { console.error('GUARD FAILED:', e.message); process.exit(1); });
 "
 ```
 
-Expected: five `ok` lines, then `restored`. Each case returns `0` without raising —
-a NULL column, an object, a bare scalar, a missing `size`, and a string `size`.
+Expected: seven rows, no error. `good -> 42`, `float size -> 12.5`, and every
+other case `-> 0`.
 
-**Hard gate:** any `GUARD FAILED` output means the guards in Step 1 were altered
-or dropped. Restore them before continuing; this exact shape 500s the account
-menu on real data otherwise.
-
-Confirm the row came back unchanged:
-
-```bash
-cd /Users/user/Desktop/STIKO-main
-node --env-file=.env.local -e "
-const { neon } = require('@neondatabase/serverless');
-const sql = neon(process.env.DATABASE_URL);
-sql\\`SELECT id, attachments FROM comments LIMIT 1\\`.then(r => console.log(r[0]));
-"
-```
-
-Expected: the original `attachments` value, not `null` and not `{}`.
+**Hard gate:** any `GUARD FAILED` output means a guard was altered or dropped.
+The `bare scalar` and `object` cases are the ones that raise without the
+`CASE`; `string size` is the one that raises without the `jsonb_typeof` check
+on `att->'size'`. Restore the guards before continuing — this exact shape 500s
+the account menu on real data otherwise.
 
 - [ ] **Step 6: Commit**
 
