@@ -31,7 +31,7 @@ export function CardPackageRow({ pkg }: { pkg: PackageCard }) {
     pkg.openComments > 0
       ? `${pkg.openComments} open`
       : pkg.fileCount > 0
-        ? `${pkg.fileCount} files`
+        ? `${pkg.fileCount} ${pkg.fileCount === 1 ? 'file' : 'files'}`
         : 'empty';
 
   return (

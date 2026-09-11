@@ -68,7 +68,9 @@ export default function ProjectCard({
             {packageCount === 1 ? '1 package' : `${packageCount} packages`}
           </span>
           <span className="text-[10.5px] font-bold text-stiko-muted">
-            {openComments > 0 ? `${openComments} open comments` : 'Nothing open'}
+            {openComments === 0
+              ? 'Nothing open'
+              : `${openComments} open ${openComments === 1 ? 'comment' : 'comments'}`}
           </span>
         </div>
 
@@ -113,8 +115,8 @@ function OwnershipChip({
   if (ownedByMe) {
     return (
       <span
-        className="shrink-0 whitespace-nowrap rounded-pill border-[1.5px] border-transparent px-2 py-[3px] text-[9.5px] font-extrabold uppercase"
-        style={{ background: '#EBE4FD', color: '#6b4fc4', letterSpacing: '0.04em' }}
+        className="shrink-0 whitespace-nowrap rounded-pill border-[1.5px] border-transparent bg-note-purple px-2 py-[3px] text-[9.5px] font-extrabold uppercase text-note-purple-text"
+        style={{ letterSpacing: '0.04em' }}
       >
         Owner
       </span>
@@ -124,8 +126,8 @@ function OwnershipChip({
   const label = myRole ? `Invited · ${roleLabel(myRole)}` : 'Invited';
   return (
     <span
-      className="shrink-0 whitespace-nowrap rounded-pill border-[1.5px] bg-white px-2 py-[3px] text-[9.5px] font-extrabold uppercase"
-      style={{ borderColor: '#DDDFE8', color: '#8A90A6', letterSpacing: '0.04em' }}
+      className="shrink-0 whitespace-nowrap rounded-pill border-[1.5px] border-stiko-chip-grey bg-white px-2 py-[3px] text-[9.5px] font-extrabold uppercase text-stiko-muted"
+      style={{ letterSpacing: '0.04em' }}
     >
       {label}
     </span>
