@@ -56,15 +56,14 @@ export default function ActivityRail({
   };
 
   return (
-    // h-full is load-bearing: without a bounded height the feed's own
-    // overflow-y-auto never activates, the aside grows to fit every row, and
-    // the WHOLE PAGE scrolls instead — taking the top bar with it. The two
-    // sibling panels with the same shape (FileTreeSidebar, CommentsPanel)
-    // carry it for exactly this reason.
-    <aside
-      className="flex h-full shrink-0 flex-col overflow-hidden rounded-panel bg-white shadow-stiko-panel"
-      style={{ width: 344 }}
-    >
+    // h-full (from lg up only) is load-bearing: without a bounded height the
+    // feed's own overflow-y-auto never activates, the aside grows to fit every
+    // row, and the WHOLE PAGE scrolls instead — taking the top bar with it.
+    // The two sibling panels with the same shape (FileTreeSidebar,
+    // CommentsPanel) carry it for exactly this reason. Below lg the rail
+    // reflows beneath the grid at full width, where the feed's own max-height
+    // cap (below) keeps it from running the page long instead.
+    <aside className="flex h-auto w-full shrink-0 flex-col overflow-hidden rounded-panel bg-white shadow-stiko-panel lg:h-full lg:w-[344px]">
       <div className="flex items-center justify-between gap-[10px] border-b border-stiko-border px-4 py-[14px]">
         <div>
           <h2 className="text-[15px] font-extrabold text-stiko-ink">Activity</h2>
@@ -88,7 +87,7 @@ export default function ActivityRail({
         <StatTile value={stats.inReview} label="in review" color="#7A5E00" />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[14px] pt-[6px]">
+      <div className="min-h-0 max-h-[45vh] flex-1 overflow-y-auto px-3 pb-[14px] pt-[6px] lg:max-h-none">
         {groups.map((group) => (
           <div key={group.label} className="pt-[10px]">
             <div className="px-1 pb-[6px] text-[10px] font-bold uppercase tracking-label text-stiko-faint">

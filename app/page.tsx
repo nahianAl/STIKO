@@ -200,7 +200,7 @@ export default function Home() {
     <Shell>
       <TopBar right={topBarRight} />
 
-      <div className="flex min-h-0 flex-1 gap-6 px-1">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 px-1 lg:flex-row">
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-3 pt-[2px]">
             <div>
@@ -281,7 +281,7 @@ export default function Home() {
         </div>
 
         {notifications.length > 0 && (
-          <div className="hidden lg:block">
+          <div className="w-full shrink-0 lg:h-full lg:w-auto">
             <ActivityRail
               notifications={notifications}
               packages={packages}
