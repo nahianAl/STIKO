@@ -139,9 +139,14 @@ export default function ProjectPeopleDrawer({
             </p>
           )}
 
+          {/* The handoff's copy described an editable panel. This one is
+              read-only by decision, because a project-level role is derived
+              rather than stored, so the note has to say where roles actually
+              live instead of describing an edit that cannot happen here. */}
           <Note className="mt-3">
-            Roles are set per package. Changing someone here updates every
-            package in this project they are already on.
+            Roles are set per package, so this shows each person&apos;s
+            strongest role across the packages you can see. Change someone&apos;s
+            access on the package itself, or in the access matrix.
           </Note>
         </div>
       </Drawer>
