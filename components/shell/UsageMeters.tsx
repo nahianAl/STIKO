@@ -35,6 +35,19 @@ const TRASH_COLOR = '#A2A7B8'; // stiko.faint
 const OVER_COLOR = '#FF6B6B'; // note.red-accent
 
 /**
+ * Raw bytes/storageBytes ratio, deliberately not clamped to 0–1 — see the
+ * comment at its call site. Guards the two ways this can go wrong: a
+ * zero/negative denominator (division by zero or a sign flip) and a
+ * non-finite result, both of which are bad input rather than a legitimately
+ * huge ratio, so they're floored to 0 rather than poisoning the segment.
+ */
+function storageRatio(bytes: number, storageBytes: number): number {
+  if (!(storageBytes > 0)) return 0;
+  const ratio = bytes / storageBytes;
+  return Number.isFinite(ratio) ? ratio : 0;
+}
+
+/**
  * Storage and project usage, as shown in the account menu.
  *
  * Takes its data rather than fetching it, so the same block can be dropped on
@@ -69,15 +82,23 @@ export default function UsageMeters({
   const { plan, storage, projects } = usage;
 
   const overStorage = storage.totalBytes > plan.storageBytes;
-  const projectShare = usageFraction(storage.projectBytes, plan.storageBytes) ?? 0;
-  const trashShare = usageFraction(storage.trashBytes, plan.storageBytes) ?? 0;
+  // Unclamped ratios, unlike usageFraction() elsewhere in this file: Meter
+  // scales segments down proportionally only when their fractions collectively
+  // overflow the track, so feeding it the true (possibly >1) ratios is what
+  // lets the bar fill exactly full while preserving the projects/trash split.
+  // Two pre-clamped 0-1 fractions could never sum past 1, so overflow could
+  // never trigger.
+  const projectShare = storageRatio(storage.projectBytes, plan.storageBytes);
+  const trashShare = storageRatio(storage.trashBytes, plan.storageBytes);
 
-  const storageSegments = overStorage
-    ? [{ key: 'over', fraction: 1, color: OVER_COLOR }]
-    : [
-        { key: 'projects', fraction: projectShare, color: PROJECT_COLOR },
-        { key: 'trash', fraction: trashShare, color: TRASH_COLOR },
-      ];
+  // Same variable feeds both the bar segment and the legend dot below, so the
+  // two can never disagree about what colour "Projects" is drawn in.
+  const projectColor = overStorage ? OVER_COLOR : PROJECT_COLOR;
+
+  const storageSegments = [
+    { key: 'projects', fraction: projectShare, color: projectColor },
+    { key: 'trash', fraction: trashShare, color: TRASH_COLOR },
+  ];
 
   const projectFraction = usageFraction(projects.count, projects.max);
   const overProjects = projects.max !== null && projects.count > projects.max;
@@ -97,7 +118,7 @@ export default function UsageMeters({
           />
         </div>
         <div className="mt-[6px] flex items-center gap-3 text-[11px] text-stiko-muted">
-          <Legend color={PROJECT_COLOR}>
+          <Legend color={projectColor}>
             Projects {formatBytes(storage.projectBytes)}
           </Legend>
           <Legend color={TRASH_COLOR}>
@@ -151,7 +172,7 @@ function Row({
       <SectionLabel>{left}</SectionLabel>
       <span
         className={`text-[11.5px] font-semibold ${
-          alarm ? 'text-[#FF6B6B]' : 'text-stiko-secondary'
+          alarm ? 'text-note-red-accent' : 'text-stiko-secondary' // #FF6B6B
         }`}
       >
         {right}
