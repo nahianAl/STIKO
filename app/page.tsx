@@ -143,8 +143,7 @@ export default function Home() {
       {showBell && (
         <NotificationTray notifications={notifications} onChanged={load} />
       )}
-      {/* 3m: a guest home has no "New package" in the primary slot. */}
-      {!isGuestOnly && <Button onClick={newPackage}>New package</Button>}
+      <Button onClick={newPackage}>New package</Button>
       <AvatarMenu />
     </>
   );
@@ -211,6 +210,15 @@ export default function Home() {
               <p className="mt-[3px] text-[12.5px] text-stiko-muted">
                 {subline}
               </p>
+              {/* The only place in the product that states this contract to an
+                  invited-only user: they never publish, so the sole signal
+                  that a new version exists is the email that goes out when
+                  one is pushed. */}
+              {isGuestOnly && (
+                <p className="mt-[3px] text-[12.5px] text-stiko-muted">
+                  You&apos;ll get an email whenever a new version lands.
+                </p>
+              )}
             </div>
 
             <div className="flex items-center gap-[6px]">
