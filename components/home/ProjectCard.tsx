@@ -64,14 +64,16 @@ export default function ProjectCard({
           </p>
         </div>
 
-        <button
-          type="button"
-          title="Manage people"
-          onClick={() => onOpenPeople(project.id)}
-          className="flex shrink-0 items-center rounded-pill border-[1.5px] border-transparent py-[3px] pl-[11px] pr-[6px] transition duration-150 hover:border-stiko-border-strong hover:bg-stiko-app"
-        >
-          <AvatarStack people={people} size={26} />
-        </button>
+        {people.length > 0 && (
+          <button
+            type="button"
+            title="Manage people"
+            onClick={() => onOpenPeople(project.id)}
+            className="flex shrink-0 items-center rounded-pill border-[1.5px] border-transparent py-[3px] pl-[11px] pr-[6px] transition duration-150 hover:border-stiko-border-strong hover:bg-stiko-app"
+          >
+            <AvatarStack people={people} size={26} />
+          </button>
+        )}
       </header>
 
       <div className="flex flex-col gap-[6px] border-t border-stiko-border p-[10px]">
