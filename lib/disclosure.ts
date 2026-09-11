@@ -42,8 +42,6 @@ export const EMPTY_DISCLOSURE: DisclosureState = {
 };
 
 export const DISCLOSURE = {
-  /** Home is a flat package list until a second package exists. */
-  groupByProject: (s: DisclosureState) => s.packageCount >= 2,
   showSearch: (s: DisclosureState) => s.packageCount >= 3 || s.fileCount >= 20,
   showNotifications: (s: DisclosureState) => s.notificationCount > 0,
   /** Never render an empty "Needs you" section. */

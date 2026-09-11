@@ -16,6 +16,8 @@ export interface NotificationRow {
   readAt: string | null;
   portalId: string | null;
   packageName: string | null;
+  projectId: string | null;
+  projectName: string | null;
   actorId: string | null;
   actorName: string | null;
 }

@@ -13,9 +13,11 @@ export async function GET() {
     SELECT n.id, n.type, n.title, n.excerpt, n.href, n.created_at AS "createdAt",
            n.read_at AS "readAt", n.portal_id AS "portalId",
            po.name AS "packageName",
+           pr.id AS "projectId", pr.name AS "projectName",
            actor.id AS "actorId", actor.name AS "actorName"
     FROM notifications n
     LEFT JOIN portals po ON po.id = n.portal_id
+    LEFT JOIN projects pr ON pr.id = po.project_id
     LEFT JOIN users actor ON actor.id = n.actor_id
     WHERE n.user_id = ${session.user.id}
     ORDER BY n.created_at DESC

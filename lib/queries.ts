@@ -2,6 +2,8 @@ import { sql } from '@/lib/db';
 import { deriveStatus, type VersionStatus, type Verdict } from '@/lib/status';
 import type { DisclosureState } from '@/lib/disclosure';
 import { planFor, type Plan } from '@/lib/plans';
+import { deriveMyRole } from '@/lib/home';
+import type { ProjectRole } from '@/lib/roles';
 
 /**
  * Aggregate reads for the redesigned screens.
@@ -24,22 +26,40 @@ export interface PackageCard {
   openComments: number;
   updatedAt: string | null;
   updatedByName: string | null;
-  people: { id: string; name: string; pending?: boolean }[];
+  people: { id: string; name: string; role?: string; pending?: boolean }[];
   /** Personal: has this viewer seen the latest version? */
   seenLatest: boolean;
   mentions: number;
 }
 
+/**
+ * A project as the dashboard needs it. Deliberately additive to the flat
+ * PackageCard[] payload rather than nesting packages inside projects: the flat
+ * array is consumed by CommandPalette and mirrored on the project page, and
+ * every roll-up the grid needs derives from it.
+ */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  /** projects.owner_id = the viewer. */
+  ownedByMe: boolean;
+  /** The owner's name. Rendered as "you" client-side when ownedByMe. */
+  createdByName: string | null;
+  myRole: ProjectRole | null;
+}
+
 /** Everything home (5a / 5b / 2f / 3m) needs, in one pass. */
 export async function getHomeData(userId: string): Promise<{
   packages: PackageCard[];
+  projects: ProjectSummary[];
   disclosure: DisclosureState;
   isGuestOnly: boolean;
 }> {
   const rows = await sql`
     WITH visible AS (
       SELECT DISTINCT po.id, po.name, po.tag, po.project_id,
-             pr.name AS project_name,
+             pr.name AS project_name, pr.owner_id,
+             pm.role AS member_role,
              (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL) AS is_member
       FROM portals po
       JOIN projects pr ON pr.id = po.project_id
@@ -81,6 +101,9 @@ export async function getHomeData(userId: string): Promise<{
     )
     SELECT visible.id, visible.name, visible.tag, visible.project_id AS "projectId",
            visible.project_name AS "projectName", visible.is_member AS "isMember",
+           (visible.owner_id = ${userId}) AS "ownedByMe",
+           visible.member_role AS "memberRole",
+           owner.name AS "ownerName",
            latest.version_id AS "versionId",
            latest.version_number AS "versionNumber",
            latest.changelog,
@@ -95,6 +118,7 @@ export async function getHomeData(userId: string): Promise<{
              WHERE vv.version_id = latest.version_id AND vv.user_id = ${userId}) AS "seen",
            (SELECT COUNT(*) FROM participants pp WHERE pp.portal_id = visible.id) AS "reviewerCount"
     FROM visible
+    LEFT JOIN users owner ON owner.id = visible.owner_id
     LEFT JOIN latest ON latest.portal_id = visible.id
     LEFT JOIN users updater ON updater.id = latest.created_by
     ORDER BY latest.published_at DESC NULLS LAST, visible.name ASC
@@ -140,7 +164,7 @@ export async function getHomeData(userId: string): Promise<{
 
   const peopleRows = packageIds.length
     ? await sql`
-        SELECT p.portal_id AS "portalId", u.id, u.name
+        SELECT p.portal_id AS "portalId", p.role, u.id, u.name
         FROM participants p
         JOIN users u ON u.id = p.user_id
         WHERE p.portal_id = ANY(${packageIds})
@@ -161,10 +185,17 @@ export async function getHomeData(userId: string): Promise<{
     verdictsBy.set(v.portalId as string, list);
   }
 
-  const peopleBy = new Map<string, { id: string; name: string }[]>();
+  const peopleBy = new Map<
+    string,
+    { id: string; name: string; role?: string }[]
+  >();
   for (const p of peopleRows) {
     const list = peopleBy.get(p.portalId as string) ?? [];
-    list.push({ id: p.id as string, name: (p.name as string) ?? 'Someone' });
+    list.push({
+      id: p.id as string,
+      name: (p.name as string) ?? 'Someone',
+      role: (p.role as string) ?? undefined,
+    });
     peopleBy.set(p.portalId as string, list);
   }
 
@@ -200,6 +231,40 @@ export async function getHomeData(userId: string): Promise<{
     };
   });
 
+  // One entry per distinct project, in the order its packages appear (the
+  // query already sorts by recency). The viewer's own role is DERIVED — there
+  // is no project-level role column, and inventing one would need a migration.
+  const projectsById = new Map<string, ProjectSummary>();
+  const viewerRoles = new Map<string, string[]>();
+
+  for (const pkg of packages) {
+    const mine = pkg.people.find((p) => p.id === userId)?.role;
+    if (mine) {
+      viewerRoles.set(pkg.projectId, [
+        ...(viewerRoles.get(pkg.projectId) ?? []),
+        mine,
+      ]);
+    }
+  }
+
+  for (const r of rows) {
+    const id = r.projectId as string;
+    if (projectsById.has(id)) continue;
+    projectsById.set(id, {
+      id,
+      name: r.projectName as string,
+      ownedByMe: Boolean(r.ownedByMe),
+      createdByName: (r.ownerName as string) ?? null,
+      myRole: deriveMyRole({
+        ownedByMe: Boolean(r.ownedByMe),
+        memberRole: (r.memberRole as string) ?? null,
+        participantRoles: viewerRoles.get(id) ?? [],
+      }),
+    });
+  }
+
+  const projects = Array.from(projectsById.values());
+
   const notificationCount = Number(
     (
       await sql`
@@ -227,7 +292,7 @@ export async function getHomeData(userId: string): Promise<{
     versionCount: 0,
   };
 
-  return { packages, disclosure, isGuestOnly };
+  return { packages, projects, disclosure, isGuestOnly };
 }
 
 export interface AccountUsage {
