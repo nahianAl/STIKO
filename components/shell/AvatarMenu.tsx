@@ -30,9 +30,20 @@ export default function AvatarMenu() {
 
     fetch('/api/me/usage')
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then(setUsage)
+      .then((data) => {
+        setUsage(data);
+        // Clears a stale failure from an earlier attempt on this mount, so a
+        // successful retry actually shows the meters instead of leaving the
+        // "Usage unavailable" state stuck on despite fresh data having landed.
+        setUsageFailed(false);
+      })
       .catch((err) => {
         console.error('Failed to load usage', err);
+        // Only the failure path resets this — a success still never
+        // refetches. Reopening after a transient blip retries once on that
+        // next open (the effect only re-runs when `open` flips), rather than
+        // looping while the popover stays open.
+        requested.current = false;
         setUsageFailed(true);
       });
   }, [open]);

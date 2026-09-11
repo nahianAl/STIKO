@@ -5,24 +5,13 @@ import { Meter } from '@/components/ui/Meter';
 import { SectionLabel, SkeletonBar } from '@/components/ui/Primitives';
 import { usageFraction } from '@/lib/plans';
 import { formatBytes } from '@/lib/design';
+import type { AccountUsage } from '@/lib/queries';
 
-export interface UsagePayload {
-  plan: {
-    id: string;
-    label: string;
-    storageBytes: number;
-    maxProjects: number | null;
-  };
-  storage: {
-    projectBytes: number;
-    trashBytes: number;
-    totalBytes: number;
-  };
-  projects: {
-    count: number;
-    max: number | null;
-  };
-}
+// Type-only import, so this erases at compile time and does not pull
+// @/lib/db (or the query itself) into the client bundle. Re-exported under
+// the old name — an alias, not a hand-copy — so the wire shape and the
+// server's AccountUsage can never drift apart the way they used to.
+export type UsagePayload = AccountUsage;
 
 /** Projects segment. */
 const PROJECT_COLOR = '#5B60FF'; // stiko.primary

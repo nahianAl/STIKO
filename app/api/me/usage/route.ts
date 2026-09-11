@@ -25,11 +25,13 @@ export async function GET() {
     // users.plan is by far the most likely cause of this route failing on a
     // deploy, so say so rather than returning an opaque 500.
     if (/column .* does not exist/i.test(message)) {
+      // The console.error above is what actually helps a developer here; the
+      // raw Postgres message has no business leaving the server, and the
+      // client never rendered `detail` anyway.
       return NextResponse.json(
         {
           error:
             'The database is missing a column this version needs. Run `npm run migrate` to apply lib/migrations.',
-          detail: message,
         },
         { status: 503 }
       );

@@ -23,20 +23,26 @@ export interface Plan {
 
 const GIB = 1024 ** 3;
 
-export const PLANS: Record<PlanId, Plan> = {
-  free: {
+// Frozen at both levels: nothing mutates these today, but a future
+// `usage.plan.label = …` on a getAccountUsage() result (Plan objects here are
+// handed out by reference, not cloned) would otherwise corrupt the catalogue
+// for every later request in this server process. Object.freeze() is
+// runtime-only — it doesn't change the exported Plan/PlanId types — so this
+// is a footgun-removal, not an API change.
+export const PLANS: Record<PlanId, Plan> = Object.freeze({
+  free: Object.freeze({
     id: 'free',
     label: 'Free',
     storageBytes: 2 * GIB,
     maxProjects: 2,
-  },
-  standard: {
+  }),
+  standard: Object.freeze({
     id: 'standard',
     label: 'Standard',
     storageBytes: 100 * GIB,
     maxProjects: null,
-  },
-};
+  }),
+});
 
 export const DEFAULT_PLAN_ID: PlanId = 'free';
 

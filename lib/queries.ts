@@ -267,6 +267,16 @@ export interface AccountUsage {
  * using" and "how many of my projects are in the way" are different questions.
  * Nothing writes projects.archived_at today; the filter is there so the count
  * stays right when project archiving arrives.
+ *
+ * Every byte counted here is client-asserted, not verified. files.file_size
+ * is written straight from the request body in app/api/files/complete/route.ts,
+ * and comments.attachments[].size is written straight from the POST body in
+ * app/api/comments/route.ts (that route validates storageKey, not size). A
+ * client can report any figure it likes for either. Harmless for a readout —
+ * a user can only mislead themselves — but if this ever feeds ENFORCEMENT
+ * (blocking an upload, gating a plan) rather than just a display, whatever
+ * does that must verify the bytes against R2 first, or a caller can mint
+ * unlimited quota by lying about `size`.
  */
 export async function getAccountUsage(userId: string): Promise<AccountUsage> {
   const rows = await sql`
