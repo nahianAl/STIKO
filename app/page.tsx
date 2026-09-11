@@ -7,6 +7,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
 import ProjectCard from '@/components/home/ProjectCard';
 import NewProjectModal from '@/components/home/NewProjectModal';
+import ProjectPeopleDrawer from '@/components/home/ProjectPeopleDrawer';
 import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
 import NotificationTray, {
   type NotificationRow,
@@ -45,10 +46,6 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   const [filter, setFilter] = useState<HomeFilter>('all');
-  // `peoplePanelProjectId` itself has no reader yet — the people drawer that
-  // consumes it lands in a later task. The setter is already wired below via
-  // `onOpenPeople`, so the state is real, just not rendered anywhere yet.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [peoplePanelProjectId, setPeoplePanelProjectId] = useState<string | null>(
     null
   );
@@ -290,6 +287,12 @@ export default function Home() {
         isOpen={newProjectOpen}
         onClose={() => setNewProjectOpen(false)}
         onCreated={load}
+      />
+      <ProjectPeopleDrawer
+        group={groups.find((g) => g.project.id === peoplePanelProjectId) ?? null}
+        isOpen={peoplePanelProjectId !== null}
+        onClose={() => setPeoplePanelProjectId(null)}
+        onChanged={load}
       />
       <CommandPalette packages={packages} onNewPackage={newPackage} />
     </Shell>
