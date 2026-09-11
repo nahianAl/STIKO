@@ -56,8 +56,13 @@ export default function ActivityRail({
   };
 
   return (
+    // h-full is load-bearing: without a bounded height the feed's own
+    // overflow-y-auto never activates, the aside grows to fit every row, and
+    // the WHOLE PAGE scrolls instead — taking the top bar with it. The two
+    // sibling panels with the same shape (FileTreeSidebar, CommentsPanel)
+    // carry it for exactly this reason.
     <aside
-      className="flex shrink-0 flex-col overflow-hidden rounded-panel bg-white shadow-stiko-panel"
+      className="flex h-full shrink-0 flex-col overflow-hidden rounded-panel bg-white shadow-stiko-panel"
       style={{ width: 344 }}
     >
       <div className="flex items-center justify-between gap-[10px] border-b border-stiko-border px-4 py-[14px]">
