@@ -189,6 +189,27 @@ export async function getHomeData(userId: string): Promise<{
     GROUP BY portal_id
   `;
 
+  // A project with no visible package produces no rows above, because the
+  // `visible` CTE selects FROM portals. Without this the "New project" flow
+  // creates a project and the grid shows nothing.
+  //
+  // Scoped to owner-or-member on purpose, matching GET /api/projects: a guest
+  // is a participant on PACKAGES, so a project with no package they can see is
+  // not theirs to know about.
+  const emptyProjectRows = await sql`
+    SELECT DISTINCT pr.id, pr.name, pr.created_at,
+           (pr.owner_id = ${userId}) AS "ownedByMe",
+           owner.name AS "ownerName",
+           pm.role AS "memberRole"
+    FROM projects pr
+    LEFT JOIN users owner ON owner.id = pr.owner_id
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE pr.archived_at IS NULL
+      AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL)
+    ORDER BY pr.created_at DESC
+  `;
+
   const verdictsBy = new Map<string, Verdict[]>();
   for (const v of verdictRows) {
     const list = verdictsBy.get(v.portalId as string) ?? [];
@@ -270,6 +291,25 @@ export async function getHomeData(userId: string): Promise<{
         ownedByMe: Boolean(r.ownedByMe),
         memberRole: (r.memberRole as string) ?? null,
         participantRoles: viewerRoles.get(id) ?? [],
+      }),
+    });
+  }
+
+  // Appended after the package-bearing projects, newest first, so a
+  // just-created project is the first of the empty ones.
+  for (const r of emptyProjectRows) {
+    const id = r.id as string;
+    if (projectsById.has(id)) continue;
+    projectsById.set(id, {
+      id,
+      name: r.name as string,
+      ownedByMe: Boolean(r.ownedByMe),
+      createdByName: (r.ownerName as string) ?? null,
+      // No visible package means no participant role to derive from.
+      myRole: deriveMyRole({
+        ownedByMe: Boolean(r.ownedByMe),
+        memberRole: (r.memberRole as string) ?? null,
+        participantRoles: [],
       }),
     });
   }
