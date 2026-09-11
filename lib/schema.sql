@@ -8,10 +8,16 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   job_title TEXT,
   company TEXT,
-  plan TEXT NOT NULL DEFAULT 'free',
   email_paused_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- The column above is only created on a FRESH database. scripts/migrate.mjs applies
+-- this file before any migration, so on an existing database the CREATE TABLE above
+-- is a no-op and a column listed only in it would never land. Mirrored in
+-- lib/migrations/011-plans.sql — same pattern already used for ai_summaries_enabled
+-- further down this file.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
 
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
