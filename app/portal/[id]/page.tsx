@@ -1236,7 +1236,11 @@ export default function PortalPage() {
     setComposerError(null);
     try {
       const attachments = composerFiles.length > 0
-        ? await Promise.all(composerFiles.map(uploadFile))
+        ? await Promise.all(
+            // Bound explicitly, not `.map(uploadFile)`: map passes the array
+            // INDEX as the second argument, which is now the fileId.
+            composerFiles.map((f) => uploadFile(f, selectedFileId))
+          )
         : [];
       const res = await fetch('/api/comments', {
         method: 'POST',

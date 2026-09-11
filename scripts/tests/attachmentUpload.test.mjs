@@ -9,6 +9,9 @@ const ok = (over) => ({
   filename: 'section-detail.pdf',
   contentType: 'application/pdf',
   size: 1024,
+  // The file the comment hangs off. Required since 2026-09-08: it is what the
+  // route resolves to a package to decide whether this caller may write at all.
+  fileId: 'file-1',
   ...over,
 });
 
@@ -115,4 +118,33 @@ test('a filename cannot smuggle a path segment through the extension', () => {
       assert.ok(!result.extension.includes(' '), filename);
     }
   }
+});
+
+test('a request without a fileId is malformed', () => {
+  // The fileId is what ties this presigned WRITE to a package the caller belongs
+  // to. Without it the route could only check that SOMEONE was logged in, so any
+  // account could mint unlimited 25MB writes into the bucket.
+  assert.deepEqual(
+    validateAttachmentRequest({ filename: 'a.png', contentType: 'image/png', size: 10 }),
+    { ok: false, reason: 'malformed' }
+  );
+});
+
+test('a non-string or empty fileId is malformed', () => {
+  const base = { filename: 'a.png', contentType: 'image/png', size: 10 };
+  for (const fileId of [null, 42, '', {}, []]) {
+    assert.deepEqual(
+      validateAttachmentRequest({ ...base, fileId }),
+      { ok: false, reason: 'malformed' },
+      `fileId ${JSON.stringify(fileId)} should be rejected`
+    );
+  }
+});
+
+test('a valid request carries the fileId through for the access check', () => {
+  const out = validateAttachmentRequest({
+    filename: 'a.png', contentType: 'image/png', size: 10, fileId: 'file-123',
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.fileId, 'file-123');
 });

@@ -123,7 +123,11 @@ function CommentForm({
       let attachments: CommentAttachment[] = [];
       if (pendingFiles.length > 0) {
         setUploading(true);
-        attachments = await Promise.all(pendingFiles.map(uploadFile));
+        attachments = await Promise.all(
+          // Bound explicitly, not `.map(uploadFile)`: map passes the array INDEX
+          // as the second argument, which is now the fileId the server checks.
+          pendingFiles.map((f) => uploadFile(f, fileId))
+        );
         setUploading(false);
       }
 
