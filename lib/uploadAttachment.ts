@@ -1,13 +1,27 @@
 import type { CommentAttachment } from '@/lib/types';
 
-/** Presign, PUT to S3, and return the attachment record. */
-export async function uploadFile(file: File): Promise<CommentAttachment> {
+/**
+ * Presign, PUT to S3, and return the attachment record.
+ *
+ * `fileId` is the file the comment will hang off. It is required because the
+ * route uses it to check that the caller actually belongs to that package —
+ * without it, any account could mint writes into the bucket.
+ */
+export async function uploadFile(
+  file: File,
+  fileId: string
+): Promise<CommentAttachment> {
   const res = await fetch('/api/comments/attachments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     // The server signs this length into the presigned URL, so it must match the
     // body actually PUT below.
-    body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+    body: JSON.stringify({
+      filename: file.name,
+      contentType: file.type,
+      size: file.size,
+      fileId,
+    }),
   });
 
   if (!res.ok) {

@@ -32,7 +32,14 @@ export const BLOCKED_CONTENT_TYPES: ReadonlySet<string> = new Set([
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export type AttachmentValidation =
-  | { ok: true; filename: string; contentType: string; size: number; extension: string }
+  | {
+      ok: true;
+      filename: string;
+      contentType: string;
+      size: number;
+      extension: string;
+      fileId: string;
+    }
   | { ok: false; reason: 'malformed' | 'unsupported_type' | 'too_large' };
 
 export function validateAttachmentRequest(input: unknown): AttachmentValidation {
@@ -40,10 +47,16 @@ export function validateAttachmentRequest(input: unknown): AttachmentValidation 
     return { ok: false, reason: 'malformed' };
   }
 
-  const { filename, contentType, size } = input as Record<string, unknown>;
+  const { filename, contentType, size, fileId } = input as Record<string, unknown>;
 
   if (typeof filename !== 'string' || !filename) return { ok: false, reason: 'malformed' };
   if (typeof contentType !== 'string' || !contentType) return { ok: false, reason: 'malformed' };
+
+  // Required. This is the file the comment will hang off, and the route resolves
+  // it to a package to decide whether the caller may write at all. Before it
+  // existed the route could only ask "is anyone logged in?", so every account —
+  // and signup is open — could mint unlimited 25MB writes into the bucket.
+  if (typeof fileId !== 'string' || !fileId) return { ok: false, reason: 'malformed' };
 
   // Required, not defaulted: the declared size is what bounds the presigned URL,
   // so accepting a request without one would leave no cap at all.
@@ -64,5 +77,5 @@ export function validateAttachmentRequest(input: unknown): AttachmentValidation 
   const raw = dot === -1 ? '' : filename.slice(dot);
   const extension = /[/\\ ]/.test(raw) ? '' : raw;
 
-  return { ok: true, filename, contentType, size, extension };
+  return { ok: true, filename, contentType, size, extension, fileId };
 }
