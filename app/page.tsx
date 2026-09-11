@@ -11,6 +11,7 @@ import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
 import NotificationTray, {
   type NotificationRow,
 } from '@/components/shell/NotificationTray';
+import ActivityRail from '@/components/home/ActivityRail';
 import AvatarMenu from '@/components/shell/AvatarMenu';
 import CommandPalette from '@/components/shell/CommandPalette';
 import { DISCLOSURE, type DisclosureState } from '@/lib/disclosure';
@@ -273,6 +274,16 @@ export default function Home() {
             ))}
           </div>
         </div>
+
+        {notifications.length > 0 && (
+          <div className="hidden lg:block">
+            <ActivityRail
+              notifications={notifications}
+              packages={packages}
+              onChanged={load}
+            />
+          </div>
+        )}
       </div>
 
       <NewProjectModal
