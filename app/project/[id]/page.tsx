@@ -16,6 +16,9 @@ import { AddPeopleModal } from '@/components/people/AddPeopleModal';
 import { TeamMatrix } from '@/components/people/TeamMatrix';
 import { WaitingOn } from '@/components/project/WaitingOn';
 import ProjectBrief from '@/components/project/ProjectBrief';
+import { DangerCard } from '@/components/settings/SettingsShell';
+import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
+import { useToast } from '@/components/ui/Toast';
 import { STATUS_ACCENT } from '@/lib/status';
 import { relativeTime } from '@/lib/design';
 import { DISCLOSURE, EMPTY_DISCLOSURE } from '@/lib/disclosure';
@@ -75,6 +78,7 @@ type Tab = 'packages' | 'team' | 'activity';
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { toast } = useToast();
 
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,6 +86,7 @@ export default function ProjectPage() {
   const [tab, setTab] = useState<Tab>('packages');
   const [view, setView] = useState<'status' | 'waiting'>('status');
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
+  const [confirmDeleteProject, setConfirmDeleteProject] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiSaving, setAiSaving] = useState(false);
@@ -117,6 +122,20 @@ export default function ProjectPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Scoped deliberately narrow: `/api/projects/[id]` DELETE is a hard
+  // cascading delete (project, packages, versions, files, comments, then the
+  // S3 objects) with no archive and no undo. This control only ever renders
+  // for a project with zero packages, so there is nothing under it to lose —
+  // that is what makes offering it here safe.
+  const deleteProject = async () => {
+    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      toast('Could not delete this project');
+      return;
+    }
+    router.push('/');
+  };
 
   // Only the project owner can see or flip the AI summaries switch — 14 gates
   // this stricter than package membership.
@@ -346,23 +365,45 @@ export default function ProjectPage() {
 
             {data.packages.length === 0 ? (
               // 3f — a project with no packages. The whole panel is a drop target.
-              <div className="mt-6 rounded-shell border-2 border-dashed border-stiko-dashed bg-white p-6">
-                <EmptyState
-                  notes={[
-                    { color: 'blue', size: 74, rotate: -9 },
-                    { color: 'yellow', size: 78, rotate: 8 },
-                  ]}
-                  heading="A package is one set of drawings, reviewed over time"
-                  description="Level 3 — Structural. Podium & Canopy. Each keeps its own versions, people and comments."
-                  actionLabel="New package"
-                  onAction={() => router.push(`/new?project=${id}`)}
-                  secondary={
-                    <span className="text-[12.5px] text-stiko-faint">
-                      or drop files anywhere here
-                    </span>
-                  }
-                />
-              </div>
+              <>
+                <div className="mt-6 rounded-shell border-2 border-dashed border-stiko-dashed bg-white p-6">
+                  <EmptyState
+                    notes={[
+                      { color: 'blue', size: 74, rotate: -9 },
+                      { color: 'yellow', size: 78, rotate: 8 },
+                    ]}
+                    heading="A package is one set of drawings, reviewed over time"
+                    description="Level 3 — Structural. Podium & Canopy. Each keeps its own versions, people and comments."
+                    actionLabel="New package"
+                    onAction={() => router.push(`/new?project=${id}`)}
+                    secondary={
+                      <span className="text-[12.5px] text-stiko-faint">
+                        or drop files anywhere here
+                      </span>
+                    }
+                  />
+                </div>
+
+                {/* Deliberately narrow: offered only for an owner's empty
+                    project, so this can only ever remove a project with
+                    nothing under it. Any package at all removes this
+                    control entirely (see ProjectPage). */}
+                {isOwner && (
+                  <div className="mt-4">
+                    <DangerCard
+                      rows={[
+                        {
+                          title: 'Delete project',
+                          description:
+                            'Permanently removes this project. This cannot be undone.',
+                          actionLabel: 'Delete',
+                          onAction: () => setConfirmDeleteProject(true),
+                        },
+                      ]}
+                    />
+                  </div>
+                )}
+              </>
             ) : view === 'waiting' ? (
               <WaitingOn packages={data.packages} />
             ) : (
@@ -402,6 +443,17 @@ export default function ProjectPage() {
         projectName={data.project.name}
         packages={data.packages}
         onDone={load}
+      />
+
+      <DestructiveConfirm
+        isOpen={confirmDeleteProject}
+        onClose={() => setConfirmDeleteProject(false)}
+        onConfirm={deleteProject}
+        title={`Delete ${data.project.name}?`}
+        name={data.project.name}
+        consequence="This permanently removes the project. This cannot be undone."
+        inventory={[]}
+        confirmLabel="Delete project"
       />
     </Shell>
   );
