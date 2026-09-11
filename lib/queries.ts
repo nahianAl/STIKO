@@ -45,6 +45,17 @@ export interface ProjectSummary {
   ownedByMe: boolean;
   /** The owner's name. Rendered as "you" client-side when ownedByMe. */
   createdByName: string | null;
+  /**
+   * DISPLAY ONLY — never an authorization input.
+   *
+   * This is derived: for a guest it is their strongest role across the packages
+   * of this project they can see, so `uploader` here can mean "uploader on one
+   * package out of ten". Gate any actual permission on getPackageAccess /
+   * capabilitiesFor for the specific package instead. (`owner` and
+   * `coordinator` are the exception — participants.role is CHECK-constrained to
+   * viewer|commenter|uploader, so those two can only come from project_members
+   * or ownership, and are genuinely project-level.)
+   */
   myRole: ProjectRole | null;
 }
 
