@@ -66,6 +66,8 @@ interface Overview {
     isYou: boolean;
   }[];
   packages: ProjectPackage[];
+  /** Every portal under the project, archived included — see the delete gate below. */
+  totalPackageCount: number;
   disclosure: {
     packagesInProject: number;
     peopleCount: number;
@@ -123,15 +125,19 @@ export default function ProjectPage() {
     load();
   }, [load]);
 
-  // Scoped deliberately narrow: `/api/projects/[id]` DELETE is a hard
-  // cascading delete (project, packages, versions, files, comments, then the
-  // S3 objects) with no archive and no undo. This control only ever renders
-  // for a project with zero packages, so there is nothing under it to lose —
-  // that is what makes offering it here safe.
+  // `/api/projects/[id]` DELETE is a hard cascading delete (project, packages,
+  // versions, files, comments, then the S3 objects) with no undo. The client
+  // gate below hides the control unless `totalPackageCount` — every portal
+  // under the project, archived included — is zero, but that gate cannot be
+  // trusted as the actual safety mechanism: a tab left open, or a package
+  // created or archived from elsewhere, can go stale. The server re-checks
+  // for ANY portal (archived or not) and refuses with 409 if one exists, so
+  // surface its message here rather than a generic failure.
   const deleteProject = async () => {
     const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
     if (!res.ok) {
-      toast('Could not delete this project');
+      const body = await res.json().catch(() => ({}));
+      toast(body.error ?? 'Could not delete this project');
       return;
     }
     router.push('/');
@@ -384,11 +390,15 @@ export default function ProjectPage() {
                   />
                 </div>
 
-                {/* Deliberately narrow: offered only for an owner's empty
-                    project, so this can only ever remove a project with
-                    nothing under it. Any package at all removes this
-                    control entirely (see ProjectPage). */}
-                {isOwner && (
+                {/* Gated on totalPackageCount, not the visible `packages`
+                    list: an archived package is deliberately hidden from
+                    that list while its versions, files, comments and S3
+                    objects all still exist, and archiving is advertised as
+                    reversible — so "packages.length === 0" is not "nothing
+                    to lose". This only avoids offering a control that would
+                    fail; the server enforces the real guarantee (any portal,
+                    archived or not, blocks the delete with 409). */}
+                {isOwner && data.totalPackageCount === 0 && (
                   <div className="mt-4">
                     <DangerCard
                       rows={[

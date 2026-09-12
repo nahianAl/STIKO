@@ -52,6 +52,16 @@ export async function GET(
 
   const packageIds = packageRows.map((p) => p.id as string);
 
+  // Every portal under the project, archived included — unlike packageRows
+  // above, which deliberately excludes them. The delete control on the
+  // project page needs this: an archived package is hidden from the list but
+  // still has files, comments and S3 objects, so "packages.length === 0" is
+  // not the same question as "is there really nothing left to delete".
+  const totalPackageCountRows = await sql`
+    SELECT COUNT(*) AS n FROM portals WHERE project_id = ${params.id}
+  `;
+  const totalPackageCount = Number(totalPackageCountRows[0]?.n ?? 0);
+
   const participantRows = packageIds.length
     ? await sql`
         SELECT p.portal_id AS "portalId", p.role, u.id, u.name, u.email, u.company
@@ -211,6 +221,7 @@ export async function GET(
       isYou: m.id === session.user!.id,
     })),
     packages,
+    totalPackageCount,
     disclosure: {
       packagesInProject: packages.length,
       peopleCount: uniquePeople.size,

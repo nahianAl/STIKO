@@ -36,6 +36,25 @@ export async function DELETE(
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // A project is only deletable while nothing lives under it. The client gate
+  // cannot be trusted for this: it counts VISIBLE packages, and an archived
+  // package is deliberately hidden from the project while its files, comments
+  // and S3 objects all still exist. Archiving is advertised as reversible, so
+  // letting this cascade through one would be a lie told with someone else's
+  // data. Archived or not, any portal blocks the delete.
+  const existing = await sql`
+    SELECT 1 FROM portals WHERE project_id = ${params.id} LIMIT 1
+  `;
+  if (existing.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          'This project still has packages. Delete or move them before deleting the project.',
+      },
+      { status: 409 }
+    );
+  }
+
   const doomedFiles = await sql`
     SELECT f.id
     FROM files f
