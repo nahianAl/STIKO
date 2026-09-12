@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
 import ProjectCard from '@/components/home/ProjectCard';
@@ -124,8 +123,7 @@ export default function Home() {
               new KeyboardEvent('keydown', { key: 'k', metaKey: true })
             );
           }}
-          className="hidden items-center gap-2 rounded-[10px] bg-stiko-app px-3 py-[7px] text-[12.5px] text-stiko-faint transition duration-150 hover:text-stiko-muted md:flex"
-          style={{ width: 240 }}
+          className="hidden items-center gap-2 whitespace-nowrap rounded-[10px] bg-stiko-app px-3 py-[7px] text-[12.5px] text-stiko-faint transition duration-150 hover:text-stiko-muted md:flex"
         >
           <svg
             className="h-[15px] w-[15px]"
@@ -143,7 +141,6 @@ export default function Home() {
       {showBell && (
         <NotificationTray notifications={notifications} onChanged={load} />
       )}
-      <Button onClick={newPackage}>New package</Button>
       <AvatarMenu />
     </>
   );
