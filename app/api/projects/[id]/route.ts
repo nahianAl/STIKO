@@ -36,6 +36,17 @@ export async function DELETE(
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Ownership is checked BEFORE the emptiness guard below, not only in the
+  // DELETE's own WHERE clause. Otherwise the guard's 409 answers "does this
+  // project have packages?" for any project id a stranger cares to try, which
+  // is a fact about someone else's work.
+  const owned = await sql`
+    SELECT 1 FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+  `;
+  if (owned.length === 0) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+  }
+
   // A project is only deletable while nothing lives under it. The client gate
   // cannot be trusted for this: it counts VISIBLE packages, and an archived
   // package is deliberately hidden from the project while its files, comments
