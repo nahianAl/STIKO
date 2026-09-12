@@ -253,9 +253,15 @@ export default function ProjectPage() {
             {allPeople.length > 0 && (
               <AvatarStack people={allPeople} size={30} />
             )}
-            <Button variant="secondary" onClick={() => setAddPeopleOpen(true)}>
-              Manage people
-            </Button>
+            {/* Access in this product is granted per package, so with no
+                packages there is nowhere for "Manage people" to send someone —
+                the modal it opens would show an empty list and a permanently
+                disabled send button. */}
+            {data.packages.length > 0 && (
+              <Button variant="secondary" onClick={() => setAddPeopleOpen(true)}>
+                Manage people
+              </Button>
+            )}
           </div>
         </div>
 
