@@ -11,11 +11,6 @@ test('a brand-new account earns nothing', () => {
   }
 });
 
-test('home stays a flat package list until a second package exists', () => {
-  assert.equal(DISCLOSURE.groupByProject(s({ packageCount: 1 })), false);
-  assert.equal(DISCLOSURE.groupByProject(s({ packageCount: 2 })), true);
-});
-
 test('search is earned by packages OR by files', () => {
   assert.equal(DISCLOSURE.showSearch(s({ packageCount: 2 })), false);
   assert.equal(DISCLOSURE.showSearch(s({ packageCount: 3 })), true);

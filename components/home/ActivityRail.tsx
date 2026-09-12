@@ -1,0 +1,175 @@
+'use client';
+
+import { useRouter } from 'next/navigation';
+import { Avatar } from '@/components/ui/Primitives';
+import { activityAccent, groupActivity, homeStats } from '@/lib/home';
+import { relativeTime } from '@/lib/design';
+import type { NotificationRow } from '@/components/shell/NotificationTray';
+import type { PackageCard } from '@/lib/queries';
+
+const BADGE_COLOR: Record<string, { bg: string; fg: string }> = {
+  MENTION: { bg: '#FFE2E2', fg: '#B23A52' },
+  ACTION: { bg: '#FFE2E2', fg: '#B23A52' },
+  NEW: { bg: '#FFFCCE', fg: '#7A5E00' },
+};
+
+/**
+ * One chronological feed for everything, replacing the standalone "Needs you"
+ * block that was the screen's biggest source of vertical dead space.
+ *
+ * Fed by `notifications`, which only carries what was addressed to this viewer.
+ * The title overstates that knowingly — see the design spec.
+ */
+export default function ActivityRail({
+  notifications,
+  packages,
+  onChanged,
+}: {
+  notifications: NotificationRow[];
+  packages: PackageCard[];
+  onChanged: () => void;
+}) {
+  const router = useRouter();
+  const stats = homeStats(packages);
+  const groups = groupActivity(notifications);
+  const hasUnread = notifications.some((n) => !n.readAt);
+
+  const open = async (row: NotificationRow) => {
+    if (!row.readAt) {
+      await fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: row.id }),
+      }).catch(() => {});
+      onChanged();
+    }
+    router.push(row.href);
+  };
+
+  const markAll = async () => {
+    await fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    }).catch(() => {});
+    onChanged();
+  };
+
+  return (
+    // h-full (from lg up only) is load-bearing: without a bounded height the
+    // feed's own overflow-y-auto never activates, the aside grows to fit every
+    // row, and the WHOLE PAGE scrolls instead — taking the top bar with it.
+    // The two sibling panels with the same shape (FileTreeSidebar,
+    // CommentsPanel) carry it for exactly this reason. Below lg neither this
+    // rail nor the grid tries to fit the viewport at all: the content row
+    // itself (`overflow-y-auto` in app/page.tsx) is the single scroller, so
+    // both children are free to size to their content.
+    <aside className="flex h-auto w-full shrink-0 flex-col overflow-hidden rounded-panel bg-white shadow-stiko-panel lg:h-full lg:w-[344px]">
+      <div className="flex items-center justify-between gap-[10px] border-b border-stiko-border px-4 py-[14px]">
+        <div>
+          <h2 className="text-[15px] font-extrabold text-stiko-ink">Activity</h2>
+          <p className="mt-[2px] text-[11.5px] text-stiko-muted">
+            Everything, newest first
+          </p>
+        </div>
+        {hasUnread && (
+          <button
+            onClick={markAll}
+            className="shrink-0 text-[11.5px] font-bold text-stiko-primary transition duration-150"
+          >
+            Mark all read
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 px-3 pb-[6px] pt-3">
+        <StatTile value={stats.needsYou} label="need you" color="#B23A52" />
+        <StatTile value={stats.openComments} label="open comments" color="#1C2030" />
+        <StatTile value={stats.inReview} label="in review" color="#7A5E00" />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-visible px-3 pb-[14px] pt-[6px] lg:max-h-none lg:overflow-y-auto">
+        {groups.map((group) => (
+          <div key={group.label} className="pt-[10px]">
+            <div className="px-1 pb-[6px] text-[10px] font-bold uppercase tracking-label text-stiko-faint">
+              {group.label}
+            </div>
+            <div className="flex flex-col gap-1">
+              {group.items.map((row) => {
+                const accent = activityAccent(row.type);
+                const badge = accent.badge ? BADGE_COLOR[accent.badge] : null;
+                const meta = [
+                  row.projectName,
+                  row.packageName,
+                  relativeTime(row.createdAt),
+                ]
+                  .filter(Boolean)
+                  .join(' · ');
+
+                return (
+                  <button
+                    key={row.id}
+                    onClick={() => open(row)}
+                    className="flex items-start gap-[10px] rounded-[11px] px-[10px] py-[9px] text-left transition duration-150 hover:bg-stiko-tint"
+                    style={{
+                      background: accent.bg ?? 'transparent',
+                      // Transparent rather than absent, so text baselines line
+                      // up across accented and plain rows.
+                      borderLeft: `3px solid ${accent.border ?? 'transparent'}`,
+                    }}
+                  >
+                    <Avatar
+                      id={row.actorId ?? row.id}
+                      name={row.actorName ?? 'Someone'}
+                      size={28}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12px] leading-[1.45] text-stiko-ink">
+                        {row.title}
+                      </span>
+                      <span className="mt-[2px] block truncate text-[10.5px] text-stiko-faint">
+                        {meta}
+                      </span>
+                    </span>
+                    {badge && (
+                      <span
+                        className="shrink-0 rounded-pill px-[7px] py-[2px] text-[9px] font-extrabold uppercase"
+                        style={{ background: badge.bg, color: badge.fg }}
+                      >
+                        {accent.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function StatTile({
+  value,
+  label,
+  color,
+}: {
+  value: number;
+  label: string;
+  color: string;
+}) {
+  return (
+    <div className="rounded-inset bg-stiko-app px-[11px] py-[10px]">
+      <div className="text-[19px] font-extrabold leading-none" style={{ color }}>
+        {value}
+      </div>
+      <div
+        className="mt-1 text-[10.5px] text-stiko-muted"
+        style={{ lineHeight: 1.3 }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}

@@ -9,6 +9,7 @@
 import React from 'react';
 import { NOTES, avatarSwatch, initials, tagSwatch, fileChip } from '@/lib/design';
 import { STATUS_CHIP, type VersionStatus } from '@/lib/status';
+import { roleLabel, roleTagSpec } from '@/lib/roles';
 
 /* -------------------------------------------------------------------------- */
 /* Panel — the universal container                                            */
@@ -458,6 +459,24 @@ export function RolePill({
       title={role[0].toUpperCase() + role.slice(1)}
     >
       {spec.letter}
+    </span>
+  );
+}
+
+/**
+ * The full-word role pill. Distinct from RolePill, which is a fixed 30x24
+ * single-letter tile for the access matrix and whose type excludes owner and
+ * coordinator entirely.
+ */
+export function RoleTag({ role }: { role: string | null }) {
+  const spec = roleTagSpec(role);
+  if (!spec) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-chip px-[9px] py-1 text-[10px] font-extrabold uppercase"
+      style={{ background: spec.bg, color: spec.fg }}
+    >
+      {roleLabel(role)}
     </span>
   );
 }

@@ -99,6 +99,13 @@ export interface ProjectSummary {
 
 `/api/home` returns `{ packages, projects, disclosure, isGuestOnly }`.
 
+`projects` is NOT derived from `packages` alone. The `visible` CTE selects `FROM portals`, so a
+project with no visible package produces no row; a second query returns projects the viewer owns
+or coordinates, and the two are merged. Without it "New project" would create a project and show
+nothing — the empty card is the whole point of that flow. That second query is scoped
+owner-or-member, matching `GET /api/projects`: a guest is a participant on *packages*, so a
+project with no package they can see is not theirs to know about.
+
 `/api/notifications` GET gains `pr.id AS "projectId", pr.name AS "projectName"` via one
 `LEFT JOIN projects pr ON pr.id = po.project_id`. `NotificationRow` grows two optional fields;
 `NotificationTray` is untouched. `LIMIT 50` stays — the rail is a feed, not an archive.
@@ -189,8 +196,11 @@ Nothing below is stored or refetched; all of it comes from `packages` + `project
 
 Transitions: 150ms on colour/background/border for hover states. Nothing animates on mount.
 
-Filter row renders only when there is something to filter (≥2 projects, or ≥1 owned and ≥1
-invited) — for a pure guest, never.
+Filter row renders only when at least one owned AND at least one invited project exist — the
+only case in which all three buttons match something. With only owned projects "Shared with
+me" is always empty; with only invited ones "Owned by me" is. For a pure guest, therefore,
+never. (This supersedes the handoff's "≥2 projects, or ≥1 owned and ≥1 invited", whose first
+clause subsumes the second and shows a dead button in both single-ownership cases.)
 
 Guest handling: the drawer's "Add people" and "Access matrix" footer renders only when
 `ownedByMe || myRole === 'coordinator'`. `/api/projects/[id]/overview` is member-gated, so the

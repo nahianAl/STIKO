@@ -1,32 +1,55 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
-import { AvatarStack, SkeletonBar } from '@/components/ui/Primitives';
-import { PackageRow } from '@/components/home/PackageRow';
+import ProjectCard from '@/components/home/ProjectCard';
+import NewProjectModal from '@/components/home/NewProjectModal';
+import ProjectPeopleDrawer from '@/components/home/ProjectPeopleDrawer';
+import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
 import NotificationTray, {
   type NotificationRow,
 } from '@/components/shell/NotificationTray';
+import ActivityRail from '@/components/home/ActivityRail';
 import AvatarMenu from '@/components/shell/AvatarMenu';
 import CommandPalette from '@/components/shell/CommandPalette';
 import { DISCLOSURE, type DisclosureState } from '@/lib/disclosure';
-import { relativeTime } from '@/lib/design';
-import type { PackageCard } from '@/lib/queries';
+import {
+  filterGroups,
+  groupProjects,
+  needsYou,
+  showFilterRow,
+  type HomeFilter,
+} from '@/lib/home';
+import type { PackageCard, ProjectSummary } from '@/lib/queries';
 import { useSession } from 'next-auth/react';
 
+/**
+ * Owner home. Two states: first run, and the project grid.
+ *
+ * The grid covers every populated case — one package or fifty, owned or
+ * invited. The old guest-only screen and the flat one-package floor are gone:
+ * an "Invited · Commenter" card says more than a separate screen did.
+ */
 export default function Home() {
   const router = useRouter();
   const { data: session } = useSession();
 
   const [packages, setPackages] = useState<PackageCard[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [disclosure, setDisclosure] = useState<DisclosureState | null>(null);
   const [isGuestOnly, setIsGuestOnly] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [filter, setFilter] = useState<HomeFilter>('all');
+  const [peoplePanelProjectId, setPeoplePanelProjectId] = useState<string | null>(
+    null
+  );
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -50,6 +73,7 @@ export default function Home() {
 
       const data = await homeRes.json();
       setPackages(data.packages);
+      setProjects(data.projects ?? []);
       setDisclosure(data.disclosure);
       setIsGuestOnly(data.isGuestOnly);
 
@@ -68,27 +92,27 @@ export default function Home() {
     load();
   }, [load]);
 
+  const groups = useMemo(
+    () => groupProjects(packages, projects),
+    [packages, projects]
+  );
+  const visible = useMemo(() => {
+    // The pills unmount when there is nothing to filter; without this the last
+    // selection would keep filtering a grid the user can no longer unfilter.
+    const active = showFilterRow(groups) ? filter : 'all';
+    return filterGroups(groups, active);
+  }, [groups, filter]);
+
   const newPackage = () => router.push('/new');
 
-  if (loading) {
-    return <HomeSkeleton />;
-  }
+  if (loading) return <HomeSkeleton />;
 
   // Anything that isn't "still loading" gets a real answer, never the skeleton.
-  if (error || !disclosure) {
-    return <HomeError message={error} onRetry={load} />;
-  }
+  if (error || !disclosure) return <HomeError message={error} onRetry={load} />;
 
   // 03: everything on the right of the top bar is earned.
   const showSearch = DISCLOSURE.showSearch(disclosure);
   const showBell = DISCLOSURE.showNotifications(disclosure);
-  const groupByProject = DISCLOSURE.groupByProject(disclosure);
-  const showTags = groupByProject;
-  const showStatus = DISCLOSURE.showStatusChips(disclosure);
-
-  const needsYou = packages.filter(
-    (p) => p.mentions > 0 || (p.versionNumber != null && !p.seenLatest)
-  );
 
   const topBarRight = (
     <>
@@ -100,8 +124,8 @@ export default function Home() {
               new KeyboardEvent('keydown', { key: 'k', metaKey: true })
             );
           }}
-          className="hidden items-center gap-2 rounded-[10px] bg-stiko-app px-3 py-[7px] text-[12.5px] text-stiko-faint transition hover:text-stiko-muted md:flex"
-          style={{ width: 260 }}
+          className="hidden items-center gap-2 rounded-[10px] bg-stiko-app px-3 py-[7px] text-[12.5px] text-stiko-faint transition duration-150 hover:text-stiko-muted md:flex"
+          style={{ width: 240 }}
         >
           <svg
             className="h-[15px] w-[15px]"
@@ -119,14 +143,13 @@ export default function Home() {
       {showBell && (
         <NotificationTray notifications={notifications} onChanged={load} />
       )}
-      {/* 3m: a guest home has no "New package" in the primary slot. */}
-      {!isGuestOnly && <Button onClick={newPackage}>New package</Button>}
+      <Button onClick={newPackage}>New package</Button>
       <AvatarMenu />
     </>
   );
 
-  // 3e — first run. No packages at all.
-  if (packages.length === 0) {
+  // 3e — first run. Nothing at all to show.
+  if (packages.length === 0 && projects.length === 0) {
     const firstName = (session?.user?.name ?? '').split(' ')[0];
     return (
       <Shell>
@@ -163,270 +186,133 @@ export default function Home() {
     );
   }
 
-  // 3m — guest home. Commenters and uploaders across several clients.
-  if (isGuestOnly) {
-    return (
-      <Shell>
-        <TopBar right={topBarRight} />
-        <Column width={880}>
-          <h1 className="text-[26px] font-extrabold tracking-title text-stiko-ink">
-            Your reviews
-          </h1>
-          <p className="mt-1 text-[13px] text-stiko-muted">
-            Packages you&apos;ve been invited to. You&apos;ll get an email
-            whenever a new version lands.
-          </p>
-
-          <div className="mt-6 flex flex-col gap-3">
-            {packages.map((p) => (
-              <PackageRow
-                key={p.id}
-                pkg={p}
-                showTag={showTags}
-                showStatus={showStatus}
-              />
-            ))}
-          </div>
-
-          <div className="mt-8 flex items-center justify-between rounded-panel bg-white px-5 py-4 shadow-stiko-panel">
-            <span className="text-[13px] text-stiko-secondary">
-              Need to send drawings of your own?
-            </span>
-            <Button variant="secondary" onClick={newPackage}>
-              New package
-            </Button>
-          </div>
-        </Column>
-        <CommandPalette packages={packages} onNewPackage={newPackage} />
-      </Shell>
-    );
-  }
-
-  // 5a — the floor. One package, flat list, no projects.
-  if (!groupByProject) {
-    return (
-      <Shell>
-        <TopBar right={topBarRight} />
-        <Column width={720}>
-          <h1 className="text-[24px] font-extrabold tracking-title text-stiko-ink">
-            Your packages
-          </h1>
-          <div className="mt-5 flex flex-col gap-3">
-            {packages.map((p) => (
-              <PackageRow
-                key={p.id}
-                pkg={p}
-                showTag={false}
-                showStatus={showStatus}
-                primary
-              />
-            ))}
-          </div>
-
-          <button
-            onClick={newPackage}
-            className="mt-4 w-full rounded-panel border-2 border-dashed border-stiko-dashed bg-stiko-app px-5 py-7 text-center transition hover:border-stiko-primary"
-          >
-            <p className="text-[13.5px] font-bold text-stiko-ink">
-              Drop files to start another package
-            </p>
-            <p className="mt-1 text-[12.5px] text-stiko-muted">
-              Group them into projects later, when you have a few.
-            </p>
-          </button>
-        </Column>
-        <CommandPalette packages={packages} onNewPackage={newPackage} />
-      </Shell>
-    );
-  }
-
-  // 5b / 2f — populated. Grouping, inbox and the rest have all been earned.
-  const byProject = new Map<string, PackageCard[]>();
-  for (const p of packages) {
-    byProject.set(p.projectId, [...(byProject.get(p.projectId) ?? []), p]);
-  }
+  const visiblePackages = visible.flatMap((g) => g.packages);
+  const needsYouCount = visiblePackages.filter(needsYou).length;
+  const subline = [
+    `${visible.length} ${visible.length === 1 ? 'project' : 'projects'}`,
+    `${visiblePackages.length} ${visiblePackages.length === 1 ? 'package' : 'packages'}`,
+    needsYouCount > 0 ? `${needsYouCount} need you` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <Shell>
       <TopBar right={topBarRight} />
-      <Column width={1120}>
-        {/* 03: never render an empty "Needs you". */}
-        {needsYou.length > 0 && (
-          <section className="mb-8">
-            <div className="mb-3 flex items-center gap-[10px]">
-              <h2 className="text-[17px] font-extrabold text-stiko-ink">
-                Needs you
-              </h2>
-              <span
-                className="rounded-pill px-2 py-[3px] text-[11px] font-extrabold"
-                style={{ background: '#FFE2E2', color: '#B23A52' }}
-              >
-                {needsYou.length}
-              </span>
-            </div>
-            <div className="flex flex-col gap-[10px]">
-              {needsYou.map((p) => (
-                <NeedsYouRow key={p.id} pkg={p} />
-              ))}
-            </div>
-          </section>
-        )}
 
-        {Array.from(byProject.entries()).map(([projectId, pkgs]) => (
-          <section key={projectId} className="mb-8">
-            <div className="mb-3 flex items-center justify-between">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-1 lg:flex-row lg:overflow-visible">
+        {/* flex-none (not flex-1) below lg: this is a flex column here, and
+            ActivityRail's aside is shrink-0 with a content-driven height —
+            once the rail's own content is taller than this row (a handful of
+            notifications is enough on a phone), flex-1's flex-basis:0% has
+            nothing to grow into and the grid collapses to 0px, rendering its
+            cards UNDER the rail instead of above it. flex-none makes this
+            column size to its own content instead of competing for space, so
+            it simply stacks above the rail and the row (which scrolls) grows
+            to fit both. lg:flex-1 restores the fill-remaining-space behaviour
+            once the layout is a row instead of a column. */}
+        <div className="min-h-0 flex-none lg:flex-1 lg:overflow-y-auto">
+          <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-3 pt-[2px]">
+            <div>
+              <h1 className="text-[20px] font-extrabold tracking-title text-stiko-ink">
+                Your projects
+              </h1>
+              <p className="mt-[3px] text-[12.5px] text-stiko-muted">
+                {subline}
+              </p>
+              {/* The only place in the product that states this contract to an
+                  invited-only user: they never publish, so the sole signal
+                  that a new version exists is the email that goes out when
+                  one is pushed. */}
+              {isGuestOnly && (
+                <p className="mt-[3px] text-[12.5px] text-stiko-muted">
+                  You&apos;ll get an email whenever a new version lands.
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-[6px]">
+              {showFilterRow(groups) && (
+                <>
+                  {(
+                    [
+                      ['all', 'All'],
+                      ['owned', 'Owned by me'],
+                      ['shared', 'Shared with me'],
+                    ] as [HomeFilter, string][]
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setFilter(key)}
+                      className={`rounded-[9px] border-[1.5px] px-[11px] py-[6px] text-[12px] font-bold transition duration-150 ${
+                        filter === key
+                          ? 'border-stiko-border-strong bg-white text-stiko-ink'
+                          : 'border-transparent bg-transparent text-stiko-muted hover:text-stiko-ink'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span
+                    className="bg-stiko-divider"
+                    style={{ width: 1, height: 20, margin: '0 4px' }}
+                  />
+                </>
+              )}
+
               <button
-                onClick={() => router.push(`/project/${projectId}`)}
-                className="text-[17px] font-extrabold text-stiko-ink hover:text-stiko-primary"
+                onClick={() => setNewProjectOpen(true)}
+                className="flex items-center gap-[6px] rounded-[10px] bg-gradient-to-br from-[#8094F5] to-[#5B60FF] px-[14px] py-2 text-[12.5px] font-bold text-white shadow-stiko-primary transition duration-150 hover:brightness-[1.04]"
               >
-                {pkgs[0].projectName}
+                <svg
+                  className="h-[13px] w-[13px]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2.8}
+                  strokeLinecap="round"
+                >
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                New project
               </button>
-              <span className="text-[12.5px] text-stiko-muted">
-                {pkgs.length} package{pkgs.length === 1 ? '' : 's'}
-              </span>
             </div>
-            <div className="flex flex-col gap-3">
-              {pkgs.map((p) => (
-                <PackageRow
-                  key={p.id}
-                  pkg={p}
-                  showTag={showTags}
-                  showStatus={showStatus}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
-      </Column>
-      <CommandPalette packages={packages} onNewPackage={newPackage} />
-    </Shell>
-  );
-}
+          </div>
 
-/** A "Needs you" row — 2f. The left border carries the event's accent. */
-function NeedsYouRow({ pkg }: { pkg: PackageCard }) {
-  const router = useRouter();
-  const isMention = pkg.mentions > 0;
-  const accent = isMention ? '#FF6B6B' : '#FFCF2E';
-
-  return (
-    <button
-      onClick={() => router.push(`/portal/${pkg.id}`)}
-      className="flex w-full items-center justify-between gap-4 rounded-[13px] bg-white px-[17px] py-[14px] text-left shadow-stiko-panel transition hover:shadow-[0_2px_8px_rgba(28,32,48,0.08)]"
-      style={{ borderLeft: `3px solid ${accent}` }}
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        {isMention ? (
-          <AvatarStack people={pkg.people.slice(0, 1)} size={30} />
-        ) : (
-          <span
-            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[10px] text-[11px] font-extrabold"
-            style={{ background: '#FFFCCE', color: '#7A5E00' }}
-          >
-            V{pkg.versionNumber}
-          </span>
-        )}
-        <div className="min-w-0">
-          <p className="truncate text-[13px] text-stiko-ink">
-            {isMention ? (
-              <>
-                You were mentioned in <b>{pkg.name}</b>
-              </>
-            ) : (
-              <>
-                <b>Version {pkg.versionNumber}</b> published in{' '}
-                <b>{pkg.name}</b>
-              </>
-            )}
-          </p>
-          <p className="mt-[2px] truncate text-[11.5px] text-stiko-muted">
-            {pkg.changelog ? `“${pkg.changelog}” · ` : ''}
-            {pkg.projectName}
-            {pkg.updatedAt ? ` · ${relativeTime(pkg.updatedAt)}` : ''}
-          </p>
-        </div>
-      </div>
-      <span className="shrink-0 text-[12.5px] font-bold text-stiko-primary">
-        {isMention ? 'Reply' : 'Review'}
-      </span>
-    </button>
-  );
-}
-
-/**
- * Shown when the load actually failed. Separate from the skeleton on purpose:
- * an error that renders as a loading state is a screen nobody can debug or
- * escape from.
- */
-function HomeError({
-  message,
-  onRetry,
-}: {
-  message: string | null;
-  onRetry: () => void;
-}) {
-  return (
-    <Shell>
-      <TopBar right={<AvatarMenu />} />
-      <Column width={720}>
-        <div className="mt-10 rounded-panel bg-white p-8 text-center shadow-stiko-panel">
-          <span
-            className="mx-auto flex h-[44px] w-[44px] items-center justify-center rounded-[13px]"
-            style={{ background: '#FFE2E2' }}
-          >
-            <svg
-              className="h-5 w-5"
-              style={{ color: '#B23A52' }}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            </svg>
-          </span>
-          <h1 className="mt-4 text-[19px] font-extrabold text-stiko-ink">
-            Couldn&apos;t load your packages
-          </h1>
-          <p className="mt-2 text-[13px] leading-[1.6] text-stiko-muted">
-            {message ?? 'Something went wrong on our side.'}
-          </p>
-          <div className="mt-6">
-            <Button onClick={onRetry}>Try again</Button>
+          <div className="flex flex-wrap items-start gap-3 pb-4">
+            {visible.map((group) => (
+              <ProjectCard
+                key={group.project.id}
+                group={group}
+                onOpenPeople={setPeoplePanelProjectId}
+              />
+            ))}
           </div>
         </div>
-      </Column>
-    </Shell>
-  );
-}
 
-/** 3g — a skeleton in the shape of the answer. No spinners. */
-function HomeSkeleton() {
-  return (
-    <Shell>
-      <div className="flex h-[52px] shrink-0 items-center justify-between rounded-panel bg-white px-[18px] shadow-stiko-panel">
-        <SkeletonBar width={120} height={14} />
-        <SkeletonBar width={90} height={14} secondary />
+        {notifications.length > 0 && (
+          <div className="w-full shrink-0 lg:h-full lg:w-auto">
+            <ActivityRail
+              notifications={notifications}
+              packages={packages}
+              onChanged={load}
+            />
+          </div>
+        )}
       </div>
-      <Column width={1120}>
-        <SkeletonBar width={180} height={20} />
-        <div className="mt-5 flex flex-col gap-3">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between rounded-[13px] bg-white px-5 py-[18px] shadow-stiko-panel"
-            >
-              <div className="flex flex-col gap-2">
-                <SkeletonBar width={220} height={14} />
-                <SkeletonBar width={300} height={11} secondary />
-              </div>
-              <SkeletonBar width={80} height={30} secondary />
-            </div>
-          ))}
-        </div>
-      </Column>
+
+      <NewProjectModal
+        isOpen={newProjectOpen}
+        onClose={() => setNewProjectOpen(false)}
+        onCreated={load}
+      />
+      <ProjectPeopleDrawer
+        group={groups.find((g) => g.project.id === peoplePanelProjectId) ?? null}
+        isOpen={peoplePanelProjectId !== null}
+        onClose={() => setPeoplePanelProjectId(null)}
+        onChanged={load}
+      />
+      <CommandPalette packages={packages} onNewPackage={newPackage} />
     </Shell>
   );
 }

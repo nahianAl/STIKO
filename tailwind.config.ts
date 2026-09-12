@@ -85,6 +85,8 @@ const config: Config = {
       },
       boxShadow: {
         "stiko-panel": "0 1px 3px rgba(28,32,48,0.05)",
+        "stiko-card":
+          "0 2px 6px -1px rgba(28,32,48,0.07), 0 1px 3px rgba(28,32,48,0.05)",
         "stiko-primary": "0 6px 16px -5px rgba(91,96,255,0.6)",
         "stiko-sheet": "0 10px 34px -12px rgba(28,32,48,0.16)",
         "stiko-pin": "0 4px 10px -2px rgba(0,0,0,0.2)",

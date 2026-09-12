@@ -13,9 +13,9 @@
 - **No database migration.** No schema change of any kind. If a task seems to need one, stop and raise it.
 - **Tests are `node --test` over pure `lib/` modules.** Run with `npm test`. The repo has **no React testing library** and 527 passing pure-logic tests. Follow that pattern: `lib/` gets TDD, components are verified in the browser (Task 10). Do **not** add a component test framework.
 - **Tests import `.ts` directly** (`import { x } from '../../lib/x.ts'`) and run under Node's native type stripping. Node v25.9.0 is in use.
-- **`lib/` modules that are unit-tested MUST use relative imports, never the `@/` alias.** Node's resolver has no knowledge of `tsconfig.json` paths, so `import { NOTES } from '@/lib/design'` inside a tested module fails with `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'`. Verified against this repo on 2026-09-11. Every currently-tested module (`lib/status.ts`, `lib/design.ts`, `lib/capabilities.ts`, `lib/brief.ts`) uses relative paths for exactly this reason. Components and route handlers go through webpack and may keep using `@/`.
+- **A VALUE import between unit-tested `lib/` modules must be relative AND carry an explicit `.ts` extension** — `import { NOTES } from './design.ts'`. Two separate failures otherwise, both verified empirically against this repo on 2026-09-11: the `@/` alias gives `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'` because Node's resolver knows nothing of `tsconfig.json` paths, and an extensionless relative path gives `ERR_MODULE_NOT_FOUND: Cannot find module '.../lib/design'` because Node's ESM resolver does no extension guessing. `lib/s3.ts` and `lib/storageKeys.ts` already import siblings this way. `tsconfig.json` already sets `allowImportingTsExtensions: true` and `moduleResolution: bundler`, so `tsc` and webpack both accept it. Components and route handlers are not run by `node --test` and may keep using `@/`.
 - **A type-only import is erased, and that is load-bearing.** `lib/home.ts` imports types from `lib/queries.ts`, which imports `lib/db` and throws at module load without `DATABASE_URL`. Writing `import type { ... }` means the test never loads it. Writing a plain `import` would make every `lib/home.ts` test require a database.
-- **Use Tailwind tokens, never raw hex**, except where a value is passed as an inline `style` (the existing components already do this for status/role colours that come from a TS map). Every token exists in `tailwind.config.ts` except `shadow-stiko-card`, added in Task 6.
+- **Use Tailwind tokens for colour where one exists.** Two exceptions match what the codebase already does: a value passed as an inline `style` (how `StatusChip` and `RolePill` render colours that come from a TS map), and the primary gradient's arbitrary-value classes `from-[#8094F5] to-[#5B60FF]`, which `Button.tsx` and `Shell.tsx` already spell exactly that way. Every token exists in `tailwind.config.ts` except `shadow-stiko-card`, added in Task 6.
 - **Never `git add -A` in this repo.** Four long-lived untracked directories (`design_handoff_*`, `stiko_handoff/`) get swept into unrelated commits. Stage files by exact path.
 - **Tailwind arbitrary-value overrides do not cascade by class order.** `<SectionLabel className="text-[10px]">` will NOT reliably override the component's built-in `text-[11px]` — equal specificity means stylesheet source order decides. Where the design calls for a size a primitive does not have, write the element inline rather than fighting it.
 - **Copy rule:** "Package" in all user-visible strings, "Portal" only in code and routes.
@@ -390,21 +390,33 @@ test('the filter splits owned from invited', () => {
   assert.deepEqual(filterGroups(groups, 'shared').map((g) => g.project.id), ['proj2']);
 });
 
-test('the filter row is hidden when there is nothing to filter', () => {
+test('the filter row needs both an owned and an invited project', () => {
   const oneOwned = groupProjects([pkg()], [proj()]);
   assert.equal(showFilterRow(oneOwned), false);
 
+  // Two owned, none invited: "Shared with me" could never match anything.
   const twoOwned = groupProjects(
     [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
     [proj(), proj({ id: 'proj2', name: 'Other' })]
   );
-  assert.equal(showFilterRow(twoOwned), true);
+  assert.equal(showFilterRow(twoOwned), false);
 
-  const mixed = groupProjects(
-    [pkg()],
-    [proj({ ownedByMe: false, myRole: 'commenter' })]
+  // A pure guest across two projects: "Owned by me" could never match.
+  const twoInvited = groupProjects(
+    [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
+    [
+      proj({ ownedByMe: false, myRole: 'commenter' }),
+      proj({ id: 'proj2', name: 'Other', ownedByMe: false, myRole: 'viewer' }),
+    ]
   );
-  assert.equal(showFilterRow(mixed), false);
+  assert.equal(showFilterRow(twoInvited), false);
+
+  // One of each is the only shape where all three buttons mean something.
+  const mixed = groupProjects(
+    [pkg(), pkg({ id: 'c', projectId: 'proj2', projectName: 'Other' })],
+    [proj(), proj({ id: 'proj2', name: 'Other', ownedByMe: false, myRole: 'commenter' })]
+  );
+  assert.equal(showFilterRow(mixed), true);
 });
 
 /* ----------------------------------------------------------------- stats -- */
@@ -436,12 +448,12 @@ Expected: FAIL — `Cannot find module` for `lib/home.ts`.
 Create `lib/home.ts`:
 
 ```typescript
-import { highestRole, ROLE_RANK, type ProjectRole } from './roles';
+import { highestRole, ROLE_RANK, type ProjectRole } from './roles.ts';
 // `import type` is load-bearing: lib/queries.ts imports lib/db, which throws at
 // module load without DATABASE_URL. A type-only import is erased, so the unit
 // tests never pull a database connection in. Do not turn this into a plain
 // import.
-import type { PackageCard, ProjectSummary } from './queries';
+import type { PackageCard, ProjectSummary } from './queries.ts';
 
 /**
  * Every derivation the home screen needs, as pure functions over the payload
@@ -570,9 +582,15 @@ export function filterGroups(
   return groups.filter((g) => g.project.ownedByMe === wantOwned);
 }
 
-/** 03's ladder: never render a control with nothing to control. */
+/**
+ * 03's ladder: never render a control with nothing to control.
+ *
+ * Both an owned and an invited project must exist. With only owned projects
+ * "Shared with me" can never match; with only invited ones "Owned by me" can
+ * never match — and a row carrying a permanently empty button is exactly the
+ * dead control the ladder exists to remove.
+ */
 export function showFilterRow(groups: ProjectGroup[]): boolean {
-  if (groups.length >= 2) return true;
   const owned = groups.filter((g) => g.project.ownedByMe).length;
   return owned >= 1 && groups.length - owned >= 1;
 }
@@ -603,7 +621,7 @@ export function homeStats(packages: PackageCard[]): {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test scripts/tests/home.test.mjs`
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -974,6 +992,50 @@ Insert after the `const packages: PackageCard[] = rows.map(...)` block (after `l
 
   const projects = Array.from(projectsById.values());
 ```
+
+**Step 5b — also return projects that have no visible package.** The `visible` CTE selects
+`FROM portals`, so a project with zero visible packages produces no rows and would never reach
+the payload — which would make the Task 5 "New project" flow create a project and show nothing.
+Add this query after `mentionRows`:
+
+```typescript
+  const emptyProjectRows = await sql`
+    SELECT DISTINCT pr.id, pr.name, pr.created_at,
+           (pr.owner_id = ${userId}) AS "ownedByMe",
+           owner.name AS "ownerName",
+           pm.role AS "memberRole"
+    FROM projects pr
+    LEFT JOIN users owner ON owner.id = pr.owner_id
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE pr.archived_at IS NULL
+      AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL)
+    ORDER BY pr.created_at DESC
+  `;
+```
+
+and merge it after the `rows` loop, before `Array.from`:
+
+```typescript
+  for (const r of emptyProjectRows) {
+    const id = r.id as string;
+    if (projectsById.has(id)) continue;
+    projectsById.set(id, {
+      id,
+      name: r.name as string,
+      ownedByMe: Boolean(r.ownedByMe),
+      createdByName: (r.ownerName as string) ?? null,
+      myRole: deriveMyRole({
+        ownedByMe: Boolean(r.ownedByMe),
+        memberRole: (r.memberRole as string) ?? null,
+        participantRoles: [],
+      }),
+    });
+  }
+```
+
+Scoped to owner-or-member on purpose, matching `GET /api/projects`: a guest is a participant on
+*packages*, so a project with no package they can see is not theirs to know about.
 
 Then change the return statement (currently `lib/queries.ts:230`) from:
 

@@ -36,6 +36,36 @@ export async function DELETE(
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Ownership is checked BEFORE the emptiness guard below, not only in the
+  // DELETE's own WHERE clause. Otherwise the guard's 409 answers "does this
+  // project have packages?" for any project id a stranger cares to try, which
+  // is a fact about someone else's work.
+  const owned = await sql`
+    SELECT 1 FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+  `;
+  if (owned.length === 0) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+  }
+
+  // A project is only deletable while nothing lives under it. The client gate
+  // cannot be trusted for this: it counts VISIBLE packages, and an archived
+  // package is deliberately hidden from the project while its files, comments
+  // and S3 objects all still exist. Archiving is advertised as reversible, so
+  // letting this cascade through one would be a lie told with someone else's
+  // data. Archived or not, any portal blocks the delete.
+  const existing = await sql`
+    SELECT 1 FROM portals WHERE project_id = ${params.id} LIMIT 1
+  `;
+  if (existing.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          'This project still has packages. Delete or move them before deleting the project.',
+      },
+      { status: 409 }
+    );
+  }
+
   const doomedFiles = await sql`
     SELECT f.id
     FROM files f
@@ -47,8 +77,16 @@ export async function DELETE(
     doomedFiles.map((f) => f.id as string)
   );
 
+  // The emptiness condition is repeated INSIDE the delete, not just in the
+  // pre-check above. Those were two separate statements, so a package created
+  // from another tab in the window between them would have been cascaded away
+  // by a delete that had already decided the project was empty. The pre-check
+  // stays, only to tell a 409 apart from a 404.
   const result = await sql`
-    DELETE FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+    DELETE FROM projects
+    WHERE id = ${params.id}
+      AND owner_id = ${session.user.id}
+      AND NOT EXISTS (SELECT 1 FROM portals WHERE project_id = projects.id)
     RETURNING id
   `;
   if (!result[0]) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
