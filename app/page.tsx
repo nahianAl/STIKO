@@ -200,8 +200,18 @@ export default function Home() {
     <Shell>
       <TopBar right={topBarRight} />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-6 px-1 lg:flex-row">
-        <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-1 lg:flex-row lg:overflow-visible">
+        {/* flex-none (not flex-1) below lg: this is a flex column here, and
+            ActivityRail's aside is shrink-0 with a content-driven height —
+            once the rail's own content is taller than this row (a handful of
+            notifications is enough on a phone), flex-1's flex-basis:0% has
+            nothing to grow into and the grid collapses to 0px, rendering its
+            cards UNDER the rail instead of above it. flex-none makes this
+            column size to its own content instead of competing for space, so
+            it simply stacks above the rail and the row (which scrolls) grows
+            to fit both. lg:flex-1 restores the fill-remaining-space behaviour
+            once the layout is a row instead of a column. */}
+        <div className="min-h-0 flex-none lg:flex-1 lg:overflow-y-auto">
           <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-3 pt-[2px]">
             <div>
               <h1 className="text-[20px] font-extrabold tracking-title text-stiko-ink">

@@ -60,9 +60,10 @@ export default function ActivityRail({
     // feed's own overflow-y-auto never activates, the aside grows to fit every
     // row, and the WHOLE PAGE scrolls instead — taking the top bar with it.
     // The two sibling panels with the same shape (FileTreeSidebar,
-    // CommentsPanel) carry it for exactly this reason. Below lg the rail
-    // reflows beneath the grid at full width, where the feed's own max-height
-    // cap (below) keeps it from running the page long instead.
+    // CommentsPanel) carry it for exactly this reason. Below lg neither this
+    // rail nor the grid tries to fit the viewport at all: the content row
+    // itself (`overflow-y-auto` in app/page.tsx) is the single scroller, so
+    // both children are free to size to their content.
     <aside className="flex h-auto w-full shrink-0 flex-col overflow-hidden rounded-panel bg-white shadow-stiko-panel lg:h-full lg:w-[344px]">
       <div className="flex items-center justify-between gap-[10px] border-b border-stiko-border px-4 py-[14px]">
         <div>
@@ -87,7 +88,7 @@ export default function ActivityRail({
         <StatTile value={stats.inReview} label="in review" color="#7A5E00" />
       </div>
 
-      <div className="min-h-0 max-h-[45vh] flex-1 overflow-y-auto px-3 pb-[14px] pt-[6px] lg:max-h-none">
+      <div className="min-h-0 flex-1 overflow-visible px-3 pb-[14px] pt-[6px] lg:max-h-none lg:overflow-y-auto">
         {groups.map((group) => (
           <div key={group.label} className="pt-[10px]">
             <div className="px-1 pb-[6px] text-[10px] font-bold uppercase tracking-label text-stiko-faint">
