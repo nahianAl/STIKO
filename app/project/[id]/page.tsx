@@ -135,6 +135,13 @@ export default function ProjectPage() {
   // surface its message here rather than a generic failure.
   const deleteProject = async () => {
     const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    // An expired session is 302'd to /login by middleware; fetch follows it and
+    // hands back 200 HTML, so res.ok alone would report a deletion that never
+    // happened and bounce the user to a home page still listing the project.
+    if (res.redirected) {
+      toast('Your session has expired. Sign in and try again.');
+      return;
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       toast(body.error ?? 'Could not delete this project');

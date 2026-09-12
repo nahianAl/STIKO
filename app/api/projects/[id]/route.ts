@@ -77,8 +77,16 @@ export async function DELETE(
     doomedFiles.map((f) => f.id as string)
   );
 
+  // The emptiness condition is repeated INSIDE the delete, not just in the
+  // pre-check above. Those were two separate statements, so a package created
+  // from another tab in the window between them would have been cascaded away
+  // by a delete that had already decided the project was empty. The pre-check
+  // stays, only to tell a 409 apart from a 404.
   const result = await sql`
-    DELETE FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+    DELETE FROM projects
+    WHERE id = ${params.id}
+      AND owner_id = ${session.user.id}
+      AND NOT EXISTS (SELECT 1 FROM portals WHERE project_id = projects.id)
     RETURNING id
   `;
   if (!result[0]) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
