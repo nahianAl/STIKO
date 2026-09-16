@@ -222,7 +222,10 @@ export default function PortalPage() {
   // the gesture, on every single render of this page.
   const {
     measurements,
+    pending: pendingMeasurement,
     selectedId: selectedMeasurementId,
+    setSelectedId: setSelectedMeasurementId,
+    addPoint: addMeasurePoint,
     begin: beginMeasure,
     cancel: cancelMeasure,
     clear: clearMeasure,
@@ -737,6 +740,26 @@ export default function PortalPage() {
   const handlePinPositionsUpdate = useCallback((positions: Map<string, PinScreenPosition>) => {
     setWorldPinPositions(positions);
   }, []);
+
+  /**
+   * A measurement click on the 3D surface.
+   *
+   * Nothing to convert on the way in. The point already arrives in the model's own frame (the
+   * same frame comment pins are stored in), and `minSeparation` already arrives scene-scaled —
+   * ModelViewerInner owns both, because it is the only place that knows the model's bounding
+   * radius and the placement transform. That is also why `intrinsicPerSurfaceUnit` is 1 for 3D:
+   * a model-frame distance IS a file-intrinsic distance, the placement carrying no scale.
+   *
+   * The committed measurement that `addPoint` may return is deliberately dropped here. The
+   * calibrate flow reads it off the `measurements` list instead, so that one effect handles a
+   * span whether it was just taken or restored — see the capture effect further down.
+   */
+  const handleMeasurePoint = useCallback(
+    (point: number[], minSeparation: number) => {
+      addMeasurePoint(point, minSeparation);
+    },
+    [addMeasurePoint]
+  );
 
   // The master toggle is the only control that removes a cut: switching the tool off clears
   // every slot, so `cutting` goes false everywhere and the model returns to its whole shape.
@@ -1801,6 +1824,17 @@ export default function PortalPage() {
             highlightedPart={hoveredPart}
             onPartsLoaded={handlePartsLoaded}
             onPartPick={handlePartPick}
+            // Measuring a 3D file happens in the live WebGL scene — see MeasureLayer on why it
+            // cannot be a DOM overlay. ViewerContainer forwards all of this to ModelViewer
+            // alone; the 2D surfaces collect their own points in their own stage space.
+            measureActive={isMeasureTool(activeTool)}
+            onMeasurePoint={handleMeasurePoint}
+            measurements={measurements}
+            pendingMeasurement={pendingMeasurement}
+            mmPerUnit={measureScale.mmPerUnit}
+            measureUnit={measureUnit}
+            selectedMeasurementId={selectedMeasurementId}
+            onSelectMeasurement={setSelectedMeasurementId}
             onPageChange={setPdfPage}
           />
         </div>

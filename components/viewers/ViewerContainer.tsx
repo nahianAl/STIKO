@@ -7,6 +7,9 @@ import type { ObjectTransform } from '@/lib/objectTransform';
 import type { PlaneId, SectionSlots } from '@/lib/crossSection';
 import type { PartNode } from '@/lib/model/partTree';
 import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
+import type { Measurement } from '@/components/markup/useMeasurements';
+import type { PendingGesture } from '@/lib/measure/gesture';
+import type { LengthUnit } from '@/lib/measure/units';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -44,6 +47,16 @@ interface ViewerContainerProps {
   highlightedPart: string | null;
   onPartsLoaded: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   onPartPick: (key: string) => void;
+  // 3D measurement props. Forwarded to ModelViewer only — the 2D surfaces collect their own
+  // points in their own stage space and never see these.
+  measureActive?: boolean;
+  onMeasurePoint?: (point: number[], minSeparation: number) => void;
+  measurements?: Measurement[];
+  pendingMeasurement?: PendingGesture | null;
+  mmPerUnit?: number | null;
+  measureUnit?: LengthUnit;
+  selectedMeasurementId?: string | null;
+  onSelectMeasurement?: (id: string | null) => void;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -86,6 +99,8 @@ export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
   partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
+  measureActive, onMeasurePoint, measurements, pendingMeasurement, mmPerUnit, measureUnit,
+  selectedMeasurementId, onSelectMeasurement,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -193,6 +208,14 @@ export default function ViewerContainer({
           highlightedPart={highlightedPart}
           onPartsLoaded={onPartsLoaded}
           onPartPick={onPartPick}
+          measureActive={measureActive}
+          onMeasurePoint={onMeasurePoint}
+          measurements={measurements}
+          pendingMeasurement={pendingMeasurement}
+          mmPerUnit={mmPerUnit}
+          measureUnit={measureUnit}
+          selectedMeasurementId={selectedMeasurementId}
+          onSelectMeasurement={onSelectMeasurement}
         />
       </ModelErrorBoundary>
     );

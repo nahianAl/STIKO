@@ -32,6 +32,10 @@ import ViewerNavigation from './ViewerNavigation';
 import ApplyCrossSection from './section/ApplyCrossSection';
 import SectionPlaneWidget from './section/SectionPlaneWidget';
 import SectionCaps from './section/SectionCaps';
+import MeasureLayer from './MeasureLayer';
+import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
+import type { Measurement } from '@/components/markup/useMeasurements';
+import type { PendingGesture } from '@/lib/measure/gesture';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Collada } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import type CameraControlsImpl from 'camera-controls';
@@ -133,6 +137,26 @@ export interface ModelViewerInnerProps {
   onPartsLoaded?: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   /** Fired when a part is clicked in the viewport (comment tool must be off). */
   onPartPick?: (key: string) => void;
+  /** True while any measure tool is armed. Arms the pick path below; nothing else changes. */
+  measureActive?: boolean;
+  /**
+   * A measurement click, in the MODEL's own frame — the same frame comment pins are stored in.
+   *
+   * The signature every measure surface shares, so lib/measure/gesture.ts never has to know
+   * which one called it. `minSeparation` is in that surface's own units and is computed HERE
+   * rather than by the caller; see MIN_SEPARATION_FRACTION.
+   */
+  onMeasurePoint?: (point: number[], minSeparation: number) => void;
+  /** Committed measurements for this session. Drawn in the WebGL scene, never as DOM. */
+  measurements?: Measurement[];
+  /** The half-placed gesture, drawn as dots and a dashed line. */
+  pendingMeasurement?: PendingGesture | null;
+  /** Millimetres per model unit, or null when the file has no usable scale yet. */
+  mmPerUnit?: number | null;
+  /** The unit readings are displayed in. */
+  measureUnit?: LengthUnit;
+  selectedMeasurementId?: string | null;
+  onSelectMeasurement?: (id: string | null) => void;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -461,6 +485,86 @@ function Model({
   );
 }
 
+/** Snap radius in screen pixels. Beyond this the free surface point is the honest answer. */
+const VERTEX_SNAP_PX = 12;
+
+/**
+ * How close two measurement clicks may land before the gesture reads as a misclick, as a
+ * fraction of the model's bounding radius.
+ *
+ * Scene-scaled rather than fixed, and computed in the viewer rather than by the caller, for the
+ * reason lib/sceneScale.ts documents: geometry here arrives with no unit convention and bounding
+ * radii span 1 to 10,000. A constant floor would reject every click on a small model and accept
+ * every misclick on a large one.
+ */
+const MIN_SEPARATION_FRACTION = 1e-4;
+
+/** The pin and measurement paths both want real surface geometry, not a wireframe polyline. */
+function isSurfaceHit(hit: THREE.Intersection): boolean {
+  return hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh;
+}
+
+function hasBatchId(hit: THREE.Intersection): boolean {
+  return hit.batchId !== undefined;
+}
+
+/**
+ * The nearest vertex of the hit triangle, in WORLD space, when one is within VERTEX_SNAP_PX of
+ * the cursor on screen. Null otherwise — in which case the caller falls back to the free surface
+ * point, which is the honest answer rather than a guess.
+ *
+ * Reads face indices straight off the intersection rather than precomputing anything: the model
+ * is drawn as merged BatchedMesh batches, so there is no per-part vertex structure to consult.
+ * three's BatchedMesh.raycast borrows the batch geometry's index and attributes for the hit test
+ * and then reassigns `intersect.object` to the BatchedMesh, so `face.a/b/c` are valid indices
+ * into `hit.object.geometry`'s position attribute.
+ *
+ * THE TRANSFORM IS THE TRAP. BatchedMesh.raycast places each instance with
+ * `getMatrixAt(i).premultiply(matrixWorld)` (three 0.169.0, BatchedMesh.js:937), and
+ * buildBatches.ts:271 deliberately puts every part's placement on its instance matrix —
+ * "geometry stays in its own local space". Using `matrixWorld` alone drops the placement and
+ * lands the snapped vertex on the wrong part of the assembly, plausibly enough that nothing
+ * looks broken. A single-part model has an identity instance matrix and passes either way, so
+ * only a multi-part assembly can tell the two apart.
+ */
+function nearestVertexSnap(
+  hit: THREE.Intersection,
+  camera: THREE.Camera,
+  gl: THREE.WebGLRenderer,
+): THREE.Vector3 | null {
+  const face = hit.face;
+  const mesh = hit.object as THREE.Mesh;
+  const position = mesh.geometry?.getAttribute('position');
+  if (!face || !position) return null;
+
+  const toWorld = mesh.matrixWorld.clone();
+  const batchId = hit.batchId;
+  if (typeof batchId === 'number' && (mesh as THREE.BatchedMesh).isBatchedMesh) {
+    const instance = new THREE.Matrix4();
+    (mesh as THREE.BatchedMesh).getMatrixAt(batchId, instance);
+    toWorld.multiply(instance);
+  }
+
+  const size = new THREE.Vector2();
+  gl.getSize(size);
+  // The hit point IS under the cursor by construction, so projecting it back is the cursor's
+  // own NDC without having to thread the pointer event down here.
+  const cursor = hit.point.clone().project(camera);
+
+  let best: { point: THREE.Vector3; px: number } | null = null;
+  for (const index of [face.a, face.b, face.c]) {
+    const world = new THREE.Vector3().fromBufferAttribute(position, index).applyMatrix4(toWorld);
+    const projected = world.clone().project(camera);
+    const px = Math.hypot(
+      ((projected.x - cursor.x) * size.x) / 2,
+      ((projected.y - cursor.y) * size.y) / 2,
+    );
+    if (!best || px < best.px) best = { point: world, px };
+  }
+
+  return best && best.px <= VERTEX_SNAP_PX ? best.point : null;
+}
+
 function SceneInteraction({
   commentToolActive,
   onSceneClick,
@@ -472,6 +576,9 @@ function SceneInteraction({
   batches,
   onPartPick,
   gizmoDraggingRef,
+  measureActive,
+  onMeasurePoint,
+  radius,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
@@ -485,6 +592,10 @@ function SceneInteraction({
   /** Set for the duration of a gizmo drag (TransformControls or a SectionPlaneWidget handle) —
    * a pick must not fire through it, the same reason the onClick deselect handler checks it. */
   gizmoDraggingRef: React.MutableRefObject<boolean>;
+  measureActive: boolean;
+  onMeasurePoint?: ModelViewerInnerProps['onMeasurePoint'];
+  /** The model's bounding radius, or 0 until it has been measured. Scales the click floor. */
+  radius: number;
 }) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -494,61 +605,89 @@ function SceneInteraction({
   // gesture started, and the pick raycast on pointerup only runs if it stayed within 4px of it.
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
+  /**
+   * The frontmost model intersection under the pointer that survives both guards, or null.
+   *
+   * ONE raycast shared by all three pick paths — pin drop, measurement point and part select —
+   * rather than a copy per tool. The gizmo-rect exclusion and the clipping test are the halves
+   * that must never drift apart between them, and writing a second raycast beside this one is
+   * exactly how they would.
+   */
+  const pickModel = useCallback(
+    (
+      e: PointerEvent,
+      accept: (hit: THREE.Intersection) => boolean,
+    ): THREE.Intersection | null => {
+      const model = modelRef.current;
+      if (!model) return null;
+
+      const rect = gl.domElement.getBoundingClientRect();
+
+      // The gizmo is a HUD layer, not scene geometry, and its React Three Fiber
+      // stopPropagation does not reach this native listener — so exclude its rect by hand.
+      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width)) return null;
+
+      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.current.setFromCamera(mouse.current, camera);
+
+      // Scoped to the model alone, not the whole scene: the ground disc, contact shadow and
+      // axis lines are all Mesh-derived and large enough to fill the viewport, so they would
+      // otherwise catch clicks intended for empty background and drop pins in space.
+      for (const hit of raycaster.current.intersectObject(model, true)) {
+        // three's raycaster ignores clipping planes entirely, so the halves a cross-section
+        // hides stay fully hittable. Without this, clicking into an opened cavity drops the pin
+        // (or a measurement point) on invisible geometry — and it then appears to float in
+        // space once the section is cleared. Several planes clip by intersection, so a hit
+        // survives only if it is on the kept side of all of them. Same guard, same reason, as
+        // ViewerNavigation's orbit-anchor raycast.
+        if (isClipped(clipPlanesRef.current, hit.point)) continue;
+        if (accept(hit)) return hit;
+      }
+      return null;
+    },
+    [camera, gl, modelRef, clipPlanesRef]
+  );
+
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {
       pointerDownPos.current = { x: e.clientX, y: e.clientY };
 
       if (!commentToolActive || !onSceneClick) return;
 
-      const model = modelRef.current;
-      if (!model) return;
+      const hit = pickModel(e, isSurfaceHit);
+      if (!hit) return;
 
-      const rect = gl.domElement.getBoundingClientRect();
-
-      // The gizmo is a HUD layer, not scene geometry, and its React Three Fiber
-      // stopPropagation does not reach this native listener — so exclude its rect by hand.
-      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width)) return;
-
-      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-      raycaster.current.setFromCamera(mouse.current, camera);
-      // Scoped to the model alone, not the whole scene: the ground disc, contact shadow and
-      // axis lines are all Mesh-derived and large enough to fill the viewport, so they would
-      // otherwise catch clicks intended for empty background and drop pins in space.
-      const intersects = raycaster.current.intersectObject(model, true);
-
-      for (const hit of intersects) {
-        if (!(hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh)) continue;
-
-        // three's raycaster ignores clipping planes entirely, so the halves a cross-section
-        // hides stay fully hittable. Without this, clicking into an opened cavity drops the pin
-        // on invisible geometry — and it then appears to float in space once the section is
-        // cleared. Several planes clip by intersection, so a hit survives only if it is on the
-        // kept side of all of them. Same guard, same reason, as ViewerNavigation's orbit-anchor
-        // raycast.
-        if (isClipped(clipPlanesRef.current, hit.point)) continue;
-
-        const point = hit.point;
-        const projected = point.clone().project(camera);
-        const screenPercent = {
-          x: ((projected.x + 1) / 2) * 100,
-          y: ((1 - projected.y) / 2) * 100,
-        };
-        // Stored relative to the model, so the pin travels with it when it is moved.
-        const local = worldToModel([point.x, point.y, point.z], transform);
-        onSceneClick({ x: local[0], y: local[1], z: local[2] }, screenPercent);
-        break;
-      }
+      const point = hit.point;
+      const projected = point.clone().project(camera);
+      const screenPercent = {
+        x: ((projected.x + 1) / 2) * 100,
+        y: ((1 - projected.y) / 2) * 100,
+      };
+      // Stored relative to the model, so the pin travels with it when it is moved.
+      const local = worldToModel([point.x, point.y, point.z], transform);
+      onSceneClick({ x: local[0], y: local[1], z: local[2] }, screenPercent);
     },
-    [commentToolActive, onSceneClick, camera, gl, modelRef, transform, clipPlanesRef]
+    [commentToolActive, onSceneClick, camera, pickModel, transform]
   );
 
   const handlePointerUp = useCallback(
     (e: PointerEvent) => {
-      // A part pick is not a pin drop: it runs when the comment tool is OFF, so the two can
-      // never both fire from one click.
-      if (commentToolActive || !onPartPick || !batches) return;
+      // A pin drop is deliberately NOT one of the branches below: it already happened on
+      // pointerdown, so the comment tool consumes the whole gesture and no two of the three
+      // can ever fire from one click.
+      if (commentToolActive) return;
+
+      // Which tool wants this pointerup, tested before the drag origin is touched so that an
+      // unarmed viewer leaves the ref exactly as it always did.
+      //
+      // A measurement point lands HERE rather than on pointerdown, unlike a pin, and that is
+      // the whole reason for putting it in this handler: a measure tool leaves the viewport
+      // live and orbitable (the portal page keeps 3D measuring out of its annotation-session
+      // effect on purpose), so a left-drag that orbits the model is the commonest gesture
+      // while one is armed. Only this handler's 4px test can stop that drag from also
+      // dropping a point.
+      if (measureActive ? !onMeasurePoint || radius <= 0 : !onPartPick || !batches) return;
 
       // A stationary right-click is the pan gesture, not a pick — R3F/native listeners get no
       // button filtering for free the way onPointerMissed's delta<=2 check does. And a click
@@ -573,28 +712,43 @@ function SceneInteraction({
       // reads as a click; past this threshold the user was orbiting.
       if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
 
-      const model = modelRef.current;
-      if (!model) return;
-
-      const rect = gl.domElement.getBoundingClientRect();
-      if (isPointerOverGizmo(e.clientX - rect.left, e.clientY - rect.top, rect.width)) return;
-
-      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.current.setFromCamera(mouse.current, camera);
-
-      for (const hit of raycaster.current.intersectObject(model, true)) {
-        // Same clipping guard, same reason, as the pin raycast above: three's raycaster
-        // ignores clipping planes, so a cross-sectioned-away half stays hittable and would
-        // select a part the viewer cannot see.
-        if (isClipped(clipPlanesRef.current, hit.point)) continue;
-        if (hit.batchId === undefined) continue;
-        const key = partKeyAt(batches, hit.object, hit.batchId);
-        if (key) onPartPick(key);
-        break;
+      if (measureActive) {
+        if (!onMeasurePoint) return;
+        // Surface hits only: a snap needs a triangle, and a STEP wireframe polyline has none.
+        const hit = pickModel(e, isSurfaceHit);
+        if (!hit) return;
+        // A snapped vertex comes back in WORLD space, so it goes through the SAME worldToModel
+        // conversion the pin path above uses — not a separate one. Points are stored in the
+        // model's own frame so a measurement travels with a moved or rotated object instead of
+        // floating where it was placed.
+        const snapped = nearestVertexSnap(hit, camera, gl);
+        const world = snapped ?? hit.point;
+        const local = worldToModel([world.x, world.y, world.z], transform);
+        onMeasurePoint(local, radius * MIN_SEPARATION_FRACTION);
+        return;
       }
+
+      // A part pick runs only when neither the comment tool nor a measure tool is armed, so
+      // the three are mutually exclusive by construction rather than by luck.
+      if (!onPartPick || !batches) return;
+      const hit = pickModel(e, hasBatchId);
+      if (!hit || hit.batchId === undefined) return;
+      const key = partKeyAt(batches, hit.object, hit.batchId);
+      if (key) onPartPick(key);
     },
-    [commentToolActive, onPartPick, batches, modelRef, gl, camera, clipPlanesRef, gizmoDraggingRef]
+    [
+      commentToolActive,
+      measureActive,
+      onMeasurePoint,
+      radius,
+      onPartPick,
+      batches,
+      pickModel,
+      camera,
+      gl,
+      transform,
+      gizmoDraggingRef,
+    ]
   );
 
   useEffect(() => {
@@ -657,6 +811,13 @@ function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> 
   );
   return null;
 }
+
+/**
+ * Stable empty default for the `measurements` prop. A fresh `[]` in the parameter list would be
+ * a new identity every render, which MeasureLayer's memo would take for a changed measurement
+ * list and rebuild every label texture against.
+ */
+const NO_MEASUREMENTS: Measurement[] = [];
 
 // Direction the camera is placed in, relative to the model's centre — the 3/4 view the
 // viewer has always opened on, now expressed as a direction rather than a fixed position.
@@ -855,6 +1016,14 @@ export default function ModelViewerInner({
   highlightedPart,
   onPartsLoaded,
   onPartPick,
+  measureActive = false,
+  onMeasurePoint,
+  measurements = NO_MEASUREMENTS,
+  pendingMeasurement = null,
+  mmPerUnit = null,
+  measureUnit = DEFAULT_LENGTH_UNIT,
+  selectedMeasurementId = null,
+  onSelectMeasurement,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
@@ -936,7 +1105,16 @@ export default function ModelViewerInner({
   }, [safeTransform]);
 
   return (
-    <div className="h-full w-full" style={{ minHeight: 400, cursor: commentToolActive ? 'crosshair' : undefined }}>
+    <div
+      className="h-full w-full"
+      style={{
+        minHeight: 400,
+        // A measure tool places points by clicking exactly the way the comment tool does, so it
+        // gets the same cursor. It does NOT freeze the viewport, so the viewer stays orbitable
+        // underneath it.
+        cursor: commentToolActive || measureActive ? 'crosshair' : undefined,
+      }}
+    >
       <Canvas
         // Position and clipping planes are placeholders only — FitCameraToModel overwrites
         // all three from the model's bounding sphere as soon as it loads. fov is derived from
@@ -1075,6 +1253,26 @@ export default function ModelViewerInner({
                   onSelect={(next) => onSelectPlane?.(next)}
                 />
               ))}
+            {/* Inside the placement group and OUTSIDE <Center>, and that position is the whole
+                contract. Measurement points are stored in the MODEL's frame — what
+                `worldToModel` produces, which undoes this group's position and rotation and
+                nothing else — so this is the one node in the tree whose local space IS that
+                frame. Mounted here, a measurement is carried by a move or a rotate for free.
+                Moved INSIDE <Center> it would pick up the centring offset as well and sit a
+                bounding-box's distance from the geometry it was taken on, and it would also
+                feed its own points into the box <Center> measures. */}
+            {bounds && (
+              <MeasureLayer
+                measurements={measurements}
+                pending={pendingMeasurement}
+                mmPerUnit={mmPerUnit}
+                unit={measureUnit}
+                selectedId={selectedMeasurementId}
+                onSelect={onSelectMeasurement}
+                clipPlanesRef={clipPlanesRef}
+                radius={bounds.radius}
+              />
+            )}
           </group>
           <ApplyFocalLength focalLength={focalLength} />
           {/* `batches` in the key, not just `url` — see MeasureModel's own doc comment for why
@@ -1143,6 +1341,12 @@ export default function ModelViewerInner({
             batches={batches}
             onPartPick={onPartPick}
             gizmoDraggingRef={gizmoDraggingRef}
+            measureActive={measureActive}
+            onMeasurePoint={onMeasurePoint}
+            // 0 until the model has been measured, which is also the value that keeps the
+            // measure branch of the pick handler shut: there is no scene scale to size the
+            // minimum click separation against yet.
+            radius={bounds?.radius ?? 0}
           />
         </Suspense>
         {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls
