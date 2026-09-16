@@ -162,6 +162,19 @@ interface MeasureLayerProps {
   selectedId: string | null;
   onSelect?: (id: string | null) => void;
   /**
+   * Whether a measurement can be clicked to select it. Defaults to true.
+   *
+   * False whenever another tool owns the click, exactly like the PDF measure layer's
+   * `listening` and like SectionPlaneWidget's own `selectable` below. With a measure tool armed
+   * SceneInteraction's pointerup drops a gesture point from the same press, so a click that
+   * lands on an existing dimension would both place a point AND select that dimension; with the
+   * comment tool armed the same press drops a pin. Dropping the handler rather than ignoring it
+   * inside also takes the whole group out of R3F's `internal.interaction` list (see applyProps
+   * in events-*.esm.js: the object is re-added only when its eventCount is non-zero), so a
+   * dimension cannot shield the model behind it from a pick either.
+   */
+  selectable?: boolean;
+  /**
    * ApplyCrossSection's live plane array, so a measurement clips with the model it belongs to.
    *
    * The REF and not the array, deliberately. ApplyCrossSection reassigns `planesRef.current`
@@ -182,6 +195,7 @@ export default function MeasureLayer({
   unit,
   selectedId,
   onSelect,
+  selectable = true,
   clipPlanesRef,
   radius,
 }: MeasureLayerProps) {
@@ -390,7 +404,9 @@ export default function MeasureLayer({
       {entries.map((entry) => (
         <group
           key={entry.id}
-          onClick={(e) => {
+          // No handler at all when another tool owns the click — see `selectable`. This is the
+          // 3D equivalent of the PDF measure layer's `listening={activeTool === 'pointer'}`.
+          onClick={!selectable ? undefined : (e) => {
             e.stopPropagation();
             // R3F's own delta<=2 drag-vs-click check (see events-*.esm.js) is applied ONLY on
             // the onPointerMissed path, not to an object's onClick like this one — and

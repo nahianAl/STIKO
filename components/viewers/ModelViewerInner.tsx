@@ -1131,13 +1131,22 @@ export default function ModelViewerInner({
         gl={{ preserveDrawingBuffer: true, localClippingEnabled: true, stencil: true }}
         onPointerMissed={(e) => {
           if (gizmoDraggingRef.current) return;
-          // Nothing selected, nothing to deselect — avoid disarming an unrelated
-          // object-gizmo session (see onSelectPlane in page.tsx).
-          if (selectedPlane === null) return;
           // R3F fires this for a stationary 'contextmenu' as well as 'click' (both are
           // click-type DOM events it applies the same delta<=2 check to). Right-click is the
           // pan gesture, not a deselect gesture, so only a primary-button click should count.
           if (e.button !== 0) return;
+          // A click on empty space is the only way out of a measurement selection: MeasureLayer
+          // only ever calls onSelect with an id, and the portal's own clears happen when a
+          // measurement is removed. A highlight with no way out turns the next Delete into a
+          // surprise — the portal's window keydown deletes the selected measurement while the
+          // markup surface's deletes the selected object, so one keypress removes two things.
+          // The drag guard is R3F's own: it reaches this handler only when the click hit
+          // nothing AND its accumulated pointer-move delta was <= 2 (see the isClickEvent
+          // branch in events-*.esm.js), so an orbit ending over empty space clears nothing.
+          onSelectMeasurement?.(null);
+          // Nothing selected, nothing to deselect — avoid disarming an unrelated
+          // object-gizmo session (see onSelectPlane in page.tsx).
+          if (selectedPlane === null) return;
           onSelectPlane?.(null);
         }}
       >
@@ -1214,6 +1223,13 @@ export default function ModelViewerInner({
                   // gesture misfiring constantly. `e.delta` is R3F's accumulated pointer-move
                   // distance for the click; 2 is the same threshold R3F applies itself.
                   if (e.delta > 2) return;
+                  // Same clear as the Canvas's onPointerMissed above, for the other half of "a
+                  // click that missed the measurements": this handler runs only when the press
+                  // landed on the model rather than on a dimension, since MeasureLayer's own
+                  // onClick stops propagation. Without a clear on both paths a measurement stays
+                  // highlighted for the rest of the session, and the next Delete removes it on
+                  // top of whatever markup object the user actually meant to delete.
+                  onSelectMeasurement?.(null);
                   // Nothing selected, nothing to deselect — avoid disarming an unrelated
                   // object-gizmo session (see onSelectPlane in page.tsx).
                   if (selectedPlane === null) return;
@@ -1269,6 +1285,11 @@ export default function ModelViewerInner({
                 unit={measureUnit}
                 selectedId={selectedMeasurementId}
                 onSelect={onSelectMeasurement}
+                // Selecting a dimension is only ever the intended gesture when no tool owns the
+                // click. With a measure tool armed the same press also drops a gesture point
+                // (SceneInteraction's pointerup), and with the comment tool armed it drops a
+                // pin — the PDF surface draws exactly the same line with `listening`.
+                selectable={!measureActive && !commentToolActive}
                 clipPlanesRef={clipPlanesRef}
                 radius={bounds.radius}
               />

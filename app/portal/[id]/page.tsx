@@ -1824,9 +1824,12 @@ export default function PortalPage() {
             highlightedPart={hoveredPart}
             onPartsLoaded={handlePartsLoaded}
             onPartPick={handlePartPick}
-            // Measuring a 3D file happens in the live WebGL scene — see MeasureLayer on why it
-            // cannot be a DOM overlay. ViewerContainer forwards all of this to ModelViewer
-            // alone; the 2D surfaces collect their own points in their own stage space.
+            // One store, two surfaces. ViewerContainer forwards this group to ModelViewer AND
+            // to PDFKonvaViewer — every prop but `measureActive`, which is 3D-only because the
+            // PDF viewer reads the armed tool out of `activeTool` it already receives. Measuring
+            // a 3D file happens in the live WebGL scene (see MeasureLayer on why it cannot be a
+            // DOM overlay); the 2D surfaces collect their points in their own stage space, which
+            // is what `intrinsicPerSurfaceUnit` and mmPerUnit exist to reconcile.
             measureActive={isMeasureTool(activeTool)}
             onMeasurePoint={handleMeasurePoint}
             measurements={measurements}

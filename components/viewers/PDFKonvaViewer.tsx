@@ -128,6 +128,11 @@ function PDFKonvaViewer(
 
     // Konva stage
     const stageRef = useRef<Konva.Stage>(null);
+    // The measurement layer, so a pointer press can ask whether it landed on a dimension. Identity
+    // rather than a name selector: `node.getLayer()` walks to the owning Layer (Stage.getLayer()
+    // returns null, Layer.getLayer() returns itself), so one `!==` covers the stage, the markup
+    // layer, the pins and anything added later, with no string to keep in sync.
+    const measureLayerRef = useRef<Konva.Layer>(null);
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
@@ -363,6 +368,29 @@ function PDFKonvaViewer(
 
       if (tagging) { const pct = toPercent(coords.x, coords.y); onCommentPlace(pct.x, pct.y, currentPage); return; }
 
+      // Deselecting a measurement. This is the ONLY place on this surface that can: MeasureObjects
+      // never calls onSelect with null, and the portal's remaining clears fire when a measurement
+      // is removed. A highlight with no way out turns the next Delete into a surprise — two window
+      // keydown listeners answer that key, this viewer's (deletes the selected markup object) and
+      // the portal's (deletes the selected measurement) — so one keypress removes two objects, one
+      // of them unintentionally. It also rides in every snapshot from then on.
+      //
+      // The test is "this press did not land on the measure layer", not "it landed on the stage"
+      // like the markup clear below. The stage test would leave exactly the failure above open:
+      // a click on a rectangle has e.target === that Rect, so it would select the markup while the
+      // dimension stayed selected behind it. Presses that DO land on a measurement are left alone
+      // and MeasureObjects' own onClick selects it on the following mouseup.
+      //
+      // ABOVE the `!annotating` guard, unlike every branch below. endSession() sets `annotating`
+      // false and switches to the pointer tool but does NOT clear the measure store (only a file
+      // switch does, via clearMeasure), so measurements outlive their session — and below the
+      // guard this clear would be dead in precisely the state where a stale selection lasts
+      // longest. Nothing here reads coordinates, so the guard's own reason (an attachment markup
+      // session collecting points in another surface's space) does not apply.
+      if (activeTool === 'pointer' && e.target.getLayer() !== measureLayerRef.current) {
+        onSelectMeasurement?.(null);
+      }
+
       if (!annotating) return; // live view: pointer pans (handled by Stage draggable)
 
       // A measure click. Ahead of every drawing branch because a measure tool is none of them,
@@ -405,7 +433,18 @@ function PDFKonvaViewer(
         onObjectCreated?.();
         return;
       }
-      if (activeTool === 'pointer') { if (e.target === stage) ann.setSelectedId(null); return; }
+      if (activeTool === 'pointer') {
+        // Empty sheet clears the markup selection, as it always has — and so does a press that
+        // lands on a dimension, which is the other half of the clear above. One Delete keypress
+        // answers to BOTH selections (this viewer's listener deletes the markup object, the
+        // portal's deletes the measurement), so the only safe invariant is that at most one of
+        // them is live at a time. Without this clause the two orders differ: rectangle-then-
+        // dimension would leave both selected and delete two objects on one key.
+        if (e.target === stage || e.target.getLayer() === measureLayerRef.current) {
+          ann.setSelectedId(null);
+        }
+        return;
+      }
       if (activeTool === 'eraser') {
         const p = stage.getPointerPosition();
         if (!p) return;
@@ -415,7 +454,7 @@ function PDFKonvaViewer(
         return;
       }
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint, onSelectMeasurement]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
@@ -645,14 +684,23 @@ function PDFKonvaViewer(
                   On the STAGE, which is what puts it in captureSnapshot's flatten — measurements
                   are session-only, so snapshotting one into a comment is the only way to keep it.
 
-                  `listening` is the eraser guard, and it cuts both ways: with the eraser armed
-                  this layer contributes nothing to the hit graph, so a drag-erase sweeping the
-                  viewport can neither delete a dimension nor be shielded by one from the markup
-                  underneath it. (deleteObject filters `ann.objects` by id and a measurement id is
-                  not in that list, so the eraser could not delete one anyway — but the shielding
-                  half is real, and a non-listening layer settles both.) It is inert for the
-                  drawing tools too, so drawing over a dimension cannot select it. */}
-              <Layer listening={activeTool === 'pointer' || isMeasureTool(activeTool)}>
+                  `listening` is the pointer tool and nothing else, because the pointer tool is
+                  the only state in which selecting a measurement is the gesture the user means.
+                  Every other tool owns the click for its own purpose and would fire twice:
+                  with a measure tool armed, handleStageMouseDown drops a gesture point on the
+                  very same press, so a click that lands on an existing dimension would both
+                  place a point AND select that dimension — the likeliest way to end up holding
+                  a selection nobody asked for. With the eraser it cuts both ways: this layer
+                  contributes nothing to the hit graph, so a drag-erase sweeping the viewport can
+                  neither delete a dimension nor be shielded by one from the markup underneath it.
+                  (deleteObject filters `ann.objects` by id and a measurement id is not in that
+                  list, so the eraser could not delete one anyway — but the shielding half is
+                  real, and a non-listening layer settles both.) Drawing over a dimension cannot
+                  select it either.
+
+                  Not listening is NOT not drawn, and not excluded from a snapshot: Konva's
+                  Stage._toKonvaCanvas skips invisible layers only, never non-listening ones. */}
+              <Layer ref={measureLayerRef} listening={activeTool === 'pointer'}>
                 <MeasureObjects
                   measurements={measurements}
                   pending={pendingMeasurement}

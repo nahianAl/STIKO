@@ -139,7 +139,9 @@ export default function MeasureObjects({
                 fontSize={px(14)}
                 fontFamily="system-ui, sans-serif"
                 fontStyle="600"
-                fill={STROKE}
+                // `color`, not STROKE: the line, arc and dots all take the selection colour,
+                // and a number left in ink beside an indigo line reads as a different object.
+                fill={color}
                 // A white plate behind the number, so a dimension stays readable over dark
                 // drawing content instead of disappearing into it.
                 shadowColor="#FFFFFF"
