@@ -38,14 +38,14 @@ import { useToast } from '@/components/ui/Toast';
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
 const AnnotationCanvas = dynamic(() => import('@/components/markup/AnnotationCanvas'), { ssr: false });
 import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
-import type { AnnTool, AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
+import type { AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
 import { isMeasureTool } from '@/components/markup/useAnnotationObjects';
 import { useMeasurements } from '@/components/markup/useMeasurements';
 import CalibrationPanel from '@/components/markup/CalibrationPanel';
 import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
 import { distance } from '@/lib/measure/geometry';
-import { pointsPerStagePixel } from '@/lib/measure/space';
+import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
 
 interface Project {
   id: string;
@@ -75,9 +75,22 @@ const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'ellipse', 
 // Synthetic id for the not-yet-posted tag, so it renders as a live preview pin
 const PENDING_TAG_ID = '__pending_tag__';
 
-// Captures the current viewer state as a JPEG data URL.
+interface ViewerSnapshot {
+  dataUrl: string;
+  /**
+   * Where the source image sits inside the snapshot, and how big it really is. Non-null only
+   * for the image branch — it is what lets a calibration be stored in NATURAL pixels rather
+   * than in whatever zoom the viewer happened to be at when the frame was frozen. A snapshot is
+   * fit-scaled and letterboxed at that zoom, so a factor captured in stage pixels reads
+   * plausibly once and is wrong the next time the file is opened.
+   */
+  imageSpace: ImageSnapshotSpace | null;
+}
+
+// Captures the current viewer state as a JPEG data URL, plus (image viewer only) the image
+// space that data URL was composed from.
 // Tries WebGL canvas first (3D), then img, then video.
-function captureViewerSnapshot(container: HTMLElement): string | null {
+function captureViewerSnapshot(container: HTMLElement): ViewerSnapshot | null {
   // WebGL canvas (3D models). The R3F canvas renders to a transparent buffer, so encoding it
   // straight to JPEG flattens the transparent areas to black. Composite onto the viewer's real
   // background (#f0f0f0, set in ModelViewerInner) first so the snapshot keeps the gray the user sees.
@@ -92,9 +105,11 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
         ctx.fillStyle = '#f0f0f0';
         ctx.fillRect(0, 0, offscreen.width, offscreen.height);
         ctx.drawImage(canvas, 0, 0);
-        return offscreen.toDataURL('image/jpeg', 0.92);
+        // No image space: a WebGL frame has no source <img>, and a 3D file measures in the live
+        // scene (MeasureLayer) rather than on a frozen snapshot.
+        return { dataUrl: offscreen.toDataURL('image/jpeg', 0.92), imageSpace: null };
       }
-      return canvas.toDataURL('image/jpeg', 0.92);
+      return { dataUrl: canvas.toDataURL('image/jpeg', 0.92), imageSpace: null };
     } catch (e) {
       console.error('Canvas capture failed:', e);
     }
@@ -120,7 +135,23 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
         imgRect.height
       );
       try {
-        return offscreen.toDataURL('image/jpeg', 0.92);
+        return {
+          dataUrl: offscreen.toDataURL('image/jpeg', 0.92),
+          // The rect drawImage was just handed, in the snapshot's own pixels, alongside the
+          // image's true size. getBoundingClientRect includes ImageViewer's CSS zoom/pan
+          // transform, so imageRect.width IS the on-screen size at the moment of the freeze —
+          // which is precisely why naturalWidth has to travel with it.
+          imageSpace: {
+            imageRect: {
+              x: imgRect.left - containerRect.left,
+              y: imgRect.top - containerRect.top,
+              width: imgRect.width,
+              height: imgRect.height,
+            },
+            naturalWidth: img.naturalWidth,
+            naturalHeight: img.naturalHeight,
+          },
+        };
       } catch (e) {
         console.error('Image capture failed:', e);
       }
@@ -146,7 +177,8 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
         videoRect.width,
         videoRect.height
       );
-      return offscreen.toDataURL('image/jpeg', 0.92);
+      // No image space: the measure tool group is withheld for video files entirely.
+      return { dataUrl: offscreen.toDataURL('image/jpeg', 0.92), imageSpace: null };
     }
   }
 
@@ -282,6 +314,17 @@ export default function PortalPage() {
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
+  // Where the source <img> sat inside that snapshot, for the image branch only. Always set and
+  // cleared in the same breath as `viewerSnapshot` — the two describe one frozen frame, and a
+  // space left over from a previous freeze would scale the next one's readings.
+  const [viewerImageSpace, setViewerImageSpace] = useState<ImageSnapshotSpace | null>(null);
+  // Natural image pixels per AnnotationCanvas stage pixel, reported UP by that canvas. It owns
+  // `bgFit`, and `bgFit` only exists after the snapshot has decoded — an async onload that lands
+  // after this page has already rendered. Pulling it back off the imperative handle in a memo
+  // here would therefore read null once and never recompute, leaving every calibration stored in
+  // stage pixels. See AnnotationCanvas's onIntrinsicScaleChange. Null means "no usable chain",
+  // and nothing downstream may substitute 1 for it.
+  const [imageIntrinsicPerStagePixel, setImageIntrinsicPerStagePixel] = useState<number | null>(null);
   // An attachment/snapshot opened for full viewing in the center viewport
   const [viewportImage, setViewportImage] = useState<string | null>(null);
   const [annotating, setAnnotating] = useState(false);
@@ -634,22 +677,27 @@ export default function PortalPage() {
    * Three surfaces, three answers:
    *   3D    — the picked points are already world units, so 1.
    *   PDF   — stage pixels to PDF points, which is what a PDF calibration must be stored in.
-   *   image — 1 FOR NOW. The real chain is naturalPerStagePixel(), which needs the snapshot's
-   *           fitted image rect, and that lands with the task that wires the image measure
-   *           surface. Nothing can reach this path before then: there is no image surface to
-   *           collect points on yet.
+   *   image — AnnotationCanvas stage pixels to the source image's NATURAL pixels, which is the
+   *           two-factor chain naturalPerStagePixel() resolves. Not computed here: the canvas
+   *           owns both halves of it and pushes the answer up (see imageIntrinsicPerStagePixel).
+   *
+   * Null means the active surface has no resolvable scale — an image whose snapshot carried no
+   * image space, or a surface that is not up yet. Deliberately not 1: substituting a stage pixel
+   * for an intrinsic unit is the silent failure this whole module exists to prevent.
    *
    * The attachment session (annotatingFile !== null) is not a case here — canCalibrate is false
    * throughout it, so the calibrate tool cannot be armed on a pasted screenshot at all.
    */
-  const intrinsicPerSurfaceUnit = useMemo(() => {
+  const intrinsicPerSurfaceUnit = useMemo<number | null>(() => {
     if (is3DFile) return 1;
     if (isPDFFile) return pointsPerStagePixel();
-    return 1;
-  }, [is3DFile, isPDFFile]);
+    return imageIntrinsicPerStagePixel;
+  }, [is3DFile, isPDFFile, imageIntrinsicPerStagePixel]);
 
   const calibrationIntrinsicDistance =
-    calibrationSpan === null ? 0 : calibrationSpan * intrinsicPerSurfaceUnit;
+    calibrationSpan === null || intrinsicPerSurfaceUnit === null
+      ? null
+      : calibrationSpan * intrinsicPerSurfaceUnit;
 
   // Which surface a markup session draws on. A PDF draws directly on its own
   // PDFKonvaViewer surface — except when the session is marking up a picked-but-not-
@@ -657,6 +705,23 @@ export default function PortalPage() {
   // AnnotationCanvas instead. Every other file type always draws on AnnotationCanvas.
   // Single source of truth for a rule that used to be hand-written at five call sites.
   const drawsOnCanvas = !isPDFFile || annotatingFile !== null;
+
+  /**
+   * Whether AnnotationCanvas is the surface the SELECTED FILE is measured on. A narrower
+   * question than `drawsOnCanvas`, and the two must not be conflated.
+   *
+   * Image files only. A 3D file measures in the live WebGL scene (MeasureLayer) and a PDF on its
+   * own stage — yet both can have an AnnotationCanvas over them: picking a draw tool on a 3D file
+   * freezes the viewport into a snapshot this canvas draws on, and an attachment session puts
+   * this canvas over a PDF. Handing the measure props over in either case would collect points in
+   * stage pixels of a frozen WebGL frame, or of a pasted screenshot, and then scale them by the
+   * selected file's mm-per-unit — a number that is about something else entirely. That is the
+   * plausible-looking wrong reading this feature is built to make impossible, so the props are
+   * withheld structurally rather than by hoping no one arms the tool.
+   *
+   * Video is excluded for completeness; DrawingTools already hides the whole measure group there.
+   */
+  const measuresOnCanvas = !is3DFile && !isPDFFile && !isVideoFile && annotatingFile === null;
 
   const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
 
@@ -1131,13 +1196,23 @@ export default function PortalPage() {
    * file's own intrinsic unit — stage pixels are never stored.
    */
   const handleCalibrationCommit = useCallback(
-    async (intrinsicDistance: number, realDistance: number, entryUnit: LengthUnit) => {
+    async (intrinsicDistance: number | null, realDistance: number, entryUnit: LengthUnit) => {
       if (!selectedFileId) return;
       const page = isPDFFile ? pdfPage : UNPAGED;
       // Clear any earlier failure up front: the panel stays open after a rejected save, so
       // without this the stale message sits under the input while the user retypes and
       // resubmits, only being replaced when the new response finally lands.
       setMeasureError(null);
+
+      // Null is its own fault, distinct from both checks below: the surface could not resolve
+      // its own stage-to-intrinsic scale at all, so the span it collected is in stage pixels and
+      // there is nothing to convert it with. Storing it anyway would file a stage-pixel number in
+      // a column that means intrinsic units — plausible at the zoom it was taken at, wrong at
+      // every other one, and nothing throws.
+      if (intrinsicDistance === null) {
+        setMeasureError("Could not work out this file's pixel scale. Close the file, reopen it and try again.");
+        return;
+      }
 
       // mmPerUnitFrom throws the same RangeError type for two different faults, and only one of
       // them is the user's. A non-positive MEASURED span means the two points landed on (or
@@ -1205,7 +1280,9 @@ export default function PortalPage() {
       // The 3D viewport composites the gizmo HUD into the same buffer the snapshot reads,
       // so ask it for a model-only frame first. No-op for image and video viewers.
       modelViewerRef.current?.renderCleanFrame();
-      setViewerSnapshot(container ? captureViewerSnapshot(container) : null);
+      const snapshot = container ? captureViewerSnapshot(container) : null;
+      setViewerSnapshot(snapshot?.dataUrl ?? null);
+      setViewerImageSpace(snapshot?.imageSpace ?? null);
     }
   }, [annotating, isPDFFile]);
 
@@ -1230,6 +1307,9 @@ export default function PortalPage() {
         // without this the session starts hidden behind it, with no visible tools.
         setViewportImage(null);
         setViewerSnapshot(reader.result as string);
+        // A pasted attachment is not the package file and has no image space: it is not measured
+        // on, and the measure props are withheld from the canvas for the whole session.
+        setViewerImageSpace(null);
         setAnnotatingFile(file);
         setAnnotating(true);
         setActiveTool('pointer');
@@ -1396,6 +1476,13 @@ export default function PortalPage() {
     // indicator comes down.
     setViewerReady(false);
     setViewerSnapshot(null);
+    setViewerImageSpace(null);
+    // Cleared here as well as by AnnotationCanvas's own unmount report, because this is the one
+    // boundary the number must never cross: a factor is a property of ONE image at ONE frozen
+    // zoom, and applying the file being left's pixel density to the file being opened is the
+    // silent-wrong-calibration failure. Ordering here is unconditional and one commit deep,
+    // rather than resting on the unmount firing before anything reads it.
+    setImageIntrinsicPerStagePixel(null);
     setViewportImage(null);
     setAnnotating(false);
     setAnnotatingFile(null);
@@ -1623,6 +1710,7 @@ export default function PortalPage() {
     setAnnotating(false);
     setAnnotatingFile(null);
     setViewerSnapshot(null);
+    setViewerImageSpace(null);
     annotationCanvasRef.current?.clear();
     pdfKonvaRef.current?.clearDrawings();
     setActiveTool('pointer');
@@ -1951,7 +2039,12 @@ export default function PortalPage() {
                 // surface is a pasted screenshot with no file id, so there is nowhere to store a
                 // calibration and nothing to resolve a scale against.
                 canCalibrate={canComment && annotatingFile === null}
-                measureAvailable={!isVideoFile}
+                // Same `annotatingFile === null` test as canCalibrate directly above, for the
+                // same reason one step further out: an attachment session's surface is a pasted
+                // screenshot with no file id, no calibration and no image space, so measuring on
+                // it could only ever produce a number about some other file. Offering a tool that
+                // is inert by design is worse than not offering it.
+                measureAvailable={!isVideoFile && annotatingFile === null}
               />
             )}
 
@@ -2053,12 +2146,26 @@ export default function PortalPage() {
             {annotating && drawsOnCanvas && (
               <AnnotationCanvas
                 backgroundDataUrl={viewerSnapshot}
-                activeTool={activeTool as AnnTool}
+                activeTool={activeTool}
                 color={drawingColor}
                 strokeWidth={drawingStrokeWidth}
                 handleRef={annotationCanvasRef}
                 onObjectCreated={() => setActiveTool('pointer')}
                 onSelectionChange={handleSelectionChange}
+                // The third measurement surface. Every prop in this group is gated on
+                // `measuresOnCanvas` — see its definition for why a canvas that DRAWS here is not
+                // necessarily the canvas this file is MEASURED on.
+                measurements={measuresOnCanvas ? measurements : []}
+                pendingMeasurement={measuresOnCanvas ? pendingMeasurement : null}
+                onMeasurePoint={measuresOnCanvas ? handleMeasurePoint : undefined}
+                mmPerIntrinsicUnit={measuresOnCanvas ? measureScale.mmPerUnit : null}
+                // Millimetres per NATURAL pixel is what measureScale.mmPerUnit holds for an
+                // image file, so this is the rect that turns a stage pixel into one of those.
+                imageSpace={measuresOnCanvas ? viewerImageSpace : null}
+                onIntrinsicScaleChange={measuresOnCanvas ? setImageIntrinsicPerStagePixel : undefined}
+                measureUnit={measureUnit}
+                selectedMeasurementId={measuresOnCanvas ? selectedMeasurementId : null}
+                onSelectMeasurement={measuresOnCanvas ? setSelectedMeasurementId : undefined}
               />
             )}
 
