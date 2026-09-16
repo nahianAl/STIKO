@@ -1270,6 +1270,33 @@ export default function PortalPage() {
     [selectedFileId, isPDFFile, pdfPage]
   );
 
+  /**
+   * Drop every measurement, the half-placed gesture, and the calibrate span that was derived
+   * from them.
+   *
+   * Used wherever the space the points were collected in stops existing. On the image surface a
+   * point is a raw STAGE pixel, and stage space there is a property of one freeze at one stage
+   * size — nothing re-anchors it — so a measurement that outlives its frozen view keeps being
+   * drawn, and keeps being labelled, against a scale that is no longer the one it was placed
+   * under. The number changes with no user action; the drawing lands on the wrong part of the
+   * image. Both are silent.
+   *
+   * The two ref assignments are not tidiness. `measurementsRef` and `calibrationBaselineRef` are
+   * both assigned during RENDER, while every caller of this runs in an effect or an event
+   * handler — so `clearMeasure()` only lands on the next render, and the measure-arming effect
+   * that runs immediately after a session start reads the REFS. Left stale, the baseline would
+   * be captured against the list this just emptied (say 1 against a list of 0), and the
+   * calibrate capture effect's `measurements.slice(baseline)` would never see the span the user
+   * then placed: the panel would never open and the file would silently keep its old scale.
+   */
+  const resetMeasureSession = useCallback(() => {
+    clearMeasure();
+    measurementsRef.current = [];
+    calibrationBaselineRef.current = 0;
+    setCalibrationSpan(null);
+    setMeasureError(null);
+  }, [clearMeasure]);
+
   // Starts an annotation session (captures the live-view snapshot for non-PDF files).
   // Shared by the draw-tool session-starter effect below and the insert-image action.
   const startAnnotationSession = useCallback(() => {
@@ -1283,8 +1310,19 @@ export default function PortalPage() {
       const snapshot = container ? captureViewerSnapshot(container) : null;
       setViewerSnapshot(snapshot?.dataUrl ?? null);
       setViewerImageSpace(snapshot?.imageSpace ?? null);
+      // A NEW freeze means the view the previous session's points were placed on no longer
+      // exists — different zoom, different imageRect, different natural-pixels-per-stage-pixel.
+      // Carrying them over redraws them somewhere else on the image and relabels them, which is
+      // the exact failure the whole natural-pixel calibration chain exists to prevent, arriving
+      // by the back door. `measuresOnCanvas` is what makes this the image surface and only the
+      // image surface: a 3D freeze must not touch measurements held in the model's frame.
+      //
+      // Runs BEFORE the measure-arming effect (that effect is declared after the session-starter
+      // one, and effects fire in declaration order), so the gesture this drops is immediately
+      // begun again on the fresh view.
+      if (measuresOnCanvas) resetMeasureSession();
     }
-  }, [annotating, isPDFFile]);
+  }, [annotating, isPDFFile, measuresOnCanvas, resetMeasureSession]);
 
   // Mark up an attachment the user just picked. This is the same session the
   // draw tools start — only the background differs: the attached image itself
@@ -1400,6 +1438,44 @@ export default function PortalPage() {
     calibrationBaselineRef.current = measurementsRef.current.length;
     beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', isPDFFile ? pdfPage : UNPAGED);
   }, [activeTool, isPDFFile, pdfPage, beginMeasure, cancelMeasure]);
+
+  // A stage resize invalidates every point on the image surface, MID-SESSION and with no user
+  // action at all.
+  //
+  // `bgFit` deliberately re-fits the frozen snapshot into whatever the stage is now, so narrowing
+  // the pane from 1000 to 500 px turns 4 natural px per stage px into 8: a dimension reading
+  // 500 mm starts reading 1000 mm, in place, while the user watches. The points are dropped
+  // rather than re-anchored — re-anchoring correctly needs the whole `bgFit` RECT, because its
+  // letterbox offset moves as well as its scale (1000x700 -> 500x700 sends x0.5 *and* y+175), and
+  // that rect lives inside AnnotationCanvas, which deliberately exposes only the scalar factor.
+  // A reading the user has to take again is recoverable; one that silently relabels itself is not.
+  //
+  // `imageIntrinsicPerStagePixel` is non-null ONLY on the image measure surface — the canvas is
+  // handed `onIntrinsicScaleChange` only when `measuresOnCanvas` — so this can never reach a 3D
+  // measurement, whose points are in the model's frame and are correct across any resize, orbit
+  // or object transform. The null guards also skip the two legitimate transitions that are not
+  // resizes: null -> number when the snapshot first decodes (async, one or more commits after
+  // the session started), and number -> null when the canvas unmounts at the end of it.
+  const lastIntrinsicScaleRef = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = lastIntrinsicScaleRef.current;
+    lastIntrinsicScaleRef.current = imageIntrinsicPerStagePixel;
+    if (previous === null || imageIntrinsicPerStagePixel === null) return;
+    if (previous === imageIntrinsicPerStagePixel) return;
+    // Nothing placed, nothing to invalidate. Worth the check because a resize is not one event:
+    // ResizeObserver fires every frame of a panel's width transition, and without this each of
+    // those frames would clear an already-empty list and restart an untouched gesture.
+    if (measurementsRef.current.length === 0 && (pendingMeasurement?.points.length ?? 0) === 0) return;
+    resetMeasureSession();
+    // The half-placed gesture goes with them — its first point is in the same dead stage space —
+    // and re-arming it is this effect's job, because `activeTool` has not changed and so the
+    // arming effect above will not run. Without this the tool stays visibly selected and dead to
+    // every click, which is the same trap the pdfPage cancel above is ordered to avoid.
+    // UNPAGED unconditionally: a non-null factor is the image surface, which has no pages.
+    if (isMeasureTool(activeTool)) {
+      beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', UNPAGED);
+    }
+  }, [imageIntrinsicPerStagePixel, activeTool, pendingMeasurement, beginMeasure, resetMeasureSession]);
 
   // Catch the calibrate gesture's result.
   //
@@ -1715,12 +1791,61 @@ export default function PortalPage() {
     pdfKonvaRef.current?.clearDrawings();
     setActiveTool('pointer');
     setSelectionType(null);
+    // Measurements are session-only — the same rule the file-switch reset states, and the one
+    // the store's own header states — so ending the session has to take them with it. It did
+    // not, and on the image surface that was the more serious half of the bug: a point there is
+    // a raw stage pixel of ONE freeze, so a measurement that survived into the next session was
+    // redrawn over the wrong part of a differently-zoomed snapshot and silently relabelled by
+    // that snapshot's factor (500 mm became 333 mm across a 100% -> 150% re-arm). The reading is
+    // gone either way; the honest outcome is that it is visibly gone.
+    //
+    // NOT on a 3D file. Those points are in the model's own frame, not in any stage space, and
+    // stay correct through camera moves, resizes and object transforms — and the session there
+    // is a MARKUP session over a frozen viewport that the user opened on top of measurements
+    // they were already reading. Clearing them would destroy valid work that nothing had
+    // invalidated. The 3D store is emptied by the file-switch reset, as before.
+    if (!is3DFile) resetMeasureSession();
   };
 
   /** "sketch.png" → "sketch-markup.jpg". The capture is always a JPEG, so
    *  keeping the original extension would be a lie about the bytes. */
   const markupName = (original: string) =>
     `${original.replace(/\.[^./]+$/, '')}-markup.jpg`;
+
+  /**
+   * Whether a measurement would be VISIBLE in the capture Apply is about to take.
+   *
+   * The capture used to be gated on `surface.hasObjects()` alone, which counts the MARKUP list —
+   * and measurements are deliberately not in it. So a measurement-only session (open an image,
+   * arm Linear, place one dimension, press Apply) captured nothing, attached nothing, and then
+   * ended; and because measurements are session-only, the reading was simply gone. That defeats
+   * the premise of the feature: snapshotting a measurement into a comment is the ONLY way to
+   * keep one. The gate is now markup OR this.
+   *
+   * Decided here rather than inside the surface components because the portal is what owns the
+   * measure store; neither surface knows the reading exists.
+   *
+   * The page test is the same filter the surfaces' own measure layers apply (MeasureObjects
+   * renders `m.page === page`, `currentPage` on the PDF and UNPAGED on the image canvas): a
+   * dimension on sheet 1 is not on screen while sheet 2 is showing, so it must not qualify a
+   * capture of sheet 2. Image and 3D gestures are all begun on UNPAGED.
+   *
+   * 3D counts, and the capture that would include it is already correct: MeasureLayer draws
+   * inside the WebGL scene and deliberately does NOT carry `userData.excludeFromSnapshot`, so
+   * `renderCleanFrame` keeps it while dropping viewer chrome, and `captureViewerSnapshot` reads
+   * that canvas into the frozen background this session draws on. The measurement is therefore
+   * baked into the background before a single markup object exists — it cannot be added
+   * mid-session, since `measuresOnCanvas` is false there and the live scene is hidden behind the
+   * snapshot.
+   *
+   * An attachment session never counts, which is why the native branch below keeps the
+   * markup-only gate: its background is the pasted image, the measure props are withheld from
+   * the canvas for its whole duration, and its capture crops to that image. There is nothing of
+   * the viewer in it to have measured.
+   */
+  const measurementInCapture =
+    annotatingFile === null &&
+    measurements.some((m) => m.page === (isPDFFile ? pdfPage : UNPAGED));
 
   const handleAnnotationDone = async () => {
     const original = annotatingFile;
@@ -1731,6 +1856,10 @@ export default function PortalPage() {
         // image's own resolution, cropped to its fitted region: the whole-stage capture
         // the ordinary session below uses would letterbox and resample the attachment
         // Done is about to replace.
+        //
+        // Markup alone is the right gate HERE, and deliberately not `|| measurementInCapture`:
+        // see that flag's note — an attachment session can never have a measurement on it, and
+        // `measurementInCapture` is false throughout one for exactly that reason.
         const surface = annotationCanvasRef.current;
         if (surface?.hasObjects()) {
           const dataUrl = surface.captureSnapshot({ native: true });
@@ -1752,7 +1881,11 @@ export default function PortalPage() {
         // Ordinary session: PDF draws directly on its own surface; everything else
         // draws on AnnotationCanvas over a viewer-snapshot background.
         const surface = drawsOnCanvas ? annotationCanvasRef.current : pdfKonvaRef.current;
-        if (surface?.hasObjects()) {
+        // `hasObjects()` is the MARKUP list and nothing else, so on its own it threw away every
+        // measurement-only session — see `measurementInCapture`. Written as an explicit
+        // `surface &&` rather than `surface?.hasObjects() || …` so a true measurement flag can
+        // never carry a null surface into `captureSnapshot` below.
+        if (surface && (surface.hasObjects() || measurementInCapture)) {
           const dataUrl = surface.captureSnapshot();
           if (dataUrl) {
             const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);

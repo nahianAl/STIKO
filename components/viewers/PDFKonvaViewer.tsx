@@ -381,12 +381,13 @@ function PDFKonvaViewer(
       // dimension stayed selected behind it. Presses that DO land on a measurement are left alone
       // and MeasureObjects' own onClick selects it on the following mouseup.
       //
-      // ABOVE the `!annotating` guard, unlike every branch below. endSession() sets `annotating`
-      // false and switches to the pointer tool but does NOT clear the measure store (only a file
-      // switch does, via clearMeasure), so measurements outlive their session — and below the
-      // guard this clear would be dead in precisely the state where a stale selection lasts
-      // longest. Nothing here reads coordinates, so the guard's own reason (an attachment markup
-      // session collecting points in another surface's space) does not apply.
+      // ABOVE the `!annotating` guard, unlike every branch below. endSession() now clears the
+      // measure store for this surface, so a selection should not normally survive a session —
+      // but `annotating` is a session flag this viewer does not own, and the cost of being wrong
+      // about that is a highlight with no way out. Keeping the clear above the guard means it
+      // works in every state rather than only inside a session. Nothing here reads coordinates,
+      // so the guard's own reason (an attachment markup session collecting points in another
+      // surface's space) does not apply.
       if (activeTool === 'pointer' && e.target.getLayer() !== measureLayerRef.current) {
         onSelectMeasurement?.(null);
       }
