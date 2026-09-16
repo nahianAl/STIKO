@@ -5,7 +5,7 @@ import Button from '@/components/ui/Button';
 import { Avatar, StatusChip, TagChip } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/design';
-import type { ProjectPackage, ProjectPerson } from '@/app/project/[id]/page';
+import type { ProjectPackage, ProjectPerson } from '@/lib/projectOverview';
 
 /**
  * 4b — "Waiting on". Chasing five consultants was the coordinator's real job

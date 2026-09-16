@@ -22,58 +22,10 @@ import { useToast } from '@/components/ui/Toast';
 import { STATUS_ACCENT } from '@/lib/status';
 import { relativeTime } from '@/lib/design';
 import { DISCLOSURE, EMPTY_DISCLOSURE } from '@/lib/disclosure';
-
-export interface ProjectPerson {
-  id: string;
-  name: string;
-  email: string;
-  company: string | null;
-  role: string;
-  verdict: string | null;
-  viewedAt: string | null;
-  commentCount: number;
-  lastCommentAt: string | null;
-}
-
-export interface ProjectPackage {
-  id: string;
-  name: string;
-  tag: string | null;
-  versionNumber: number | null;
-  changelog: string | null;
-  publishedAt: string | null;
-  updatedByName: string | null;
-  fileCount: number;
-  openComments: number;
-  status: keyof typeof STATUS_ACCENT;
-  people: ProjectPerson[];
-  pending: {
-    email: string;
-    role: string;
-    createdAt: string;
-    expiresAt: string;
-  }[];
-}
-
-interface Overview {
-  project: { id: string; name: string; createdAt: string };
-  members: {
-    id: string;
-    name: string;
-    email: string;
-    company: string | null;
-    role: string;
-    isYou: boolean;
-  }[];
-  packages: ProjectPackage[];
-  /** Every portal under the project, archived included — see the delete gate below. */
-  totalPackageCount: number;
-  disclosure: {
-    packagesInProject: number;
-    peopleCount: number;
-    hasPublishedVersion: boolean;
-  };
-}
+import type {
+  ProjectPackage,
+  ProjectOverview as Overview,
+} from '@/lib/projectOverview';
 
 type Tab = 'packages' | 'team' | 'activity';
 

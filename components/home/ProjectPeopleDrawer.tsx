@@ -8,7 +8,7 @@ import { Avatar, Note, RoleTag } from '@/components/ui/Primitives';
 import { AddPeopleModal } from '@/components/people/AddPeopleModal';
 import type { ProjectGroup } from '@/lib/home';
 import type { PackageCard } from '@/lib/queries';
-import type { ProjectPackage } from '@/app/project/[id]/page';
+import type { ProjectPackage } from '@/lib/projectOverview';
 
 /**
  * `AddPeopleModal.packages` wants the richer `ProjectPackage` shape (the one

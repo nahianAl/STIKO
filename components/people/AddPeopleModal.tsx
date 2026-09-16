@@ -5,7 +5,7 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { Field, Input, Note, Textarea } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-import type { ProjectPackage } from '@/app/project/[id]/page';
+import type { ProjectPackage } from '@/lib/projectOverview';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 type PackageGrant = {
