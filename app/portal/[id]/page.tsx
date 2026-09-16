@@ -1116,6 +1116,16 @@ export default function PortalPage() {
       // resubmits, only being replaced when the new response finally lands.
       setMeasureError(null);
 
+      // mmPerUnitFrom throws the same RangeError type for two different faults, and only one of
+      // them is the user's. A non-positive MEASURED span means the two points landed on (or
+      // within rounding of) each other — the tool's problem, not the typed number's. Check that
+      // operand here so the catch below can only be the typed distance, rather than telling
+      // someone to enter a bigger number when the number they entered was fine.
+      if (!Number.isFinite(intrinsicDistance) || intrinsicDistance <= 0) {
+        setMeasureError('Those two points are too close together to calibrate from. Place them further apart.');
+        return;
+      }
+
       let mmPerUnit: number;
       try {
         mmPerUnit = mmPerUnitFrom(intrinsicDistance, realDistance, entryUnit);
@@ -1308,7 +1318,16 @@ export default function PortalPage() {
     if (activeTool !== 'calibrate') return;
     const since = measurements.slice(calibrationBaselineRef.current);
     const captured = since[since.length - 1];
-    if (!captured || captured.points.length < 2) return;
+    if (!captured || captured.points.length < 2) {
+      // Nothing past the baseline any more — the user selected the calibrate measurement and
+      // pressed Delete, and this effect re-ran because `measurements` changed. Returning here
+      // without clearing would strand the span: the panel's gate is `calibrationSpan !== null`,
+      // so it would stay mounted showing a measurement that no longer exists, and pressing Set
+      // would store a scale derived from a span the user explicitly deleted. Same class as the
+      // latch above — the span must always be the points the user last placed, or none.
+      setCalibrationSpan(null);
+      return;
+    }
     setCalibrationSpan(distance(captured.points[0], captured.points[1]));
   }, [activeTool, measurements]);
 
@@ -1371,6 +1390,11 @@ export default function PortalPage() {
     // Measurements are per-file and session-only: a reading taken on one drawing means nothing
     // on the next, and the scale it was read against has already changed underneath it.
     clearMeasure();
+    // Cleared here rather than left to the disarm cleanup that this effect's setActiveTool
+    // eventually triggers. That cascade lands a render later, and for the render in between the
+    // panel is painted holding file A's span while selectedFileId and handleCalibrationCommit
+    // already belong to file B. Reset in one commit instead of depending on an effect chain.
+    setCalibrationSpan(null);
     setMeasureError(null);
   }, [selectedFileId, clearMeasure]);
 

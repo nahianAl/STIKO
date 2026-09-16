@@ -450,12 +450,21 @@ function PDFKonvaViewer(
 
     const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? ERASER_CURSOR : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
 
-    // Measuring is the one annotating mode that may still turn the page. Calibration is stored
-    // PER PAGE, because a multi-sheet drawing set routinely mixes scales — so if arming a measure
-    // tool locked the nav, sheet 2 could never be calibrated without disarming, paging and
-    // re-arming, which is the whole feature. Every other annotating mode keeps the nav locked:
-    // the objects being drawn belong to the sheet under them, and the session's snapshot with it.
-    const pageNavLocked = annotating && !isMeasureTool(activeTool);
+    // The nav opens for exactly one case: a measure tool armed in a session that has nothing
+    // drawn in it. Per-page calibration has to be able to turn the page — a calibration is
+    // stored PER PAGE because a multi-sheet drawing set routinely mixes scales, so a nav locked
+    // by the session would make sheet 2 uncalibratable without disarming, paging and re-arming.
+    //
+    // The hasObjects() half is not belt-and-braces; it is the reason the unlock is safe.
+    // `annotating` is a SESSION flag, not a per-tool one, and nothing clears it on a tool
+    // change: arming Rect, drawing a rectangle and then switching to Angle leaves both the
+    // session and the rectangle standing, because startAnnotationSession early-returns while a
+    // session is open. `ann.objects` is one flat list rendered unfiltered by page and Apply is a
+    // flat stage.toDataURL(), so without this clause the user could page to sheet 2 still
+    // carrying sheet 1's rectangle and attach that composite to the composer. Markup drawn on
+    // one sheet must never be captured over another; a measure session has nothing drawn in it
+    // by construction, which is exactly the case the unlock is for.
+    const pageNavLocked = annotating && !(isMeasureTool(activeTool) && !ann.hasObjects());
 
     // The zoom and pan live on the Stage, so every layer inherits them — the fill has to be
     // expressed in page space or it scrolls away from the viewport with the page.
