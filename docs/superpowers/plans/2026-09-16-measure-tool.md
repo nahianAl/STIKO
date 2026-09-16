@@ -990,57 +990,46 @@ git commit -m "feat: image and PDF measurement coordinate conversions"
 
 **Why this is its own task:** the 3D design assumes a raycast hit against the model exposes enough data to find the triangle's vertices. The model is drawn as merged `BatchedMesh` batches (`lib/model/buildBatches.ts`), and three's `BatchedMesh` raycast reports a `batchId`. If `intersection.face` and the underlying position attribute are not reachable per-hit, snapping needs a different approach — and that is much cheaper to learn now than after the layer is built on top of it.
 
-- [ ] **Step 1: Start the app and open a STEP or GLB model**
+**OUTCOME (recorded 2026-09-16, answered from library and repo source rather than a browser):**
 
-```bash
-npm run dev
-```
+**Vertex snapping IS viable — with a correction to the transform this plan originally specified.**
 
-Open a package containing a 3D file in the browser. (If no local database is configured, follow the local visual verification route already used for viewer work.)
+Evidence, from `node_modules/three/src/objects/BatchedMesh.js:901-961` (three 0.169.0):
 
-- [ ] **Step 2: Add a temporary probe to the existing pick raycast**
+- `BatchedMesh.raycast` delegates to an internal plain `Mesh` whose geometry borrows the batch's
+  own `index` and `attributes`, then pushes those intersections outward after reassigning
+  `intersect.object = this` and `intersect.batchId = i`.
+- So `hit.face` **is** populated, and `face.a/b/c` are indices into the **batch** geometry's
+  `position` attribute — which is exactly what `hit.object.geometry.getAttribute('position')`
+  returns, because `object` was reassigned to the BatchedMesh. Direct lookup works.
 
-In `components/viewers/ModelViewerInner.tsx`, inside `handlePointerUp`'s existing loop over
-`raycaster.current.intersectObject(model, true)`, temporarily log what a hit carries:
+But the same code path is where the original plan was wrong:
 
-```ts
-console.log('HIT', {
-  type: hit.object.type,
-  batchId: (hit as { batchId?: number }).batchId,
-  hasFace: hit.face !== null && hit.face !== undefined,
-  faceIndices: hit.face ? [hit.face.a, hit.face.b, hit.face.c] : null,
-  positionCount: (hit.object as THREE.Mesh).geometry?.getAttribute('position')?.count ?? null,
-});
-```
+- `raycast` computes each instance's transform as `getMatrixAt(i)` **premultiplied by**
+  `matrixWorld` (line 937). `hit.object.matrixWorld` alone is therefore only half the transform.
+- `lib/model/buildBatches.ts:271` calls `batched.setMatrixAt(instanceId, entry.mesh.matrixWorld)`
+  with the comment "Geometry stays in its own local space; placement rides on the instance
+  matrix." The per-instance matrices are **deliberately non-identity** — they carry every part's
+  placement in the assembly.
+- Using `mesh.matrixWorld` alone, as this plan first specified, would place every snapped vertex
+  at its unplaced local position. On a multi-part CAD assembly — the main use case — the snap
+  would land somewhere else on the model entirely, and it would look plausible rather than
+  broken.
 
-- [ ] **Step 3: Click several parts of the model and read the console**
+Worth noting for future spikes: the console probe this task originally prescribed logged
+`hasFace`, `faceIndices` and `positionCount`. All three would have come back healthy, the spike
+would have reported "viable", and the instance-matrix bug would have shipped. Reading the
+library's own raycast was the cheaper AND the stronger check.
 
-Record, for a `BatchedMesh` hit specifically:
-- Is `hit.face` non-null?
-- Are `hit.face.a/b/c` valid indices into the hit object's `position` attribute?
-- Does reading those three vertices and transforming them by the object's `matrixWorld` produce points that sit on the clicked feature?
+Task 13 therefore implements vertex snapping, with the corrected transform written into its
+Step 2. Empirical confirmation happens in Task 13's browser step, which must snap on a
+**multi-part assembly** — a single-part model has an identity instance matrix and cannot tell
+the two implementations apart.
 
-- [ ] **Step 4: Record the decision in this plan file**
-
-Append to this task, replacing this step's text:
-
-> **Outcome:** `hit.face` IS / IS NOT available on BatchedMesh hits. Task 13 therefore implements
-> vertex snapping / free surface points only.
-
-If vertex snap is **not** viable, edit Task 13 Step 3 to drop `nearestVertexSnap` and its call site,
-and edit the spec's "Decisions" table entry for 3D point picking to read "free surface point; vertex
-snap deferred".
-
-- [ ] **Step 5: Remove the probe**
-
-Revert the temporary `console.log`. Confirm `git diff components/viewers/ModelViewerInner.tsx` is empty.
-
-- [ ] **Step 6: Commit the decision**
-
-```bash
-git add docs/superpowers/plans/2026-09-16-measure-tool.md
-git commit -m "docs: record BatchedMesh vertex-snap spike outcome"
-```
+- [x] **Step 1: Determine whether BatchedMesh hits expose face and vertex data** — yes, see above.
+- [x] **Step 2: Determine the correct world transform for a hit vertex** — `matrixWorld` composed
+      with `getMatrixAt(hit.batchId)`, in that order.
+- [x] **Step 3: Record the decision and correct Task 13** — done in the same commit as this note.
 
 ---
 
@@ -2363,36 +2352,61 @@ the same handler — after the existing clipping-plane guard that selects `hit` 
           // (see lib/sceneScale.ts), so a fixed floor would reject every click on a small model
           // and accept every misclick on a large one. `radius` is the model's bounding radius,
           // already available in this component for the scene furniture.
-          onMeasurePoint(
-            nearestVertexSnap(hit, camera, gl) ?? [local[0], local[1], local[2]],
-            radius * 1e-4,
-          );
+          // A snapped vertex comes back in WORLD space, so it goes through the SAME
+          // worldToModel conversion the pin path uses three lines above — not a separate one.
+          // `local` is already that conversion applied to hit.point, so the fallback needs no
+          // further work.
+          const snapped = nearestVertexSnap(hit, camera, gl);
+          const modelPoint = snapped
+            ? worldToModel([snapped.x, snapped.y, snapped.z], transform)
+            : local;
+          onMeasurePoint([modelPoint[0], modelPoint[1], modelPoint[2]], radius * 1e-4);
           return;
         }
 ```
 
-Add `nearestVertexSnap` beside the handler:
+Add `nearestVertexSnap` beside the handler. Note the transform: it composes the batch's
+`matrixWorld` with the hit instance's own matrix, which Task 6 established is mandatory here.
 
 ```ts
 /** Snap radius in screen pixels. Beyond this the free surface point is the honest answer. */
 const VERTEX_SNAP_PX = 12;
 
 /**
- * The nearest vertex of the hit triangle, in the model's own frame, when one is within
- * VERTEX_SNAP_PX of the cursor on screen. Null otherwise.
+ * The nearest vertex of the hit triangle, in WORLD space, when one is within VERTEX_SNAP_PX of
+ * the cursor on screen. Null otherwise — in which case the caller falls back to the free surface
+ * point, which is the honest answer rather than a guess.
  *
  * Reads face indices straight off the intersection rather than precomputing anything: the model
  * is drawn as merged BatchedMesh batches, so there is no per-part vertex structure to consult.
+ * three's BatchedMesh.raycast borrows the batch geometry's index and attributes for the hit test
+ * and then reassigns `intersect.object` to the BatchedMesh, so `face.a/b/c` are valid indices
+ * into `hit.object.geometry`'s position attribute.
+ *
+ * THE TRANSFORM IS THE TRAP. BatchedMesh.raycast places each instance with
+ * `getMatrixAt(i).premultiply(matrixWorld)` (three 0.169.0, BatchedMesh.js:937), and
+ * buildBatches.ts:271 deliberately puts every part's placement on its instance matrix —
+ * "geometry stays in its own local space". Using `matrixWorld` alone drops the placement and
+ * lands the snapped vertex on the wrong part of the assembly, plausibly enough that nothing
+ * looks broken.
  */
 function nearestVertexSnap(
   hit: THREE.Intersection,
   camera: THREE.Camera,
   gl: THREE.WebGLRenderer,
-): [number, number, number] | null {
+): THREE.Vector3 | null {
   const face = hit.face;
   const mesh = hit.object as THREE.Mesh;
   const position = mesh.geometry?.getAttribute('position');
   if (!face || !position) return null;
+
+  const toWorld = mesh.matrixWorld.clone();
+  const batchId = (hit as THREE.Intersection & { batchId?: number }).batchId;
+  if (typeof batchId === 'number' && (mesh as THREE.BatchedMesh).isBatchedMesh) {
+    const instance = new THREE.Matrix4();
+    (mesh as THREE.BatchedMesh).getMatrixAt(batchId, instance);
+    toWorld.multiply(instance);
+  }
 
   const size = new THREE.Vector2();
   gl.getSize(size);
@@ -2400,8 +2414,7 @@ function nearestVertexSnap(
 
   let best: { point: THREE.Vector3; px: number } | null = null;
   for (const index of [face.a, face.b, face.c]) {
-    const local = new THREE.Vector3().fromBufferAttribute(position, index);
-    const world = local.clone().applyMatrix4(mesh.matrixWorld);
+    const world = new THREE.Vector3().fromBufferAttribute(position, index).applyMatrix4(toWorld);
     const projected = world.clone().project(camera);
     const px = Math.hypot(
       ((projected.x - cursor.x) * size.x) / 2,
@@ -2410,15 +2423,11 @@ function nearestVertexSnap(
     if (!best || px < best.px) best = { point: world, px };
   }
 
-  if (!best || best.px > VERTEX_SNAP_PX) return null;
-  const local = best.point.clone();
-  hit.object.parent?.worldToLocal(local);
-  return [local.x, local.y, local.z];
+  return best && best.px <= VERTEX_SNAP_PX ? best.point : null;
 }
 ```
 
-**If Task 6 recorded that `hit.face` is unavailable on BatchedMesh hits**, delete
-`nearestVertexSnap` and call `onMeasurePoint([local[0], local[1], local[2]])` directly.
+Task 6 confirmed `hit.face` IS available, so this ships as written.
 
 - [ ] **Step 3: Render the layer and thread the props**
 
@@ -2452,7 +2461,11 @@ Expected: no errors.
 - [ ] **Step 6: Verify in the browser**
 
 With `npm run dev` and a STEP or GLB file open:
-1. Arm Linear, click two corners. A dimension appears with a plausible number.
+1. **On a MULTI-PART assembly, not a single part** — arm Linear and click two corners on two
+   DIFFERENT parts. A dimension appears with a plausible number, and each endpoint sits on the
+   corner you clicked. This is the case that distinguishes a correct instance-matrix composition
+   from the wrong one Task 6 caught: a single-part model has an identity instance matrix and
+   passes either way.
 2. Orbit. The measurement stays welded to the geometry.
 3. Arm Angle, click three points. An arc and a degree reading appear.
 4. Click a measurement, press Delete. It disappears.
