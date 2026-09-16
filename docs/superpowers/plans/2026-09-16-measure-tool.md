@@ -1492,7 +1492,6 @@ git commit -m "feat: serve file calibrations and measure unit with the file list
   - `ToolType` widened to `AnnTool | 'comment' | MeasureTool`
   - `const MEASURE_TOOLS: readonly MeasureTool[]`
   - `isMeasureTool(tool: ToolType): tool is MeasureTool`
-  - `measureKindFor(tool: ToolType): MeasureKind | null`
   - `interface Measurement extends MeasurementDraft { id: string }`
   - `useMeasurements()` returning `{ measurements, pending, selectedId, setSelectedId, begin, addPoint, cancel, remove, clear }`
 
