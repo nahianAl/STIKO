@@ -86,7 +86,10 @@ interface ViewerContainerProps {
   onPageChange?: (page: number) => void;
 }
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
+// Exported: the portal page reuses this as the canonical, positive test for "is this file
+// measured on the AnnotationCanvas/Konva surface" — see measuresOnCanvas and measureAvailable
+// in app/portal/[id]/page.tsx. Do not fork a second copy of this list there.
+export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
 const PDF_EXTENSIONS = ['.pdf'];
 const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.3ds', '.ply', '.dae', '.step', '.stp'];

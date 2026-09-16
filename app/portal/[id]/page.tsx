@@ -12,7 +12,7 @@ import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
-import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
+import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
 import CrossSectionControl from '@/components/viewers/CrossSectionControl';
 import PlanesPanel from '@/components/viewers/section/PlanesPanel';
@@ -46,6 +46,7 @@ import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
 import { distance } from '@/lib/measure/geometry';
 import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
+import { extensionOf } from '@/lib/fileFormats';
 
 interface Project {
   id: string;
@@ -647,10 +648,23 @@ export default function PortalPage() {
     return ext === 'pdf';
   }, [selectedFile]);
 
-  const isVideoFile = useMemo(() => {
+  /**
+   * Positive, not exclusion: is the selected file one of the extensions the image viewer opens.
+   * `measuresOnCanvas` and `measureAvailable` below used to be spelled as "not 3D, not PDF, not
+   * video" — which reads fine until a fifth category shows up. An unsupported type like .dwg or
+   * .dxf is none of those three, so it silently fell through an exclusion list and inherited the
+   * image measure surface: DrawingTools offered Measure, AnnotationCanvas mounted transparent
+   * over the "Unsupported file type" message, and Apply attached a near-blank JPEG. A positive
+   * test cannot make that mistake — a future file type is simply not in IMAGE_EXTENSIONS until
+   * someone deliberately adds it. Reuses ViewerContainer's list rather than a fourth copy of it.
+   *
+   * There is no separate `isVideoFile` any more: `measureAvailable` below now unions the three
+   * known-good measuring surfaces (image, PDF, 3D) instead of excluding the one known-bad type,
+   * so video is already false there without being named — the same way an unsupported type is.
+   */
+  const isImageFile = useMemo(() => {
     if (!selectedFile) return false;
-    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
-    return ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+    return IMAGE_EXTENSIONS.includes(`.${extensionOf(selectedFile.filename)}`);
   }, [selectedFile]);
 
   /** The unit readings are shown in on this file. Falls back until someone chooses one. */
@@ -710,18 +724,19 @@ export default function PortalPage() {
    * Whether AnnotationCanvas is the surface the SELECTED FILE is measured on. A narrower
    * question than `drawsOnCanvas`, and the two must not be conflated.
    *
-   * Image files only. A 3D file measures in the live WebGL scene (MeasureLayer) and a PDF on its
-   * own stage — yet both can have an AnnotationCanvas over them: picking a draw tool on a 3D file
-   * freezes the viewport into a snapshot this canvas draws on, and an attachment session puts
-   * this canvas over a PDF. Handing the measure props over in either case would collect points in
-   * stage pixels of a frozen WebGL frame, or of a pasted screenshot, and then scale them by the
-   * selected file's mm-per-unit — a number that is about something else entirely. That is the
-   * plausible-looking wrong reading this feature is built to make impossible, so the props are
-   * withheld structurally rather than by hoping no one arms the tool.
-   *
-   * Video is excluded for completeness; DrawingTools already hides the whole measure group there.
+   * Image files only — `isImageFile`, not "not 3D, not PDF, not video". A 3D file measures in the
+   * live WebGL scene (MeasureLayer) and a PDF on its own stage — yet both can have an
+   * AnnotationCanvas over them: picking a draw tool on a 3D file freezes the viewport into a
+   * snapshot this canvas draws on, and an attachment session puts this canvas over a PDF. Handing
+   * the measure props over in either case would collect points in stage pixels of a frozen WebGL
+   * frame, or of a pasted screenshot, and then scale them by the selected file's mm-per-unit — a
+   * number that is about something else entirely. That is the plausible-looking wrong reading
+   * this feature is built to make impossible, so the props are withheld structurally rather than
+   * by hoping no one arms the tool. Spelling this as an exclusion ("not 3D, not PDF, not video")
+   * would let it too, the same way `measureAvailable` below used to: any type outside all three —
+   * a .dwg, a .dxf — would fall through and inherit the image surface by default.
    */
-  const measuresOnCanvas = !is3DFile && !isPDFFile && !isVideoFile && annotatingFile === null;
+  const measuresOnCanvas = isImageFile && annotatingFile === null;
 
   const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
 
@@ -1320,9 +1335,19 @@ export default function PortalPage() {
       // Runs BEFORE the measure-arming effect (that effect is declared after the session-starter
       // one, and effects fire in declaration order), so the gesture this drops is immediately
       // begun again on the fresh view.
-      if (measuresOnCanvas) resetMeasureSession();
+      if (measuresOnCanvas) {
+        resetMeasureSession();
+      } else {
+        // measuresOnCanvas is false here for a 3D file (among others) — its measurements live
+        // in the model's own frame and stay valid, so resetMeasureSession must not run (that's
+        // its 3D carve-out, left untouched). But the live 3D surface is about to sit behind this
+        // frozen snapshot for the whole markup session, so a measurement selected before the
+        // freeze is now invisible while the shared Delete/Backspace handler below can still hit
+        // it. Clear just the selection, not the measurements, so there is nothing stale to hit.
+        setSelectedMeasurementId(null);
+      }
     }
-  }, [annotating, isPDFFile, measuresOnCanvas, resetMeasureSession]);
+  }, [annotating, isPDFFile, measuresOnCanvas, resetMeasureSession, setSelectedMeasurementId]);
 
   // Mark up an attachment the user just picked. This is the same session the
   // draw tools start — only the background differs: the attached image itself
@@ -2177,7 +2202,16 @@ export default function PortalPage() {
                 // screenshot with no file id, no calibration and no image space, so measuring on
                 // it could only ever produce a number about some other file. Offering a tool that
                 // is inert by design is worse than not offering it.
-                measureAvailable={!isVideoFile && annotatingFile === null}
+                //
+                // The type half is a positive union of the three surfaces that actually measure
+                // something — image (AnnotationCanvas), PDF (its own stage) and 3D (the live
+                // WebGL scene) — not "not video". An exclusion list only names the types known to
+                // be wrong at the time it was written, so video was covered but an unsupported
+                // type like .dwg or .dxf was not: neither video nor 3D nor PDF nor image, it fell
+                // through and got Measure shown anyway with no surface underneath it that could
+                // ever produce a reading. A positive list cannot make that mistake — a fourth
+                // file type is simply absent until someone deliberately adds it here.
+                measureAvailable={(isImageFile || isPDFFile || is3DFile) && annotatingFile === null}
               />
             )}
 
