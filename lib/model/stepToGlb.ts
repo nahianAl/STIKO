@@ -1,6 +1,7 @@
-import { Document, Node, WebIO } from '@gltf-transform/core';
+import { Document, Node, Primitive, WebIO } from '@gltf-transform/core';
 import type { OcctImportParams, OcctNode, OcctResult } from 'occt-import-js';
 import { PART_MARKER } from './partTree.ts';
+import { extractWireframe, type WireframeResult } from './stepWireframe.ts';
 
 /**
  * STEP → GLB, and the only module in the codebase that knows OpenCascade exists.
@@ -73,17 +74,105 @@ export async function stepToGlb(
   const occt = await initOcct(options.locateFile);
 
   const result = occt.ReadStepFile(bytes, STEP_TESSELLATION);
+  if (result.success && result.meshes.length) {
+    return buildGlbDocument(result);
+  }
+
+  // No triangles. OCCT only ever meshes faces (importer-xcaf.cpp walks TopAbs_FACE/SHELL/
+  // SOLID and nothing else), so this is the expected result for a curve-only export —
+  // Rhino's GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION, which is what a panel
+  // layout or a toolpath arrives as. Measured on a 4.4 MB Rhino wireframe: ReadStepFile
+  // returns success in 1.7 s with meshes: [], and every curve in the file is discarded.
+  //
+  // The fallback runs on the `!success` path too, deliberately. OCCT rejects outright some
+  // files whose curve data is perfectly readable — a minimal hand-written wireframe among
+  // them — and a file it could not parse is one this cannot make worse.
+  const wireframe = extractWireframe(decodeStep(bytes));
+  if (wireframe.polylines.length) {
+    return buildWireframeDocument(wireframe);
+  }
+
   if (!result.success) {
     throw new Error('STEP file could not be read');
   }
-  if (!result.meshes.length) {
-    // Success with no meshes means the file parsed but held no solid geometry — a
-    // drawing-only or reference-geometry export. Returning an empty GLB would show an
-    // empty viewport with no explanation, so this is an error.
-    throw new Error('STEP file contained no solid geometry');
-  }
 
-  return buildGlbDocument(result);
+  // Parsed, but holding neither solids nor curves: a drawing-only, annotation-only or
+  // reference-geometry export. Returning an empty GLB would show an empty viewport with no
+  // explanation, so this is an error — and it names what was found so the console says
+  // something truer than "too complex".
+  throw new Error(`STEP file contained no displayable geometry${describeUnsupported(wireframe)}`);
+}
+
+/**
+ * STEP is an ISO-10303-21 exchange file: its syntax is pure ASCII, and only string values
+ * can carry anything else. latin1 maps every byte to a character and never fails, so a file
+ * with a stray high byte in a part name parses instead of throwing — which utf-8 decoding,
+ * even non-fatally, would turn into replacement characters mid-token.
+ */
+function decodeStep(bytes: Uint8Array): string {
+  return new TextDecoder('latin1').decode(bytes);
+}
+
+/** Names the curve types that were found but not drawn, for an error a human can act on. */
+function describeUnsupported(wireframe: WireframeResult): string {
+  if (!wireframe.unsupported.size) return '';
+  const types = Array.from(wireframe.unsupported.keys()).sort().join(', ');
+  return ` (unsupported curve types: ${types})`;
+}
+
+/**
+ * What a curve is drawn in, filling DEFAULT_COLOR's role for solids — but deliberately much
+ * darker than it, because a curve is a hairline rather than a shaded surface and WebGL
+ * ignores `linewidth` above 1 on essentially every platform.
+ *
+ * LINEAR, as every glTF baseColorFactor is: on screen this resolves to about #707887 against
+ * the viewport's #f0f0f0. Read as sRGB it looks almost black, so do not "fix" it by eye.
+ */
+const WIREFRAME_COLOR: [number, number, number] = [0.16, 0.19, 0.24];
+
+/**
+ * Builds a GLB of LINE_STRIP primitives — one per curve — from extracted wireframe geometry.
+ *
+ * Nothing here is stamped with PART_MARKER, unlike buildGlbDocument, and that is the whole
+ * design rather than an omission. Line primitives are not `isMesh`, so buildPartTree collects
+ * none of them and buildBatches has nothing to batch (BatchedMesh holds triangles only).
+ * Marking them would give ModelViewerInner a non-empty `parts` with a null `batches`, i.e. a
+ * Parts panel of rows that can never be coloured, hidden or picked. Unmarked, the viewer takes
+ * its `<primitive object={root} />` branch and renders the loaded tree directly — the path
+ * that already draws every line and point primitive an ordinary GLB carries.
+ *
+ * three's GLTFLoader turns a LINE_STRIP primitive into a THREE.Line and derives a
+ * LineBasicMaterial from the primitive's material, copying its colour across, so the material
+ * below is what sets the drawn colour despite lines being unlit.
+ */
+export async function buildWireframeDocument(wireframe: WireframeResult): Promise<Uint8Array> {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+
+  // One material for every curve: a line's appearance carries no per-curve information here,
+  // and a material apiece would be as many GL programs as the file has curves.
+  const material = doc
+    .createMaterial('wireframe_material')
+    .setBaseColorFactor([...WIREFRAME_COLOR, 1])
+    .setMetallicFactor(0)
+    .setRoughnessFactor(1);
+
+  wireframe.polylines.forEach((polyline, index) => {
+    const name = `curve_${index}`;
+    const primitive = doc
+      .createPrimitive()
+      .setMode(Primitive.Mode.LINE_STRIP)
+      .setMaterial(material)
+      .setAttribute(
+        'POSITION',
+        doc.createAccessor().setType('VEC3').setArray(polyline.points).setBuffer(buffer)
+      );
+
+    scene.addChild(doc.createNode(name).setMesh(doc.createMesh(name).addPrimitive(primitive)));
+  });
+
+  return new WebIO().writeBinary(doc);
 }
 
 /**
