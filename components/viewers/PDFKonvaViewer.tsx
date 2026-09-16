@@ -6,7 +6,7 @@ import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
 import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
-import { useAnnotationObjects, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
+import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
@@ -450,6 +450,13 @@ function PDFKonvaViewer(
 
     const cursorStyle = tagging ? 'crosshair' : (annotating && activeTool !== 'pointer' && activeTool !== 'eraser') ? 'crosshair' : annotating && activeTool === 'eraser' ? ERASER_CURSOR : activeTool === 'pointer' && !annotating ? 'grab' : 'default';
 
+    // Measuring is the one annotating mode that may still turn the page. Calibration is stored
+    // PER PAGE, because a multi-sheet drawing set routinely mixes scales — so if arming a measure
+    // tool locked the nav, sheet 2 could never be calibrated without disarming, paging and
+    // re-arming, which is the whole feature. Every other annotating mode keeps the nav locked:
+    // the objects being drawn belong to the sheet under them, and the session's snapshot with it.
+    const pageNavLocked = annotating && !isMeasureTool(activeTool);
+
     // The zoom and pan live on the Stage, so every layer inherits them — the fill has to be
     // expressed in page space or it scrolls away from the viewport with the page.
     const matte = matteRectForStage({ stagePos, stageScale, containerSize });
@@ -462,7 +469,7 @@ function PDFKonvaViewer(
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage <= 1 || annotating}
+              disabled={currentPage <= 1 || pageNavLocked}
               className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -474,7 +481,7 @@ function PDFKonvaViewer(
             </span>
             <button
               onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-              disabled={currentPage >= numPages || annotating}
+              disabled={currentPage >= numPages || pageNavLocked}
               className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

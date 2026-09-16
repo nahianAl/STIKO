@@ -1111,6 +1111,10 @@ export default function PortalPage() {
     async (intrinsicDistance: number, realDistance: number, entryUnit: LengthUnit) => {
       if (!selectedFileId) return;
       const page = isPDFFile ? pdfPage : UNPAGED;
+      // Clear any earlier failure up front: the panel stays open after a rejected save, so
+      // without this the stale message sits under the input while the user retypes and
+      // resubmits, only being replaced when the new response finally lands.
+      setMeasureError(null);
 
       let mmPerUnit: number;
       try {
@@ -1209,11 +1213,19 @@ export default function PortalPage() {
   // frozen 3D model cannot be orbited — which is most of the point of measuring one. For PDFs
   // the call sets `annotating` without freezing anything, which is exactly what that surface
   // wants: it disables stage panning so a drag reads as a gesture rather than a pan.
+  //
+  // `!!selectedFile` is part of the measure clause because `is3DFile` is derived from
+  // `selectedFile`: if the file list is ever emptied while a measure tool is armed (a failed
+  // PATCH resyncs through fetchFiles, which sets `files` to [] on a non-ok response without
+  // clearing selectedFileId), `selectedFile` goes null and `is3DFile` goes false with it — which
+  // would otherwise read as "not 3D, start a session" and strand `annotating` true with no file
+  // to freeze and no file-switch reset to turn it off again.
   useEffect(() => {
-    const needsSurface = DRAW_TOOLS.includes(activeTool) || (isMeasureTool(activeTool) && !is3DFile);
+    const needsSurface =
+      DRAW_TOOLS.includes(activeTool) || (isMeasureTool(activeTool) && !is3DFile && !!selectedFile);
     if (!needsSurface) return;
     startAnnotationSession();
-  }, [activeTool, is3DFile, startAnnotationSession]);
+  }, [activeTool, is3DFile, selectedFile, startAnnotationSession]);
 
   // Tag placement, drawing and measuring are mutually exclusive — disarm tagging when a draw or
   // measure tool is selected.
@@ -1252,8 +1264,15 @@ export default function PortalPage() {
   // gesture and the arming effect immediately starts a fresh one on the new page. Swapped
   // around, the cancel would land last and leave the tool armed with no gesture behind it —
   // visibly selected, and dead to every click.
+  //
+  // A captured calibrate span goes with it. The span was measured on the sheet being left, but
+  // handleCalibrationCommit files it against the CURRENT pdfPage — so carrying it across a page
+  // turn would store sheet N's measured length as sheet N+1's scale. Unconditional because both
+  // setters bail out on Object.is when nothing was held.
   useEffect(() => {
     cancelMeasure();
+    setCalibrationSpan(null);
+    setMeasureError(null);
   }, [pdfPage, cancelMeasure]);
 
   // Arming a measure tool begins a gesture; disarming abandons whatever was half-placed.
@@ -1276,13 +1295,22 @@ export default function PortalPage() {
   // same call, so `pending` never holds two points. The measurement is left in the list while
   // the panel is up — that is the only feedback showing WHICH span is being named — and taken
   // back out when the tool is disarmed, because a calibration is a scale, not a dimension.
+  //
+  // ALWAYS the last measurement past the baseline, never latched on the first one. This used to
+  // bail out once `calibrationSpan` was set, which was wrong: useMeasurements restarts the
+  // gesture straight after every commit, so the surface keeps collecting points for as long as
+  // Calibrate stays armed. A user who mis-clicks and places two fresh points gets a second
+  // committed span — and with the latch in place the panel stayed pinned to the span they had
+  // already replaced, so the real-world distance they typed was divided by the wrong measured
+  // length and every later reading on the file was silently wrong. Re-running with an identical
+  // span is a no-op: React bails out on Object.is, so there is no render loop.
   useEffect(() => {
-    if (activeTool !== 'calibrate' || calibrationSpan !== null) return;
+    if (activeTool !== 'calibrate') return;
     const since = measurements.slice(calibrationBaselineRef.current);
     const captured = since[since.length - 1];
     if (!captured || captured.points.length < 2) return;
     setCalibrationSpan(distance(captured.points[0], captured.points[1]));
-  }, [activeTool, calibrationSpan, measurements]);
+  }, [activeTool, measurements]);
 
   // Leaving Calibrate — by committing, by cancelling, or by simply picking another tool — drops
   // the captured span and takes every measurement the gesture made back out of the list: a
