@@ -37,7 +37,6 @@ export async function GET(request: NextRequest) {
            f.position_z AS "positionZ",
            f.rotation_x AS "rotationX", f.rotation_y AS "rotationY",
            f.rotation_z AS "rotationZ",
-           f.measure_unit AS "measureUnit",
            f.created_at AS "createdAt"
     FROM files f
     LEFT JOIN users u ON u.id = f.uploaded_by
@@ -101,7 +100,13 @@ export async function GET(request: NextRequest) {
   // are applied by hand, and this repo has forgotten one twice. An unapplied
   // 012-measure-calibration.sql must degrade to "the measure tool is unavailable", never to a
   // file-listing outage.
+  //
+  // files.measure_unit is fetched here too, even though it is a plain column on a table the main
+  // SELECT above already reads. It arrives with this same migration, exactly as file_calibrations
+  // does, so it is just as capable of taking the whole endpoint down while 012 is unapplied. Do
+  // not "simplify" this back into the main SELECT — that is what the finding on Task 9 flagged.
   let calibrationsByFile = new Map<string, Record<number, number>>();
+  let measureUnitByFile = new Map<string, string | null>();
   try {
     const calibrationRows = await sql`
       SELECT fc.file_id AS "fileId", fc.page_number AS "pageNumber", fc.mm_per_unit AS "mmPerUnit"
@@ -114,13 +119,21 @@ export async function GET(request: NextRequest) {
       forFile[Number(row.pageNumber)] = Number(row.mmPerUnit);
       calibrationsByFile.set(row.fileId as string, forFile);
     });
+
+    const measureUnitRows = await sql`
+      SELECT id, measure_unit AS "measureUnit" FROM files WHERE version_id = ${versionId}
+    `;
+    measureUnitByFile = new Map(
+      measureUnitRows.map((row) => [row.id as string, (row.measureUnit as string | null) ?? null])
+    );
   } catch (error) {
     console.error(
-      `Failed to fetch file_calibrations for version ${versionId}:`,
+      `Failed to fetch measure-tool data (file_calibrations, files.measure_unit) for version ${versionId}, likely because migration 012-measure-calibration.sql has not been applied yet:`,
       error instanceof Error ? error.message : String(error)
     );
-    // Fall back to uncalibrated; a file listing matters more than a measurement.
+    // Fall back to uncalibrated and unit-less; a file listing matters more than a measurement.
     calibrationsByFile = new Map();
+    measureUnitByFile = new Map();
   }
 
   const files = rows.map((row) => {
@@ -160,6 +173,9 @@ export async function GET(request: NextRequest) {
       // Computed server-side from the same table the measure-tool calibration route writes,
       // keyed by page number; empty for files that have never been calibrated.
       calibrations: calibrationsByFile.get(row.id as string) ?? {},
+      // From the same guarded fetch as calibrations above, and for the same reason: null for
+      // files nobody has set a unit on, and null for every file if that fetch failed outright.
+      measureUnit: measureUnitByFile.get(row.id as string) ?? null,
     };
   });
 

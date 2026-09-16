@@ -1376,22 +1376,66 @@ In `app/api/files/route.ts`, after the `part_colors` `try/catch` that assigns `c
   }
 ```
 
-- [ ] **Step 3: Attach both fields to each file row**
+- [ ] **Step 3: Fetch `measure_unit` inside the same guarded block — never the main `SELECT`**
 
-`files.measure_unit` is a plain column, so add it to this route's main file `SELECT` list beside
-the other aliased columns:
+`files.measure_unit` is a plain column, which makes it tempting to add straight to this route's
+main file `SELECT` list beside the other aliased columns. Do not do that. The column is not
+pre-existing: it arrives with `012-measure-calibration.sql`, the exact same migration that
+creates `file_calibrations`. "It's just a column read" only holds once that migration has run
+everywhere; on the day this code deploys ahead of the migration being applied by hand (this repo
+has forgotten that step twice already), the column does not exist yet, and the main `SELECT` is
+the one query in this route with no `try/catch` around it. A `column f.measure_unit does not
+exist` error thrown there happens before either guarded block below is reached, so it takes down
+`/api/files` entirely — a file-listing outage — instead of degrading to "the measure tool is
+unavailable," which is exactly the failure mode Step 2's fail-soft contract exists to prevent.
 
-```sql
-      f.measure_unit AS "measureUnit",
+So `measure_unit` gets the same guard as `file_calibrations`, and for the same reason: extend the
+`try` block from Step 2 with a second query, sharing its one `catch`. They come from the same
+migration, so they should fail together and recover together:
+
+```ts
+  let calibrationsByFile = new Map<string, Record<number, number>>();
+  let measureUnitByFile = new Map<string, string | null>();
+  try {
+    const calibrationRows = await sql`
+      SELECT fc.file_id AS "fileId", fc.page_number AS "pageNumber", fc.mm_per_unit AS "mmPerUnit"
+      FROM file_calibrations fc
+      JOIN files f ON f.id = fc.file_id
+      WHERE f.version_id = ${versionId}
+    `;
+    calibrationRows.forEach((row) => {
+      const forFile = calibrationsByFile.get(row.fileId as string) ?? {};
+      forFile[Number(row.pageNumber)] = Number(row.mmPerUnit);
+      calibrationsByFile.set(row.fileId as string, forFile);
+    });
+
+    const measureUnitRows = await sql`
+      SELECT id, measure_unit AS "measureUnit" FROM files WHERE version_id = ${versionId}
+    `;
+    measureUnitByFile = new Map(
+      measureUnitRows.map((row) => [row.id as string, (row.measureUnit as string | null) ?? null])
+    );
+  } catch (error) {
+    console.error(
+      `Failed to fetch measure-tool data (file_calibrations, files.measure_unit) for version ${versionId}, likely because migration 012-measure-calibration.sql has not been applied yet:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    // Fall back to uncalibrated and unit-less; a file listing matters more than a measurement.
+    calibrationsByFile = new Map();
+    measureUnitByFile = new Map();
+  }
 ```
 
-Then in the `rows.map(...)` that builds each file object, add the calibrations:
+Then in the `rows.map(...)` that builds each file object, add both fields from their maps:
 
 ```ts
       calibrations: calibrationsByFile.get(row.id as string) ?? {},
+      measureUnit: measureUnitByFile.get(row.id as string) ?? null,
 ```
 
-`measureUnit` needs no mapping — it arrives on `row` already aliased.
+A file with no entry in `measureUnitByFile` — because nobody has set a unit on it, or because the
+guarded fetch above failed outright — gets `null`, matching the column's nullable type and
+`FileRecord.measureUnit`'s declared `LengthUnit | null`.
 
 - [ ] **Step 4: Typecheck and verify the response**
 
