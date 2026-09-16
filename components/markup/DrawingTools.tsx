@@ -4,7 +4,9 @@ import { useState, useRef, useEffect } from 'react';
 import { MARKUP_COLORS, isPresetColor, sameColor } from '@/lib/markup/colors';
 import ColorPickerPopover from './ColorPickerPopover';
 import { BAR, SUB_BAR, slot, LABEL } from './toolbarStyles';
-import type { AnnotationObjectType, ToolType } from './useAnnotationObjects';
+import type { AnnotationObjectType, MeasureTool, ToolType } from './useAnnotationObjects';
+import { LENGTH_UNITS, type LengthUnit } from '@/lib/measure/units';
+import type { ScaleSource } from '@/lib/measure/calibration';
 
 interface DrawingToolsProps {
   activeTool: ToolType;
@@ -23,6 +25,23 @@ interface DrawingToolsProps {
    *  decide whether it is presenting stroke weights or text sizes — there is no other way for
    *  the toolbar to know what kind of object a width would be applied to. */
   selectionType?: AnnotationObjectType | null;
+  /** The unit measurements are read in on this file. */
+  measureUnit: LengthUnit;
+  onMeasureUnitChange: (unit: LengthUnit) => void;
+  /**
+   * Whether this file has a usable scale. 'unknown' disables Linear — a length with no scale is
+   * a pixel count, not a dimension. Angular is never gated: angles are scale-invariant, so
+   * calibration does not affect them.
+   */
+  scaleSource: ScaleSource;
+  /** False for roles that may not calibrate, and during an attachment session (no file to store on). */
+  canCalibrate: boolean;
+  /**
+   * False hides the Measure button outright. Video and unsupported types have no stable
+   * intrinsic space — a moving frame cannot be calibrated meaningfully — so the honest
+   * presentation is no button at all rather than a permanently disabled one.
+   */
+  measureAvailable: boolean;
 }
 
 /* Icons. currentColor throughout and one nominal box, but sized optically rather than
@@ -83,6 +102,42 @@ const EraserIcon = (
     <line x1="8" y1="9" x2="15" y2="16" />
   </svg>
 );
+
+const MeasureIcon = (
+  <svg {...px(19)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2.5 15.5 15.5 2.5a1.4 1.4 0 0 1 2 0l4 4a1.4 1.4 0 0 1 0 2l-13 13a1.4 1.4 0 0 1-2 0l-4-4a1.4 1.4 0 0 1 0-2Z" />
+    <path d="M7 11l2 2M10.5 7.5l2 2M14 4l2 2" />
+  </svg>
+);
+
+const LinearIcon = (
+  <svg {...ICON} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+    <line x1="2" y1="8" x2="14" y2="8" />
+    <polyline points="4.5,5.5 2,8 4.5,10.5" />
+    <polyline points="11.5,5.5 14,8 11.5,10.5" />
+  </svg>
+);
+
+const AngleIcon = (
+  <svg {...ICON} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3,13 13,13 3,4 3,13" />
+    <path d="M7 13a4.5 4.5 0 0 0-1.4-3.2" />
+  </svg>
+);
+
+const CalibrateIcon = (
+  <svg {...ICON} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="2" y1="11" x2="14" y2="11" />
+    <path d="M2 8.5v2.5M6 9.5v1.5M10 9.5v1.5M14 8.5v2.5" />
+    <path d="M9.5 5.5 12 3l1.5 1.5L11 7Z" />
+  </svg>
+);
+
+const MEASURE_SUB_TOOLS: { id: MeasureTool; label: string; icon: React.ReactNode }[] = [
+  { id: 'measure', label: 'Linear', icon: LinearIcon },
+  { id: 'angle', label: 'Angle', icon: AngleIcon },
+  { id: 'calibrate', label: 'Calibrate', icon: CalibrateIcon },
+];
 
 const SHAPE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
   {
@@ -155,18 +210,14 @@ const TEXT_PREVIEW_SIZES = [10, 13, 16];
  * tooltip land on it.
  */
 function ToolButton({
-  label,
-  active,
-  onClick,
-  hideLabel,
-  expanded,
-  children,
+  label, active, onClick, hideLabel, expanded, disabled, children,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
   hideLabel?: boolean;
   expanded?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -175,8 +226,9 @@ function ToolButton({
         aria-label={label}
         aria-pressed={expanded === undefined ? active : undefined}
         aria-expanded={expanded}
+        disabled={disabled}
         onClick={onClick}
-        className={slot(active)}
+        className={`${slot(active)} ${disabled ? 'cursor-not-allowed opacity-40 hover:scale-100 hover:shadow-none' : ''}`}
       >
         {children}
       </button>
@@ -202,9 +254,14 @@ export default function DrawingTools({
   onInsertImage,
   offsetTop = 12,
   selectionType = null,
+  measureUnit,
+  onMeasureUnitChange,
+  scaleSource,
+  canCalibrate,
+  measureAvailable,
 }: DrawingToolsProps) {
   // Only ever one sub-bar open — two stacked panels under one short bar reads as a mess.
-  const [menu, setMenu] = useState<'shapes' | 'stroke' | 'picker' | null>(null);
+  const [menu, setMenu] = useState<'shapes' | 'stroke' | 'picker' | 'measure' | 'units' | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -217,6 +274,16 @@ export default function DrawingTools({
   }, [menu]);
 
   const shapeActive = SHAPE_TOOLS.some((s) => s.id === activeTool);
+
+  // Precomputed before either is tested as a condition, rather than written inline as
+  // `menu === 'measure'` / `menu === 'units'` where they're used below. The units chip nests
+  // a `menu === 'units'` check inside the block `menu === 'measure'` already gates, and
+  // TypeScript's aliased-condition narrowing carries an effectively-const `menu` down to a
+  // single literal for the rest of a block that tests it (or a boolean alias of that test) —
+  // so the second, different literal comparison reads as impossible (TS2367). Computing both
+  // up front, before `menu` is narrowed by either, sidesteps that.
+  const measureOpen = menu === 'measure';
+  const unitsOpen = menu === 'units';
 
   // Picking a top-level tool dismisses whatever sub-bar was open; picking a shape leaves the
   // shapes sub-bar up so the neighbouring shapes stay one click away.
@@ -286,6 +353,83 @@ export default function DrawingTools({
             </div>
           )}
         </div>
+
+        {/* Measure — linear, angular, calibrate and the unit the readings are in */}
+        {measureAvailable && (
+        <div className="relative flex">
+          <ToolButton
+            label="Measure"
+            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || measureOpen}
+            expanded={measureOpen}
+            hideLabel={menu !== null}
+            onClick={() => setMenu(measureOpen ? null : 'measure')}
+          >
+            {MeasureIcon}
+          </ToolButton>
+          {measureOpen && (
+            <div className={SUB_BAR}>
+              <div className={BAR}>
+                {MEASURE_SUB_TOOLS.map((t) => {
+                  // Linear needs a scale; without one a "length" is a pixel count. Angular never
+                  // does — angles are scale-invariant. Calibrate is gated by role instead.
+                  const disabled =
+                    (t.id === 'measure' && scaleSource === 'unknown') ||
+                    (t.id === 'calibrate' && !canCalibrate);
+                  const label =
+                    t.id === 'measure' && scaleSource === 'unknown'
+                      ? 'Calibrate this file first'
+                      : t.id === 'calibrate' && !canCalibrate
+                        ? 'You cannot calibrate this file'
+                        : t.label;
+                  return (
+                    <ToolButton
+                      key={t.id}
+                      label={label}
+                      active={activeTool === t.id}
+                      disabled={disabled}
+                      onClick={() => onToolChange(activeTool === t.id ? 'pointer' : t.id)}
+                    >
+                      {t.icon}
+                    </ToolButton>
+                  );
+                })}
+
+                <div className="w-px h-[24px] bg-stiko-divider mx-[6px]" />
+
+                {/* Units — a chip showing the current unit, not a ToolButton: it opens a list
+                    rather than arming a mode. Anchored right-edge to trigger, like the colour
+                    picker, so it cannot clip in a narrow viewer pane. */}
+                <div className="relative flex">
+                  <button
+                    aria-label="Measurement units"
+                    aria-expanded={unitsOpen}
+                    onClick={() => setMenu(unitsOpen ? 'measure' : 'units')}
+                    className={`${slot(unitsOpen)} w-[44px] text-[11px] font-semibold tracking-heading`}
+                  >
+                    {measureUnit}
+                  </button>
+                  {unitsOpen && (
+                    <div className="absolute top-full mt-[13px] right-0 z-50 rounded-sheet bg-white border border-stiko-border shadow-stiko-panel py-[4px]">
+                      {LENGTH_UNITS.map((u) => (
+                        <button
+                          key={u}
+                          onClick={() => { onMeasureUnitChange(u); setMenu('measure'); }}
+                          aria-pressed={u === measureUnit}
+                          className={`block w-[72px] px-[12px] py-[6px] text-left text-[12px] ${
+                            u === measureUnit ? 'text-stiko-primary font-semibold' : 'text-stiko-secondary'
+                          } hover:bg-stiko-tint`}
+                        >
+                          {u}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        )}
 
         {/* Stroke width */}
         <div className="relative flex">
