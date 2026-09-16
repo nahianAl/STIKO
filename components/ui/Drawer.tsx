@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 
 /**
  * The drawer from 02 / 2e. It is anchored INSIDE the app shell (top/right/bottom
@@ -18,6 +18,9 @@ import React, { useEffect } from 'react';
  * from inside a drawer still wins, and above every page-level layer (the
  * highest is the sticky Header at z-50).
  */
+/** One source of truth for the slide: the exit timeout must outlast the CSS. */
+const DRAWER_MS = 280;
+
 export default function Drawer({
   isOpen,
   onClose,
@@ -70,12 +73,34 @@ export default function Drawer({
     return () => document.removeEventListener('keydown', onKey);
   }, [isOpen, onClose, closeOnEscape]);
 
-  if (!isOpen) return null;
+  // Two flags, not one. `mounted` outlives `isOpen` by the length of the close
+  // so the panel has frames to slide out in — unmounting on `isOpen` alone
+  // means the exit never renders. `shown` lags `mounted` by one frame on the
+  // way in for the mirror-image reason: mount and transform applied in the
+  // same frame get coalesced, and the entrance never renders either.
+  const [mounted, setMounted] = useState(isOpen);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setMounted(true);
+      const id = requestAnimationFrame(() => setShown(true));
+      return () => cancelAnimationFrame(id);
+    }
+    setShown(false);
+    const t = setTimeout(() => setMounted(false), DRAWER_MS);
+    return () => clearTimeout(t);
+  }, [isOpen]);
+
+  if (!mounted) return null;
 
   return (
     <>
       <div
-        className="stiko-scrim fixed inset-0 z-[58]"
+        className={`stiko-scrim stiko-motion fixed inset-0 z-[58] transition-opacity ${
+          shown ? 'opacity-100' : 'opacity-0'
+        }`}
+        style={{ transitionDuration: `${DRAWER_MS}ms` }}
         onClick={onClose}
         aria-hidden
       />
@@ -83,12 +108,17 @@ export default function Drawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`z-[59] flex flex-col overflow-hidden rounded-sheet bg-white shadow-stiko-drawer ${
+        className={`stiko-motion z-[59] flex flex-col overflow-hidden rounded-sheet bg-white shadow-stiko-drawer transition-transform ease-[cubic-bezier(.32,.72,0,1)] ${
+          shown ? 'translate-x-0' : 'translate-x-[calc(100%+16px)]'
+        } ${
           anchor === 'inline'
             ? 'absolute top-0 max-h-full'
             : 'fixed bottom-3 right-3 top-3'
         }`}
-        style={anchor === 'inline' ? { width, left: offsetLeft } : { width }}
+        style={{
+          ...(anchor === 'inline' ? { width, left: offsetLeft } : { width }),
+          transitionDuration: `${DRAWER_MS}ms`,
+        }}
       >
         <header className="flex items-start justify-between border-b border-stiko-border px-[22px] py-[18px]">
           <div>

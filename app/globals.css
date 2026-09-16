@@ -103,46 +103,19 @@ a:hover {
   }
 }
 
-/* Dashboard disclosure. The expansion panel fades down into place and its
-   package rows fade up — opposite directions on purpose, so the panel reads as
-   a surface arriving and the rows as content settling onto it. */
-@keyframes stikoPanelIn {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
+/* Disclosure motion is carried by transitions on interpolable properties
+   (grid-template-rows, width, max-height, transform) rather than keyframes,
+   so that every one of them animates SHUT as well as open. A keyframe can
+   only run on mount, which is exactly the half that was missing.
 
-@keyframes stikoRowIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.stiko-panel-in {
-  animation: stikoPanelIn 240ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.stiko-row-in {
-  animation: stikoRowIn 260ms ease both;
-}
-
-/* Movement is decoration here — every one of these states is also carried by a
+   Movement is decoration — every one of these states is also carried by a
    colour or a layout change, so dropping the motion loses nothing. */
 @media (prefers-reduced-motion: reduce) {
-  .stiko-panel-in,
-  .stiko-row-in {
-    animation: none;
-  }
+  /* Only the elements that actually move carry .stiko-motion, so this does not
+     need a descendant selector — and should not have one. The query is about
+     vestibular triggers: movement, scaling, parallax. An opacity fade is none
+     of those, and sweeping every descendant would also strip the ordinary
+     colour transitions on hover, which nobody asked to lose. */
   .stiko-motion {
     transition: none !important;
   }

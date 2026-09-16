@@ -93,6 +93,11 @@ export default function ProjectPeopleDrawer({
   // The last value the server confirmed, so a failed save can roll the switch
   // back to the truth rather than to whatever it was mid-flight.
   const confirmedAi = useRef(true);
+  const [retained, setRetained] = useState<ProjectGroup | null>(group);
+
+  useEffect(() => {
+    if (group) setRetained(group);
+  }, [group]);
 
   const projectId = group?.project.id ?? null;
   // A guest can neither invite nor open the matrix — /api/projects/[id]/overview
@@ -179,9 +184,15 @@ export default function ProjectPeopleDrawer({
     onChanged();
   };
 
-  if (!group) return null;
+  // The caller derives `group` by looking up the selected id, so it goes null
+  // the instant the drawer is dismissed — which would unmount Drawer before
+  // Drawer's own exit animation has a frame to run in. Holding the last
+  // non-null group keeps the contents on screen for exactly as long as the
+  // slide-out takes. Same reason ProjectSummaryPanel keeps a `lastId`.
+  const shown = group ?? retained;
+  if (!shown) return null;
 
-  const { project, people, packages } = group;
+  const { project, people, packages } = shown;
 
   const subtitle = project.ownedByMe
     ? `You own this project · ${people.length} ${people.length === 1 ? 'person' : 'people'}`
