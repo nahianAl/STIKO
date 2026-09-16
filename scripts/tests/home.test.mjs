@@ -8,6 +8,8 @@ import {
   showFilterRow,
   needsYou,
   homeStats,
+  packageAttention,
+  projectAttention,
 } from '../../lib/home.ts';
 
 const pkg = (over = {}) => ({
@@ -199,4 +201,54 @@ test('the rail tiles count over visible packages only', () => {
     pkg({ id: 'c', openComments: 0, status: 'in_review' }),
   ]);
   assert.deepEqual(stats, { needsYou: 1, openComments: 5, inReview: 2 });
+});
+
+/* ------------------------------------------------------------- attention -- */
+
+test('a package needing nothing has no attention pill', () => {
+  assert.equal(packageAttention(pkg({ mentions: 0, seenLatest: true })), null);
+});
+
+test('mentions outrank an unseen version', () => {
+  const a = packageAttention(pkg({ mentions: 2, seenLatest: false }));
+  assert.equal(a.kind, 'mention');
+  assert.equal(a.label, '2 mentions');
+  assert.equal(a.bg, '#FFE2E2');
+  assert.equal(a.fg, '#B23A52');
+});
+
+test('a single mention reads singular', () => {
+  assert.equal(packageAttention(pkg({ mentions: 1 })).label, '1 mention');
+});
+
+test('an unseen version with no mentions is a new-version pill', () => {
+  const a = packageAttention(pkg({ mentions: 0, seenLatest: false, versionNumber: 3 }));
+  assert.equal(a.kind, 'new_version');
+  assert.equal(a.label, 'New version');
+  assert.equal(a.bg, '#FFFCCE');
+  assert.equal(a.fg, '#7A5E00');
+});
+
+test('a package with no version cannot carry a new-version pill', () => {
+  assert.equal(
+    packageAttention(pkg({ mentions: 0, seenLatest: false, versionNumber: null })),
+    null
+  );
+});
+
+test('the project pill is the first attention-carrying package', () => {
+  const a = projectAttention([
+    pkg({ id: 'a', mentions: 0, seenLatest: true }),
+    pkg({ id: 'b', mentions: 0, seenLatest: false, versionNumber: 2 }),
+    pkg({ id: 'c', mentions: 5 }),
+  ]);
+  assert.equal(a.kind, 'new_version');
+});
+
+test('a project where nothing needs you has no pill', () => {
+  assert.equal(projectAttention([pkg({ mentions: 0, seenLatest: true })]), null);
+});
+
+test('a project with no packages has no pill', () => {
+  assert.equal(projectAttention([]), null);
 });
