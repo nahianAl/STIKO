@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
            f.position_z AS "positionZ",
            f.rotation_x AS "rotationX", f.rotation_y AS "rotationY",
            f.rotation_z AS "rotationZ",
+           f.measure_unit AS "measureUnit",
            f.created_at AS "createdAt"
     FROM files f
     LEFT JOIN users u ON u.id = f.uploaded_by
@@ -95,6 +96,33 @@ export async function GET(request: NextRequest) {
     colorsByFile = new Map();
   }
 
+  // Same one-query-per-version shape as the colours above, and the same fail-soft contract for
+  // the same reason: this endpoint is load-bearing for file listing app-wide, migrations here
+  // are applied by hand, and this repo has forgotten one twice. An unapplied
+  // 012-measure-calibration.sql must degrade to "the measure tool is unavailable", never to a
+  // file-listing outage.
+  let calibrationsByFile = new Map<string, Record<number, number>>();
+  try {
+    const calibrationRows = await sql`
+      SELECT fc.file_id AS "fileId", fc.page_number AS "pageNumber", fc.mm_per_unit AS "mmPerUnit"
+      FROM file_calibrations fc
+      JOIN files f ON f.id = fc.file_id
+      WHERE f.version_id = ${versionId}
+    `;
+    calibrationRows.forEach((row) => {
+      const forFile = calibrationsByFile.get(row.fileId as string) ?? {};
+      forFile[Number(row.pageNumber)] = Number(row.mmPerUnit);
+      calibrationsByFile.set(row.fileId as string, forFile);
+    });
+  } catch (error) {
+    console.error(
+      `Failed to fetch file_calibrations for version ${versionId}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    // Fall back to uncalibrated; a file listing matters more than a measurement.
+    calibrationsByFile = new Map();
+  }
+
   const files = rows.map((row) => {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
     return {
@@ -129,6 +157,9 @@ export async function GET(request: NextRequest) {
       // Computed server-side from the same table the PATCH route writes, never re-derived in
       // the client: what renders and what persists must not be able to disagree.
       partColors: colorsByFile.get(row.id as string) ?? {},
+      // Computed server-side from the same table the measure-tool calibration route writes,
+      // keyed by page number; empty for files that have never been calibrated.
+      calibrations: calibrationsByFile.get(row.id as string) ?? {},
     };
   });
 
