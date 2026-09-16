@@ -67,6 +67,8 @@ interface ViewerContainerProps {
   onReady?: () => void;
   onObjectCreated?: () => void;
   onSelectionChange?: (selection: MarkupSelection | null) => void;
+  /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
+  onPageChange?: (page: number) => void;
 }
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
@@ -83,7 +85,7 @@ function getExtension(filename: string): string {
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
-  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick,
+  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -158,6 +160,7 @@ export default function ViewerContainer({
         onObjectCreated={onObjectCreated}
         onSelectionChange={onSelectionChange}
         onReady={onReady}
+        onPageChange={onPageChange}
       />
     );
   }

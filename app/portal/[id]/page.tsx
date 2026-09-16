@@ -39,6 +39,13 @@ import { useToast } from '@/components/ui/Toast';
 const AnnotationCanvas = dynamic(() => import('@/components/markup/AnnotationCanvas'), { ssr: false });
 import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
 import type { AnnTool, AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
+import { isMeasureTool } from '@/components/markup/useAnnotationObjects';
+import { useMeasurements } from '@/components/markup/useMeasurements';
+import CalibrationPanel from '@/components/markup/CalibrationPanel';
+import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
+import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
+import { distance } from '@/lib/measure/geometry';
+import { pointsPerStagePixel } from '@/lib/measure/space';
 
 interface Project {
   id: string;
@@ -182,6 +189,10 @@ export default function PortalPage() {
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [canUpload, setCanUpload] = useState(false);
   const [canTransform, setCanTransform] = useState(false);
+  // Separate from the other two because it gates a different thing: calibrating a file. The
+  // client-side gate is presentation only — PATCH /api/files/[id]/measure enforces it for real,
+  // and enforces the stricter "overwriting an EXISTING calibration needs canTransform" on top.
+  const [canComment, setCanComment] = useState(false);
 
   // Which version the detail drawer is showing. The version OBJECT is resolved
   // from `versions` each render rather than copied into state, so a version that
@@ -200,6 +211,46 @@ export default function PortalPage() {
   const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(4);
   const [selectionType, setSelectionType] = useState<AnnotationObjectType | null>(null);
+
+  // Measure tool state. The store is session-only, exactly like markup: nothing here survives a
+  // file switch, and the way to keep a reading is to snapshot it into a comment.
+  const measure = useMeasurements();
+  // The store's callbacks are individually stable, but the object holding them is new every
+  // render. The effects below therefore depend on the callbacks BY NAME, pulled out here:
+  // written as `measure.begin` in a dependency array, react-hooks/exhaustive-deps asks for the
+  // whole object instead — and depending on that would re-run every measure effect, restarting
+  // the gesture, on every single render of this page.
+  const {
+    measurements,
+    selectedId: selectedMeasurementId,
+    begin: beginMeasure,
+    cancel: cancelMeasure,
+    clear: clearMeasure,
+    remove: removeMeasure,
+  } = measure;
+  // The page PDFKonvaViewer is showing. Mirrored here rather than pulled off its imperative
+  // handle because two things RENDER from it — the toolbar's disabled state and the per-page
+  // calibration lookup — and getCurrentPage() is a pull, not a subscription.
+  const [pdfPage, setPdfPage] = useState(UNPAGED);
+  // Why the last calibration save failed, shown inside CalibrationPanel. Null when there is
+  // nothing to say.
+  const [measureError, setMeasureError] = useState<string | null>(null);
+  // The span the calibrate gesture captured, in the active surface's own units. Null until it
+  // has one, which is also what keeps CalibrationPanel off screen.
+  //
+  // Read from a COMMITTED measurement rather than from `measure.pending`: useMeasurements
+  // commits a linear gesture the instant its second point lands and restarts the gesture in the
+  // same call, so a pending linear gesture only ever holds 0 or 1 points. Calibrate collects the
+  // same two points a linear does, so it arrives the same way — see the capture effect below.
+  const [calibrationSpan, setCalibrationSpan] = useState<number | null>(null);
+  // Assigned during render (like annotatingRef above) so the gesture effects can read the
+  // current list WITHOUT depending on it — a dependency there would re-arm, and so restart, the
+  // gesture every time a reading was taken.
+  const measurementsRef = useRef(measurements);
+  measurementsRef.current = measurements;
+  // How long the list was when the current tool was armed. Everything past it belongs to this
+  // gesture.
+  const calibrationBaselineRef = useRef(0);
 
   // Comment linking state
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
@@ -550,6 +601,53 @@ export default function PortalPage() {
     return ext === 'pdf';
   }, [selectedFile]);
 
+  const isVideoFile = useMemo(() => {
+    if (!selectedFile) return false;
+    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
+    return ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+  }, [selectedFile]);
+
+  /** The unit readings are shown in on this file. Falls back until someone chooses one. */
+  const measureUnit: LengthUnit = selectedFile?.measureUnit ?? DEFAULT_LENGTH_UNIT;
+
+  // filename is the ORIGINAL upload's, never the converted GLB. A STEP file is on screen as a
+  // GLB, and reading the extension off the loaded file would apply the glTF metre convention
+  // and report every STEP model 1000x too large. See assumedMmPerUnit for the whole rule.
+  const measureScale = useMemo(
+    () =>
+      selectedFile
+        ? resolveScale({
+            filename: selectedFile.filename,
+            calibrations: selectedFile.calibrations,
+            page: isPDFFile ? pdfPage : UNPAGED,
+          })
+        : { mmPerUnit: null, source: 'unknown' as const },
+    [selectedFile, isPDFFile, pdfPage]
+  );
+
+  /**
+   * How many of the file's own INTRINSIC units one unit of the active surface's space spans.
+   *
+   * Three surfaces, three answers:
+   *   3D    — the picked points are already world units, so 1.
+   *   PDF   — stage pixels to PDF points, which is what a PDF calibration must be stored in.
+   *   image — 1 FOR NOW. The real chain is naturalPerStagePixel(), which needs the snapshot's
+   *           fitted image rect, and that lands with the task that wires the image measure
+   *           surface. Nothing can reach this path before then: there is no image surface to
+   *           collect points on yet.
+   *
+   * The attachment session (annotatingFile !== null) is not a case here — canCalibrate is false
+   * throughout it, so the calibrate tool cannot be armed on a pasted screenshot at all.
+   */
+  const intrinsicPerSurfaceUnit = useMemo(() => {
+    if (is3DFile) return 1;
+    if (isPDFFile) return pointsPerStagePixel();
+    return 1;
+  }, [is3DFile, isPDFFile]);
+
+  const calibrationIntrinsicDistance =
+    calibrationSpan === null ? 0 : calibrationSpan * intrinsicPerSurfaceUnit;
+
   // Which surface a markup session draws on. A PDF draws directly on its own
   // PDFKonvaViewer surface — except when the session is marking up a picked-but-not-
   // posted attachment, which is never the PDF being reviewed and so always draws on
@@ -795,10 +893,12 @@ export default function PortalPage() {
       .then((info) => {
         setCanUpload(Boolean(info?.access?.canUpload));
         setCanTransform(Boolean(info?.access?.canTransform));
+        setCanComment(Boolean(info?.access?.canComment));
       })
       .catch(() => {
         setCanUpload(false);
         setCanTransform(false);
+        setCanComment(false);
       });
   }, [portalId]);
 
@@ -986,6 +1086,78 @@ export default function PortalPage() {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
 
+  const handleMeasureUnitChange = useCallback(
+    async (unit: LengthUnit) => {
+      if (!selectedFileId) return;
+      // Optimistic: readings relabel immediately. A failed write resyncs from the server rather
+      // than leaving the toolbar showing a unit the server never accepted.
+      setFiles((prev) => prev.map((f) => (f.id === selectedFileId ? { ...f, measureUnit: unit } : f)));
+      const res = await fetch(`/api/files/${selectedFileId}/measure`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit }),
+      }).catch(() => null);
+      if (!res?.ok && selectedVersionId) fetchFiles(selectedVersionId);
+    },
+    [selectedFileId, selectedVersionId, fetchFiles]
+  );
+
+  /**
+   * Commit a calibration from the two points the gesture collected plus the distance the user
+   * typed. `intrinsicDistance` arrives already converted out of the surface's space into the
+   * file's own intrinsic unit — stage pixels are never stored.
+   */
+  const handleCalibrationCommit = useCallback(
+    async (intrinsicDistance: number, realDistance: number, entryUnit: LengthUnit) => {
+      if (!selectedFileId) return;
+      const page = isPDFFile ? pdfPage : UNPAGED;
+
+      let mmPerUnit: number;
+      try {
+        mmPerUnit = mmPerUnitFrom(intrinsicDistance, realDistance, entryUnit);
+      } catch {
+        setMeasureError('Enter a distance greater than zero.');
+        return;
+      }
+
+      const res = await fetch(`/api/files/${selectedFileId}/measure`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calibration: { page, mmPerUnit } }),
+      }).catch(() => null);
+
+      if (!res) {
+        setMeasureError('Could not reach the server. Try again.');
+        return;
+      }
+
+      if (res.ok) {
+        setMeasureError(null);
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === selectedFileId
+              ? { ...f, calibrations: { ...(f.calibrations ?? {}), [page]: mmPerUnit } }
+              : f
+          )
+        );
+        setActiveTool('pointer');
+        return;
+      }
+
+      const body = await res.json().catch(() => ({}));
+      // A 500 from this route on an app that is otherwise working most likely means the
+      // file_calibrations table is missing — this repo applies migrations by hand and has
+      // forgotten one twice. Say so, rather than accepting a calibration that silently vanishes.
+      setMeasureError(
+        body?.error ??
+          (res.status === 500
+            ? "Measurement isn't available yet on this deployment."
+            : 'Could not save the calibration.')
+      );
+    },
+    [selectedFileId, isPDFFile, pdfPage]
+  );
+
   // Starts an annotation session (captures the live-view snapshot for non-PDF files).
   // Shared by the draw-tool session-starter effect below and the insert-image action.
   const startAnnotationSession = useCallback(() => {
@@ -1031,14 +1203,22 @@ export default function PortalPage() {
   );
 
   // Start an annotation session when a draw tool is picked (only session-starter).
+  //
+  // Measure tools join this for 2D files but NOT for 3D, which is why they are deliberately
+  // absent from DRAW_TOOLS: startAnnotationSession freezes the viewport into a snapshot, and a
+  // frozen 3D model cannot be orbited — which is most of the point of measuring one. For PDFs
+  // the call sets `annotating` without freezing anything, which is exactly what that surface
+  // wants: it disables stage panning so a drag reads as a gesture rather than a pan.
   useEffect(() => {
-    if (!DRAW_TOOLS.includes(activeTool)) return;
+    const needsSurface = DRAW_TOOLS.includes(activeTool) || (isMeasureTool(activeTool) && !is3DFile);
+    if (!needsSurface) return;
     startAnnotationSession();
-  }, [activeTool, startAnnotationSession]);
+  }, [activeTool, is3DFile, startAnnotationSession]);
 
-  // Tag placement and drawing are mutually exclusive — disarm tagging when a draw tool is selected.
+  // Tag placement, drawing and measuring are mutually exclusive — disarm tagging when a draw or
+  // measure tool is selected.
   useEffect(() => {
-    if (DRAW_TOOLS.includes(activeTool)) setTagging(false);
+    if (DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) setTagging(false);
   }, [activeTool]);
 
   // The transform gizmo and the comment/draw tools are mutually exclusive too: drei's
@@ -1059,11 +1239,86 @@ export default function PortalPage() {
     // other direction (selecting a plane disarms tagging) already goes through
     // handleSelectPlane; match it here so arming a comment/draw tool fully releases a
     // plane selection too.
-    if (tagging || DRAW_TOOLS.includes(activeTool)) {
+    if (tagging || DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) {
       setTransformMode(null);
       setSelectedPlane(null);
     }
   }, [tagging, activeTool]);
+
+  // Turning a page mid-gesture must not let the second click land on a different sheet.
+  //
+  // Declared ABOVE the arming effect on purpose: both fire on a pdfPage change, effects run in
+  // declaration order, and the later one wins. This way the page turn abandons the half-placed
+  // gesture and the arming effect immediately starts a fresh one on the new page. Swapped
+  // around, the cancel would land last and leave the tool armed with no gesture behind it —
+  // visibly selected, and dead to every click.
+  useEffect(() => {
+    cancelMeasure();
+  }, [pdfPage, cancelMeasure]);
+
+  // Arming a measure tool begins a gesture; disarming abandons whatever was half-placed.
+  // 'calibrate' collects the same two points a linear does — only what happens on commit differs.
+  useEffect(() => {
+    if (!isMeasureTool(activeTool)) {
+      cancelMeasure();
+      return;
+    }
+    // Anything already in the list belongs to an earlier gesture and must not be mistaken for
+    // this one's result — see the capture effect below.
+    calibrationBaselineRef.current = measurementsRef.current.length;
+    beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', isPDFFile ? pdfPage : UNPAGED);
+  }, [activeTool, isPDFFile, pdfPage, beginMeasure, cancelMeasure]);
+
+  // Catch the calibrate gesture's result.
+  //
+  // It arrives as a COMMITTED measurement rather than as a two-point `pending`: useMeasurements
+  // commits a linear gesture the instant its second point lands and restarts the gesture in the
+  // same call, so `pending` never holds two points. The measurement is left in the list while
+  // the panel is up — that is the only feedback showing WHICH span is being named — and taken
+  // back out when the tool is disarmed, because a calibration is a scale, not a dimension.
+  useEffect(() => {
+    if (activeTool !== 'calibrate' || calibrationSpan !== null) return;
+    const since = measurements.slice(calibrationBaselineRef.current);
+    const captured = since[since.length - 1];
+    if (!captured || captured.points.length < 2) return;
+    setCalibrationSpan(distance(captured.points[0], captured.points[1]));
+  }, [activeTool, calibrationSpan, measurements]);
+
+  // Leaving Calibrate — by committing, by cancelling, or by simply picking another tool — drops
+  // the captured span and takes every measurement the gesture made back out of the list: a
+  // calibration is a scale, not a dimension anyone asked to see. Swept by the baseline rather
+  // than by the one captured id, so extra clicks made while the panel was up go with it. One
+  // cleanup rather than three call sites that would each have to remember.
+  useEffect(() => {
+    if (activeTool !== 'calibrate') return;
+    return () => {
+      for (const m of measurementsRef.current.slice(calibrationBaselineRef.current)) {
+        removeMeasure(m.id);
+      }
+      setCalibrationSpan(null);
+      setMeasureError(null);
+    };
+  }, [activeTool, removeMeasure]);
+
+  // Escape abandons a pending gesture; Delete removes a selected measurement. One handler for
+  // all three surfaces, because the store lives here and the 3D viewer has no keyboard surface
+  // of its own. Keys are ignored while a field has focus — CalibrationPanel's own input handles
+  // Escape itself, and Backspace there must delete a character, not a measurement.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'Escape' && isMeasureTool(activeTool)) {
+        beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', isPDFFile ? pdfPage : UNPAGED);
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedMeasurementId) {
+        e.preventDefault();
+        removeMeasure(selectedMeasurementId);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTool, isPDFFile, pdfPage, selectedMeasurementId, removeMeasure, beginMeasure]);
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
@@ -1085,7 +1340,11 @@ export default function PortalPage() {
     setSectionActive(false);
     setSectionSlots(emptySlots());
     setSelectedPlane(null);
-  }, [selectedFileId]);
+    // Measurements are per-file and session-only: a reading taken on one drawing means nothing
+    // on the next, and the scale it was read against has already changed underneath it.
+    clearMeasure();
+    setMeasureError(null);
+  }, [selectedFileId, clearMeasure]);
 
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
@@ -1490,6 +1749,7 @@ export default function PortalPage() {
             highlightedPart={hoveredPart}
             onPartsLoaded={handlePartsLoaded}
             onPartPick={handlePartPick}
+            onPageChange={setPdfPage}
           />
         </div>
       </>
@@ -1595,6 +1855,29 @@ export default function PortalPage() {
                 onInsertImage={handleInsertImage}
                 offsetTop={isPDFFile ? 45 : 12}
                 selectionType={selectionType}
+                measureUnit={measureUnit}
+                onMeasureUnitChange={handleMeasureUnitChange}
+                scaleSource={measureScale.source}
+                // annotatingFile === null is load-bearing: during an attachment session the
+                // surface is a pasted screenshot with no file id, so there is nowhere to store a
+                // calibration and nothing to resolve a scale against.
+                canCalibrate={canComment && annotatingFile === null}
+                measureAvailable={!isVideoFile}
+              />
+            )}
+
+            {/* "This distance is …" — the second half of the calibrate gesture, shown once both
+                its points are down. Beside the toolbar rather than inside it: it owns the
+                keyboard while it is up, and it is the only thing on screen that can report a
+                failed save. */}
+            {!viewportBusy && !viewportImage && activeTool === 'calibrate' && calibrationSpan !== null && (
+              <CalibrationPanel
+                unit={measureUnit}
+                error={measureError}
+                onCommit={(realDistance, entryUnit) =>
+                  handleCalibrationCommit(calibrationIntrinsicDistance, realDistance, entryUnit)
+                }
+                onCancel={() => { setMeasureError(null); setActiveTool('pointer'); }}
               />
             )}
             {selectedFileId && !isPDFFile && !annotating && (

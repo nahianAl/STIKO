@@ -51,10 +51,16 @@ interface PDFKonvaViewerProps {
    * document that is already open is not that.
    */
   onReady?: () => void;
+  /**
+   * Fires whenever the visible page changes, and once for the page this viewer opens on, so
+   * callers can resolve per-page calibration. `getCurrentPage()` on the handle is a pull, not
+   * a subscription, so anything that must RENDER from the current page needs this instead.
+   */
+  onPageChange?: (page: number) => void;
 }
 
 function PDFKonvaViewer(
-    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange, onReady }: PDFKonvaViewerProps
+    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange, onReady, onPageChange }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -76,6 +82,16 @@ function PDFKonvaViewer(
       readyFired.current = true;
       onReadyRef.current?.();
     }, []);
+
+    // Report the visible page upward. Held in a ref and depended on by `currentPage` ALONE for
+    // the same reason announceReady is: a caller passing an inline arrow must not be able to
+    // make this fire on every one of its own re-renders. Fires on mount too, which is how the
+    // page the document opens on gets reported without a second code path.
+    const onPageChangeRef = useRef(onPageChange);
+    onPageChangeRef.current = onPageChange;
+    useEffect(() => {
+      onPageChangeRef.current?.(currentPage);
+    }, [currentPage]);
 
     // Container sizing
     const containerRef = useRef<HTMLDivElement>(null);
