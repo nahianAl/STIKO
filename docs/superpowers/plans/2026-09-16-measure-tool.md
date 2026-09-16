@@ -271,13 +271,22 @@ test('angleAt works in 3D', () => {
   assert.ok(Math.abs(right - Math.PI / 2) < 1e-12);
 });
 
-// The trap this exists for: dot/(|a||b|) can land on 1.0000000000000002 for genuinely
-// collinear input, and Math.acos of that is NaN. Without clamping, pointing at two points
-// on the same edge produces a blank label instead of 0.0°.
-test('angleAt clamps floating-point overshoot instead of returning NaN', () => {
-  const collinear = angleAt([0, 0, 0], [0.1, 0.2, 0.3], [0.2, 0.4, 0.6]);
-  assert.ok(Number.isFinite(collinear), 'expected a finite angle');
-  assert.ok(Math.abs(collinear) < 1e-6);
+// The trap this exists for: dot/(|a||b|) can land one ulp outside [-1, 1] for genuinely
+// collinear input, and Math.acos of such a value is NaN. Without clamping to [-1, 1], the
+// quotient lands at 1.0000000000000002 or -1.0000000000000002, producing NaN instead of 0 or π.
+// That would render as a blank measurement label for a perfectly valid gesture.
+test('angleAt clamps upper overshoot: dot/denominator lands at 1.0000000000000002', () => {
+  const angle = angleAt([0, 0, 0], [0.1, 0.1, 0.2], [0.5, 0.5, 1.0]);
+  // Without the clamp, Math.acos(1.0000000000000002) is NaN; with it, Math.acos(1) is 0.
+  assert.ok(Number.isFinite(angle), 'expected a finite angle');
+  assert.ok(Math.abs(angle) < 1e-12);
+});
+
+test('angleAt clamps lower overshoot: dot/denominator lands at -1.0000000000000002', () => {
+  const angle = angleAt([0, 0, 0], [0.1, 0.1, 0.2], [-0.5, -0.5, -1.0]);
+  // Without the clamp, Math.acos(-1.0000000000000002) is NaN; with it, Math.acos(-1) is π.
+  assert.ok(Number.isFinite(angle), 'expected a finite angle');
+  assert.ok(Math.abs(angle - Math.PI) < 1e-12);
 });
 
 test('angleAt returns NaN when a leg has no length', () => {
@@ -1512,9 +1521,22 @@ export function useMeasurements() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const idRef = useRef(0);
 
-  const begin = useCallback((kind: MeasureKind, page: number = UNPAGED) => {
-    setPending(beginGesture(kind, page));
+  // The pending gesture is mirrored in a ref and READ from the ref, never from inside a state
+  // updater. useAnnotationObjects does the same with draftRef, for the same reason: a click
+  // handler needs the current gesture synchronously, and doing the work inside setPending's
+  // updater would run it twice under StrictMode — double-incrementing idRef and making the
+  // committed measurement a side effect of rendering.
+  const pendingRef = useRef<PendingGesture | null>(null);
+
+  const setGesture = useCallback((next: PendingGesture | null) => {
+    pendingRef.current = next;
+    setPending(next);
   }, []);
+
+  const begin = useCallback(
+    (kind: MeasureKind, page: number = UNPAGED) => setGesture(beginGesture(kind, page)),
+    [setGesture]
+  );
 
   /**
    * Returns the committed measurement, or null while the gesture is still collecting points or
@@ -1523,22 +1545,26 @@ export function useMeasurements() {
    */
   const addPoint = useCallback(
     (point: number[], minSeparation: number): Measurement | null => {
-      let committed: Measurement | null = null;
-      setPending((current) => {
-        if (!current) return current;
-        const result = addGesturePoint(current, point, minSeparation);
-        if (result.status === 'pending') return result.gesture;
-        if (result.status === 'rejected') return beginGesture(current.kind, current.page);
-        committed = { ...result.measurement, id: `measure-${idRef.current++}` };
-        return beginGesture(current.kind, current.page);
-      });
-      if (committed) setMeasurements((prev) => [...prev, committed as Measurement]);
+      const current = pendingRef.current;
+      if (!current) return null;
+
+      const result = addGesturePoint(current, point, minSeparation);
+      if (result.status === 'pending') {
+        setGesture(result.gesture);
+        return null;
+      }
+
+      setGesture(beginGesture(current.kind, current.page));
+      if (result.status === 'rejected') return null;
+
+      const committed: Measurement = { ...result.measurement, id: `measure-${idRef.current++}` };
+      setMeasurements((prev) => [...prev, committed]);
       return committed;
     },
-    []
+    [setGesture]
   );
 
-  const cancel = useCallback(() => setPending(null), []);
+  const cancel = useCallback(() => setGesture(null), [setGesture]);
 
   const remove = useCallback((id: string) => {
     setMeasurements((prev) => prev.filter((m) => m.id !== id));
@@ -1547,9 +1573,9 @@ export function useMeasurements() {
 
   const clear = useCallback(() => {
     setMeasurements([]);
-    setPending(null);
+    setGesture(null);
     setSelectedId(null);
-  }, []);
+  }, [setGesture]);
 
   return { measurements, pending, selectedId, setSelectedId, begin, addPoint, cancel, remove, clear };
 }

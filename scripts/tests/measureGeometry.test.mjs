@@ -25,13 +25,22 @@ test('angleAt works in 3D', () => {
   assert.ok(Math.abs(right - Math.PI / 2) < 1e-12);
 });
 
-// The trap this exists for: dot/(|a||b|) can land on 1.0000000000000002 for genuinely
-// collinear input, and Math.acos of that is NaN. Without clamping, pointing at two points
-// on the same edge produces a blank label instead of 0.0°.
-test('angleAt clamps floating-point overshoot instead of returning NaN', () => {
-  const collinear = angleAt([0, 0, 0], [0.1, 0.2, 0.3], [0.2, 0.4, 0.6]);
-  assert.ok(Number.isFinite(collinear), 'expected a finite angle');
-  assert.ok(Math.abs(collinear) < 1e-6);
+// The trap this exists for: dot/(|a||b|) can land one ulp outside [-1, 1] for genuinely
+// collinear input, and Math.acos of such a value is NaN. Without clamping to [-1, 1], the
+// quotient lands at 1.0000000000000002 or -1.0000000000000002, producing NaN instead of 0 or π.
+// That would render as a blank measurement label for a perfectly valid gesture.
+test('angleAt clamps upper overshoot: dot/denominator lands at 1.0000000000000002', () => {
+  const angle = angleAt([0, 0, 0], [0.1, 0.1, 0.2], [0.5, 0.5, 1.0]);
+  // Without the clamp, Math.acos(1.0000000000000002) is NaN; with it, Math.acos(1) is 0.
+  assert.ok(Number.isFinite(angle), 'expected a finite angle');
+  assert.ok(Math.abs(angle) < 1e-12);
+});
+
+test('angleAt clamps lower overshoot: dot/denominator lands at -1.0000000000000002', () => {
+  const angle = angleAt([0, 0, 0], [0.1, 0.1, 0.2], [-0.5, -0.5, -1.0]);
+  // Without the clamp, Math.acos(-1.0000000000000002) is NaN; with it, Math.acos(-1) is π.
+  assert.ok(Number.isFinite(angle), 'expected a finite angle');
+  assert.ok(Math.abs(angle - Math.PI) < 1e-12);
 });
 
 test('angleAt returns NaN when a leg has no length', () => {
