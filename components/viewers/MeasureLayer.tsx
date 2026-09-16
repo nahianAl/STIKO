@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { distance, angleAt } from '@/lib/measure/geometry';
 import { formatLength, formatAngle, type LengthUnit } from '@/lib/measure/units';
 import type { Measurement } from '@/components/markup/useMeasurements';
@@ -171,7 +171,7 @@ interface MeasureLayerProps {
    * by. Same reason SectionCaps tracks it by identity in its own frame loop.
    */
   clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
-  /** The model's bounding radius — scene scale for the dash length and nothing else. */
+  /** The model's bounding radius — scene scale for the dash length and the line-pick threshold. */
   radius: number;
 }
 
@@ -188,6 +188,26 @@ export default function MeasureLayer({
   const sprites = useRef(new Map<string, THREE.Sprite>());
   const worldAnchor = useRef(new THREE.Vector3());
 
+  // three's line-raycast threshold defaults to 1 WORLD unit (Raycaster.js), which is only ever
+  // right by accident: bounding radii in this app span 1 to 10,000 (see lib/sceneScale.ts), so on
+  // most models it is either a sub-pixel target or a house-sized one. Scaling it to the model
+  // keeps a measurement's THREE.Line pickable regardless of scene scale — which matters doubly on
+  // an uncalibrated file (OBJ/STL/PLY/3DS/DAE, where assumedMmPerUnit returns null), because the
+  // label sprite that normally carries the click target isn't rendered at all (see `label` below),
+  // leaving the line as the ONLY way to select and delete the measurement.
+  //
+  // This raycaster is shared with the rest of the viewer (part picks, pin drops), so the previous
+  // value is restored on cleanup rather than left raised — and `Math.max` never LOWERS whatever
+  // threshold another consumer already needs.
+  const raycaster = useThree((s) => s.raycaster);
+  useEffect(() => {
+    const previous = raycaster.params.Line.threshold;
+    raycaster.params.Line.threshold = Math.max(previous, radius * 5e-3);
+    return () => {
+      raycaster.params.Line.threshold = previous;
+    };
+  }, [raycaster, radius]);
+
   const entries = useMemo<MeasureEntry[]>(() => {
     const label = (m: Measurement): string => {
       if (m.kind === 'angular') return formatAngle(angleAt(m.points[1], m.points[0], m.points[2]));
@@ -201,14 +221,28 @@ export default function MeasureLayer({
       const materials: THREE.LineBasicMaterial[] = [];
       const lines: THREE.Line[] = [];
 
-      const legMaterial = new THREE.LineBasicMaterial({ color: LINE_COLOR, depthTest: false });
+      // depthWrite paired with depthTest: false, matching the sprite material below. An overlay
+      // that skips the depth TEST but still WRITES depth would stamp far-side depth values into
+      // the buffer — and three draws the whole transparent queue after the whole opaque queue
+      // regardless of renderOrder, so that interaction with SceneGround's transparent disc and
+      // ContactShadows is not something reading the code alone can predict. Depth-write-off is
+      // the standard pairing for a CAD-style overlay that must always read on top.
+      const legMaterial = new THREE.LineBasicMaterial({
+        color: LINE_COLOR,
+        depthTest: false,
+        depthWrite: false,
+      });
       materials.push(legMaterial);
       lines.push(makeLine(toVectors(m.points), legMaterial));
 
       if (m.kind === 'angular') {
         const arc = arcPoints(m.points[1], m.points[0], m.points[2]);
         if (arc.length > 0) {
-          const arcMaterial = new THREE.LineBasicMaterial({ color: LINE_COLOR, depthTest: false });
+          const arcMaterial = new THREE.LineBasicMaterial({
+            color: LINE_COLOR,
+            depthTest: false,
+            depthWrite: false,
+          });
           materials.push(arcMaterial);
           lines.push(makeLine(arc, arcMaterial));
         }
@@ -247,6 +281,8 @@ export default function MeasureLayer({
       size: PENDING_POINT_PX,
       sizeAttenuation: false,
       depthTest: false,
+      // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
+      depthWrite: false,
     });
     const dots = new THREE.Points(
       new THREE.BufferGeometry().setFromPoints(points),
@@ -265,6 +301,8 @@ export default function MeasureLayer({
         dashSize: radius * PENDING_DASH_FRACTION,
         gapSize: radius * PENDING_GAP_FRACTION,
         depthTest: false,
+        // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
+        depthWrite: false,
       });
       const line = makeLine(points, dashMaterial);
       // LineDashedMaterial reads a per-vertex `lineDistance` attribute that only this call
@@ -354,6 +392,14 @@ export default function MeasureLayer({
           key={entry.id}
           onClick={(e) => {
             e.stopPropagation();
+            // R3F's own delta<=2 drag-vs-click check (see events-*.esm.js) is applied ONLY on
+            // the onPointerMissed path, not to an object's onClick like this one — and
+            // camera-controls deliberately never calls preventDefault() on pointerdown, so a
+            // left-drag orbit that starts and ends over this measurement would otherwise select
+            // it every time. Same reasoning as the model's onClick guard in
+            // ModelViewerInner.tsx. `e.delta` is R3F's accumulated pointer-move distance for the
+            // click; 2 is the same threshold R3F applies itself.
+            if (e.delta > 2) return;
             onSelect?.(entry.id);
           }}
         >
