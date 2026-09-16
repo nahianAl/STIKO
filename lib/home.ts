@@ -153,6 +153,51 @@ export function needsYou(pkg: PackageCard): boolean {
   return pkg.mentions > 0 || (pkg.versionNumber != null && !pkg.seenLatest);
 }
 
+export interface Attention {
+  kind: 'mention' | 'new_version';
+  /** Sentence case; the pill uppercases it in CSS. */
+  label: string;
+  bg: string;
+  fg: string;
+}
+
+/**
+ * The personal attention pill for one package — a fact about YOU, so it is a
+ * SOLID pastel pill, never the outlined chip that states the work's status.
+ *
+ * Gated on the same `needsYou` predicate the header subline and the rail's
+ * stat tiles count with, so a pill and a count can never disagree.
+ */
+export function packageAttention(pkg: PackageCard): Attention | null {
+  if (!needsYou(pkg)) return null;
+
+  if (pkg.mentions > 0) {
+    return {
+      kind: 'mention',
+      label: `${pkg.mentions} mention${pkg.mentions === 1 ? '' : 's'}`,
+      bg: '#FFE2E2',
+      fg: '#B23A52',
+    };
+  }
+
+  return { kind: 'new_version', label: 'New version', bg: '#FFFCCE', fg: '#7A5E00' };
+}
+
+/**
+ * One pill for a whole project: the first attention-carrying package wins.
+ *
+ * "First" means first in the project's own package order, which /api/home
+ * returns in recency order — so the pill describes the most recent thing that
+ * wants the viewer, which is what a collapsed row should surface.
+ */
+export function projectAttention(pkgs: PackageCard[]): Attention | null {
+  for (const pkg of pkgs) {
+    const attention = packageAttention(pkg);
+    if (attention) return attention;
+  }
+  return null;
+}
+
 export function homeStats(packages: PackageCard[]): {
   needsYou: number;
   openComments: number;

@@ -4,14 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import EmptyState from '@/components/ui/EmptyState';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
-import ProjectCard from '@/components/home/ProjectCard';
+import { ProjectListRow } from '@/components/home/ProjectListRow';
+import { ProjectListHeader } from '@/components/home/ProjectListHeader';
 import NewProjectModal from '@/components/home/NewProjectModal';
 import ProjectPeopleDrawer from '@/components/home/ProjectPeopleDrawer';
 import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
-import NotificationTray, {
-  type NotificationRow,
-} from '@/components/shell/NotificationTray';
+import type { NotificationRow } from '@/components/shell/NotificationTray';
 import ActivityRail from '@/components/home/ActivityRail';
+import ProjectSummaryPanel from '@/components/home/ProjectSummaryPanel';
+import RailToggle from '@/components/shell/RailToggle';
 import AvatarMenu from '@/components/shell/AvatarMenu';
 import CommandPalette from '@/components/shell/CommandPalette';
 import { DISCLOSURE, type DisclosureState } from '@/lib/disclosure';
@@ -26,11 +27,12 @@ import type { PackageCard, ProjectSummary } from '@/lib/queries';
 import { useSession } from 'next-auth/react';
 
 /**
- * Owner home. Two states: first run, and the project grid.
+ * Owner home. Two states: first run, and the project list.
  *
- * The grid covers every populated case — one package or fifty, owned or
- * invited. The old guest-only screen and the flat one-package floor are gone:
- * an "Invited · Commenter" card says more than a separate screen did.
+ * The list covers every populated case — one package or fifty, owned or
+ * invited. Packages stay hidden until their project is selected, which is what
+ * keeps the screen readable at five packages per project and above; the card
+ * grid that preceded this listed every package inline and did not.
  */
 export default function Home() {
   const router = useRouter();
@@ -49,6 +51,37 @@ export default function Home() {
     null
   );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // The last non-null selection, so the summary panel keeps its content for
+  // the whole close animation instead of flashing empty on the way down.
+  const [lastId, setLastId] = useState<string | null>(null);
+  const [railOpen, setRailOpen] = useState(true);
+
+  // Read from localStorage in an effect, never as the initial state: this
+  // component is still server-rendered, and a value the server cannot see
+  // would make the first client render disagree with the HTML.
+  useEffect(() => {
+    const stored = window.localStorage.getItem('stiko.railOpen');
+    if (stored !== null) setRailOpen(stored === 'true');
+  }, []);
+
+  const toggleRail = useCallback(() => {
+    setRailOpen((v) => {
+      window.localStorage.setItem('stiko.railOpen', String(!v));
+      return !v;
+    });
+  }, []);
+
+  const toggleProject = useCallback((id: string) => {
+    setExpanded((current) => (current === id ? null : id));
+    setLastId(id);
+    // Forced open, never forced closed: otherwise the summary panel would
+    // animate open behind a hidden rail. The user's own choice to hide the
+    // rail is never overridden in the other direction.
+    setRailOpen(true);
+    window.localStorage.setItem('stiko.railOpen', 'true');
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -139,7 +172,11 @@ export default function Home() {
         </button>
       )}
       {showBell && (
-        <NotificationTray notifications={notifications} onChanged={load} />
+        <RailToggle
+          open={railOpen}
+          hasUnread={notifications.some((n) => !n.readAt)}
+          onToggle={toggleRail}
+        />
       )}
       <AvatarMenu />
     </>
@@ -193,30 +230,34 @@ export default function Home() {
     .filter(Boolean)
     .join(' · ');
 
+  const summaryGroup = groups.find((g) => g.project.id === lastId) ?? null;
+
   return (
     <Shell>
       <TopBar right={topBarRight} />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-1 lg:flex-row lg:overflow-visible">
+      {/* Clicking the page background deselects. Everything that would be
+          closing the thing you just clicked inside of — the expansion panel,
+          the rail, the header's own controls — stops the event itself. */}
+      <div
+        onClick={() => setExpanded(null)}
+        className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-1 lg:flex-row lg:gap-3 lg:overflow-visible"
+      >
         {/* flex-none (not flex-1) below lg: this is a flex column here, and
-            ActivityRail's aside is shrink-0 with a content-driven height —
-            once the rail's own content is taller than this row (a handful of
-            notifications is enough on a phone), flex-1's flex-basis:0% has
-            nothing to grow into and the grid collapses to 0px, rendering its
-            cards UNDER the rail instead of above it. flex-none makes this
-            column size to its own content instead of competing for space, so
-            it simply stacks above the rail and the row (which scrolls) grows
-            to fit both. lg:flex-1 restores the fill-remaining-space behaviour
-            once the layout is a row instead of a column. */}
-        <div className="min-h-0 flex-none lg:flex-1 lg:overflow-y-auto">
+            the rail is shrink-0 with a content-driven height — once the rail's
+            content is taller than this row (a handful of notifications is
+            enough on a phone), flex-1's flex-basis:0% has nothing to grow into
+            and the column collapses to 0px, rendering the list UNDER the rail
+            instead of above it. flex-none makes this column size to its own
+            content. lg:flex-1 restores fill-remaining-space once the layout is
+            a row. */}
+        <div className="min-h-0 flex-none lg:flex-1 lg:overflow-y-auto lg:pr-2">
           <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-3 pt-[2px]">
             <div>
               <h1 className="text-[20px] font-extrabold tracking-title text-stiko-ink">
                 Your projects
               </h1>
-              <p className="mt-[3px] text-[12.5px] text-stiko-muted">
-                {subline}
-              </p>
+              <p className="mt-[3px] text-[12.5px] text-stiko-muted">{subline}</p>
               {/* The only place in the product that states this contract to an
                   invited-only user: they never publish, so the sole signal
                   that a new version exists is the email that goes out when
@@ -228,7 +269,10 @@ export default function Home() {
               )}
             </div>
 
-            <div className="flex items-center gap-[6px]">
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-[6px]"
+            >
               {showFilterRow(groups) && (
                 <>
                   {(
@@ -276,11 +320,19 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-start gap-3 pb-4">
+          {/* overflow-x on the container with min-w on every child: below
+              760px the list scrolls sideways rather than crushing the project
+              name. Every child carries box-border too — a mixed box model here
+              drifts the columns out of alignment and stops the row dividers
+              short of the row edge once scrolled. */}
+          <div className="overflow-x-auto overflow-y-hidden rounded-panel border border-stiko-sheet bg-white shadow-stiko-panel">
+            <ProjectListHeader />
             {visible.map((group) => (
-              <ProjectCard
+              <ProjectListRow
                 key={group.project.id}
                 group={group}
+                expanded={expanded === group.project.id}
+                onToggle={toggleProject}
                 onOpenPeople={setPeoplePanelProjectId}
               />
             ))}
@@ -288,13 +340,20 @@ export default function Home() {
         </div>
 
         {notifications.length > 0 && (
-          <div className="w-full shrink-0 lg:h-full lg:w-auto">
-            <ActivityRail
-              notifications={notifications}
-              packages={packages}
-              onChanged={load}
-            />
-          </div>
+          <ActivityRail
+            notifications={notifications}
+            packages={visiblePackages}
+            railOpen={railOpen}
+            onChanged={load}
+            onCollapse={toggleRail}
+            summary={
+              <ProjectSummaryPanel
+                group={summaryGroup}
+                open={expanded !== null}
+                onClose={() => setExpanded(null)}
+              />
+            }
+          />
         )}
       </div>
 

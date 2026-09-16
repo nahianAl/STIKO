@@ -102,3 +102,51 @@ a:hover {
     transform: rotate(45deg) rotateX(-25deg) rotateY(25deg);
   }
 }
+
+/* Dashboard disclosure. The expansion panel fades down into place and its
+   package rows fade up — opposite directions on purpose, so the panel reads as
+   a surface arriving and the rows as content settling onto it. */
+@keyframes stikoPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes stikoRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.stiko-panel-in {
+  animation: stikoPanelIn 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stiko-row-in {
+  animation: stikoRowIn 260ms ease both;
+}
+
+/* Movement is decoration here — every one of these states is also carried by a
+   colour or a layout change, so dropping the motion loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .stiko-panel-in,
+  .stiko-row-in {
+    animation: none;
+  }
+  .stiko-motion {
+    transition: none !important;
+  }
+  .stiko-motion:hover {
+    transform: none !important;
+  }
+}

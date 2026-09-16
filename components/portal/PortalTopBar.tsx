@@ -59,18 +59,11 @@ export default function PortalTopBar({
         <div className="flex min-w-0 items-center gap-2 text-[13px]">
           {project?.name && (
             <>
-              {/* A guest sees the project name as context but cannot open it —
-                  01: guests cannot see the project or its other packages. */}
-              {info?.access.isProjectMember ? (
-                <Link
-                  href={`/project/${project.id}`}
-                  className="truncate !text-stiko-muted hover:!text-stiko-ink"
-                >
-                  {project.name}
-                </Link>
-              ) : (
-                <span className="truncate text-stiko-muted">{project.name}</span>
-              )}
+              {/* Context, not a destination. There is no project page to open
+                  any more — the dashboard's own list is where a project
+                  expands — and a guest could never open one anyway (01:
+                  guests cannot see the project or its other packages). */}
+              <span className="truncate text-stiko-muted">{project.name}</span>
               <span className="text-stiko-crumb">›</span>
             </>
           )}

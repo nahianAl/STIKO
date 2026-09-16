@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/design';
-import type { ProjectPackage } from '@/app/project/[id]/page';
+import type { ProjectPackage } from '@/lib/projectOverview';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 
