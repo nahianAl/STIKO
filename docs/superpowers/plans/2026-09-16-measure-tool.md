@@ -1095,22 +1095,29 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS measure_unit TEXT DEFAULT NULL;
 Append the same two statements (table + index + column) to `lib/schema.sql`, immediately after the
 `part_colors` table block that ends at the `part_colors_file_id_idx` index, keeping the full comment.
 
-- [ ] **Step 3: Apply the migration**
+- [ ] **Step 3: Apply the migration** — CONTROLLER ONLY, not the implementer
+
+Production is the only environment this project has, so applying a migration is a production
+write and is performed by the controller, not by a task implementer.
+
+**Load env with `node --env-file=.env.local`, never `set -a && . .env.local`.** Sourcing the
+file from zsh exposes the credentials in the shell's process table and history; this project has
+already had a Neon password leak that way, and rotation is still outstanding.
 
 ```bash
-set -a && . .env.local && set +a && npm run migrate -- --dry
+node --env-file=.env.local scripts/migrate.mjs --dry
 ```
 Expected: lists `012-measure-calibration.sql` as outstanding.
 
 ```bash
-set -a && . .env.local && set +a && npm run migrate
+node --env-file=.env.local scripts/migrate.mjs
 ```
 Expected: applies it and records it in `schema_migrations`.
 
-- [ ] **Step 4: Verify the constraint actually bites**
+- [ ] **Step 4: Verify the constraint actually bites** — CONTROLLER ONLY
 
 ```bash
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`SELECT column_name, is_nullable, column_default FROM information_schema.columns
@@ -1403,7 +1410,7 @@ Expected: each file object carries `calibrations` (an object) and `measureUnit` 
 Temporarily rename the table and reload the package page:
 
 ```bash
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`ALTER TABLE file_calibrations RENAME TO file_calibrations_tmp\`.then(() => console.log('renamed'));
@@ -1412,7 +1419,7 @@ sql\`ALTER TABLE file_calibrations RENAME TO file_calibrations_tmp\`.then(() => 
 Expected: the package page still lists its files; the server console logs the fetch failure. Then restore:
 
 ```bash
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`ALTER TABLE file_calibrations_tmp RENAME TO file_calibrations\`.then(() => console.log('restored'));
