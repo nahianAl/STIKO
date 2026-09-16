@@ -49,7 +49,14 @@ export function ProjectListRow({
       >
         <button
           type="button"
-          onClick={() => onToggle(project.id)}
+          // stopPropagation is load-bearing, not defensive: the page root
+          // carries a deselect-on-background-click handler, so without this
+          // the click sets `expanded` here and then bubbles up and clears it
+          // again in the same React batch. The row would never open.
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle(project.id);
+          }}
           aria-expanded={expanded}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
           className="absolute inset-0 h-full w-full"
