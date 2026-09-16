@@ -8,6 +8,11 @@ import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
+import MeasureObjects from '@/components/markup/MeasureObjects';
+import type { Measurement } from '@/components/markup/useMeasurements';
+import type { PendingGesture } from '@/lib/measure/gesture';
+import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
+import { PDF_RENDER_SCALE, pointsPerStagePixel } from '@/lib/measure/space';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { paletteForComment } from '@/lib/commentColors';
@@ -57,10 +62,34 @@ interface PDFKonvaViewerProps {
    * a subscription, so anything that must RENDER from the current page needs this instead.
    */
   onPageChange?: (page: number) => void;
+  // Measurement props. The session store lives in the portal page, not here, because one
+  // measure session spans every surface and the calibrate flow reads its committed span from
+  // there. This viewer only collects points in its own page space and draws what it is given.
+  //
+  // Deliberately NOT part of the markup object model: a measurement has no colour and no stroke
+  // width, so none of this ever reaches `onSelectionChange`, `applyStyleToSelection` or the
+  // eraser.
+  measurements?: Measurement[];
+  pendingMeasurement?: PendingGesture | null;
+  /**
+   * A measure click, in PAGE pixels with a 3-pixel minimum separation. Same signature as the
+   * 3D surface's, so the store never learns which surface called it.
+   */
+  onMeasurePoint?: (point: number[], minSeparation: number) => void;
+  /**
+   * Millimetres per PDF POINT for the visible page, or null while the page is uncalibrated.
+   * Points, not rendered pixels — see PDF_RENDER_SCALE.
+   */
+  mmPerIntrinsicUnit?: number | null;
+  measureUnit?: LengthUnit;
+  selectedMeasurementId?: string | null;
+  onSelectMeasurement?: (id: string | null) => void;
 }
 
 function PDFKonvaViewer(
-    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange, onReady, onPageChange }: PDFKonvaViewerProps
+    { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange, onReady, onPageChange,
+      measurements = [], pendingMeasurement = null, onMeasurePoint, mmPerIntrinsicUnit = null,
+      measureUnit = DEFAULT_LENGTH_UNIT, selectedMeasurementId = null, onSelectMeasurement }: PDFKonvaViewerProps
   ) {
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -244,7 +273,11 @@ function PDFKonvaViewer(
       const renderPage = async () => {
         try {
           const page = await pdfDoc.getPage(currentPage);
-          const viewport = page.getViewport({ scale: 2 });
+          // The shared constant, never a literal 2: a PDF's intrinsic unit is the POINT
+          // (1/72") and this is the only thing standing between a page pixel and one. A
+          // calibration stored against rendered pixels is wrong by exactly this factor, on
+          // every reading, and nothing throws.
+          const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
 
           const offscreen = document.createElement('canvas');
           offscreen.width = viewport.width;
@@ -332,6 +365,31 @@ function PDFKonvaViewer(
 
       if (!annotating) return; // live view: pointer pans (handled by Stage draggable)
 
+      // A measure click. Ahead of every drawing branch because a measure tool is none of them,
+      // and because the fall-through at the bottom of this handler would otherwise reach
+      // `ann.startDraw` with a tool that is not an AnnTool at all.
+      //
+      // On MOUSEDOWN, unlike the 3D surface, where the equivalent branch had to live in
+      // pointerup: camera-controls leaves the viewport orbitable with a measure tool armed, so
+      // a left-drag orbit that begins and ends on the model would drop a point at each end, and
+      // pointerup is where that drag guard sits. No such hazard here. The Stage is `draggable`
+      // only for `activeTool === 'pointer' && !annotating && !tagging`, so with any measure tool
+      // armed it cannot pan at all, and a press on this stage can only ever be a click. Placing
+      // the point on mousedown also matches every drawing tool on this surface.
+      //
+      // Below the `!annotating` guard rather than above it. The portal opens a session for a
+      // measure tool on every 2D file (see the needsSurface effect), so the guard never costs a
+      // real click — but during an ATTACHMENT markup session this viewer is handed
+      // `annotating={false}` while the user works on an AnnotationCanvas laid over it, and a
+      // point collected here would be in the wrong surface's coordinate space entirely.
+      if (isMeasureTool(activeTool)) {
+        // 3 page pixels, the same floor `endDraw` applies to a drawn object. The signature
+        // matches the 3D surface's so the store never learns which surface called it; the page
+        // a measurement belongs to comes from the gesture, not from here.
+        onMeasurePoint?.([coords.x, coords.y], 3);
+        return;
+      }
+
       if (activeTool === 'text') {
         const wrapWidth = wrapWidthForContent(pageSize.width);
         const x = Math.max(0, Math.min(coords.x, pageSize.width - wrapWidth));
@@ -357,10 +415,13 @@ function PDFKonvaViewer(
         return;
       }
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
+      // A measure gesture is click-by-click: there is nothing to drag, and the fall-through
+      // below would hand `ann.moveDraw` a tool that is not an AnnTool.
+      if (isMeasureTool(activeTool)) return;
       const stage = e.target.getStage();
       if (!stage) return;
       if (activeTool === 'eraser') {
@@ -574,6 +635,36 @@ function PDFKonvaViewer(
                   editingId={editingId}
                   onEditText={setEditingId}
                   onBakeText={ann.bakeTextTransform}
+                />
+              </Layer>
+
+              {/* Measurements. Their own layer, above the markup and below the pins, never
+                  through AnnotationObjects: a measurement has no colour and no stroke width, so
+                  it must not reach the style model, and it must not be selectable as markup.
+
+                  On the STAGE, which is what puts it in captureSnapshot's flatten — measurements
+                  are session-only, so snapshotting one into a comment is the only way to keep it.
+
+                  `listening` is the eraser guard, and it cuts both ways: with the eraser armed
+                  this layer contributes nothing to the hit graph, so a drag-erase sweeping the
+                  viewport can neither delete a dimension nor be shielded by one from the markup
+                  underneath it. (deleteObject filters `ann.objects` by id and a measurement id is
+                  not in that list, so the eraser could not delete one anyway — but the shielding
+                  half is real, and a non-listening layer settles both.) It is inert for the
+                  drawing tools too, so drawing over a dimension cannot select it. */}
+              <Layer listening={activeTool === 'pointer' || isMeasureTool(activeTool)}>
+                <MeasureObjects
+                  measurements={measurements}
+                  pending={pendingMeasurement}
+                  mmPerIntrinsicUnit={mmPerIntrinsicUnit}
+                  // Page pixels to PDF points. The one conversion this whole feature turns on.
+                  intrinsicPerStagePixel={pointsPerStagePixel()}
+                  unit={measureUnit}
+                  selectedId={selectedMeasurementId}
+                  onSelect={(id) => onSelectMeasurement?.(id)}
+                  // Sheet 1's dimensions must not draw over sheet 2.
+                  page={currentPage}
+                  screenScale={stageScale}
                 />
               </Layer>
 

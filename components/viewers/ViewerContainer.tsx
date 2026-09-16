@@ -47,8 +47,10 @@ interface ViewerContainerProps {
   highlightedPart: string | null;
   onPartsLoaded: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   onPartPick: (key: string) => void;
-  // 3D measurement props. Forwarded to ModelViewer only — the 2D surfaces collect their own
-  // points in their own stage space and never see these.
+  // Measurement props. `measureActive` is 3D-only — PDFKonvaViewer reads the armed tool out of
+  // `activeTool` itself. The rest go to whichever surface is on screen; each collects points in
+  // its OWN space, which is why `mmPerUnit` reaches the PDF as `mmPerIntrinsicUnit`: for a PDF
+  // the file's intrinsic unit is the point, and the viewer converts its page pixels to points.
   measureActive?: boolean;
   onMeasurePoint?: (point: number[], minSeparation: number) => void;
   measurements?: Measurement[];
@@ -176,6 +178,13 @@ export default function ViewerContainer({
         onSelectionChange={onSelectionChange}
         onReady={onReady}
         onPageChange={onPageChange}
+        measurements={measurements}
+        pendingMeasurement={pendingMeasurement}
+        onMeasurePoint={onMeasurePoint}
+        mmPerIntrinsicUnit={mmPerUnit}
+        measureUnit={measureUnit}
+        selectedMeasurementId={selectedMeasurementId}
+        onSelectMeasurement={onSelectMeasurement}
       />
     );
   }
