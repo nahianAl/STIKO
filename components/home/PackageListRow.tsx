@@ -40,7 +40,7 @@ export function PackageListRow({ pkg }: { pkg: PackageCard }) {
   return (
     <button
       onClick={() => router.push(`/portal/${pkg.id}`)}
-      className="stiko-motion stiko-row-in flex items-center gap-3 rounded-[10px] bg-white px-3 py-[11px] text-left shadow-stiko-panel transition-[transform,box-shadow] duration-[160ms] ease-[cubic-bezier(.34,1.3,.64,1)] hover:translate-x-[3px] hover:shadow-stiko-lift"
+      className="stiko-motion flex items-center gap-3 rounded-[10px] bg-white px-3 py-[11px] text-left shadow-stiko-panel transition-[transform,box-shadow] duration-[160ms] ease-[cubic-bezier(.34,1.3,.64,1)] hover:translate-x-[3px] hover:shadow-stiko-lift"
       style={{ borderLeft: `3px solid ${STATUS_ACCENT[pkg.status]}` }}
     >
       <span

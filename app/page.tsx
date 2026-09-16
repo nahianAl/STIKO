@@ -252,12 +252,17 @@ export default function Home() {
             content. lg:flex-1 restores fill-remaining-space once the layout is
             a row. */}
         <div className="min-h-0 flex-none lg:flex-1 lg:overflow-y-auto lg:pr-2">
-          <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-3 pt-[2px]">
+          <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-4 pt-5">
             <div>
-              <h1 className="text-[20px] font-extrabold tracking-title text-stiko-ink">
-                Your projects
-              </h1>
-              <p className="mt-[3px] text-[12.5px] text-stiko-muted">{subline}</p>
+              {/* Title and count share a baseline rather than stacking: the
+                  count is an attribute of the title, not a second heading, and
+                  side by side it reads as one line instead of two. */}
+              <div className="flex flex-wrap items-baseline gap-3">
+                <h1 className="text-[20px] font-extrabold tracking-title text-stiko-ink">
+                  Your projects
+                </h1>
+                <p className="text-[12.5px] text-stiko-muted">{subline}</p>
+              </div>
               {/* The only place in the product that states this contract to an
                   invited-only user: they never publish, so the sole signal
                   that a new version exists is the email that goes out when

@@ -1,6 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { STATUS_ACCENT } from '@/lib/status';
 import { relativeTime } from '@/lib/design';
 import type { ProjectGroup } from '@/lib/home';
@@ -30,6 +36,17 @@ interface SummaryResponse {
  * never been summarised shows a button rather than a spinner. Firing the
  * generation automatically on select would mean a half-minute wait and a paid
  * call for every row the user clicks through.
+ *
+ * There is NO loading state. The panel has exactly two faces — text, or the
+ * button that produces text — and it opens straight into one of them. While
+ * the GET is in flight it shows the button face, which is the honest answer to
+ * "is there a summary here" until the server says otherwise, and the far more
+ * common one. A third "…" face would flash on every single selection to report
+ * something the user cannot act on.
+ *
+ * The panel sizes to its content rather than to a fixed 328px, so the button
+ * face is short and only the text face is tall. Its height is measured rather
+ * than guessed because the text face has no predictable line count.
  */
 export default function ProjectSummaryPanel({
   group,
@@ -45,6 +62,10 @@ export default function ProjectSummaryPanel({
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Not a visible state — the panel never renders a spinner. It only stops the
+  // Summarise button from firing a 30s POST while the cheap GET that might
+  // make it unnecessary is still in the air.
+  const [fetching, setFetching] = useState(false);
 
   // Re-selecting a project the user already looked at must not re-fetch, and a
   // fast run down the list must not leave a slow response overwriting a fast
@@ -61,6 +82,7 @@ export default function ProjectSummaryPanel({
     if (cached) {
       setData(cached);
       setError(null);
+      setFetching(false);
       return;
     }
 
@@ -70,6 +92,7 @@ export default function ProjectSummaryPanel({
 
     setData(null);
     setError(null);
+    setFetching(true);
 
     fetch(`/api/projects/${projectId}/summary`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
@@ -80,6 +103,9 @@ export default function ProjectSummaryPanel({
       })
       .catch(() => {
         if (!controller.signal.aborted) setError('Couldn’t load the summary.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFetching(false);
       });
 
     return () => controller.abort();
@@ -111,18 +137,41 @@ export default function ProjectSummaryPanel({
   // below simply takes the whole rail.
   const visible = open && Boolean(group) && data?.enabled !== false;
 
+  // The two faces are very different heights and the text face has no
+  // predictable line count, so the open height is measured rather than
+  // guessed. Capped so a long brief scrolls instead of eating the feed.
+  const panelRef = useRef<HTMLElement>(null);
+  const [panelHeight, setPanelHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    if (!panelRef.current) return;
+    setPanelHeight(Math.min(panelRef.current.scrollHeight, 328));
+  }, [data, error, busy, visible, group?.project.id]);
+
   return (
     <div
       className="stiko-motion shrink-0 overflow-hidden transition-[max-height,opacity,margin-bottom,transform] duration-[380ms] ease-[cubic-bezier(.32,.72,0,1)]"
       style={{
-        maxHeight: visible ? 328 : 0,
+        maxHeight: visible ? panelHeight : 0,
         opacity: visible ? 1 : 0,
         marginBottom: visible ? 12 : 0,
         transform: visible ? 'none' : 'translateY(-10px)',
+        // Deferred to the end of the close so the panel stays visible while it
+        // animates shut, then leaves the tab order entirely.
+        visibility: visible ? 'visible' : 'hidden',
+        transitionProperty: 'max-height, opacity, margin-bottom, transform, visibility',
+        // visibility is a 0s step — see the note in ActivityRail. Given a real
+        // duration it lands at duration+delay and holds the panel focusable
+        // long after it has gone.
+        transitionDuration: '380ms, 260ms, 380ms, 380ms, 0s',
+        transitionDelay: visible ? '0s' : '0s, 0s, 0s, 0s, 380ms',
       }}
       aria-hidden={!visible}
     >
-      <section className="flex h-[328px] flex-col overflow-hidden rounded-panel border-[1.5px] border-stiko-divider bg-white shadow-stiko-panel">
+      <section
+        ref={panelRef}
+        className="flex max-h-[328px] flex-col overflow-hidden rounded-panel border-[1.5px] border-stiko-divider bg-white shadow-stiko-panel"
+      >
         <div className="flex shrink-0 items-start justify-between gap-2 border-b border-stiko-border px-4 py-[13px]">
           <div className="min-w-0">
             <div className="flex items-center gap-[7px]">
@@ -158,23 +207,25 @@ export default function ProjectSummaryPanel({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[14px] pt-3">
+        <div className="max-h-[252px] min-h-0 overflow-y-auto px-4 pb-[14px] pt-3">
           {error ? (
             <p className="text-[12px] text-note-red-text">{error}</p>
           ) : data?.brief ? (
             <Brief brief={data.brief} group={group} generatedAt={data.generatedAt} />
-          ) : data ? (
+          ) : (
+            // The button face. Also what shows while the GET is in flight —
+            // see the note at the top: no third loading face.
             <div>
               <p className="text-[12.5px] leading-[1.55] text-stiko-secondary">
-                {data.configured
-                  ? 'No summary yet. Stiko can read this project’s comments and versions and write one.'
-                  : 'Summaries aren’t configured for this deployment.'}
+                {data && !data.configured
+                  ? 'Summaries aren’t configured for this deployment.'
+                  : 'No summary yet. Stiko can read this project’s comments and versions and write one.'}
               </p>
-              {data.configured && (
+              {(!data || data.configured) && (
                 <button
                   type="button"
                   onClick={generate}
-                  disabled={busy}
+                  disabled={busy || fetching}
                   className="mt-3 rounded-[10px] bg-gradient-to-br from-[#8094F5] to-[#5B60FF] px-[14px] py-2 text-[12.5px] font-bold text-white shadow-stiko-primary transition duration-150 hover:brightness-[1.04] disabled:opacity-50"
                 >
                   {busy ? 'Writing…' : 'Summarise this project'}
@@ -186,8 +237,6 @@ export default function ProjectSummaryPanel({
                 </p>
               )}
             </div>
-          ) : (
-            <p className="text-[12px] text-stiko-faint">Loading…</p>
           )}
         </div>
       </section>

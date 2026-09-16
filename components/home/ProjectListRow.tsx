@@ -129,11 +129,31 @@ export function ProjectListRow({
         </div>
       </div>
 
-      {expanded && (
+      {/* grid-template-rows 0fr -> 1fr animates BOTH directions without anyone
+          measuring anything. `{expanded && ...}` could only ever animate the
+          open: an unmount has no frames to run a transition in. The cost is
+          that the packages stay mounted while collapsed, so `visibility` is
+          deferred to the end of the close — it keeps them out of the tab order
+          without cutting the animation short. */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        aria-hidden={!expanded}
+        className="stiko-motion grid transition-[grid-template-rows] duration-[260ms] ease-[cubic-bezier(.4,0,.2,1)]"
+        style={{
+          gridTemplateRows: expanded ? '1fr' : '0fr',
+          visibility: expanded ? 'visible' : 'hidden',
+          transitionProperty: 'grid-template-rows, visibility',
+          // visibility is a 0s step — see the note in ActivityRail.
+          transitionDuration: '260ms, 0s',
+          transitionDelay: expanded ? '0s' : '0s, 260ms',
+        }}
+      >
         <div
-          onClick={(e) => e.stopPropagation()}
-          className="stiko-panel-in flex flex-col gap-[6px] bg-stiko-wash pb-[14px] pl-[34px] pr-[14px] pt-[10px]"
+          className={`overflow-hidden transition-opacity duration-200 ${
+            expanded ? 'opacity-100' : 'opacity-0'
+          }`}
         >
+          <div className="flex flex-col gap-[6px] bg-stiko-wash pb-[14px] pl-[34px] pr-[14px] pt-[10px]">
           {packages.map((pkg) => (
             <PackageListRow key={pkg.id} pkg={pkg} />
           ))}
@@ -163,8 +183,9 @@ export function ProjectListRow({
               Add a package
             </button>
           )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

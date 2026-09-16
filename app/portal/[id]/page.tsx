@@ -1520,7 +1520,11 @@ export default function PortalPage() {
       {/* 3-Panel Layout. `relative` so the version detail drawer can sit beside
           the rail and inherit this row's height, rather than pinning itself to
           the window and starting above the panels. */}
-      <div className={`relative flex-1 grid gap-3 overflow-hidden min-h-0 ${
+      {/* grid-template-columns is an interpolable property, so transitioning it
+          here slides BOTH side panels open and shut from one declaration —
+          neither panel has to know it is being animated, and the viewer in the
+          middle reflows with them instead of jumping. */}
+      <div className={`stiko-motion relative flex-1 grid gap-3 overflow-hidden min-h-0 transition-[grid-template-columns] duration-[280ms] ease-[cubic-bezier(.4,0,.2,1)] ${
         sidebarCollapsed && commentsCollapsed ? 'grid-cols-[48px_1fr_48px]' :
         sidebarCollapsed ? 'grid-cols-[48px_1fr_340px]' :
         commentsCollapsed ? 'grid-cols-[272px_1fr_48px]' :
