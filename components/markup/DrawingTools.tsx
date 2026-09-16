@@ -359,14 +359,18 @@ export default function DrawingTools({
         <div className="relative flex">
           <ToolButton
             label="Measure"
-            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || measureOpen}
-            expanded={measureOpen}
+            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || measureOpen || unitsOpen}
+            expanded={measureOpen || unitsOpen}
             hideLabel={menu !== null}
             onClick={() => setMenu(measureOpen ? null : 'measure')}
           >
             {MeasureIcon}
           </ToolButton>
-          {measureOpen && (
+          {/* Gated on both states, not just `measureOpen`: the units popover below lives
+              inside this same subtree, and its trigger sets `menu` to 'units'. Gating on
+              'measure' alone would unmount this whole block — chip and popover included —
+              the instant it's clicked, since `menu` can only ever hold one value. */}
+          {(measureOpen || unitsOpen) && (
             <div className={SUB_BAR}>
               <div className={BAR}>
                 {MEASURE_SUB_TOOLS.map((t) => {

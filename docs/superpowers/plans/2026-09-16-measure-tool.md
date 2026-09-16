@@ -1761,6 +1761,18 @@ Change the menu state to include the two new panels:
   const [menu, setMenu] = useState<'shapes' | 'stroke' | 'picker' | 'measure' | 'units' | null>(null);
 ```
 
+Precompute both booleans before either is tested, rather than writing `menu === 'measure'` /
+`menu === 'units'` inline where they're used below — the units chip nests a `menu === 'units'`
+check inside the block the `menu === 'measure'` gate already covers, and TypeScript's
+aliased-condition narrowing carries an effectively-const `menu` down to a single literal for the
+rest of a block that tests it, so the second, different literal comparison reads as impossible
+(TS2367). Computing both up front sidesteps that:
+
+```tsx
+  const measureOpen = menu === 'measure';
+  const unitsOpen = menu === 'units';
+```
+
 Add, immediately after the Shapes block and before the Stroke width block:
 
 ```tsx
@@ -1769,14 +1781,18 @@ Add, immediately after the Shapes block and before the Stroke width block:
         <div className="relative flex">
           <ToolButton
             label="Measure"
-            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || menu === 'measure'}
-            expanded={menu === 'measure'}
+            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || measureOpen || unitsOpen}
+            expanded={measureOpen || unitsOpen}
             hideLabel={menu !== null}
-            onClick={() => setMenu(menu === 'measure' ? null : 'measure')}
+            onClick={() => setMenu(measureOpen ? null : 'measure')}
           >
             {MeasureIcon}
           </ToolButton>
-          {menu === 'measure' && (
+          {/* Gated on both states, not just `measureOpen`: the units popover below lives
+              inside this same subtree, and its trigger sets `menu` to 'units'. Gating on
+              'measure' alone would unmount this whole block — chip and popover included —
+              the instant it's clicked, since `menu` can only ever hold one value. */}
+          {(measureOpen || unitsOpen) && (
             <div className={SUB_BAR}>
               <div className={BAR}>
                 {MEASURE_SUB_TOOLS.map((t) => {
@@ -1812,13 +1828,13 @@ Add, immediately after the Shapes block and before the Stroke width block:
                 <div className="relative flex">
                   <button
                     aria-label="Measurement units"
-                    aria-expanded={menu === 'units'}
-                    onClick={() => setMenu(menu === 'units' ? 'measure' : 'units')}
-                    className={`${slot(menu === 'units')} w-[44px] text-[11px] font-semibold tracking-heading`}
+                    aria-expanded={unitsOpen}
+                    onClick={() => setMenu(unitsOpen ? 'measure' : 'units')}
+                    className={`${slot(unitsOpen)} w-[44px] text-[11px] font-semibold tracking-heading`}
                   >
                     {measureUnit}
                   </button>
-                  {menu === 'units' && (
+                  {unitsOpen && (
                     <div className="absolute top-full mt-[13px] right-0 z-50 rounded-sheet bg-white border border-stiko-border shadow-stiko-panel py-[4px]">
                       {LENGTH_UNITS.map((u) => (
                         <button
