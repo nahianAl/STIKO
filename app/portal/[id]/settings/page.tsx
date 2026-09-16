@@ -125,7 +125,7 @@ export default function PackageSettings() {
       return;
     }
     toast('Package deleted');
-    router.push(data ? `/project/${data.package.projectId}` : '/');
+    router.push('/');
   };
 
   if (!data) {
@@ -148,7 +148,7 @@ export default function PackageSettings() {
   return (
     <SettingsShell
       crumbs={[
-        { label: data.package.projectName, href: `/project/${data.package.projectId}` },
+        { label: data.package.projectName },
         { label: data.package.name, href: `/portal/${id}` },
         { label: 'Settings' },
       ]}

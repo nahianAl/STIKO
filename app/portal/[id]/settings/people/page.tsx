@@ -216,7 +216,7 @@ export default function PackagePeople() {
       crumbs={
         pkg
           ? [
-              { label: pkg.projectName, href: `/project/${pkg.projectId}` },
+              { label: pkg.projectName },
               { label: pkg.name, href: `/portal/${id}` },
               { label: 'People' },
             ]
