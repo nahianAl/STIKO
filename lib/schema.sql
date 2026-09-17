@@ -368,3 +368,6 @@ CREATE TABLE IF NOT EXISTS project_summaries (
 
 CREATE INDEX IF NOT EXISTS comments_file_created_idx ON comments(file_id, created_at);
 CREATE INDEX IF NOT EXISTS files_version_idx ON files(version_id);
+-- The portal change feed re-filters versions by portal_id every six seconds per
+-- open tab; without this it seq-scans. Added in 013-comment-edits.sql.
+CREATE INDEX IF NOT EXISTS versions_portal_idx ON versions(portal_id);
