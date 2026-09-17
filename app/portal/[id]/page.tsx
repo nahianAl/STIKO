@@ -297,6 +297,12 @@ export default function PortalPage() {
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
+  // The roster has two consumers that do not share a fetch. `participants`
+  // below feeds only NewVersionDrawer's notify list, which only an uploader can
+  // open; the avatar stack and "Who can see this" that every viewer sees are
+  // PortalTopBar's own /access fetch. This key is what re-runs that second one,
+  // the same way commentsRefreshKey drives CommentsPanel's.
+  const [participantsRefreshKey, setParticipantsRefreshKey] = useState(0);
 
   // Top-level composer draft (single source of truth)
   const [composerText, setComposerText] = useState('');
@@ -1026,14 +1032,24 @@ export default function PortalPage() {
   }, [portalId]);
 
   // Extracted from the effect below so deleting a version can re-run it.
-  const loadVersions = useCallback(async () => {
+  //
+  // `background: true` is for a poll-driven refresh, and it governs the clear
+  // below for the same reason fetchFiles keys its clear on !background.
+  const loadVersions = useCallback(async (options?: { background?: boolean }) => {
+    const background = options?.background === true;
     try {
       const res = await fetch(`/api/versions?portalId=${portalId}`);
       // A 401 or 403 returns a JSON error object, not an array. Without this
       // it lands in setVersions and the sidebar's reduce throws during render,
       // taking out the whole route — there is no error boundary above it.
+      //
+      // Clearing is right on a foreground load, which has no rail on screen to
+      // protect. It is wrong on a background one: a single transient 502 would
+      // empty a rail the user is working in, and there is no recovery — the
+      // feed's cursor has already advanced past this change, so this handler
+      // does not fire again until something else moves it.
       if (!res.ok) {
-        setVersions([]);
+        if (!background) setVersions([]);
         return;
       }
       const data: Version[] = await res.json();
@@ -1244,12 +1260,20 @@ export default function PortalPage() {
     // One bump drives both this page's pin fetch and CommentsPanel's own fetch,
     // which is why there is no second call here.
     comments: () => setCommentsRefreshKey((k) => k + 1),
-    participants: fetchParticipants,
+    // Both roster consumers, because they do not share a fetch: `participants`
+    // for the drawer's notify list, the key for PortalTopBar's avatar stack and
+    // "Who can see this". Refreshing only the first leaves every viewer who
+    // cannot open the drawer — which is everyone but an uploader — looking at
+    // the roster as it was at mount.
+    participants: () => {
+      setParticipantsRefreshKey((k) => k + 1);
+      return fetchParticipants();
+    },
     // Unlike the other three loaders, this one has no preserveIfUnchanged — deliberately. The
     // feed only calls this when the versions cursor itself moved (a create, delete or publish),
     // never on a poll tick with nothing new, so there is no steady-state churn to guard against
     // and every call here is a genuine reason to refresh each version's summary.
-    versions: loadVersions,
+    versions: () => loadVersions({ background: true }),
     files: () => {
       if (selectedVersionId) fetchFiles(selectedVersionId, { background: true });
     },
@@ -2211,7 +2235,7 @@ export default function PortalPage() {
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
       {/* Submitting a version is the sidebar's job now — it sits next to the
           versions it creates, and the top bar had the only other copy. */}
-      <PortalTopBar project={project} portal={portal} portalId={portalId} />
+      <PortalTopBar project={project} portal={portal} portalId={portalId} refreshKey={participantsRefreshKey} />
 
       {/* 3-Panel Layout. `relative` so the version detail drawer can sit beside
           the rail and inherit this row's height, rather than pinning itself to

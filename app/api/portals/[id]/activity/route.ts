@@ -52,7 +52,7 @@ export async function GET(
   // or against an empty array.
   const rows = await sql`
     WITH visible_versions AS (
-      SELECT v.id, v.created_at
+      SELECT v.id, v.created_at, v.published_at
       FROM versions v
       WHERE v.portal_id = ${params.id}
         AND (${includeDrafts}::boolean OR v.published_at IS NOT NULL)
@@ -72,7 +72,16 @@ export async function GET(
       (SELECT COUNT(*) FROM participants WHERE portal_id = ${params.id}) AS "participantsN",
       (SELECT MAX(created_at) FROM participants WHERE portal_id = ${params.id}) AS "participantsAt",
       (SELECT COUNT(*) FROM visible_versions) AS "versionsN",
-      (SELECT MAX(created_at) FROM visible_versions) AS "versionsAt",
+      -- published_at is folded in for the same reason edited_at is folded into
+      -- the comment stamp below: an IN-PLACE edit moves neither half of a
+      -- (count, stamp) pair on its own. Publishing sets published_at on a row
+      -- that already exists, so for anyone whose includeDrafts is true the
+      -- draft was already counted and nothing about it moves — their rail would
+      -- go on calling a published version a draft, and the file delete confirm
+      -- would go on offering the light wording for it.
+      -- GREATEST skips NULLs (see the note on the comment stamp), so an
+      -- all-draft package still yields the created_at maximum.
+      (SELECT GREATEST(MAX(created_at), MAX(published_at)) FROM visible_versions) AS "versionsAt",
       (SELECT COUNT(*) FROM visible_files) AS "filesN",
       (SELECT MAX(created_at) FROM visible_files) AS "filesAt",
       (SELECT COUNT(*) FROM visible_comments) AS "commentsN",
