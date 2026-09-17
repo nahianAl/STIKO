@@ -164,7 +164,11 @@ CREATE TABLE IF NOT EXISTS comments (
   page_number INT DEFAULT NULL,
   timestamp DOUBLE PRECISION DEFAULT NULL,
   author TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Set by PUT /api/comments/[id]. Read by the portal's change feed, which
+  -- cannot otherwise see an edit: an edit leaves created_at untouched and the
+  -- row count unchanged. See lib/migrations/013-comment-edits.sql.
+  edited_at TIMESTAMPTZ DEFAULT NULL
 );
 
 -- Legacy per-object markup persistence. Nothing reads or writes this table today — markup is
@@ -364,3 +368,6 @@ CREATE TABLE IF NOT EXISTS project_summaries (
 
 CREATE INDEX IF NOT EXISTS comments_file_created_idx ON comments(file_id, created_at);
 CREATE INDEX IF NOT EXISTS files_version_idx ON files(version_id);
+-- The portal change feed re-filters versions by portal_id every six seconds per
+-- open tab; without this it seq-scans. Added in 013-comment-edits.sql.
+CREATE INDEX IF NOT EXISTS versions_portal_idx ON versions(portal_id);

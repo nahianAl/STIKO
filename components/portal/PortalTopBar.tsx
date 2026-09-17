@@ -34,10 +34,20 @@ export default function PortalTopBar({
   project,
   portal,
   portalId,
+  refreshKey,
 }: {
   project: Project | null;
   portal: Portal | null;
   portalId: string;
+  /**
+   * Bumped by the page when the change feed reports the roster moved. Without
+   * it the effect below is keyed on an id that never changes while the portal
+   * is open, so someone accepting an invite would stay missing from the avatar
+   * stack and from "Who can see this" until a manual refresh — the page's own
+   * `participants` state only feeds the uploader-only notify list. Same idiom
+   * as CommentsPanel's `refreshKey`.
+   */
+  refreshKey?: number;
 }) {
   const [info, setInfo] = useState<AccessInfo | null>(null);
   const [showShare, setShowShare] = useState(false);
@@ -45,9 +55,12 @@ export default function PortalTopBar({
   useEffect(() => {
     fetch(`/api/portals/${portalId}/access`)
       .then((r) => (r.ok ? r.json() : null))
-      .then(setInfo)
-      .catch(() => setInfo(null));
-  }, [portalId]);
+      // A failed re-fetch must not blank a roster already on screen: `info`
+      // null hides the avatar stack and the Share button outright. Only the
+      // first load has nothing to lose, and it starts null anyway.
+      .then((next) => setInfo((prev) => next ?? prev))
+      .catch(() => {});
+  }, [portalId, refreshKey]);
 
   return (
     <header className="flex h-[52px] flex-shrink-0 items-center justify-between rounded-panel bg-white px-[18px] shadow-stiko-panel">

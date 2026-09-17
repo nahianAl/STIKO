@@ -10,6 +10,7 @@ import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
 import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
+import { usePortalActivity } from '@/components/portal/usePortalActivity';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
@@ -29,6 +30,7 @@ import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { BRIEF_MIN_COMMENTS } from '@/lib/brief';
+import { preserveIfUnchanged } from '@/lib/portalActivity';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -295,6 +297,12 @@ export default function PortalPage() {
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
+  // The roster has two consumers that do not share a fetch. `participants`
+  // below feeds only NewVersionDrawer's notify list, which only an uploader can
+  // open; the avatar stack and "Who can see this" that every viewer sees are
+  // PortalTopBar's own /access fetch. This key is what re-runs that second one,
+  // the same way commentsRefreshKey drives CommentsPanel's.
+  const [participantsRefreshKey, setParticipantsRefreshKey] = useState(0);
 
   // Top-level composer draft (single source of truth)
   const [composerText, setComposerText] = useState('');
@@ -426,6 +434,12 @@ export default function PortalPage() {
   // switch. Updated every render (not gated on an effect) so it is never one commit behind.
   const currentFileIdRef = useRef(selectedFileId);
   currentFileIdRef.current = selectedFileId;
+
+  // Same idiom, for fetchFiles: lets an in-flight request notice that the user has since
+  // switched versions, without fetchFiles itself closing over a selectedVersionId that is
+  // frozen at whichever render started the request.
+  const currentVersionIdRef = useRef(selectedVersionId);
+  currentVersionIdRef.current = selectedVersionId;
 
   // Session-only part state resets on a genuine file switch — keyed on selectedFileId ALONE.
   // selectedFile is recomputed by files.find(...) every render, and fetchFiles replaces
@@ -982,20 +996,23 @@ export default function PortalPage() {
     fetchPortal();
   }, [portalId]);
 
-  // Fetch participants
-  useEffect(() => {
-    const fetchParticipants = async () => {
-      try {
-        const res = await fetch(`/api/participants?portalId=${portalId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        setParticipants(data);
-      } catch (err) {
-        console.error('Failed to fetch participants:', err);
-      }
-    };
-    fetchParticipants();
+  // Extracted from an effect into a callback so the change feed can re-run it,
+  // the same shape as loadVersions.
+  const fetchParticipants = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/participants?portalId=${portalId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      setParticipants((prev) => preserveIfUnchanged(prev, data));
+    } catch (err) {
+      console.error('Failed to fetch participants:', err);
+    }
   }, [portalId]);
+
+  useEffect(() => {
+    fetchParticipants();
+  }, [fetchParticipants]);
 
   // What this viewer is allowed to do here. Drives whether the submit
   // affordances render at all — a commenter never sees them.
@@ -1015,14 +1032,24 @@ export default function PortalPage() {
   }, [portalId]);
 
   // Extracted from the effect below so deleting a version can re-run it.
-  const loadVersions = useCallback(async () => {
+  //
+  // `background: true` is for a poll-driven refresh, and it governs the clear
+  // below for the same reason fetchFiles keys its clear on !background.
+  const loadVersions = useCallback(async (options?: { background?: boolean }) => {
+    const background = options?.background === true;
     try {
       const res = await fetch(`/api/versions?portalId=${portalId}`);
       // A 401 or 403 returns a JSON error object, not an array. Without this
       // it lands in setVersions and the sidebar's reduce throws during render,
       // taking out the whole route — there is no error boundary above it.
+      //
+      // Clearing is right on a foreground load, which has no rail on screen to
+      // protect. It is wrong on a background one: a single transient 502 would
+      // empty a rail the user is working in, and there is no recovery — the
+      // feed's cursor has already advanced past this change, so this handler
+      // does not fire again until something else moves it.
       if (!res.ok) {
-        setVersions([]);
+        if (!background) setVersions([]);
         return;
       }
       const data: Version[] = await res.json();
@@ -1133,35 +1160,68 @@ export default function PortalPage() {
     };
   }, [selectedVersionId]);
 
-  // Fetch files when version changes
-  const fetchFiles = useCallback(async (versionId: string) => {
-    setFilesLoading(true);
-    try {
-      const res = await fetch(`/api/files?versionId=${versionId}`);
-      // Same failure shape as loadVersions: a 401/403 body is a JSON object,
-      // not an array, and would otherwise reach setFiles and blow up render.
-      if (!res.ok) {
-        setFiles([]);
-        return;
+  // Fetch files when version changes.
+  //
+  // `background: true` is for a poll-driven refresh: someone else uploading a
+  // file must not flash the sidebar spinner over content that is already on
+  // screen.
+  const fetchFiles = useCallback(
+    async (versionId: string, options?: { background?: boolean }) => {
+      const background = options?.background === true;
+      if (!background) setFilesLoading(true);
+      try {
+        const res = await fetch(`/api/files?versionId=${versionId}`);
+        // The version this request was FOR may no longer be the one on screen — a poll has no
+        // way to cancel itself, and even a foreground call can be overtaken by a fast version
+        // switch while it is in flight. Either way, a response for a version the user has since
+        // left must not land in state: it would replace the new version's files with the old
+        // one's, and the setSelectedFileId below would open a file that belongs to the wrong
+        // version. currentVersionIdRef (not the `versionId` param, which is fine, and not
+        // selectedVersionId, whose closure here would be frozen at whichever render started
+        // this call) is what makes that check see a switch that happened after the fact.
+        if (currentVersionIdRef.current !== versionId) return;
+        // Same failure shape as loadVersions: a 401/403 body is a JSON object,
+        // not an array, and would otherwise reach setFiles and blow up render.
+        if (!res.ok) {
+          if (!background) setFiles([]);
+          return;
+        }
+        const payload = await res.json();
+        if (currentVersionIdRef.current !== versionId) return;
+        // A 200 whose body is not an array — a proxy's error page, a route that
+        // started returning an object — would reach setFiles and take out render
+        // at the first `.length`. Cleared only in the foreground, on the same
+        // reasoning as the !res.ok branch above: a poll must never empty a
+        // sidebar the user is working in.
+        if (!Array.isArray(payload)) {
+          if (!background) setFiles([]);
+          return;
+        }
+        const data = payload as FileRecord[];
+        setFiles((prev) => preserveIfUnchanged(prev, data));
+        if (data.length > 0) {
+          // A version change should land on the first file, but a delete that
+          // leaves the current selection intact must not throw the viewer back
+          // to file 1.
+          setSelectedFileId((current) =>
+            current && data.some((f) => f.id === current) ? current : data[0].id
+          );
+        } else {
+          setSelectedFileId(null);
+        }
+      } catch (err) {
+        console.error('Failed to fetch files:', err);
+      } finally {
+        // Deliberately NOT staleness-guarded, unlike the two returns above. A stale foreground
+        // response clearing this flashes the empty-file state for one round trip — mildly ugly,
+        // and still better than the wrong version's files. Guarding it is the obvious "fix" and
+        // is worse: when selectedVersionId goes null (deleting the last version) no successor
+        // fetch ever runs, so the spinner would stay up forever.
+        if (!background) setFilesLoading(false);
       }
-      const data: FileRecord[] = await res.json();
-      setFiles(data);
-      if (data.length > 0) {
-        // A version change should land on the first file, but a delete that
-        // leaves the current selection intact must not throw the viewer back
-        // to file 1.
-        setSelectedFileId((current) =>
-          current && data.some((f) => f.id === current) ? current : data[0].id
-        );
-      } else {
-        setSelectedFileId(null);
-      }
-    } catch (err) {
-      console.error('Failed to fetch files:', err);
-    } finally {
-      setFilesLoading(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     if (selectedVersionId) {
@@ -1187,7 +1247,12 @@ export default function PortalPage() {
       const res = await fetch(`/api/comments?fileId=${selectedFileId}`);
       if (res.ok) {
         const data = await res.json();
-        setComments(data);
+        if (!Array.isArray(data)) return;
+        // The comment cursor is portal-wide, so a comment on ANOTHER file
+        // re-fetches this one and gets identical data. Without this guard every
+        // pin and the 3D overlay would re-render on a new array identity each
+        // time anyone commented anywhere in the package.
+        setComments((prev) => preserveIfUnchanged(prev, data));
       }
     } catch (err) {
       console.error('Failed to fetch comments for pins:', err);
@@ -1197,6 +1262,32 @@ export default function PortalPage() {
   useEffect(() => {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
+
+  // Live updates. Each handler re-runs the loader that already owns that
+  // entity, so nothing about how data is loaded or authorized is duplicated
+  // here — the feed only says WHICH loader to re-run.
+  usePortalActivity(portalId, {
+    // One bump drives both this page's pin fetch and CommentsPanel's own fetch,
+    // which is why there is no second call here.
+    comments: () => setCommentsRefreshKey((k) => k + 1),
+    // Both roster consumers, because they do not share a fetch: `participants`
+    // for the drawer's notify list, the key for PortalTopBar's avatar stack and
+    // "Who can see this". Refreshing only the first leaves every viewer who
+    // cannot open the drawer — which is everyone but an uploader — looking at
+    // the roster as it was at mount.
+    participants: () => {
+      setParticipantsRefreshKey((k) => k + 1);
+      return fetchParticipants();
+    },
+    // Unlike the other three loaders, this one has no preserveIfUnchanged — deliberately. The
+    // feed only calls this when the versions cursor itself moved (a create, delete or publish),
+    // never on a poll tick with nothing new, so there is no steady-state churn to guard against
+    // and every call here is a genuine reason to refresh each version's summary.
+    versions: () => loadVersions({ background: true }),
+    files: () => {
+      if (selectedVersionId) fetchFiles(selectedVersionId, { background: true });
+    },
+  });
 
   const handleMeasureUnitChange = useCallback(
     async (unit: LengthUnit) => {
@@ -1401,8 +1492,9 @@ export default function PortalPage() {
   //
   // `!!selectedFile` is part of the measure clause because `is3DFile` is derived from
   // `selectedFile`: if the file list is ever emptied while a measure tool is armed (a failed
-  // PATCH resyncs through fetchFiles, which sets `files` to [] on a non-ok response without
-  // clearing selectedFileId), `selectedFile` goes null and `is3DFile` goes false with it — which
+  // PATCH resyncs through fetchFiles, whose FOREGROUND path — which that resync takes — sets
+  // `files` to [] on a non-ok response without clearing selectedFileId; the background path a
+  // poll uses deliberately keeps them), `selectedFile` goes null and `is3DFile` goes false — which
   // would otherwise read as "not 3D, start a session" and strand `annotating` true with no file
   // to freeze and no file-switch reset to turn it off again.
   useEffect(() => {
@@ -2154,7 +2246,7 @@ export default function PortalPage() {
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
       {/* Submitting a version is the sidebar's job now — it sits next to the
           versions it creates, and the top bar had the only other copy. */}
-      <PortalTopBar project={project} portal={portal} portalId={portalId} />
+      <PortalTopBar project={project} portal={portal} portalId={portalId} refreshKey={participantsRefreshKey} />
 
       {/* 3-Panel Layout. `relative` so the version detail drawer can sit beside
           the rail and inherit this row's height, rather than pinning itself to

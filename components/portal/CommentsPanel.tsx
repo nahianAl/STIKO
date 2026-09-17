@@ -9,6 +9,7 @@ import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
 import { getInitials } from '@/lib/initials';
 import { formatFileSize } from '@/lib/versionDetail';
+import { preserveIfUnchanged } from '@/lib/portalActivity';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -487,20 +488,53 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
   const { data: session } = useSession();
   const currentUserId = (session?.user as { id?: string } | undefined)?.id ?? null;
 
+  // Which file the panel has already shown comments for. The spinner belongs to
+  // opening a file, not to refreshing one that is already on screen: a
+  // poll-driven re-fetch would otherwise flash a loading state over the thread
+  // every few seconds.
+  const loadedFileRef = useRef<string | null>(null);
+
   const fetchComments = useCallback(async () => {
     if (!fileId) {
       setComments([]);
+      loadedFileRef.current = null;
       return;
     }
-    setLoading(true);
+    const firstLoad = loadedFileRef.current !== fileId;
+    if (firstLoad) setLoading(true);
     try {
       const res = await fetch(`/api/comments?fileId=${fileId}`);
+      // A 401/403/500 body is a JSON object, not an array, and would reach
+      // setComments and break every .filter below it. Harmless when this ran
+      // once on mount; with a poll behind it, one transient failure would take
+      // the panel out for the rest of the session.
+      //
+      // Clearing is keyed on firstLoad for the same reason fetchFiles keys it on
+      // !background: on an open or a switch, holding the PREVIOUS file's thread
+      // under the new file is worse than showing nothing — the tag numbers match
+      // no pin in the viewport and the reply buttons target another file. On a
+      // refresh of comments already on screen, one failed request must not wipe
+      // them. loadedFileRef stays un-advanced either way, so the next attempt
+      // retries with a spinner.
+      if (!res.ok) {
+        if (firstLoad) setComments([]);
+        return;
+      }
       const data = await res.json();
-      setComments(data);
+      if (!Array.isArray(data)) {
+        if (firstLoad) setComments([]);
+        return;
+      }
+      // Keep the old array when nothing differs: the feed's comment cursor is
+      // portal-wide, so a comment posted on ANOTHER file refreshes this one and
+      // gets byte-identical data. A new array identity would re-render every pin
+      // for nothing. See preserveIfUnchanged in lib/portalActivity.ts.
+      setComments((prev) => preserveIfUnchanged(prev, data));
+      loadedFileRef.current = fileId;
     } catch (err) {
       console.error('Failed to fetch comments:', err);
     } finally {
-      setLoading(false);
+      if (firstLoad) setLoading(false);
     }
   }, [fileId]);
 
@@ -508,19 +542,29 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
     fetchComments();
   }, [fetchComments, refreshKey]);
 
-  // Scroll to active comment. Also re-runs when `comments` changes (not just
-  // `activeCommentId`) because a citation chip for a comment on a different
-  // file sets both `fileId` and `activeCommentId` at once: the target's file
-  // switches, which starts an async re-fetch here, and the very first run of
-  // this effect finds the old file's comments still in the DOM — no element
-  // with the new id yet. Re-running once `comments` lands retries against the
-  // DOM the new fetch actually produced, without this component needing to
-  // know anything about *why* activeCommentId changed.
+  // Scroll to the active comment, ONCE per active id.
+  //
+  // This also re-runs when `comments` changes, not just `activeCommentId`,
+  // because a citation chip for a comment on a different file sets both at
+  // once: the target's file switches, which starts an async re-fetch, and the
+  // first run finds the old file's comments still in the DOM with no element
+  // for the new id. Re-running once `comments` lands retries against the DOM
+  // the new fetch actually produced.
+  //
+  // The ref is what keeps that retry from becoming a nuisance under polling:
+  // without it, every arriving comment re-runs this effect and drags the panel
+  // back to the active pin, out from under someone who has scrolled elsewhere.
+  const scrolledToRef = useRef<string | null>(null);
   useEffect(() => {
-    if (activeCommentId) {
-      const el = document.getElementById(`comment-${activeCommentId}`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!activeCommentId) {
+      scrolledToRef.current = null;
+      return;
     }
+    if (scrolledToRef.current === activeCommentId) return;
+    const el = document.getElementById(`comment-${activeCommentId}`);
+    if (!el) return; // comments for the new file have not landed yet; retry on the next run
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrolledToRef.current = activeCommentId;
   }, [activeCommentId, comments]);
 
   // Build threaded structure

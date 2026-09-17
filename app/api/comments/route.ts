@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getDownloadPresignedUrl } from '@/lib/s3';
+import { getCommentAssetPresignedUrl } from '@/lib/s3';
 import { getFileAccess } from '@/lib/access';
 import { isAllowedCommentKey } from '@/lib/storageKeys';
 
@@ -67,13 +67,21 @@ export async function GET(request: NextRequest) {
     `;
   }
 
-  // Resolve snapshot and attachment storage keys to presigned download URLs
+  // Resolve snapshot and attachment storage keys to presigned download URLs.
+  //
+  // The signer here is quantized (see lib/s3.ts): within a signing window the same
+  // key yields a byte-identical URL. That matters because this route is polled —
+  // the portal's change feed re-runs it every few seconds for the open thread. A
+  // per-call signature would hand <img src> a new URL each time and re-download
+  // every snapshot and attachment from R2, and would make the client's
+  // preserveIfUnchanged guard, which compares the payload by JSON, see a change on
+  // every poll and re-render the pins for nothing.
   const resolved = await Promise.all(
     rows.map(async (row) => {
       // Resolve snapshot URL
       if (row.snapshotUrl && !row.snapshotUrl.startsWith('http') && !row.snapshotUrl.startsWith('data:')) {
         try {
-          row = { ...row, snapshotUrl: await getDownloadPresignedUrl(row.snapshotUrl) };
+          row = { ...row, snapshotUrl: await getCommentAssetPresignedUrl(row.snapshotUrl) };
         } catch {
           // keep original
         }
@@ -85,7 +93,7 @@ export async function GET(request: NextRequest) {
         const resolvedAttachments = await Promise.all(
           attachments.map(async (att: { storageKey: string; filename: string; contentType: string; size: number }) => {
             try {
-              const url = await getDownloadPresignedUrl(att.storageKey);
+              const url = await getCommentAssetPresignedUrl(att.storageKey);
               return { ...att, url };
             } catch {
               return att;
