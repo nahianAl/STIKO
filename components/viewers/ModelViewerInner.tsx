@@ -163,8 +163,16 @@ export interface ModelViewerInnerProps {
    * SceneInteraction's `handlePointerMove`.
    */
   onMeasureHover?: (point: number[] | null) => void;
-  /** The toolbar's live colour, for the in-progress gesture. See MeasureLayer's `previewColor`. */
-  measurePreviewColor?: string;
+  /**
+   * The toolbar's live colour, for the in-progress gesture. See MeasureLayer's `previewColor`.
+   *
+   * Required, not defaulted: ViewerContainer is this component's only caller and always has a
+   * colour to hand over (the portal's `drawingColor`, the same value its `handleMeasurePoint`
+   * stamps on the commit), so a default here would be unreachable dead code — worse, one that
+   * could silently disagree with the toolbar's real default and break the one property this
+   * preview exists to guarantee: that the preview ink matches the committed ink.
+   */
+  measurePreviewColor: string;
   /** Millimetres per model unit, or null when the file has no usable scale yet. */
   mmPerUnit?: number | null;
   /** The unit readings are displayed in. */
@@ -815,17 +823,29 @@ function SceneInteraction({
     [measureActive, onMeasureHover, pendingMeasurement, pickModel, camera, gl, transform]
   );
 
+  /**
+   * Without this, moving off the canvas mid-gesture leaves the last `handlePointerMove` report
+   * standing forever: nothing else clears it, so the dashed leg freezes pointing at the edge
+   * until the pointer comes back. Mirrors the Konva surfaces' `onMouseLeave`.
+   */
+  const handlePointerLeave = useCallback(() => {
+    if (!measureActive || !onMeasureHover) return;
+    onMeasureHover(null);
+  }, [measureActive, onMeasureHover]);
+
   useEffect(() => {
     const canvas = gl.domElement;
     canvas.addEventListener('pointerdown', handlePointerDown);
     canvas.addEventListener('pointerup', handlePointerUp);
     canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerleave', handlePointerLeave);
     return () => {
       canvas.removeEventListener('pointerdown', handlePointerDown);
       canvas.removeEventListener('pointerup', handlePointerUp);
       canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerleave', handlePointerLeave);
     };
-  }, [gl, handlePointerDown, handlePointerUp, handlePointerMove]);
+  }, [gl, handlePointerDown, handlePointerUp, handlePointerMove, handlePointerLeave]);
 
   // Project world pins to screen space every frame
   useFrame(() => {
@@ -884,14 +904,6 @@ function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> 
  * list and rebuild every label texture against.
  */
 const NO_MEASUREMENTS: Measurement[] = [];
-
-/**
- * Fallback ink for the in-progress gesture when a host arms measuring without handing over the
- * toolbar's colour. The portal always hands it over (`drawingColor`, the same value its
- * `handleMeasurePoint` stamps on the commit), so this only keeps the preview from rendering
- * `undefined`; it is the toolbar's own default swatch so the two agree when it does fire.
- */
-const DEFAULT_MEASURE_COLOR = '#FF6B6B';
 
 // Direction the camera is placed in, relative to the model's centre — the 3/4 view the
 // viewer has always opened on, now expressed as a direction rather than a fixed position.
@@ -1096,7 +1108,7 @@ export default function ModelViewerInner({
   pendingMeasurement = null,
   measureHoverPoint = null,
   onMeasureHover,
-  measurePreviewColor = DEFAULT_MEASURE_COLOR,
+  measurePreviewColor,
   mmPerUnit = null,
   measureUnit = DEFAULT_LENGTH_UNIT,
   selectedMeasurementId = null,

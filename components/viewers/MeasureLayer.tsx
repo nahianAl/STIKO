@@ -465,15 +465,25 @@ export default function MeasureLayer({
       // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
       depthWrite: false,
     });
-    return { dot, dash, all: [dot, dash] as THREE.Material[] };
+    // Solid, not dashed — matching a committed entry's arcMaterial, because this arc is the same
+    // arc the entry keeps: the angle it draws is already final the moment the second leg exists,
+    // unlike the still-moving legs the dashed material represents.
+    const arc = new THREE.LineBasicMaterial({
+      color: previewColor,
+      depthTest: false,
+      // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
+      depthWrite: false,
+    });
+    return { dot, dash, arc, all: [dot, dash, arc] as THREE.Material[] };
   }, [previewColor, radius]);
 
-  // The half-placed gesture: a dot per preview point, and a dashed line once there are two.
-  // Without the dots the first click of a two-click linear gesture has no feedback at all, and
-  // the dot on the HOVER point is what makes a vertex snap visible before it is committed —
-  // the snapped position is deliberately not under the cursor.
+  // The half-placed gesture: a dot per preview point, a dashed line once there are two, and —
+  // for an angular gesture with both legs placed — the arc between them. Without the dots the
+  // first click of a two-click linear gesture has no feedback at all, and the dot on the HOVER
+  // point is what makes a vertex snap visible before it is committed — the snapped position is
+  // deliberately not under the cursor.
   const pendingParts = useMemo<PendingParts>(() => {
-    if (!preview) return { objects: [], geometries: [] };
+    if (!preview || !pending) return { objects: [], geometries: [] };
     const points = toVectors(preview);
     const parts: PendingParts = { objects: [], geometries: [] };
 
@@ -494,30 +504,56 @@ export default function MeasureLayer({
       parts.geometries.push(line.geometry);
     }
 
+    // Gated on KIND, not merely on `preview.length === 3`: that length only ever occurs for an
+    // angular gesture (a linear one commits at 2 points, so its preview tops out at a placed
+    // point plus the hover), but branching on kind says so rather than leaving it to be worked
+    // out from `addPoint`'s point counts. Built with the SAME arcPoints() the committed entries
+    // use (see `entries` above), so the arc the commit draws was already on screen.
+    if (pending.kind === 'angular' && preview.length === 3) {
+      const arc = arcPoints(preview[1], preview[0], preview[2]);
+      if (arc.length > 0) {
+        const arcLine = makeLine(arc, pendingMaterials.arc);
+        parts.objects.push(arcLine);
+        parts.geometries.push(arcLine.geometry);
+      }
+    }
+
     return parts;
-  }, [preview, pendingMaterials]);
+  }, [preview, pending, pendingMaterials]);
 
   /**
-   * The running reading, and where it hangs.
+   * The running reading, and where it hangs — following the gesture's KIND, not merely how many
+   * points happen to exist. `preview.length === 2` is ambiguous on its own: it is both "linear,
+   * one point placed plus the hover" (a real length) AND "angular, one point placed plus the
+   * hover" (no angle yet — the vertex has not been placed). Reading `pending.kind` instead of
+   * inferring from the count is what tells those apart; see `PendingGesture`.
    *
-   * Two preview points make a linear reading; three make an angle at the middle one, which is
-   * where `addPoint` puts the vertex. The anchor follows the SAME rule the committed entries use
-   * — vertex for an angle, midpoint for a length — so the pill does not jump across the model at
+   * A linear/calibrate gesture never exceeds 2 preview points (it commits at 2 placed points).
+   * An angular one shows nothing until the THIRD preview point exists — the two placed clicks
+   * plus the hover — at which point it reads the angle at the middle one, which is where
+   * `addPoint` puts the vertex. The anchor follows the SAME rule the committed entries use —
+   * vertex for an angle, midpoint for a length — so the pill does not jump across the model at
    * the instant the gesture commits.
    */
   const previewText = useMemo(() => {
-    if (!preview || preview.length < 2) return '';
-    if (preview.length === 3) return formatAngle(angleAt(preview[1], preview[0], preview[2]));
-    return lengthLabel(preview[0], preview[1], mmPerUnit, unit);
-  }, [preview, mmPerUnit, unit]);
+    if (!preview || !pending) return '';
+    if (pending.kind === 'angular') {
+      return preview.length === 3
+        ? formatAngle(angleAt(preview[1], preview[0], preview[2]))
+        : '';
+    }
+    return preview.length === 2 ? lengthLabel(preview[0], preview[1], mmPerUnit, unit) : '';
+  }, [preview, pending, mmPerUnit, unit]);
 
   const previewAnchor = useMemo(() => {
-    if (!preview || preview.length < 2) return null;
-    if (preview.length === 3) {
-      return new THREE.Vector3(preview[1][0], preview[1][1], preview[1][2]);
+    if (!preview || !pending) return null;
+    if (pending.kind === 'angular') {
+      return preview.length === 3
+        ? new THREE.Vector3(preview[1][0], preview[1][1], preview[1][2])
+        : null;
     }
-    return midpoint(preview[0], preview[preview.length - 1]);
-  }, [preview]);
+    return preview.length === 2 ? midpoint(preview[0], preview[1]) : null;
+  }, [preview, pending]);
 
   /**
    * ONE canvas and ONE texture for the whole life of this layer, repainted in place.

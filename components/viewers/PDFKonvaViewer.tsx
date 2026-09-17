@@ -680,7 +680,7 @@ function PDFKonvaViewer(
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
               onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
-              onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
+              onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
             >
               {/* PDF Background */}
               <Layer>

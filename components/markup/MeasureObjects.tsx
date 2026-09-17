@@ -233,22 +233,36 @@ export default function MeasureObjects({
         // clicks have to render on their own too — which is also the whole behaviour on a host
         // that reports no hover.
         const preview = hoverPoint ? [...pending.points, hoverPoint] : pending.points;
-        const last = preview[preview.length - 1];
-        // Two points make a linear reading; three make an angle at the middle one, which is where
-        // `addPoint` puts the vertex. One point is just the dot.
-        const value =
-          preview.length === 2
+        // The reading follows the gesture's KIND, not merely how many points happen to exist —
+        // `pending.points.length` alone can't tell a half-placed angle (one point + hover, which
+        // is also 2 points) from a length (one point + hover). A linear/calibrate gesture reaches
+        // 2 points at most before it commits; an angular one reaches 3. See PendingGesture.
+        const isAngular = pending.kind === 'angular';
+        // Linear/calibrate: a reading once the second (provisional) point exists.
+        // Angular: no reading until the THIRD point exists — a length here would describe a
+        // distance the gesture is not measuring and would pop to an angle the instant the vertex
+        // lands. Nothing (dashed leg + dots) is shown for the one-point-plus-hover case instead.
+        const value = isAngular
+          ? preview.length === 3
+            ? formatAngle(angleAt(preview[1], preview[0], preview[2]))
+            : ''
+          : preview.length === 2
             ? lengthLabel(preview[0], preview[1])
-            : preview.length === 3
-              ? formatAngle(angleAt(preview[1], preview[0], preview[2]))
-              : '';
+            : '';
+        // The arc appears exactly when the angle does, built with the SAME arcPoints() the
+        // committed entries use, so the arc that shows at commit was already on screen.
+        const arc = isAngular && preview.length === 3
+          ? arcPoints(preview[1], preview[0], preview[2])
+          : [];
         // The SAME anchor rule the committed measurements above use — the vertex for an angle,
         // the midpoint for a length — so the pill does not jump across the drawing at the instant
         // the gesture commits. The colour is the toolbar's live colour for the same reason.
-        const anchor =
-          preview.length === 3
-            ? preview[1]
-            : [(preview[0][0] + last[0]) / 2, (preview[0][1] + last[1]) / 2];
+        // (Only meaningful when `value !== ''`, i.e. the pill actually renders — otherwise a
+        // shorter `preview` can leave the other branch's index past the end.)
+        const last = preview[preview.length - 1];
+        const anchor = isAngular
+          ? preview[1]
+          : [(preview[0][0] + last[0]) / 2, (preview[0][1] + last[1]) / 2];
         return (
           <Group listening={false}>
             {preview.length > 1 && (
@@ -260,6 +274,9 @@ export default function MeasureObjects({
                 lineCap="round"
                 lineJoin="round"
               />
+            )}
+            {arc.length > 0 && (
+              <Line points={arc} stroke={previewColor} strokeWidth={px(1.5)} />
             )}
             {/* Every preview point, the hovered one included — not just the placed clicks. The
                 dots are not decoration: without them the first click of a two-click linear

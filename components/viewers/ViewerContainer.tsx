@@ -70,7 +70,15 @@ interface ViewerContainerProps {
   activeTool?: ToolType;
   tagging?: boolean;
   annotating?: boolean;
-  color?: string;
+  /**
+   * The markup toolbar's live colour. Required, not defaulted: the portal is this component's
+   * only caller and always has one (`drawingColor`), so a `?? fallback` here would be
+   * unreachable dead code — and the PDF branch below also hands this to the measure preview
+   * (`measurePreviewColor`), where an unreachable fallback disagreeing with the toolbar's real
+   * default would be worse than merely dead: it would break the one property that prop exists
+   * to guarantee, that the preview ink matches the committed ink.
+   */
+  color: string;
   strokeWidth?: number;
   fileId?: string;
   onCommentPlace?: (x: number, y: number, pageNumber: number) => void;
@@ -178,7 +186,7 @@ export default function ViewerContainer({
         activeTool={activeTool ?? 'pointer'}
         tagging={tagging}
         annotating={annotating}
-        color={color ?? '#ef4444'}
+        color={color}
         strokeWidth={strokeWidth ?? 4}
         onCommentPlace={onCommentPlace ?? (() => {})}
         comments={comments ?? []}
@@ -238,7 +246,7 @@ export default function ViewerContainer({
           onMeasureHover={onMeasureHover}
           // The same markup colour PDFKonvaViewer is handed above, and the same value the
           // portal stamps on a committed measurement.
-          measurePreviewColor={color ?? '#ef4444'}
+          measurePreviewColor={color}
           mmPerUnit={mmPerUnit}
           measureUnit={measureUnit}
           selectedMeasurementId={selectedMeasurementId}

@@ -450,7 +450,7 @@ export default function AnnotationCanvas({
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
-          onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
         >
           <Layer listening={false}>
             {/* Inside the stage, not on the container: toDataURL reads the stage, and JPEG has no
