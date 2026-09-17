@@ -508,10 +508,19 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
       // setComments and break every .filter below it. Harmless when this ran
       // once on mount; with a poll behind it, one transient failure would take
       // the panel out for the rest of the session.
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (firstLoad) setComments([]);
+        return;
+      }
       const data = await res.json();
-      if (!Array.isArray(data)) return;
-      // Keep the old array when nothing actually differs — see Step 4.
+      if (!Array.isArray(data)) {
+        if (firstLoad) setComments([]);
+        return;
+      }
+      // On opening or switching files, clear old comments before accepting new
+      // ones (preserveIfUnchanged will restore them if nothing changed). For
+      // background refreshes, don't clear — one failed request shouldn't wipe
+      // working content. See preserveIfUnchanged in lib/portalActivity.ts.
       setComments((prev) => preserveIfUnchanged(prev, data));
       loadedFileRef.current = fileId;
     } catch (err) {
