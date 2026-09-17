@@ -1,10 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { diffDigest, type PortalDigest, type PortalEntity } from '@/lib/portalActivity';
+import { diffDigest, type DigestDiff, type PortalDigest, type PortalEntity } from '@/lib/portalActivity';
 
 const BASE_INTERVAL_MS = 6000;
 const MAX_INTERVAL_MS = 60000;
+// A stalled connection (dead mobile radio, a proxy that neither answers nor
+// closes) never rejects and never resolves on its own. Without a deadline
+// per request, `inFlight` would stay true forever and nothing — not even
+// returning to the tab — reschedules a poll while it is stuck true.
+const REQUEST_TIMEOUT_MS = 15000;
 
 export type ActivityHandlers = Partial<Record<PortalEntity, () => void>>;
 
@@ -51,38 +56,66 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
       if (document.visibilityState !== 'visible') return;
 
       inFlight = true;
+
+      // Chained to the unmount controller (via AbortSignal.any) so a
+      // teardown still cancels an in-flight request, but this timer is the
+      // one that actually fires for a request that just never settles.
+      const timeoutController = new AbortController();
+      const requestTimer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+      const signal = AbortSignal.any([controller.signal, timeoutController.signal]);
+
+      let changed: DigestDiff | null = null;
       try {
         const res = await fetch(`/api/portals/${portalId}/activity`, {
-          signal: controller.signal,
+          signal,
           cache: 'no-store',
         });
         if (cancelled) return;
 
-        // Access revoked mid-session. Stop for good rather than backing off:
-        // retrying cannot start succeeding, and an open tab would otherwise
-        // poll a 403 until it was closed.
-        if (res.status === 401 || res.status === 403) {
+        // Access revoked mid-session (401/403), OR the middleware couldn't
+        // tell this apart from a browser navigation and 307-redirected it to
+        // /login — /portal/[id] is public, so a logged-out viewer never gets
+        // the 401 body, just a 200 whose HTML fails to parse as JSON.
+        // `res.redirected` is true whenever fetch followed one of those, and
+        // it is the only way to see the redirect from here since the 307
+        // itself is invisible to the caller. All three are terminal: retrying
+        // cannot start succeeding, and without this an open tab would poll
+        // the login page every 60s for as long as it stayed open.
+        if (res.status === 401 || res.status === 403 || res.redirected) {
           cancelled = true;
           return;
         }
         if (!res.ok) throw new Error(`activity ${res.status}`);
 
         const next = (await res.json()) as PortalDigest;
-        const changed = diffDigest(previous, next);
+        changed = diffDigest(previous, next);
         previous = next;
         interval = BASE_INTERVAL_MS;
-
-        for (const key of Object.keys(changed) as PortalEntity[]) {
-          if (changed[key]) handlersRef.current[key]?.();
-        }
-      } catch (err) {
-        if (cancelled || (err as Error)?.name === 'AbortError') return;
-        // Transient — a Neon blip, or a deploy swapping the function out. Back
-        // off rather than hammer, and reset on the first success above.
+      } catch {
+        // `cancelled` is set (by the effect cleanup) before the unmount
+        // controller is aborted, so an unmount abort always lands here with
+        // cancelled already true. Anything else reaching this branch —
+        // including this request's own timeout firing — is a real failure to
+        // back off from; there is no other source left to special-case.
+        if (cancelled) return;
+        // Transient — a Neon blip, a deploy swapping the function out, or
+        // this request's own timeout. Back off rather than hammer, and reset
+        // on the first success above.
         interval = Math.min(interval * 2, MAX_INTERVAL_MS);
       } finally {
+        clearTimeout(requestTimer);
         inFlight = false;
         schedule(interval);
+      }
+
+      // Handlers run outside the network try/catch on purpose: a handler that
+      // throws must not be mistaken for a fetch failure (which would double
+      // the backoff for no network reason) and must not be swallowed either —
+      // `previous` above has already advanced, so a change eaten here is gone
+      // for good, not reported on the next poll.
+      if (cancelled || !changed) return;
+      for (const key of Object.keys(changed) as PortalEntity[]) {
+        if (changed[key]) handlersRef.current[key]?.();
       }
     };
 
