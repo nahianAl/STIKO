@@ -35,6 +35,9 @@ export function snapMeasureSegment(
   // Returning the point untouched leaves the caller's first click exactly where they put it.
   if (length === 0) return { x: x1, y: y1 };
 
+  // Math.round breaks ties toward +Infinity, so an angle exactly halfway between two steps
+  // (7.5 degrees, 22.5 degrees, ...) resolves to the higher one — and Math.round(-0.5) is -0,
+  // not 0. Same trap as documented on snapToRightAngle in lib/markup/rotationSnap.ts.
   const angle = Math.round(Math.atan2(dy, dx) / MEASURE_SNAP_STEP) * MEASURE_SNAP_STEP;
   return { x: x0 + Math.cos(angle) * length, y: y0 + Math.sin(angle) * length };
 }
@@ -49,14 +52,16 @@ export function snapMeasureSegment(
  *
  * `anchor` is the previous point of the gesture, so for an angular measurement each leg snaps
  * about the vertex and the resulting angle always lands on a multiple of 15 degrees. Undefined
- * on the first click, where there is nothing to snap about and Shift must be inert.
+ * on the first click, where there is nothing to snap about and Shift must be inert. An anchor
+ * without both components (e.g. `[]`) is treated the same as no anchor at all — an empty array
+ * is truthy, so this has to be checked explicitly rather than relying on `!anchor`.
  */
 export function snapMeasurePoint(
   anchor: number[] | undefined,
   point: number[],
   shiftKey: boolean,
 ): number[] {
-  if (!shiftKey || !anchor) return point;
+  if (!shiftKey || !anchor || anchor.length < 2) return point;
   const snapped = snapMeasureSegment(anchor[0], anchor[1], point[0], point[1]);
   return [snapped.x, snapped.y];
 }
