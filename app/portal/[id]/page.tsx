@@ -12,7 +12,7 @@ import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
-import ViewerContainer, { type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
+import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
 import CrossSectionControl from '@/components/viewers/CrossSectionControl';
 import PlanesPanel from '@/components/viewers/section/PlanesPanel';
@@ -38,7 +38,15 @@ import { useToast } from '@/components/ui/Toast';
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
 const AnnotationCanvas = dynamic(() => import('@/components/markup/AnnotationCanvas'), { ssr: false });
 import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanvas';
-import type { AnnTool, AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
+import type { AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
+import { isMeasureTool } from '@/components/markup/useAnnotationObjects';
+import { useMeasurements } from '@/components/markup/useMeasurements';
+import CalibrationPanel from '@/components/markup/CalibrationPanel';
+import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
+import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
+import { distance } from '@/lib/measure/geometry';
+import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
+import { extensionOf } from '@/lib/fileFormats';
 
 interface Project {
   id: string;
@@ -68,9 +76,22 @@ const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'ellipse', 
 // Synthetic id for the not-yet-posted tag, so it renders as a live preview pin
 const PENDING_TAG_ID = '__pending_tag__';
 
-// Captures the current viewer state as a JPEG data URL.
+interface ViewerSnapshot {
+  dataUrl: string;
+  /**
+   * Where the source image sits inside the snapshot, and how big it really is. Non-null only
+   * for the image branch — it is what lets a calibration be stored in NATURAL pixels rather
+   * than in whatever zoom the viewer happened to be at when the frame was frozen. A snapshot is
+   * fit-scaled and letterboxed at that zoom, so a factor captured in stage pixels reads
+   * plausibly once and is wrong the next time the file is opened.
+   */
+  imageSpace: ImageSnapshotSpace | null;
+}
+
+// Captures the current viewer state as a JPEG data URL, plus (image viewer only) the image
+// space that data URL was composed from.
 // Tries WebGL canvas first (3D), then img, then video.
-function captureViewerSnapshot(container: HTMLElement): string | null {
+function captureViewerSnapshot(container: HTMLElement): ViewerSnapshot | null {
   // WebGL canvas (3D models). The R3F canvas renders to a transparent buffer, so encoding it
   // straight to JPEG flattens the transparent areas to black. Composite onto the viewer's real
   // background (#f0f0f0, set in ModelViewerInner) first so the snapshot keeps the gray the user sees.
@@ -85,9 +106,11 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
         ctx.fillStyle = '#f0f0f0';
         ctx.fillRect(0, 0, offscreen.width, offscreen.height);
         ctx.drawImage(canvas, 0, 0);
-        return offscreen.toDataURL('image/jpeg', 0.92);
+        // No image space: a WebGL frame has no source <img>, and a 3D file measures in the live
+        // scene (MeasureLayer) rather than on a frozen snapshot.
+        return { dataUrl: offscreen.toDataURL('image/jpeg', 0.92), imageSpace: null };
       }
-      return canvas.toDataURL('image/jpeg', 0.92);
+      return { dataUrl: canvas.toDataURL('image/jpeg', 0.92), imageSpace: null };
     } catch (e) {
       console.error('Canvas capture failed:', e);
     }
@@ -113,7 +136,23 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
         imgRect.height
       );
       try {
-        return offscreen.toDataURL('image/jpeg', 0.92);
+        return {
+          dataUrl: offscreen.toDataURL('image/jpeg', 0.92),
+          // The rect drawImage was just handed, in the snapshot's own pixels, alongside the
+          // image's true size. getBoundingClientRect includes ImageViewer's CSS zoom/pan
+          // transform, so imageRect.width IS the on-screen size at the moment of the freeze —
+          // which is precisely why naturalWidth has to travel with it.
+          imageSpace: {
+            imageRect: {
+              x: imgRect.left - containerRect.left,
+              y: imgRect.top - containerRect.top,
+              width: imgRect.width,
+              height: imgRect.height,
+            },
+            naturalWidth: img.naturalWidth,
+            naturalHeight: img.naturalHeight,
+          },
+        };
       } catch (e) {
         console.error('Image capture failed:', e);
       }
@@ -139,7 +178,8 @@ function captureViewerSnapshot(container: HTMLElement): string | null {
         videoRect.width,
         videoRect.height
       );
-      return offscreen.toDataURL('image/jpeg', 0.92);
+      // No image space: the measure tool group is withheld for video files entirely.
+      return { dataUrl: offscreen.toDataURL('image/jpeg', 0.92), imageSpace: null };
     }
   }
 
@@ -182,6 +222,10 @@ export default function PortalPage() {
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [canUpload, setCanUpload] = useState(false);
   const [canTransform, setCanTransform] = useState(false);
+  // Separate from the other two because it gates a different thing: calibrating a file. The
+  // client-side gate is presentation only — PATCH /api/files/[id]/measure enforces it for real,
+  // and enforces the stricter "overwriting an EXISTING calibration needs canTransform" on top.
+  const [canComment, setCanComment] = useState(false);
 
   // Which version the detail drawer is showing. The version OBJECT is resolved
   // from `versions` each render rather than copied into state, so a version that
@@ -200,6 +244,49 @@ export default function PortalPage() {
   const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(4);
   const [selectionType, setSelectionType] = useState<AnnotationObjectType | null>(null);
+
+  // Measure tool state. The store is session-only, exactly like markup: nothing here survives a
+  // file switch, and the way to keep a reading is to snapshot it into a comment.
+  const measure = useMeasurements();
+  // The store's callbacks are individually stable, but the object holding them is new every
+  // render. The effects below therefore depend on the callbacks BY NAME, pulled out here:
+  // written as `measure.begin` in a dependency array, react-hooks/exhaustive-deps asks for the
+  // whole object instead — and depending on that would re-run every measure effect, restarting
+  // the gesture, on every single render of this page.
+  const {
+    measurements,
+    pending: pendingMeasurement,
+    selectedId: selectedMeasurementId,
+    setSelectedId: setSelectedMeasurementId,
+    addPoint: addMeasurePoint,
+    begin: beginMeasure,
+    cancel: cancelMeasure,
+    clear: clearMeasure,
+    remove: removeMeasure,
+  } = measure;
+  // The page PDFKonvaViewer is showing. Mirrored here rather than pulled off its imperative
+  // handle because two things RENDER from it — the toolbar's disabled state and the per-page
+  // calibration lookup — and getCurrentPage() is a pull, not a subscription.
+  const [pdfPage, setPdfPage] = useState(UNPAGED);
+  // Why the last calibration save failed, shown inside CalibrationPanel. Null when there is
+  // nothing to say.
+  const [measureError, setMeasureError] = useState<string | null>(null);
+  // The span the calibrate gesture captured, in the active surface's own units. Null until it
+  // has one, which is also what keeps CalibrationPanel off screen.
+  //
+  // Read from a COMMITTED measurement rather than from `measure.pending`: useMeasurements
+  // commits a linear gesture the instant its second point lands and restarts the gesture in the
+  // same call, so a pending linear gesture only ever holds 0 or 1 points. Calibrate collects the
+  // same two points a linear does, so it arrives the same way — see the capture effect below.
+  const [calibrationSpan, setCalibrationSpan] = useState<number | null>(null);
+  // Assigned during render (like annotatingRef above) so the gesture effects can read the
+  // current list WITHOUT depending on it — a dependency there would re-arm, and so restart, the
+  // gesture every time a reading was taken.
+  const measurementsRef = useRef(measurements);
+  measurementsRef.current = measurements;
+  // How long the list was when the current tool was armed. Everything past it belongs to this
+  // gesture.
+  const calibrationBaselineRef = useRef(0);
 
   // Comment linking state
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
@@ -228,6 +315,17 @@ export default function PortalPage() {
 
   // Snapshot state (annotation mode — frozen view for drawing)
   const [viewerSnapshot, setViewerSnapshot] = useState<string | null>(null);
+  // Where the source <img> sat inside that snapshot, for the image branch only. Always set and
+  // cleared in the same breath as `viewerSnapshot` — the two describe one frozen frame, and a
+  // space left over from a previous freeze would scale the next one's readings.
+  const [viewerImageSpace, setViewerImageSpace] = useState<ImageSnapshotSpace | null>(null);
+  // Natural image pixels per AnnotationCanvas stage pixel, reported UP by that canvas. It owns
+  // `bgFit`, and `bgFit` only exists after the snapshot has decoded — an async onload that lands
+  // after this page has already rendered. Pulling it back off the imperative handle in a memo
+  // here would therefore read null once and never recompute, leaving every calibration stored in
+  // stage pixels. See AnnotationCanvas's onIntrinsicScaleChange. Null means "no usable chain",
+  // and nothing downstream may substitute 1 for it.
+  const [imageIntrinsicPerStagePixel, setImageIntrinsicPerStagePixel] = useState<number | null>(null);
   // An attachment/snapshot opened for full viewing in the center viewport
   const [viewportImage, setViewportImage] = useState<string | null>(null);
   const [annotating, setAnnotating] = useState(false);
@@ -550,12 +648,95 @@ export default function PortalPage() {
     return ext === 'pdf';
   }, [selectedFile]);
 
+  /**
+   * Positive, not exclusion: is the selected file one of the extensions the image viewer opens.
+   * `measuresOnCanvas` and `measureAvailable` below used to be spelled as "not 3D, not PDF, not
+   * video" — which reads fine until a fifth category shows up. An unsupported type like .dwg or
+   * .dxf is none of those three, so it silently fell through an exclusion list and inherited the
+   * image measure surface: DrawingTools offered Measure, AnnotationCanvas mounted transparent
+   * over the "Unsupported file type" message, and Apply attached a near-blank JPEG. A positive
+   * test cannot make that mistake — a future file type is simply not in IMAGE_EXTENSIONS until
+   * someone deliberately adds it. Reuses ViewerContainer's list rather than a fourth copy of it.
+   *
+   * There is no separate `isVideoFile` any more: `measureAvailable` below now unions the three
+   * known-good measuring surfaces (image, PDF, 3D) instead of excluding the one known-bad type,
+   * so video is already false there without being named — the same way an unsupported type is.
+   */
+  const isImageFile = useMemo(() => {
+    if (!selectedFile) return false;
+    return IMAGE_EXTENSIONS.includes(`.${extensionOf(selectedFile.filename)}`);
+  }, [selectedFile]);
+
+  /** The unit readings are shown in on this file. Falls back until someone chooses one. */
+  const measureUnit: LengthUnit = selectedFile?.measureUnit ?? DEFAULT_LENGTH_UNIT;
+
+  // filename is the ORIGINAL upload's, never the converted GLB. A STEP file is on screen as a
+  // GLB, and reading the extension off the loaded file would apply the glTF metre convention
+  // and report every STEP model 1000x too large. See assumedMmPerUnit for the whole rule.
+  const measureScale = useMemo(
+    () =>
+      selectedFile
+        ? resolveScale({
+            filename: selectedFile.filename,
+            calibrations: selectedFile.calibrations,
+            page: isPDFFile ? pdfPage : UNPAGED,
+          })
+        : { mmPerUnit: null, source: 'unknown' as const },
+    [selectedFile, isPDFFile, pdfPage]
+  );
+
+  /**
+   * How many of the file's own INTRINSIC units one unit of the active surface's space spans.
+   *
+   * Three surfaces, three answers:
+   *   3D    — the picked points are already world units, so 1.
+   *   PDF   — stage pixels to PDF points, which is what a PDF calibration must be stored in.
+   *   image — AnnotationCanvas stage pixels to the source image's NATURAL pixels, which is the
+   *           two-factor chain naturalPerStagePixel() resolves. Not computed here: the canvas
+   *           owns both halves of it and pushes the answer up (see imageIntrinsicPerStagePixel).
+   *
+   * Null means the active surface has no resolvable scale — an image whose snapshot carried no
+   * image space, or a surface that is not up yet. Deliberately not 1: substituting a stage pixel
+   * for an intrinsic unit is the silent failure this whole module exists to prevent.
+   *
+   * The attachment session (annotatingFile !== null) is not a case here — canCalibrate is false
+   * throughout it, so the calibrate tool cannot be armed on a pasted screenshot at all.
+   */
+  const intrinsicPerSurfaceUnit = useMemo<number | null>(() => {
+    if (is3DFile) return 1;
+    if (isPDFFile) return pointsPerStagePixel();
+    return imageIntrinsicPerStagePixel;
+  }, [is3DFile, isPDFFile, imageIntrinsicPerStagePixel]);
+
+  const calibrationIntrinsicDistance =
+    calibrationSpan === null || intrinsicPerSurfaceUnit === null
+      ? null
+      : calibrationSpan * intrinsicPerSurfaceUnit;
+
   // Which surface a markup session draws on. A PDF draws directly on its own
   // PDFKonvaViewer surface — except when the session is marking up a picked-but-not-
   // posted attachment, which is never the PDF being reviewed and so always draws on
   // AnnotationCanvas instead. Every other file type always draws on AnnotationCanvas.
   // Single source of truth for a rule that used to be hand-written at five call sites.
   const drawsOnCanvas = !isPDFFile || annotatingFile !== null;
+
+  /**
+   * Whether AnnotationCanvas is the surface the SELECTED FILE is measured on. A narrower
+   * question than `drawsOnCanvas`, and the two must not be conflated.
+   *
+   * Image files only — `isImageFile`, not "not 3D, not PDF, not video". A 3D file measures in the
+   * live WebGL scene (MeasureLayer) and a PDF on its own stage — yet both can have an
+   * AnnotationCanvas over them: picking a draw tool on a 3D file freezes the viewport into a
+   * snapshot this canvas draws on, and an attachment session puts this canvas over a PDF. Handing
+   * the measure props over in either case would collect points in stage pixels of a frozen WebGL
+   * frame, or of a pasted screenshot, and then scale them by the selected file's mm-per-unit — a
+   * number that is about something else entirely. That is the plausible-looking wrong reading
+   * this feature is built to make impossible, so the props are withheld structurally rather than
+   * by hoping no one arms the tool. Spelling this as an exclusion ("not 3D, not PDF, not video")
+   * would let it too, the same way `measureAvailable` below used to: any type outside all three —
+   * a .dwg, a .dxf — would fall through and inherit the image surface by default.
+   */
+  const measuresOnCanvas = isImageFile && annotatingFile === null;
 
   const pdfKonvaRef = useRef<PDFKonvaViewerHandle>(null);
 
@@ -639,6 +820,26 @@ export default function PortalPage() {
   const handlePinPositionsUpdate = useCallback((positions: Map<string, PinScreenPosition>) => {
     setWorldPinPositions(positions);
   }, []);
+
+  /**
+   * A measurement click on the 3D surface.
+   *
+   * Nothing to convert on the way in. The point already arrives in the model's own frame (the
+   * same frame comment pins are stored in), and `minSeparation` already arrives scene-scaled —
+   * ModelViewerInner owns both, because it is the only place that knows the model's bounding
+   * radius and the placement transform. That is also why `intrinsicPerSurfaceUnit` is 1 for 3D:
+   * a model-frame distance IS a file-intrinsic distance, the placement carrying no scale.
+   *
+   * The committed measurement that `addPoint` may return is deliberately dropped here. The
+   * calibrate flow reads it off the `measurements` list instead, so that one effect handles a
+   * span whether it was just taken or restored — see the capture effect further down.
+   */
+  const handleMeasurePoint = useCallback(
+    (point: number[], minSeparation: number) => {
+      addMeasurePoint(point, minSeparation);
+    },
+    [addMeasurePoint]
+  );
 
   // The master toggle is the only control that removes a cut: switching the tool off clears
   // every slot, so `cutting` goes false everywhere and the model returns to its whole shape.
@@ -795,10 +996,12 @@ export default function PortalPage() {
       .then((info) => {
         setCanUpload(Boolean(info?.access?.canUpload));
         setCanTransform(Boolean(info?.access?.canTransform));
+        setCanComment(Boolean(info?.access?.canComment));
       })
       .catch(() => {
         setCanUpload(false);
         setCanTransform(false);
+        setCanComment(false);
       });
   }, [portalId]);
 
@@ -986,6 +1189,129 @@ export default function PortalPage() {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
 
+  const handleMeasureUnitChange = useCallback(
+    async (unit: LengthUnit) => {
+      if (!selectedFileId) return;
+      // Optimistic: readings relabel immediately. A failed write resyncs from the server rather
+      // than leaving the toolbar showing a unit the server never accepted.
+      setFiles((prev) => prev.map((f) => (f.id === selectedFileId ? { ...f, measureUnit: unit } : f)));
+      const res = await fetch(`/api/files/${selectedFileId}/measure`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit }),
+      }).catch(() => null);
+      if (!res?.ok && selectedVersionId) fetchFiles(selectedVersionId);
+    },
+    [selectedFileId, selectedVersionId, fetchFiles]
+  );
+
+  /**
+   * Commit a calibration from the two points the gesture collected plus the distance the user
+   * typed. `intrinsicDistance` arrives already converted out of the surface's space into the
+   * file's own intrinsic unit — stage pixels are never stored.
+   */
+  const handleCalibrationCommit = useCallback(
+    async (intrinsicDistance: number | null, realDistance: number, entryUnit: LengthUnit) => {
+      if (!selectedFileId) return;
+      const page = isPDFFile ? pdfPage : UNPAGED;
+      // Clear any earlier failure up front: the panel stays open after a rejected save, so
+      // without this the stale message sits under the input while the user retypes and
+      // resubmits, only being replaced when the new response finally lands.
+      setMeasureError(null);
+
+      // Null is its own fault, distinct from both checks below: the surface could not resolve
+      // its own stage-to-intrinsic scale at all, so the span it collected is in stage pixels and
+      // there is nothing to convert it with. Storing it anyway would file a stage-pixel number in
+      // a column that means intrinsic units — plausible at the zoom it was taken at, wrong at
+      // every other one, and nothing throws.
+      if (intrinsicDistance === null) {
+        setMeasureError("Could not work out this file's pixel scale. Close the file, reopen it and try again.");
+        return;
+      }
+
+      // mmPerUnitFrom throws the same RangeError type for two different faults, and only one of
+      // them is the user's. A non-positive MEASURED span means the two points landed on (or
+      // within rounding of) each other — the tool's problem, not the typed number's. Check that
+      // operand here so the catch below can only be the typed distance, rather than telling
+      // someone to enter a bigger number when the number they entered was fine.
+      if (!Number.isFinite(intrinsicDistance) || intrinsicDistance <= 0) {
+        setMeasureError('Those two points are too close together to calibrate from. Place them further apart.');
+        return;
+      }
+
+      let mmPerUnit: number;
+      try {
+        mmPerUnit = mmPerUnitFrom(intrinsicDistance, realDistance, entryUnit);
+      } catch {
+        setMeasureError('Enter a distance greater than zero.');
+        return;
+      }
+
+      const res = await fetch(`/api/files/${selectedFileId}/measure`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calibration: { page, mmPerUnit } }),
+      }).catch(() => null);
+
+      if (!res) {
+        setMeasureError('Could not reach the server. Try again.');
+        return;
+      }
+
+      if (res.ok) {
+        setMeasureError(null);
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === selectedFileId
+              ? { ...f, calibrations: { ...(f.calibrations ?? {}), [page]: mmPerUnit } }
+              : f
+          )
+        );
+        setActiveTool('pointer');
+        return;
+      }
+
+      const body = await res.json().catch(() => ({}));
+      // A 500 from this route on an app that is otherwise working most likely means the
+      // file_calibrations table is missing — this repo applies migrations by hand and has
+      // forgotten one twice. Say so, rather than accepting a calibration that silently vanishes.
+      setMeasureError(
+        body?.error ??
+          (res.status === 500
+            ? "Measurement isn't available yet on this deployment."
+            : 'Could not save the calibration.')
+      );
+    },
+    [selectedFileId, isPDFFile, pdfPage]
+  );
+
+  /**
+   * Drop every measurement, the half-placed gesture, and the calibrate span that was derived
+   * from them.
+   *
+   * Used wherever the space the points were collected in stops existing. On the image surface a
+   * point is a raw STAGE pixel, and stage space there is a property of one freeze at one stage
+   * size — nothing re-anchors it — so a measurement that outlives its frozen view keeps being
+   * drawn, and keeps being labelled, against a scale that is no longer the one it was placed
+   * under. The number changes with no user action; the drawing lands on the wrong part of the
+   * image. Both are silent.
+   *
+   * The two ref assignments are not tidiness. `measurementsRef` and `calibrationBaselineRef` are
+   * both assigned during RENDER, while every caller of this runs in an effect or an event
+   * handler — so `clearMeasure()` only lands on the next render, and the measure-arming effect
+   * that runs immediately after a session start reads the REFS. Left stale, the baseline would
+   * be captured against the list this just emptied (say 1 against a list of 0), and the
+   * calibrate capture effect's `measurements.slice(baseline)` would never see the span the user
+   * then placed: the panel would never open and the file would silently keep its old scale.
+   */
+  const resetMeasureSession = useCallback(() => {
+    clearMeasure();
+    measurementsRef.current = [];
+    calibrationBaselineRef.current = 0;
+    setCalibrationSpan(null);
+    setMeasureError(null);
+  }, [clearMeasure]);
+
   // Starts an annotation session (captures the live-view snapshot for non-PDF files).
   // Shared by the draw-tool session-starter effect below and the insert-image action.
   const startAnnotationSession = useCallback(() => {
@@ -996,9 +1322,32 @@ export default function PortalPage() {
       // The 3D viewport composites the gizmo HUD into the same buffer the snapshot reads,
       // so ask it for a model-only frame first. No-op for image and video viewers.
       modelViewerRef.current?.renderCleanFrame();
-      setViewerSnapshot(container ? captureViewerSnapshot(container) : null);
+      const snapshot = container ? captureViewerSnapshot(container) : null;
+      setViewerSnapshot(snapshot?.dataUrl ?? null);
+      setViewerImageSpace(snapshot?.imageSpace ?? null);
+      // A NEW freeze means the view the previous session's points were placed on no longer
+      // exists — different zoom, different imageRect, different natural-pixels-per-stage-pixel.
+      // Carrying them over redraws them somewhere else on the image and relabels them, which is
+      // the exact failure the whole natural-pixel calibration chain exists to prevent, arriving
+      // by the back door. `measuresOnCanvas` is what makes this the image surface and only the
+      // image surface: a 3D freeze must not touch measurements held in the model's frame.
+      //
+      // Runs BEFORE the measure-arming effect (that effect is declared after the session-starter
+      // one, and effects fire in declaration order), so the gesture this drops is immediately
+      // begun again on the fresh view.
+      if (measuresOnCanvas) {
+        resetMeasureSession();
+      } else {
+        // measuresOnCanvas is false here for a 3D file (among others) — its measurements live
+        // in the model's own frame and stay valid, so resetMeasureSession must not run (that's
+        // its 3D carve-out, left untouched). But the live 3D surface is about to sit behind this
+        // frozen snapshot for the whole markup session, so a measurement selected before the
+        // freeze is now invisible while the shared Delete/Backspace handler below can still hit
+        // it. Clear just the selection, not the measurements, so there is nothing stale to hit.
+        setSelectedMeasurementId(null);
+      }
     }
-  }, [annotating, isPDFFile]);
+  }, [annotating, isPDFFile, measuresOnCanvas, resetMeasureSession, setSelectedMeasurementId]);
 
   // Mark up an attachment the user just picked. This is the same session the
   // draw tools start — only the background differs: the attached image itself
@@ -1021,6 +1370,9 @@ export default function PortalPage() {
         // without this the session starts hidden behind it, with no visible tools.
         setViewportImage(null);
         setViewerSnapshot(reader.result as string);
+        // A pasted attachment is not the package file and has no image space: it is not measured
+        // on, and the measure props are withheld from the canvas for the whole session.
+        setViewerImageSpace(null);
         setAnnotatingFile(file);
         setAnnotating(true);
         setActiveTool('pointer');
@@ -1031,14 +1383,30 @@ export default function PortalPage() {
   );
 
   // Start an annotation session when a draw tool is picked (only session-starter).
+  //
+  // Measure tools join this for 2D files but NOT for 3D, which is why they are deliberately
+  // absent from DRAW_TOOLS: startAnnotationSession freezes the viewport into a snapshot, and a
+  // frozen 3D model cannot be orbited — which is most of the point of measuring one. For PDFs
+  // the call sets `annotating` without freezing anything, which is exactly what that surface
+  // wants: it disables stage panning so a drag reads as a gesture rather than a pan.
+  //
+  // `!!selectedFile` is part of the measure clause because `is3DFile` is derived from
+  // `selectedFile`: if the file list is ever emptied while a measure tool is armed (a failed
+  // PATCH resyncs through fetchFiles, which sets `files` to [] on a non-ok response without
+  // clearing selectedFileId), `selectedFile` goes null and `is3DFile` goes false with it — which
+  // would otherwise read as "not 3D, start a session" and strand `annotating` true with no file
+  // to freeze and no file-switch reset to turn it off again.
   useEffect(() => {
-    if (!DRAW_TOOLS.includes(activeTool)) return;
+    const needsSurface =
+      DRAW_TOOLS.includes(activeTool) || (isMeasureTool(activeTool) && !is3DFile && !!selectedFile);
+    if (!needsSurface) return;
     startAnnotationSession();
-  }, [activeTool, startAnnotationSession]);
+  }, [activeTool, is3DFile, selectedFile, startAnnotationSession]);
 
-  // Tag placement and drawing are mutually exclusive — disarm tagging when a draw tool is selected.
+  // Tag placement, drawing and measuring are mutually exclusive — disarm tagging when a draw or
+  // measure tool is selected.
   useEffect(() => {
-    if (DRAW_TOOLS.includes(activeTool)) setTagging(false);
+    if (DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) setTagging(false);
   }, [activeTool]);
 
   // The transform gizmo and the comment/draw tools are mutually exclusive too: drei's
@@ -1059,11 +1427,149 @@ export default function PortalPage() {
     // other direction (selecting a plane disarms tagging) already goes through
     // handleSelectPlane; match it here so arming a comment/draw tool fully releases a
     // plane selection too.
-    if (tagging || DRAW_TOOLS.includes(activeTool)) {
+    if (tagging || DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) {
       setTransformMode(null);
       setSelectedPlane(null);
     }
   }, [tagging, activeTool]);
+
+  // Turning a page mid-gesture must not let the second click land on a different sheet.
+  //
+  // Declared ABOVE the arming effect on purpose: both fire on a pdfPage change, effects run in
+  // declaration order, and the later one wins. This way the page turn abandons the half-placed
+  // gesture and the arming effect immediately starts a fresh one on the new page. Swapped
+  // around, the cancel would land last and leave the tool armed with no gesture behind it —
+  // visibly selected, and dead to every click.
+  //
+  // A captured calibrate span goes with it. The span was measured on the sheet being left, but
+  // handleCalibrationCommit files it against the CURRENT pdfPage — so carrying it across a page
+  // turn would store sheet N's measured length as sheet N+1's scale. Unconditional because both
+  // setters bail out on Object.is when nothing was held.
+  useEffect(() => {
+    cancelMeasure();
+    setCalibrationSpan(null);
+    setMeasureError(null);
+  }, [pdfPage, cancelMeasure]);
+
+  // Arming a measure tool begins a gesture; disarming abandons whatever was half-placed.
+  // 'calibrate' collects the same two points a linear does — only what happens on commit differs.
+  useEffect(() => {
+    if (!isMeasureTool(activeTool)) {
+      cancelMeasure();
+      return;
+    }
+    // Anything already in the list belongs to an earlier gesture and must not be mistaken for
+    // this one's result — see the capture effect below.
+    calibrationBaselineRef.current = measurementsRef.current.length;
+    beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', isPDFFile ? pdfPage : UNPAGED);
+  }, [activeTool, isPDFFile, pdfPage, beginMeasure, cancelMeasure]);
+
+  // A stage resize invalidates every point on the image surface, MID-SESSION and with no user
+  // action at all.
+  //
+  // `bgFit` deliberately re-fits the frozen snapshot into whatever the stage is now, so narrowing
+  // the pane from 1000 to 500 px turns 4 natural px per stage px into 8: a dimension reading
+  // 500 mm starts reading 1000 mm, in place, while the user watches. The points are dropped
+  // rather than re-anchored — re-anchoring correctly needs the whole `bgFit` RECT, because its
+  // letterbox offset moves as well as its scale (1000x700 -> 500x700 sends x0.5 *and* y+175), and
+  // that rect lives inside AnnotationCanvas, which deliberately exposes only the scalar factor.
+  // A reading the user has to take again is recoverable; one that silently relabels itself is not.
+  //
+  // `imageIntrinsicPerStagePixel` is non-null ONLY on the image measure surface — the canvas is
+  // handed `onIntrinsicScaleChange` only when `measuresOnCanvas` — so this can never reach a 3D
+  // measurement, whose points are in the model's frame and are correct across any resize, orbit
+  // or object transform. The null guards also skip the two legitimate transitions that are not
+  // resizes: null -> number when the snapshot first decodes (async, one or more commits after
+  // the session started), and number -> null when the canvas unmounts at the end of it.
+  const lastIntrinsicScaleRef = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = lastIntrinsicScaleRef.current;
+    lastIntrinsicScaleRef.current = imageIntrinsicPerStagePixel;
+    if (previous === null || imageIntrinsicPerStagePixel === null) return;
+    if (previous === imageIntrinsicPerStagePixel) return;
+    // Nothing placed, nothing to invalidate. Worth the check because a resize is not one event:
+    // ResizeObserver fires every frame of a panel's width transition, and without this each of
+    // those frames would clear an already-empty list and restart an untouched gesture.
+    if (measurementsRef.current.length === 0 && (pendingMeasurement?.points.length ?? 0) === 0) return;
+    resetMeasureSession();
+    // The half-placed gesture goes with them — its first point is in the same dead stage space —
+    // and re-arming it is this effect's job, because `activeTool` has not changed and so the
+    // arming effect above will not run. Without this the tool stays visibly selected and dead to
+    // every click, which is the same trap the pdfPage cancel above is ordered to avoid.
+    // UNPAGED unconditionally: a non-null factor is the image surface, which has no pages.
+    if (isMeasureTool(activeTool)) {
+      beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', UNPAGED);
+    }
+  }, [imageIntrinsicPerStagePixel, activeTool, pendingMeasurement, beginMeasure, resetMeasureSession]);
+
+  // Catch the calibrate gesture's result.
+  //
+  // It arrives as a COMMITTED measurement rather than as a two-point `pending`: useMeasurements
+  // commits a linear gesture the instant its second point lands and restarts the gesture in the
+  // same call, so `pending` never holds two points. The measurement is left in the list while
+  // the panel is up — that is the only feedback showing WHICH span is being named — and taken
+  // back out when the tool is disarmed, because a calibration is a scale, not a dimension.
+  //
+  // ALWAYS the last measurement past the baseline, never latched on the first one. This used to
+  // bail out once `calibrationSpan` was set, which was wrong: useMeasurements restarts the
+  // gesture straight after every commit, so the surface keeps collecting points for as long as
+  // Calibrate stays armed. A user who mis-clicks and places two fresh points gets a second
+  // committed span — and with the latch in place the panel stayed pinned to the span they had
+  // already replaced, so the real-world distance they typed was divided by the wrong measured
+  // length and every later reading on the file was silently wrong. Re-running with an identical
+  // span is a no-op: React bails out on Object.is, so there is no render loop.
+  useEffect(() => {
+    if (activeTool !== 'calibrate') return;
+    const since = measurements.slice(calibrationBaselineRef.current);
+    const captured = since[since.length - 1];
+    if (!captured || captured.points.length < 2) {
+      // Nothing past the baseline any more — the user selected the calibrate measurement and
+      // pressed Delete, and this effect re-ran because `measurements` changed. Returning here
+      // without clearing would strand the span: the panel's gate is `calibrationSpan !== null`,
+      // so it would stay mounted showing a measurement that no longer exists, and pressing Set
+      // would store a scale derived from a span the user explicitly deleted. Same class as the
+      // latch above — the span must always be the points the user last placed, or none.
+      setCalibrationSpan(null);
+      return;
+    }
+    setCalibrationSpan(distance(captured.points[0], captured.points[1]));
+  }, [activeTool, measurements]);
+
+  // Leaving Calibrate — by committing, by cancelling, or by simply picking another tool — drops
+  // the captured span and takes every measurement the gesture made back out of the list: a
+  // calibration is a scale, not a dimension anyone asked to see. Swept by the baseline rather
+  // than by the one captured id, so extra clicks made while the panel was up go with it. One
+  // cleanup rather than three call sites that would each have to remember.
+  useEffect(() => {
+    if (activeTool !== 'calibrate') return;
+    return () => {
+      for (const m of measurementsRef.current.slice(calibrationBaselineRef.current)) {
+        removeMeasure(m.id);
+      }
+      setCalibrationSpan(null);
+      setMeasureError(null);
+    };
+  }, [activeTool, removeMeasure]);
+
+  // Escape abandons a pending gesture; Delete removes a selected measurement. One handler for
+  // all three surfaces, because the store lives here and the 3D viewer has no keyboard surface
+  // of its own. Keys are ignored while a field has focus — CalibrationPanel's own input handles
+  // Escape itself, and Backspace there must delete a character, not a measurement.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'Escape' && isMeasureTool(activeTool)) {
+        beginMeasure(activeTool === 'angle' ? 'angular' : 'linear', isPDFFile ? pdfPage : UNPAGED);
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedMeasurementId) {
+        e.preventDefault();
+        removeMeasure(selectedMeasurementId);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTool, isPDFFile, pdfPage, selectedMeasurementId, removeMeasure, beginMeasure]);
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
@@ -1071,6 +1577,13 @@ export default function PortalPage() {
     // indicator comes down.
     setViewerReady(false);
     setViewerSnapshot(null);
+    setViewerImageSpace(null);
+    // Cleared here as well as by AnnotationCanvas's own unmount report, because this is the one
+    // boundary the number must never cross: a factor is a property of ONE image at ONE frozen
+    // zoom, and applying the file being left's pixel density to the file being opened is the
+    // silent-wrong-calibration failure. Ordering here is unconditional and one commit deep,
+    // rather than resting on the unmount firing before anything reads it.
+    setImageIntrinsicPerStagePixel(null);
     setViewportImage(null);
     setAnnotating(false);
     setAnnotatingFile(null);
@@ -1085,7 +1598,16 @@ export default function PortalPage() {
     setSectionActive(false);
     setSectionSlots(emptySlots());
     setSelectedPlane(null);
-  }, [selectedFileId]);
+    // Measurements are per-file and session-only: a reading taken on one drawing means nothing
+    // on the next, and the scale it was read against has already changed underneath it.
+    clearMeasure();
+    // Cleared here rather than left to the disarm cleanup that this effect's setActiveTool
+    // eventually triggers. That cascade lands a render later, and for the render in between the
+    // panel is painted holding file A's span while selectedFileId and handleCalibrationCommit
+    // already belong to file B. Reset in one commit instead of depending on an effect chain.
+    setCalibrationSpan(null);
+    setMeasureError(null);
+  }, [selectedFileId, clearMeasure]);
 
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
@@ -1289,16 +1811,66 @@ export default function PortalPage() {
     setAnnotating(false);
     setAnnotatingFile(null);
     setViewerSnapshot(null);
+    setViewerImageSpace(null);
     annotationCanvasRef.current?.clear();
     pdfKonvaRef.current?.clearDrawings();
     setActiveTool('pointer');
     setSelectionType(null);
+    // Measurements are session-only — the same rule the file-switch reset states, and the one
+    // the store's own header states — so ending the session has to take them with it. It did
+    // not, and on the image surface that was the more serious half of the bug: a point there is
+    // a raw stage pixel of ONE freeze, so a measurement that survived into the next session was
+    // redrawn over the wrong part of a differently-zoomed snapshot and silently relabelled by
+    // that snapshot's factor (500 mm became 333 mm across a 100% -> 150% re-arm). The reading is
+    // gone either way; the honest outcome is that it is visibly gone.
+    //
+    // NOT on a 3D file. Those points are in the model's own frame, not in any stage space, and
+    // stay correct through camera moves, resizes and object transforms — and the session there
+    // is a MARKUP session over a frozen viewport that the user opened on top of measurements
+    // they were already reading. Clearing them would destroy valid work that nothing had
+    // invalidated. The 3D store is emptied by the file-switch reset, as before.
+    if (!is3DFile) resetMeasureSession();
   };
 
   /** "sketch.png" → "sketch-markup.jpg". The capture is always a JPEG, so
    *  keeping the original extension would be a lie about the bytes. */
   const markupName = (original: string) =>
     `${original.replace(/\.[^./]+$/, '')}-markup.jpg`;
+
+  /**
+   * Whether a measurement would be VISIBLE in the capture Apply is about to take.
+   *
+   * The capture used to be gated on `surface.hasObjects()` alone, which counts the MARKUP list —
+   * and measurements are deliberately not in it. So a measurement-only session (open an image,
+   * arm Linear, place one dimension, press Apply) captured nothing, attached nothing, and then
+   * ended; and because measurements are session-only, the reading was simply gone. That defeats
+   * the premise of the feature: snapshotting a measurement into a comment is the ONLY way to
+   * keep one. The gate is now markup OR this.
+   *
+   * Decided here rather than inside the surface components because the portal is what owns the
+   * measure store; neither surface knows the reading exists.
+   *
+   * The page test is the same filter the surfaces' own measure layers apply (MeasureObjects
+   * renders `m.page === page`, `currentPage` on the PDF and UNPAGED on the image canvas): a
+   * dimension on sheet 1 is not on screen while sheet 2 is showing, so it must not qualify a
+   * capture of sheet 2. Image and 3D gestures are all begun on UNPAGED.
+   *
+   * 3D counts, and the capture that would include it is already correct: MeasureLayer draws
+   * inside the WebGL scene and deliberately does NOT carry `userData.excludeFromSnapshot`, so
+   * `renderCleanFrame` keeps it while dropping viewer chrome, and `captureViewerSnapshot` reads
+   * that canvas into the frozen background this session draws on. The measurement is therefore
+   * baked into the background before a single markup object exists — it cannot be added
+   * mid-session, since `measuresOnCanvas` is false there and the live scene is hidden behind the
+   * snapshot.
+   *
+   * An attachment session never counts, which is why the native branch below keeps the
+   * markup-only gate: its background is the pasted image, the measure props are withheld from
+   * the canvas for its whole duration, and its capture crops to that image. There is nothing of
+   * the viewer in it to have measured.
+   */
+  const measurementInCapture =
+    annotatingFile === null &&
+    measurements.some((m) => m.page === (isPDFFile ? pdfPage : UNPAGED));
 
   const handleAnnotationDone = async () => {
     const original = annotatingFile;
@@ -1309,6 +1881,10 @@ export default function PortalPage() {
         // image's own resolution, cropped to its fitted region: the whole-stage capture
         // the ordinary session below uses would letterbox and resample the attachment
         // Done is about to replace.
+        //
+        // Markup alone is the right gate HERE, and deliberately not `|| measurementInCapture`:
+        // see that flag's note — an attachment session can never have a measurement on it, and
+        // `measurementInCapture` is false throughout one for exactly that reason.
         const surface = annotationCanvasRef.current;
         if (surface?.hasObjects()) {
           const dataUrl = surface.captureSnapshot({ native: true });
@@ -1330,7 +1906,11 @@ export default function PortalPage() {
         // Ordinary session: PDF draws directly on its own surface; everything else
         // draws on AnnotationCanvas over a viewer-snapshot background.
         const surface = drawsOnCanvas ? annotationCanvasRef.current : pdfKonvaRef.current;
-        if (surface?.hasObjects()) {
+        // `hasObjects()` is the MARKUP list and nothing else, so on its own it threw away every
+        // measurement-only session — see `measurementInCapture`. Written as an explicit
+        // `surface &&` rather than `surface?.hasObjects() || …` so a true measurement flag can
+        // never carry a null surface into `captureSnapshot` below.
+        if (surface && (surface.hasObjects() || measurementInCapture)) {
           const dataUrl = surface.captureSnapshot();
           if (dataUrl) {
             const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
@@ -1490,6 +2070,21 @@ export default function PortalPage() {
             highlightedPart={hoveredPart}
             onPartsLoaded={handlePartsLoaded}
             onPartPick={handlePartPick}
+            // One store, two surfaces. ViewerContainer forwards this group to ModelViewer AND
+            // to PDFKonvaViewer — every prop but `measureActive`, which is 3D-only because the
+            // PDF viewer reads the armed tool out of `activeTool` it already receives. Measuring
+            // a 3D file happens in the live WebGL scene (see MeasureLayer on why it cannot be a
+            // DOM overlay); the 2D surfaces collect their points in their own stage space, which
+            // is what `intrinsicPerSurfaceUnit` and mmPerUnit exist to reconcile.
+            measureActive={isMeasureTool(activeTool)}
+            onMeasurePoint={handleMeasurePoint}
+            measurements={measurements}
+            pendingMeasurement={pendingMeasurement}
+            mmPerUnit={measureScale.mmPerUnit}
+            measureUnit={measureUnit}
+            selectedMeasurementId={selectedMeasurementId}
+            onSelectMeasurement={setSelectedMeasurementId}
+            onPageChange={setPdfPage}
           />
         </div>
       </>
@@ -1595,6 +2190,43 @@ export default function PortalPage() {
                 onInsertImage={handleInsertImage}
                 offsetTop={isPDFFile ? 45 : 12}
                 selectionType={selectionType}
+                measureUnit={measureUnit}
+                onMeasureUnitChange={handleMeasureUnitChange}
+                scaleSource={measureScale.source}
+                // annotatingFile === null is load-bearing: during an attachment session the
+                // surface is a pasted screenshot with no file id, so there is nowhere to store a
+                // calibration and nothing to resolve a scale against.
+                canCalibrate={canComment && annotatingFile === null}
+                // Same `annotatingFile === null` test as canCalibrate directly above, for the
+                // same reason one step further out: an attachment session's surface is a pasted
+                // screenshot with no file id, no calibration and no image space, so measuring on
+                // it could only ever produce a number about some other file. Offering a tool that
+                // is inert by design is worse than not offering it.
+                //
+                // The type half is a positive union of the three surfaces that actually measure
+                // something — image (AnnotationCanvas), PDF (its own stage) and 3D (the live
+                // WebGL scene) — not "not video". An exclusion list only names the types known to
+                // be wrong at the time it was written, so video was covered but an unsupported
+                // type like .dwg or .dxf was not: neither video nor 3D nor PDF nor image, it fell
+                // through and got Measure shown anyway with no surface underneath it that could
+                // ever produce a reading. A positive list cannot make that mistake — a fourth
+                // file type is simply absent until someone deliberately adds it here.
+                measureAvailable={(isImageFile || isPDFFile || is3DFile) && annotatingFile === null}
+              />
+            )}
+
+            {/* "This distance is …" — the second half of the calibrate gesture, shown once both
+                its points are down. Beside the toolbar rather than inside it: it owns the
+                keyboard while it is up, and it is the only thing on screen that can report a
+                failed save. */}
+            {!viewportBusy && !viewportImage && activeTool === 'calibrate' && calibrationSpan !== null && (
+              <CalibrationPanel
+                unit={measureUnit}
+                error={measureError}
+                onCommit={(realDistance, entryUnit) =>
+                  handleCalibrationCommit(calibrationIntrinsicDistance, realDistance, entryUnit)
+                }
+                onCancel={() => { setMeasureError(null); setActiveTool('pointer'); }}
               />
             )}
             {selectedFileId && !isPDFFile && !annotating && (
@@ -1681,12 +2313,26 @@ export default function PortalPage() {
             {annotating && drawsOnCanvas && (
               <AnnotationCanvas
                 backgroundDataUrl={viewerSnapshot}
-                activeTool={activeTool as AnnTool}
+                activeTool={activeTool}
                 color={drawingColor}
                 strokeWidth={drawingStrokeWidth}
                 handleRef={annotationCanvasRef}
                 onObjectCreated={() => setActiveTool('pointer')}
                 onSelectionChange={handleSelectionChange}
+                // The third measurement surface. Every prop in this group is gated on
+                // `measuresOnCanvas` — see its definition for why a canvas that DRAWS here is not
+                // necessarily the canvas this file is MEASURED on.
+                measurements={measuresOnCanvas ? measurements : []}
+                pendingMeasurement={measuresOnCanvas ? pendingMeasurement : null}
+                onMeasurePoint={measuresOnCanvas ? handleMeasurePoint : undefined}
+                mmPerIntrinsicUnit={measuresOnCanvas ? measureScale.mmPerUnit : null}
+                // Millimetres per NATURAL pixel is what measureScale.mmPerUnit holds for an
+                // image file, so this is the rect that turns a stage pixel into one of those.
+                imageSpace={measuresOnCanvas ? viewerImageSpace : null}
+                onIntrinsicScaleChange={measuresOnCanvas ? setImageIntrinsicPerStagePixel : undefined}
+                measureUnit={measureUnit}
+                selectedMeasurementId={measuresOnCanvas ? selectedMeasurementId : null}
+                onSelectMeasurement={measuresOnCanvas ? setSelectedMeasurementId : undefined}
               />
             )}
 

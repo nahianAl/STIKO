@@ -95,6 +95,47 @@ export async function GET(request: NextRequest) {
     colorsByFile = new Map();
   }
 
+  // Same one-query-per-version shape as the colours above, and the same fail-soft contract for
+  // the same reason: this endpoint is load-bearing for file listing app-wide, migrations here
+  // are applied by hand, and this repo has forgotten one twice. An unapplied
+  // 012-measure-calibration.sql must degrade to "the measure tool is unavailable", never to a
+  // file-listing outage.
+  //
+  // files.measure_unit is fetched here too, even though it is a plain column on a table the main
+  // SELECT above already reads. It arrives with this same migration, exactly as file_calibrations
+  // does, so it is just as capable of taking the whole endpoint down while 012 is unapplied. Do
+  // not "simplify" this back into the main SELECT — that is what the finding on Task 9 flagged.
+  let calibrationsByFile = new Map<string, Record<number, number>>();
+  let measureUnitByFile = new Map<string, string | null>();
+  try {
+    const calibrationRows = await sql`
+      SELECT fc.file_id AS "fileId", fc.page_number AS "pageNumber", fc.mm_per_unit AS "mmPerUnit"
+      FROM file_calibrations fc
+      JOIN files f ON f.id = fc.file_id
+      WHERE f.version_id = ${versionId}
+    `;
+    calibrationRows.forEach((row) => {
+      const forFile = calibrationsByFile.get(row.fileId as string) ?? {};
+      forFile[Number(row.pageNumber)] = Number(row.mmPerUnit);
+      calibrationsByFile.set(row.fileId as string, forFile);
+    });
+
+    const measureUnitRows = await sql`
+      SELECT id, measure_unit AS "measureUnit" FROM files WHERE version_id = ${versionId}
+    `;
+    measureUnitByFile = new Map(
+      measureUnitRows.map((row) => [row.id as string, (row.measureUnit as string | null) ?? null])
+    );
+  } catch (error) {
+    console.error(
+      `Failed to fetch measure-tool data (file_calibrations, files.measure_unit) for version ${versionId}, likely because migration 012-measure-calibration.sql has not been applied yet:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    // Fall back to uncalibrated and unit-less; a file listing matters more than a measurement.
+    calibrationsByFile = new Map();
+    measureUnitByFile = new Map();
+  }
+
   const files = rows.map((row) => {
     const { positionX, positionY, positionZ, rotationX, rotationY, rotationZ, ...file } = row;
     return {
@@ -129,6 +170,12 @@ export async function GET(request: NextRequest) {
       // Computed server-side from the same table the PATCH route writes, never re-derived in
       // the client: what renders and what persists must not be able to disagree.
       partColors: colorsByFile.get(row.id as string) ?? {},
+      // Computed server-side from the same table the measure-tool calibration route writes,
+      // keyed by page number; empty for files that have never been calibrated.
+      calibrations: calibrationsByFile.get(row.id as string) ?? {},
+      // From the same guarded fetch as calibrations above, and for the same reason: null for
+      // files nobody has set a unit on, and null for every file if that fetch failed outright.
+      measureUnit: measureUnitByFile.get(row.id as string) ?? null,
     };
   });
 

@@ -7,15 +7,26 @@ import { startGeometry, updateGeometry, isBoxTool, type DraftTool } from '@/lib/
 export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'image';
 export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'eraser';
 
+/** The three measure-tool modes. Not AnnTools: they create no markup object and carry no style. */
+export type MeasureTool = 'measure' | 'angle' | 'calibrate';
+
+export const MEASURE_TOOLS: readonly MeasureTool[] = ['measure', 'angle', 'calibrate'];
+
 /**
  * Everything the toolbar can have armed. One definition, imported by the toolbar, both
  * drawing surfaces and the portal page — it used to be hand-copied into four files, which
  * is one place to forget when a tool is added.
  *
  * 'comment' is the pin mode, which is a toolbar state but never an AnnTool: it places a
- * comment rather than drawing an object.
+ * comment rather than drawing an object. The measure tools are the same kind of exception —
+ * they produce measurements, which are their own layer with no colour and no stroke width, so
+ * they must never reach the markup style model.
  */
-export type ToolType = AnnTool | 'comment';
+export type ToolType = AnnTool | 'comment' | MeasureTool;
+
+export function isMeasureTool(tool: ToolType): tool is MeasureTool {
+  return (MEASURE_TOOLS as readonly string[]).includes(tool);
+}
 
 export interface AnnotationObject {
   id: string;

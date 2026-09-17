@@ -271,13 +271,22 @@ test('angleAt works in 3D', () => {
   assert.ok(Math.abs(right - Math.PI / 2) < 1e-12);
 });
 
-// The trap this exists for: dot/(|a||b|) can land on 1.0000000000000002 for genuinely
-// collinear input, and Math.acos of that is NaN. Without clamping, pointing at two points
-// on the same edge produces a blank label instead of 0.0°.
-test('angleAt clamps floating-point overshoot instead of returning NaN', () => {
-  const collinear = angleAt([0, 0, 0], [0.1, 0.2, 0.3], [0.2, 0.4, 0.6]);
-  assert.ok(Number.isFinite(collinear), 'expected a finite angle');
-  assert.ok(Math.abs(collinear) < 1e-6);
+// The trap this exists for: dot/(|a||b|) can land one ulp outside [-1, 1] for genuinely
+// collinear input, and Math.acos of such a value is NaN. Without clamping to [-1, 1], the
+// quotient lands at 1.0000000000000002 or -1.0000000000000002, producing NaN instead of 0 or π.
+// That would render as a blank measurement label for a perfectly valid gesture.
+test('angleAt clamps upper overshoot: dot/denominator lands at 1.0000000000000002', () => {
+  const angle = angleAt([0, 0, 0], [0.1, 0.1, 0.2], [0.5, 0.5, 1.0]);
+  // Without the clamp, Math.acos(1.0000000000000002) is NaN; with it, Math.acos(1) is 0.
+  assert.ok(Number.isFinite(angle), 'expected a finite angle');
+  assert.ok(Math.abs(angle) < 1e-12);
+});
+
+test('angleAt clamps lower overshoot: dot/denominator lands at -1.0000000000000002', () => {
+  const angle = angleAt([0, 0, 0], [0.1, 0.1, 0.2], [-0.5, -0.5, -1.0]);
+  // Without the clamp, Math.acos(-1.0000000000000002) is NaN; with it, Math.acos(-1) is π.
+  assert.ok(Number.isFinite(angle), 'expected a finite angle');
+  assert.ok(Math.abs(angle - Math.PI) < 1e-12);
 });
 
 test('angleAt returns NaN when a leg has no length', () => {
@@ -981,57 +990,46 @@ git commit -m "feat: image and PDF measurement coordinate conversions"
 
 **Why this is its own task:** the 3D design assumes a raycast hit against the model exposes enough data to find the triangle's vertices. The model is drawn as merged `BatchedMesh` batches (`lib/model/buildBatches.ts`), and three's `BatchedMesh` raycast reports a `batchId`. If `intersection.face` and the underlying position attribute are not reachable per-hit, snapping needs a different approach — and that is much cheaper to learn now than after the layer is built on top of it.
 
-- [ ] **Step 1: Start the app and open a STEP or GLB model**
+**OUTCOME (recorded 2026-09-16, answered from library and repo source rather than a browser):**
 
-```bash
-npm run dev
-```
+**Vertex snapping IS viable — with a correction to the transform this plan originally specified.**
 
-Open a package containing a 3D file in the browser. (If no local database is configured, follow the local visual verification route already used for viewer work.)
+Evidence, from `node_modules/three/src/objects/BatchedMesh.js:901-961` (three 0.169.0):
 
-- [ ] **Step 2: Add a temporary probe to the existing pick raycast**
+- `BatchedMesh.raycast` delegates to an internal plain `Mesh` whose geometry borrows the batch's
+  own `index` and `attributes`, then pushes those intersections outward after reassigning
+  `intersect.object = this` and `intersect.batchId = i`.
+- So `hit.face` **is** populated, and `face.a/b/c` are indices into the **batch** geometry's
+  `position` attribute — which is exactly what `hit.object.geometry.getAttribute('position')`
+  returns, because `object` was reassigned to the BatchedMesh. Direct lookup works.
 
-In `components/viewers/ModelViewerInner.tsx`, inside `handlePointerUp`'s existing loop over
-`raycaster.current.intersectObject(model, true)`, temporarily log what a hit carries:
+But the same code path is where the original plan was wrong:
 
-```ts
-console.log('HIT', {
-  type: hit.object.type,
-  batchId: (hit as { batchId?: number }).batchId,
-  hasFace: hit.face !== null && hit.face !== undefined,
-  faceIndices: hit.face ? [hit.face.a, hit.face.b, hit.face.c] : null,
-  positionCount: (hit.object as THREE.Mesh).geometry?.getAttribute('position')?.count ?? null,
-});
-```
+- `raycast` computes each instance's transform as `getMatrixAt(i)` **premultiplied by**
+  `matrixWorld` (line 937). `hit.object.matrixWorld` alone is therefore only half the transform.
+- `lib/model/buildBatches.ts:271` calls `batched.setMatrixAt(instanceId, entry.mesh.matrixWorld)`
+  with the comment "Geometry stays in its own local space; placement rides on the instance
+  matrix." The per-instance matrices are **deliberately non-identity** — they carry every part's
+  placement in the assembly.
+- Using `mesh.matrixWorld` alone, as this plan first specified, would place every snapped vertex
+  at its unplaced local position. On a multi-part CAD assembly — the main use case — the snap
+  would land somewhere else on the model entirely, and it would look plausible rather than
+  broken.
 
-- [ ] **Step 3: Click several parts of the model and read the console**
+Worth noting for future spikes: the console probe this task originally prescribed logged
+`hasFace`, `faceIndices` and `positionCount`. All three would have come back healthy, the spike
+would have reported "viable", and the instance-matrix bug would have shipped. Reading the
+library's own raycast was the cheaper AND the stronger check.
 
-Record, for a `BatchedMesh` hit specifically:
-- Is `hit.face` non-null?
-- Are `hit.face.a/b/c` valid indices into the hit object's `position` attribute?
-- Does reading those three vertices and transforming them by the object's `matrixWorld` produce points that sit on the clicked feature?
+Task 13 therefore implements vertex snapping, with the corrected transform written into its
+Step 2. Empirical confirmation happens in Task 13's browser step, which must snap on a
+**multi-part assembly** — a single-part model has an identity instance matrix and cannot tell
+the two implementations apart.
 
-- [ ] **Step 4: Record the decision in this plan file**
-
-Append to this task, replacing this step's text:
-
-> **Outcome:** `hit.face` IS / IS NOT available on BatchedMesh hits. Task 13 therefore implements
-> vertex snapping / free surface points only.
-
-If vertex snap is **not** viable, edit Task 13 Step 3 to drop `nearestVertexSnap` and its call site,
-and edit the spec's "Decisions" table entry for 3D point picking to read "free surface point; vertex
-snap deferred".
-
-- [ ] **Step 5: Remove the probe**
-
-Revert the temporary `console.log`. Confirm `git diff components/viewers/ModelViewerInner.tsx` is empty.
-
-- [ ] **Step 6: Commit the decision**
-
-```bash
-git add docs/superpowers/plans/2026-09-16-measure-tool.md
-git commit -m "docs: record BatchedMesh vertex-snap spike outcome"
-```
+- [x] **Step 1: Determine whether BatchedMesh hits expose face and vertex data** — yes, see above.
+- [x] **Step 2: Determine the correct world transform for a hit vertex** — `matrixWorld` composed
+      with `getMatrixAt(hit.batchId)`, in that order.
+- [x] **Step 3: Record the decision and correct Task 13** — done in the same commit as this note.
 
 ---
 
@@ -1097,22 +1095,29 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS measure_unit TEXT DEFAULT NULL;
 Append the same two statements (table + index + column) to `lib/schema.sql`, immediately after the
 `part_colors` table block that ends at the `part_colors_file_id_idx` index, keeping the full comment.
 
-- [ ] **Step 3: Apply the migration**
+- [ ] **Step 3: Apply the migration** — CONTROLLER ONLY, not the implementer
+
+Production is the only environment this project has, so applying a migration is a production
+write and is performed by the controller, not by a task implementer.
+
+**Load env with `node --env-file=.env.local`, never `set -a && . .env.local`.** Sourcing the
+file from zsh exposes the credentials in the shell's process table and history; this project has
+already had a Neon password leak that way, and rotation is still outstanding.
 
 ```bash
-set -a && . .env.local && set +a && npm run migrate -- --dry
+node --env-file=.env.local scripts/migrate.mjs --dry
 ```
 Expected: lists `012-measure-calibration.sql` as outstanding.
 
 ```bash
-set -a && . .env.local && set +a && npm run migrate
+node --env-file=.env.local scripts/migrate.mjs
 ```
 Expected: applies it and records it in `schema_migrations`.
 
-- [ ] **Step 4: Verify the constraint actually bites**
+- [ ] **Step 4: Verify the constraint actually bites** — CONTROLLER ONLY
 
 ```bash
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`SELECT column_name, is_nullable, column_default FROM information_schema.columns
@@ -1371,22 +1376,66 @@ In `app/api/files/route.ts`, after the `part_colors` `try/catch` that assigns `c
   }
 ```
 
-- [ ] **Step 3: Attach both fields to each file row**
+- [ ] **Step 3: Fetch `measure_unit` inside the same guarded block — never the main `SELECT`**
 
-`files.measure_unit` is a plain column, so add it to this route's main file `SELECT` list beside
-the other aliased columns:
+`files.measure_unit` is a plain column, which makes it tempting to add straight to this route's
+main file `SELECT` list beside the other aliased columns. Do not do that. The column is not
+pre-existing: it arrives with `012-measure-calibration.sql`, the exact same migration that
+creates `file_calibrations`. "It's just a column read" only holds once that migration has run
+everywhere; on the day this code deploys ahead of the migration being applied by hand (this repo
+has forgotten that step twice already), the column does not exist yet, and the main `SELECT` is
+the one query in this route with no `try/catch` around it. A `column f.measure_unit does not
+exist` error thrown there happens before either guarded block below is reached, so it takes down
+`/api/files` entirely — a file-listing outage — instead of degrading to "the measure tool is
+unavailable," which is exactly the failure mode Step 2's fail-soft contract exists to prevent.
 
-```sql
-      f.measure_unit AS "measureUnit",
+So `measure_unit` gets the same guard as `file_calibrations`, and for the same reason: extend the
+`try` block from Step 2 with a second query, sharing its one `catch`. They come from the same
+migration, so they should fail together and recover together:
+
+```ts
+  let calibrationsByFile = new Map<string, Record<number, number>>();
+  let measureUnitByFile = new Map<string, string | null>();
+  try {
+    const calibrationRows = await sql`
+      SELECT fc.file_id AS "fileId", fc.page_number AS "pageNumber", fc.mm_per_unit AS "mmPerUnit"
+      FROM file_calibrations fc
+      JOIN files f ON f.id = fc.file_id
+      WHERE f.version_id = ${versionId}
+    `;
+    calibrationRows.forEach((row) => {
+      const forFile = calibrationsByFile.get(row.fileId as string) ?? {};
+      forFile[Number(row.pageNumber)] = Number(row.mmPerUnit);
+      calibrationsByFile.set(row.fileId as string, forFile);
+    });
+
+    const measureUnitRows = await sql`
+      SELECT id, measure_unit AS "measureUnit" FROM files WHERE version_id = ${versionId}
+    `;
+    measureUnitByFile = new Map(
+      measureUnitRows.map((row) => [row.id as string, (row.measureUnit as string | null) ?? null])
+    );
+  } catch (error) {
+    console.error(
+      `Failed to fetch measure-tool data (file_calibrations, files.measure_unit) for version ${versionId}, likely because migration 012-measure-calibration.sql has not been applied yet:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    // Fall back to uncalibrated and unit-less; a file listing matters more than a measurement.
+    calibrationsByFile = new Map();
+    measureUnitByFile = new Map();
+  }
 ```
 
-Then in the `rows.map(...)` that builds each file object, add the calibrations:
+Then in the `rows.map(...)` that builds each file object, add both fields from their maps:
 
 ```ts
       calibrations: calibrationsByFile.get(row.id as string) ?? {},
+      measureUnit: measureUnitByFile.get(row.id as string) ?? null,
 ```
 
-`measureUnit` needs no mapping — it arrives on `row` already aliased.
+A file with no entry in `measureUnitByFile` — because nobody has set a unit on it, or because the
+guarded fetch above failed outright — gets `null`, matching the column's nullable type and
+`FileRecord.measureUnit`'s declared `LengthUnit | null`.
 
 - [ ] **Step 4: Typecheck and verify the response**
 
@@ -1405,7 +1454,7 @@ Expected: each file object carries `calibrations` (an object) and `measureUnit` 
 Temporarily rename the table and reload the package page:
 
 ```bash
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`ALTER TABLE file_calibrations RENAME TO file_calibrations_tmp\`.then(() => console.log('renamed'));
@@ -1414,7 +1463,7 @@ sql\`ALTER TABLE file_calibrations RENAME TO file_calibrations_tmp\`.then(() => 
 Expected: the package page still lists its files; the server console logs the fetch failure. Then restore:
 
 ```bash
-set -a && . .env.local && set +a && node -e "
+node --env-file=.env.local -e "
 const { neon } = require('@neondatabase/serverless');
 const sql = neon(process.env.DATABASE_URL);
 sql\`ALTER TABLE file_calibrations_tmp RENAME TO file_calibrations\`.then(() => console.log('restored'));
@@ -1443,7 +1492,6 @@ git commit -m "feat: serve file calibrations and measure unit with the file list
   - `ToolType` widened to `AnnTool | 'comment' | MeasureTool`
   - `const MEASURE_TOOLS: readonly MeasureTool[]`
   - `isMeasureTool(tool: ToolType): tool is MeasureTool`
-  - `measureKindFor(tool: ToolType): MeasureKind | null`
   - `interface Measurement extends MeasurementDraft { id: string }`
   - `useMeasurements()` returning `{ measurements, pending, selectedId, setSelectedId, begin, addPoint, cancel, remove, clear }`
 
@@ -1512,9 +1560,22 @@ export function useMeasurements() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const idRef = useRef(0);
 
-  const begin = useCallback((kind: MeasureKind, page: number = UNPAGED) => {
-    setPending(beginGesture(kind, page));
+  // The pending gesture is mirrored in a ref and READ from the ref, never from inside a state
+  // updater. useAnnotationObjects does the same with draftRef, for the same reason: a click
+  // handler needs the current gesture synchronously, and doing the work inside setPending's
+  // updater would run it twice under StrictMode — double-incrementing idRef and making the
+  // committed measurement a side effect of rendering.
+  const pendingRef = useRef<PendingGesture | null>(null);
+
+  const setGesture = useCallback((next: PendingGesture | null) => {
+    pendingRef.current = next;
+    setPending(next);
   }, []);
+
+  const begin = useCallback(
+    (kind: MeasureKind, page: number = UNPAGED) => setGesture(beginGesture(kind, page)),
+    [setGesture]
+  );
 
   /**
    * Returns the committed measurement, or null while the gesture is still collecting points or
@@ -1523,22 +1584,26 @@ export function useMeasurements() {
    */
   const addPoint = useCallback(
     (point: number[], minSeparation: number): Measurement | null => {
-      let committed: Measurement | null = null;
-      setPending((current) => {
-        if (!current) return current;
-        const result = addGesturePoint(current, point, minSeparation);
-        if (result.status === 'pending') return result.gesture;
-        if (result.status === 'rejected') return beginGesture(current.kind, current.page);
-        committed = { ...result.measurement, id: `measure-${idRef.current++}` };
-        return beginGesture(current.kind, current.page);
-      });
-      if (committed) setMeasurements((prev) => [...prev, committed as Measurement]);
+      const current = pendingRef.current;
+      if (!current) return null;
+
+      const result = addGesturePoint(current, point, minSeparation);
+      if (result.status === 'pending') {
+        setGesture(result.gesture);
+        return null;
+      }
+
+      setGesture(beginGesture(current.kind, current.page));
+      if (result.status === 'rejected') return null;
+
+      const committed: Measurement = { ...result.measurement, id: `measure-${idRef.current++}` };
+      setMeasurements((prev) => [...prev, committed]);
       return committed;
     },
-    []
+    [setGesture]
   );
 
-  const cancel = useCallback(() => setPending(null), []);
+  const cancel = useCallback(() => setGesture(null), [setGesture]);
 
   const remove = useCallback((id: string) => {
     setMeasurements((prev) => prev.filter((m) => m.id !== id));
@@ -1547,9 +1612,9 @@ export function useMeasurements() {
 
   const clear = useCallback(() => {
     setMeasurements([]);
-    setPending(null);
+    setGesture(null);
     setSelectedId(null);
-  }, []);
+  }, [setGesture]);
 
   return { measurements, pending, selectedId, setSelectedId, begin, addPoint, cancel, remove, clear };
 }
@@ -1696,6 +1761,18 @@ Change the menu state to include the two new panels:
   const [menu, setMenu] = useState<'shapes' | 'stroke' | 'picker' | 'measure' | 'units' | null>(null);
 ```
 
+Precompute both booleans before either is tested, rather than writing `menu === 'measure'` /
+`menu === 'units'` inline where they're used below — the units chip nests a `menu === 'units'`
+check inside the block the `menu === 'measure'` gate already covers, and TypeScript's
+aliased-condition narrowing carries an effectively-const `menu` down to a single literal for the
+rest of a block that tests it, so the second, different literal comparison reads as impossible
+(TS2367). Computing both up front sidesteps that:
+
+```tsx
+  const measureOpen = menu === 'measure';
+  const unitsOpen = menu === 'units';
+```
+
 Add, immediately after the Shapes block and before the Stroke width block:
 
 ```tsx
@@ -1704,14 +1781,18 @@ Add, immediately after the Shapes block and before the Stroke width block:
         <div className="relative flex">
           <ToolButton
             label="Measure"
-            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || menu === 'measure'}
-            expanded={menu === 'measure'}
+            active={MEASURE_SUB_TOOLS.some((t) => t.id === activeTool) || measureOpen || unitsOpen}
+            expanded={measureOpen || unitsOpen}
             hideLabel={menu !== null}
-            onClick={() => setMenu(menu === 'measure' ? null : 'measure')}
+            onClick={() => setMenu(measureOpen ? null : 'measure')}
           >
             {MeasureIcon}
           </ToolButton>
-          {menu === 'measure' && (
+          {/* Gated on both states, not just `measureOpen`: the units popover below lives
+              inside this same subtree, and its trigger sets `menu` to 'units'. Gating on
+              'measure' alone would unmount this whole block — chip and popover included —
+              the instant it's clicked, since `menu` can only ever hold one value. */}
+          {(measureOpen || unitsOpen) && (
             <div className={SUB_BAR}>
               <div className={BAR}>
                 {MEASURE_SUB_TOOLS.map((t) => {
@@ -1747,13 +1828,13 @@ Add, immediately after the Shapes block and before the Stroke width block:
                 <div className="relative flex">
                   <button
                     aria-label="Measurement units"
-                    aria-expanded={menu === 'units'}
-                    onClick={() => setMenu(menu === 'units' ? 'measure' : 'units')}
-                    className={`${slot(menu === 'units')} w-[44px] text-[11px] font-semibold tracking-heading`}
+                    aria-expanded={unitsOpen}
+                    onClick={() => setMenu(unitsOpen ? 'measure' : 'units')}
+                    className={`${slot(unitsOpen)} w-[44px] text-[11px] font-semibold tracking-heading`}
                   >
                     {measureUnit}
                   </button>
-                  {menu === 'units' && (
+                  {unitsOpen && (
                     <div className="absolute top-full mt-[13px] right-0 z-50 rounded-sheet bg-white border border-stiko-border shadow-stiko-panel py-[4px]">
                       {LENGTH_UNITS.map((u) => (
                         <button
@@ -2337,36 +2418,61 @@ the same handler — after the existing clipping-plane guard that selects `hit` 
           // (see lib/sceneScale.ts), so a fixed floor would reject every click on a small model
           // and accept every misclick on a large one. `radius` is the model's bounding radius,
           // already available in this component for the scene furniture.
-          onMeasurePoint(
-            nearestVertexSnap(hit, camera, gl) ?? [local[0], local[1], local[2]],
-            radius * 1e-4,
-          );
+          // A snapped vertex comes back in WORLD space, so it goes through the SAME
+          // worldToModel conversion the pin path uses three lines above — not a separate one.
+          // `local` is already that conversion applied to hit.point, so the fallback needs no
+          // further work.
+          const snapped = nearestVertexSnap(hit, camera, gl);
+          const modelPoint = snapped
+            ? worldToModel([snapped.x, snapped.y, snapped.z], transform)
+            : local;
+          onMeasurePoint([modelPoint[0], modelPoint[1], modelPoint[2]], radius * 1e-4);
           return;
         }
 ```
 
-Add `nearestVertexSnap` beside the handler:
+Add `nearestVertexSnap` beside the handler. Note the transform: it composes the batch's
+`matrixWorld` with the hit instance's own matrix, which Task 6 established is mandatory here.
 
 ```ts
 /** Snap radius in screen pixels. Beyond this the free surface point is the honest answer. */
 const VERTEX_SNAP_PX = 12;
 
 /**
- * The nearest vertex of the hit triangle, in the model's own frame, when one is within
- * VERTEX_SNAP_PX of the cursor on screen. Null otherwise.
+ * The nearest vertex of the hit triangle, in WORLD space, when one is within VERTEX_SNAP_PX of
+ * the cursor on screen. Null otherwise — in which case the caller falls back to the free surface
+ * point, which is the honest answer rather than a guess.
  *
  * Reads face indices straight off the intersection rather than precomputing anything: the model
  * is drawn as merged BatchedMesh batches, so there is no per-part vertex structure to consult.
+ * three's BatchedMesh.raycast borrows the batch geometry's index and attributes for the hit test
+ * and then reassigns `intersect.object` to the BatchedMesh, so `face.a/b/c` are valid indices
+ * into `hit.object.geometry`'s position attribute.
+ *
+ * THE TRANSFORM IS THE TRAP. BatchedMesh.raycast places each instance with
+ * `getMatrixAt(i).premultiply(matrixWorld)` (three 0.169.0, BatchedMesh.js:937), and
+ * buildBatches.ts:271 deliberately puts every part's placement on its instance matrix —
+ * "geometry stays in its own local space". Using `matrixWorld` alone drops the placement and
+ * lands the snapped vertex on the wrong part of the assembly, plausibly enough that nothing
+ * looks broken.
  */
 function nearestVertexSnap(
   hit: THREE.Intersection,
   camera: THREE.Camera,
   gl: THREE.WebGLRenderer,
-): [number, number, number] | null {
+): THREE.Vector3 | null {
   const face = hit.face;
   const mesh = hit.object as THREE.Mesh;
   const position = mesh.geometry?.getAttribute('position');
   if (!face || !position) return null;
+
+  const toWorld = mesh.matrixWorld.clone();
+  const batchId = (hit as THREE.Intersection & { batchId?: number }).batchId;
+  if (typeof batchId === 'number' && (mesh as THREE.BatchedMesh).isBatchedMesh) {
+    const instance = new THREE.Matrix4();
+    (mesh as THREE.BatchedMesh).getMatrixAt(batchId, instance);
+    toWorld.multiply(instance);
+  }
 
   const size = new THREE.Vector2();
   gl.getSize(size);
@@ -2374,8 +2480,7 @@ function nearestVertexSnap(
 
   let best: { point: THREE.Vector3; px: number } | null = null;
   for (const index of [face.a, face.b, face.c]) {
-    const local = new THREE.Vector3().fromBufferAttribute(position, index);
-    const world = local.clone().applyMatrix4(mesh.matrixWorld);
+    const world = new THREE.Vector3().fromBufferAttribute(position, index).applyMatrix4(toWorld);
     const projected = world.clone().project(camera);
     const px = Math.hypot(
       ((projected.x - cursor.x) * size.x) / 2,
@@ -2384,15 +2489,11 @@ function nearestVertexSnap(
     if (!best || px < best.px) best = { point: world, px };
   }
 
-  if (!best || best.px > VERTEX_SNAP_PX) return null;
-  const local = best.point.clone();
-  hit.object.parent?.worldToLocal(local);
-  return [local.x, local.y, local.z];
+  return best && best.px <= VERTEX_SNAP_PX ? best.point : null;
 }
 ```
 
-**If Task 6 recorded that `hit.face` is unavailable on BatchedMesh hits**, delete
-`nearestVertexSnap` and call `onMeasurePoint([local[0], local[1], local[2]])` directly.
+Task 6 confirmed `hit.face` IS available, so this ships as written.
 
 - [ ] **Step 3: Render the layer and thread the props**
 
@@ -2426,7 +2527,11 @@ Expected: no errors.
 - [ ] **Step 6: Verify in the browser**
 
 With `npm run dev` and a STEP or GLB file open:
-1. Arm Linear, click two corners. A dimension appears with a plausible number.
+1. **On a MULTI-PART assembly, not a single part** — arm Linear and click two corners on two
+   DIFFERENT parts. A dimension appears with a plausible number, and each endpoint sits on the
+   corner you clicked. This is the case that distinguishes a correct instance-matrix composition
+   from the wrong one Task 6 caught: a single-part model has an identity instance matrix and
+   passes either way.
 2. Orbit. The measurement stays welded to the geometry.
 3. Arm Angle, click three points. An arc and a degree reading appear.
 4. Click a measurement, press Delete. It disappears.

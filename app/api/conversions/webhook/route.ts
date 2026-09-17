@@ -96,6 +96,27 @@ export async function POST(request: NextRequest) {
           colorErr instanceof Error ? colorErr.message : String(colorErr)
         );
       }
+
+      // Same obligation as the part_colors delete above, same reasoning, same tolerance for its
+      // own failure. A 3D calibration says what one world unit of the LOADED GLB means in
+      // millimetres. converted_storage_key just started pointing at CloudConvert's own GLB,
+      // whose scale has nothing to do with whatever produced the saved number — left in place,
+      // every measurement on this file would silently read wrong, with no error anywhere.
+      //
+      // Its own statement and its own try/catch, deliberately NOT sharing a transaction with the
+      // UPDATE above: if 012-measure-calibration.sql has not been applied yet, a throw here must
+      // not roll back a conversion whose GLB is already in S3.
+      try {
+        await sql`
+          DELETE FROM file_calibrations WHERE file_id = ${fileId}
+        `;
+      } catch (calibrationErr) {
+        console.error(
+          `Failed to delete stale file_calibrations for file ${fileId} after conversion` +
+            ' (likely 012-measure-calibration.sql has not been applied yet):',
+          calibrationErr instanceof Error ? calibrationErr.message : String(calibrationErr)
+        );
+      }
     } catch (err) {
       console.error('Failed to process conversion result for', fileId, err);
       await sql`

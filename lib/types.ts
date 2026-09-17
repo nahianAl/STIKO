@@ -1,4 +1,5 @@
 import type { ObjectTransform } from '@/lib/objectTransform';
+import type { LengthUnit } from './measure/units.ts';
 
 export interface Project {
   id: string;
@@ -68,6 +69,15 @@ export interface FileRecord {
   commentCount?: number;
   /** Explicit per-part colour overrides, keyed by part key. Empty for files with no overrides. */
   partColors?: Record<string, string>;
+  /**
+   * Calibration for the measure tool: millimetres per intrinsic unit, keyed by page number
+   * (0 for files without pages). Absent or empty means uncalibrated — which for a 2D file
+   * means linear measurement is blocked, and for a 3D file means the format's own unit
+   * convention applies instead.
+   */
+  calibrations?: Record<number, number>;
+  /** Which unit measurements are read in on this file. Null until someone chooses. */
+  measureUnit?: LengthUnit | null;
 }
 
 export interface CommentAttachment {

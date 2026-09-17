@@ -7,6 +7,9 @@ import type { ObjectTransform } from '@/lib/objectTransform';
 import type { PlaneId, SectionSlots } from '@/lib/crossSection';
 import type { PartNode } from '@/lib/model/partTree';
 import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
+import type { Measurement } from '@/components/markup/useMeasurements';
+import type { PendingGesture } from '@/lib/measure/gesture';
+import type { LengthUnit } from '@/lib/measure/units';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -44,6 +47,18 @@ interface ViewerContainerProps {
   highlightedPart: string | null;
   onPartsLoaded: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   onPartPick: (key: string) => void;
+  // Measurement props. `measureActive` is 3D-only — PDFKonvaViewer reads the armed tool out of
+  // `activeTool` itself. The rest go to whichever surface is on screen; each collects points in
+  // its OWN space, which is why `mmPerUnit` reaches the PDF as `mmPerIntrinsicUnit`: for a PDF
+  // the file's intrinsic unit is the point, and the viewer converts its page pixels to points.
+  measureActive?: boolean;
+  onMeasurePoint?: (point: number[], minSeparation: number) => void;
+  measurements?: Measurement[];
+  pendingMeasurement?: PendingGesture | null;
+  mmPerUnit?: number | null;
+  measureUnit?: LengthUnit;
+  selectedMeasurementId?: string | null;
+  onSelectMeasurement?: (id: string | null) => void;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -67,9 +82,14 @@ interface ViewerContainerProps {
   onReady?: () => void;
   onObjectCreated?: () => void;
   onSelectionChange?: (selection: MarkupSelection | null) => void;
+  /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
+  onPageChange?: (page: number) => void;
 }
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
+// Exported: the portal page reuses this as the canonical, positive test for "is this file
+// measured on the AnnotationCanvas/Konva surface" — see measuresOnCanvas and measureAvailable
+// in app/portal/[id]/page.tsx. Do not fork a second copy of this list there.
+export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
 const PDF_EXTENSIONS = ['.pdf'];
 const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.3ds', '.ply', '.dae', '.step', '.stp'];
@@ -83,7 +103,9 @@ function getExtension(filename: string): string {
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
-  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick,
+  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
+  measureActive, onMeasurePoint, measurements, pendingMeasurement, mmPerUnit, measureUnit,
+  selectedMeasurementId, onSelectMeasurement,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -158,6 +180,14 @@ export default function ViewerContainer({
         onObjectCreated={onObjectCreated}
         onSelectionChange={onSelectionChange}
         onReady={onReady}
+        onPageChange={onPageChange}
+        measurements={measurements}
+        pendingMeasurement={pendingMeasurement}
+        onMeasurePoint={onMeasurePoint}
+        mmPerIntrinsicUnit={mmPerUnit}
+        measureUnit={measureUnit}
+        selectedMeasurementId={selectedMeasurementId}
+        onSelectMeasurement={onSelectMeasurement}
       />
     );
   }
@@ -190,6 +220,14 @@ export default function ViewerContainer({
           highlightedPart={highlightedPart}
           onPartsLoaded={onPartsLoaded}
           onPartPick={onPartPick}
+          measureActive={measureActive}
+          onMeasurePoint={onMeasurePoint}
+          measurements={measurements}
+          pendingMeasurement={pendingMeasurement}
+          mmPerUnit={mmPerUnit}
+          measureUnit={measureUnit}
+          selectedMeasurementId={selectedMeasurementId}
+          onSelectMeasurement={onSelectMeasurement}
         />
       </ModelErrorBoundary>
     );
