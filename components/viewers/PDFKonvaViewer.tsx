@@ -13,6 +13,7 @@ import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { PDF_RENDER_SCALE, pointsPerStagePixel } from '@/lib/measure/space';
+import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { paletteForComment } from '@/lib/commentColors';
@@ -427,7 +428,13 @@ function PDFKonvaViewer(
         // 3 page pixels, the same floor `endDraw` applies to a drawn object. The signature
         // matches the 3D surface's so the store never learns which surface called it; the page
         // a measurement belongs to comes from the gesture, not from here.
-        onMeasurePoint?.([coords.x, coords.y], 3);
+        //
+        // Shift snaps this point to 15 degrees about the gesture's last placed point — read
+        // fresh off the event, matching moveDraw's contract for the drawing tools below. Must
+        // snap identically to the hover preview in handleStageMouseMove, or the point jumps at
+        // the click.
+        const anchor = pendingMeasurement?.points[pendingMeasurement.points.length - 1];
+        onMeasurePoint?.(snapMeasurePoint(anchor, [coords.x, coords.y], e.evt.shiftKey), 3);
         return;
       }
 
@@ -467,7 +474,7 @@ function PDFKonvaViewer(
         return;
       }
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint, onSelectMeasurement]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint, onSelectMeasurement, pendingMeasurement]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
@@ -489,7 +496,10 @@ function PDFKonvaViewer(
         // same zoom and pan. A second conversion here is how the previewed point and the
         // committed one would end up in different places.
         const p = getPageCoords(stage);
-        onMeasureHover?.(p ? [p.x, p.y] : null);
+        // Same anchor, same Shift-off-the-event read, same helper as the mousedown branch — the
+        // preview must show exactly what a click right now would commit.
+        const anchor = pendingMeasurement.points[pendingMeasurement.points.length - 1];
+        onMeasureHover?.(p ? snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey) : null);
         return;
       }
       if (activeTool === 'eraser') {

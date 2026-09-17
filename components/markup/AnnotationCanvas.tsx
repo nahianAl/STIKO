@@ -11,6 +11,7 @@ import type { PendingGesture } from '@/lib/measure/gesture';
 import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { naturalPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
 import { UNPAGED } from '@/lib/measure/calibration';
+import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from './CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { ERASER_CURSOR } from '@/lib/cursors';
@@ -336,7 +337,12 @@ export default function AnnotationCanvas({
     if (isMeasureTool(activeTool)) {
       // 3 stage pixels, the same floor `endDraw` applies to a drawn object, and the same number
       // the PDF surface passes. Stage space IS screen space here — the stage is untransformed.
-      onMeasurePoint?.([p.x, p.y], 3);
+      //
+      // Shift snaps this point to 15 degrees about the gesture's last placed point — read fresh
+      // off the event, matching moveDraw's contract for the drawing tools below. Must snap
+      // identically to the hover preview in handleMouseMove, or the point jumps at the click.
+      const anchor = pendingMeasurement?.points[pendingMeasurement.points.length - 1];
+      onMeasurePoint?.(snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey), 3);
       return;
     }
 
@@ -399,7 +405,11 @@ export default function AnnotationCanvas({
       // `p` is the SAME stage.getPointerPosition() the measure click in handleMouseDown reads,
       // in the same untransformed stage space. A second conversion here is how the previewed
       // point and the committed one would end up in different places.
-      onMeasureHover?.([p.x, p.y]);
+      //
+      // Same anchor, same Shift-off-the-event read, same helper as the mousedown branch — the
+      // preview must show exactly what a click right now would commit.
+      const anchor = pendingMeasurement.points[pendingMeasurement.points.length - 1];
+      onMeasureHover?.(snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey));
       return;
     }
     if (activeTool === 'eraser') {
