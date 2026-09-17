@@ -165,7 +165,25 @@ Access scoping is covered in the style of `scripts/tests/access.test.mjs`: draft
 
 Production is the only environment, so ordering matters.
 
-1. Apply migration 013 and confirm it in `schema_migrations` — the feed's `GREATEST(…, MAX(edited_at))` references the column and the route 500s without it.
+1. Apply migration 013 and confirm it in `schema_migrations`. It carries **two** statements — `comments.edited_at` and `versions_portal_idx` — and the feed's SQL references the column, so the route 500s on every poll without it. Confirm the index landed too (`\d versions`); it is what keeps `visible_versions` from seq-scanning once per portal per six seconds per open tab.
 2. Deploy the app.
 
-Rollback is a revert of the application code. The column is additive and harmless if left in place.
+Rollback is a revert of the application code. Both statements are additive and harmless if left in place.
+
+### Cost to expect
+
+Per open, **visible** tab: 10 polls/min, each costing the digest's one indexed aggregate plus `getPackageAccess`'s own query (two for a version-scoped guest). Roughly 4,800 Vercel invocations and ~14,000 Neon queries per viewer per eight-hour day. `auth()` is JWT-strategy, so it adds no database hit. A backgrounded tab costs exactly zero — no request and no timer.
+
+Worth knowing rather than fixing: this is the first thing in the app that polls, so a single portal left in the foreground all day keeps the Neon compute endpoint from ever autosuspending.
+
+**One burst scales with package size.** The headline effect is keyed on the `versions` array identity, so each versions event fires one `GET /api/versions/{id}/summary` **per version in the package, per open tab** — about `1 + 2 + 6N` Neon queries per viewer. Ten versions with five viewers is ~300 queries inside a six-second window. It is triggered by a rare event (a publish or a delete), not steady state, but it is the one place where package size multiplies cost. Keying that effect on the version id set rather than the array identity would remove the count-unchanged cases; deferred as it touches brief loading.
+
+## Known gaps, deliberately not fixed here
+
+Recorded so they are decisions rather than surprises:
+
+- **`files` carries optimistic local writes that a background refetch can overwrite.** Part colours already have an unconfirmed-writes layer (`pendingColorWrites`/`inFlightColorWrites`) built for exactly this; `transform` and `measureUnit` do not. The reachable case: a drag is released, its PATCH is in flight, and a background `fetchFiles` issued before the PATCH commits lands after it — the object snaps back to its pre-drag pose while the server holds the new one. The mid-drag case *is* guarded. Extending the part-colour idiom to these two fields is the fix.
+- **Neither `fetchComments` has a stale-response guard**, unlike `fetchFiles`, which gained `currentVersionIdRef`. Fast file switching can land an older response last.
+- **Scroll-to-active no longer re-fires on a file switch-back** — a consequence of the once-per-id rule that stops the panel being yanked on every arriving comment.
+- **A comment deleted by someone else while you are mid-edit** now removes your in-progress text within six seconds, where it previously took a manual refresh.
+- **`Number(value ?? 0)` in the feed route** turns a future column-alias drift into a permanent silent zero rather than a visible `NaN`; that entity would simply stop updating, with no error anywhere.
