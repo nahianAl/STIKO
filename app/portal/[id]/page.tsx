@@ -10,6 +10,7 @@ import CommentsPanel from '@/components/portal/CommentsPanel';
 import CommentComposer from '@/components/portal/CommentComposer';
 import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
+import { usePortalActivity } from '@/components/portal/usePortalActivity';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
@@ -983,20 +984,23 @@ export default function PortalPage() {
     fetchPortal();
   }, [portalId]);
 
-  // Fetch participants
-  useEffect(() => {
-    const fetchParticipants = async () => {
-      try {
-        const res = await fetch(`/api/participants?portalId=${portalId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        setParticipants(data);
-      } catch (err) {
-        console.error('Failed to fetch participants:', err);
-      }
-    };
-    fetchParticipants();
+  // Extracted from an effect into a callback so the change feed can re-run it,
+  // the same shape as loadVersions.
+  const fetchParticipants = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/participants?portalId=${portalId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      setParticipants((prev) => preserveIfUnchanged(prev, data));
+    } catch (err) {
+      console.error('Failed to fetch participants:', err);
+    }
   }, [portalId]);
+
+  useEffect(() => {
+    fetchParticipants();
+  }, [fetchParticipants]);
 
   // What this viewer is allowed to do here. Drives whether the submit
   // affordances render at all — a commenter never sees them.
@@ -1196,7 +1200,12 @@ export default function PortalPage() {
       const res = await fetch(`/api/comments?fileId=${selectedFileId}`);
       if (res.ok) {
         const data = await res.json();
-        setComments(data);
+        if (!Array.isArray(data)) return;
+        // The comment cursor is portal-wide, so a comment on ANOTHER file
+        // re-fetches this one and gets identical data. Without this guard every
+        // pin and the 3D overlay would re-render on a new array identity each
+        // time anyone commented anywhere in the package.
+        setComments((prev) => preserveIfUnchanged(prev, data));
       }
     } catch (err) {
       console.error('Failed to fetch comments for pins:', err);
@@ -1206,6 +1215,20 @@ export default function PortalPage() {
   useEffect(() => {
     fetchComments();
   }, [fetchComments, commentsRefreshKey]);
+
+  // Live updates. Each handler re-runs the loader that already owns that
+  // entity, so nothing about how data is loaded or authorized is duplicated
+  // here — the feed only says WHICH loader to re-run.
+  usePortalActivity(portalId, {
+    // One bump drives both this page's pin fetch and CommentsPanel's own fetch,
+    // which is why there is no second call here.
+    comments: () => setCommentsRefreshKey((k) => k + 1),
+    participants: fetchParticipants,
+    versions: loadVersions,
+    files: () => {
+      if (selectedVersionId) fetchFiles(selectedVersionId, { background: true });
+    },
+  });
 
   const handleMeasureUnitChange = useCallback(
     async (unit: LengthUnit) => {
