@@ -62,7 +62,7 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
 
       // Everything that can throw between here and the network call must sit
       // inside the try. Setup used to happen before it (an `AbortSignal.any`
-      // call, dropped below), and a throw there skipped catch and finally
+      // call, since removed), and a throw there skipped catch and finally
       // both: `inFlight` never reset, and nothing — not even a
       // visibilitychange poll on returning to the tab — could get past that
       // stuck guard. Only a remount recovered.
@@ -104,8 +104,8 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
         previous = next;
         interval = BASE_INTERVAL_MS;
       } catch {
-        // `cancelled` is set (by the effect cleanup) before the unmount
-        // controller is aborted, so an unmount abort always lands here with
+        // `cancelled` is set (by the effect cleanup) before `active` is
+        // aborted, so an unmount abort always lands here with
         // cancelled already true. Anything else reaching this branch —
         // including this request's own timeout firing — is a real failure to
         // back off from; there is no other source left to special-case.
