@@ -18,6 +18,16 @@ export async function GET(request: NextRequest) {
   const access = await getPackageAccess(session.user.id, portalId);
   if (!access) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+  // Two filters decide what a caller may see here: the draft rule immediately
+  // below, and the version-scope rule further down. BOTH are mirrored, in SQL
+  // rather than in JS, by the portal change feed — `feedFilters` in
+  // lib/portalActivity.ts and the visible_versions CTE in
+  // app/api/portals/[id]/activity/route.ts. Nothing links the two but this
+  // note: the feed hand-rolls what canSeeVersion does here, so a filter added
+  // or loosened on this route and not mirrored there leaks through the feed's
+  // counters — which is a disclosure even though the feed serves no content,
+  // because a count is what tells a scoped reviewer how much exists.
+  //
   // A draft is only visible to whoever can publish — reviewers see published
   // versions only, so an in-progress version never appears in their rail.
   const rows = access.canUpload
@@ -45,6 +55,8 @@ export async function GET(request: NextRequest) {
   // A scoped reviewer sees only their versions — no row, no count, nothing
   // about the rest. The version number still reveals that a history exists,
   // which is accepted; the content of it does not.
+  //
+  // Mirrored as `v.id = ANY($scope)` in the activity feed — see the note above.
   const visible = rows.filter((r) =>
     canSeeVersion(access.versionScope, r.id as string)
   );

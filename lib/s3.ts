@@ -63,10 +63,19 @@ export async function getUploadPresignedUrl(
 // link is effectively a shared capability for that long. Accepted deliberately, for
 // the caching win described above; not a free property.
 //
-// Deliberately NOT folded into getDownloadPresignedUrl: that function also serves
-// comment snapshots, comment attachments, conversion retries and the download route.
-// None of them wants a stable URL, and the download route varies
-// ResponseContentDisposition per request, which would defeat stability anyway.
+// Deliberately NOT folded into getDownloadPresignedUrl: that function still serves
+// the download route, which varies ResponseContentDisposition per request and so
+// could not be stable anyway.
+//
+// Comment snapshots and attachments used to be in that list, described as not
+// wanting a stable URL. That was wrong, and for the same reason it was wrong for
+// the model: /api/comments re-signs every snapshot and attachment on every GET,
+// the portal now GETs that route on a six-second poll, and a URL that changes per
+// call is a browser cache key that changes per call — so every open thread
+// re-downloaded every image it showed, on every poll. It also defeated
+// preserveIfUnchanged, which compares payloads by JSON and saw a difference in
+// X-Amz-Date alone. They use getCommentAssetPresignedUrl below, which is this
+// function under a name that says whose keys it is for.
 export async function getViewerPresignedUrl(storageKey: string): Promise<string> {
   const command = new GetObjectCommand({
     Bucket: BUCKET,
@@ -75,10 +84,10 @@ export async function getViewerPresignedUrl(storageKey: string): Promise<string>
     // bucket — none of which carries a Cache-Control of its own. `private` because
     // these URLs are authorized per user and no shared cache should ever hold one.
     // `immutable` is honest: an upload key carries a fresh fileId per upload and is
-    // never overwritten in place. This route (`/api/files/url`) also hands out
-    // signed URLs for annotation-snapshot and comment-attachment keys, which are
-    // equally safe to call immutable — both are UUID-derived and never overwritten
-    // in place either. Anyone adding a caller for a key that CAN be overwritten in
+    // never overwritten in place. The same holds for the annotation-snapshot and
+    // comment-attachment keys that reach here through `/api/files/url` and through
+    // getCommentAssetPresignedUrl — both are UUID-derived and never overwritten in
+    // place either. Anyone adding a caller for a key that CAN be overwritten in
     // place must not reuse `immutable` unmodified.
     ResponseCacheControl: `private, max-age=${URL_WINDOW_MS / 1000}, immutable`,
   });
@@ -86,6 +95,21 @@ export async function getViewerPresignedUrl(storageKey: string): Promise<string>
     expiresIn: (2 * URL_WINDOW_MS) / 1000,
     signingDate: signingWindowStart(Date.now()),
   });
+}
+
+// Presigned URL for an annotation snapshot or a comment attachment.
+//
+// Same signing as the viewer path, and for the same reason: /api/comments re-signs
+// these on every GET, and the portal's change feed GETs that route every six
+// seconds. An unquantized signature would give the <img> a new src per poll and
+// re-fetch the image from R2 each time, and would make preserveIfUnchanged — which
+// compares the whole payload by JSON — report a change on every single poll.
+//
+// Kept as its own name rather than calling getViewerPresignedUrl from the comments
+// route so the call site reads as what it is, and so the two windows can diverge
+// later without one quietly dragging the other with it.
+export function getCommentAssetPresignedUrl(storageKey: string): Promise<string> {
+  return getViewerPresignedUrl(storageKey);
 }
 
 // Generate a presigned URL for a direct client ← R2 GET download

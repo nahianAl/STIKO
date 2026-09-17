@@ -1186,8 +1186,18 @@ export default function PortalPage() {
           if (!background) setFiles([]);
           return;
         }
-        const data: FileRecord[] = await res.json();
+        const payload = await res.json();
         if (currentVersionIdRef.current !== versionId) return;
+        // A 200 whose body is not an array — a proxy's error page, a route that
+        // started returning an object — would reach setFiles and take out render
+        // at the first `.length`. Cleared only in the foreground, on the same
+        // reasoning as the !res.ok branch above: a poll must never empty a
+        // sidebar the user is working in.
+        if (!Array.isArray(payload)) {
+          if (!background) setFiles([]);
+          return;
+        }
+        const data = payload as FileRecord[];
         setFiles((prev) => preserveIfUnchanged(prev, data));
         if (data.length > 0) {
           // A version change should land on the first file, but a delete that
@@ -1482,8 +1492,9 @@ export default function PortalPage() {
   //
   // `!!selectedFile` is part of the measure clause because `is3DFile` is derived from
   // `selectedFile`: if the file list is ever emptied while a measure tool is armed (a failed
-  // PATCH resyncs through fetchFiles, which sets `files` to [] on a non-ok response without
-  // clearing selectedFileId), `selectedFile` goes null and `is3DFile` goes false with it — which
+  // PATCH resyncs through fetchFiles, whose FOREGROUND path — which that resync takes — sets
+  // `files` to [] on a non-ok response without clearing selectedFileId; the background path a
+  // poll uses deliberately keeps them), `selectedFile` goes null and `is3DFile` goes false — which
   // would otherwise read as "not 3D, start a session" and strand `annotating` true with no file
   // to freeze and no file-switch reset to turn it off again.
   useEffect(() => {

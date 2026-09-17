@@ -11,7 +11,13 @@ const MAX_INTERVAL_MS = 60000;
 // returning to the tab — reschedules a poll while it is stuck true.
 const ACTIVITY_REQUEST_TIMEOUT_MS = 15000;
 
-export type ActivityHandlers = Partial<Record<PortalEntity, () => void>>;
+/**
+ * Every handler the portal passes is async — each one re-runs a loader that
+ * awaits a fetch. The return type says so, so the loop below can contain a
+ * rejection as well as a throw; typing these as `() => void` let a rejected
+ * promise escape the try/catch entirely and surface as an unhandled rejection.
+ */
+export type ActivityHandlers = Partial<Record<PortalEntity, () => void | Promise<void>>>;
 
 /**
  * Poll the package's change feed and call back for whatever moved.
@@ -130,7 +136,14 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
       for (const key of Object.keys(changed) as PortalEntity[]) {
         if (!changed[key]) continue;
         try {
-          handlersRef.current[key]?.();
+          // The try and the .catch cover different halves of the same call: the
+          // try catches a throw that happens before the handler's first await,
+          // the .catch catches a rejection after it. Every handler here is
+          // async, so the second half is the one that matters — without it the
+          // failure these handlers can actually have escapes the guard as an
+          // unhandled rejection, which is exactly what the guard claims to
+          // prevent.
+          void Promise.resolve(handlersRef.current[key]?.()).catch(() => {});
         } catch {
           // One handler's bug must not drop the other entities' refresh for
           // this tick — `previous` has already advanced, so a change missed

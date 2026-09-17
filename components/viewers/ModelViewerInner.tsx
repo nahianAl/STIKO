@@ -1470,16 +1470,28 @@ export default function ModelViewerInner({
   // true would hard-reset this group out from under a live drag, snapping the object back to its
   // persisted pose under the user's cursor — and TransformGizmo's onMouseUp would then commit
   // THAT snapped pose as if the user had dragged it there. Skip while a drag owns this group.
-  // Nothing is lost by skipping: TransformGizmo's onMouseUp always runs onCommit, and
-  // handleTransformCommit always gives `transform` a fresh identity of its own afterwards —
-  // on success with the just-dragged values, on failure with the reverted ones (see its comment
-  // in page.tsx) — so this effect fires again with the latest value once dragging is over.
+  // Skipping loses nothing that the drag itself owns: TransformGizmo's onMouseUp always runs
+  // onCommit, and handleTransformCommit always gives `transform` a fresh identity of its own
+  // afterwards — on success with the just-dragged values, on failure with the reverted ones (see
+  // its comment in page.tsx) — so this effect fires again once the drag is over, with whichever
+  // of those two handleTransformCommit produced.
   //
-  // That guarantee is the MODEL gizmo's. The plane gizmo shares this same ref and deliberately
-  // has no onCommit (planes are session-only), so an identity arriving during a plane drag is
-  // skipped with nothing to re-fire it. Harmless, and not worth plumbing for: a plane drag never
-  // mutates THIS group, so the write being skipped would have been a no-op. Do not generalise the
-  // sentence above into "any drag re-applies afterwards" — only one of the two does.
+  // What it does NOT guarantee is that the identity arriving after a drag carries the LATEST
+  // persisted values, because the poll is a second writer to `files`. A background fetchFiles
+  // issued before the PATCH commits can land after handleTransformCommit's setFiles, carrying
+  // the pre-drag transform; preserveIfUnchanged sees a real difference, gizmoDraggingRef is
+  // false by then, and this effect hard-sets the object back to the pose the user just moved it
+  // off — server updated, screen reverted, until the next refresh. Closing that needs an
+  // unconfirmed-local-writes layer like the pendingColorWrites/inFlightColorWrites pair in
+  // page.tsx, which part colours already have and transforms do not; it is filed as follow-up
+  // work rather than bolted on here. Do not read the paragraph above as "the screen always ends
+  // up matching the server" — it does not.
+  //
+  // The re-fire guarantee that does hold is the MODEL gizmo's. The plane gizmo shares this same
+  // ref and deliberately has no onCommit (planes are session-only), so an identity arriving
+  // during a plane drag is skipped with nothing to re-fire it. Harmless, and not worth plumbing
+  // for: a plane drag never mutates THIS group, so the write being skipped would have been a
+  // no-op. Do not generalise it into "any drag re-applies afterwards" — only one of the two does.
   useEffect(() => {
     const group = transformRef.current;
     if (!group || gizmoDraggingRef.current) return;
