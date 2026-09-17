@@ -487,6 +487,7 @@ export default function AnnotationCanvas({
               onSelect={(id) => onSelectMeasurement?.(id)}
               // This surface has no pages; the portal begins every non-PDF gesture on UNPAGED.
               page={UNPAGED}
+              haloColor={CANVAS_MATTE}
               // 1, and explicitly so rather than by omission: this Stage carries no scaleX/scaleY
               // and no offset (see the text editor's `scale={1}` below, which relies on the same
               // fact), so a stage pixel IS a screen pixel and labels are already the size they

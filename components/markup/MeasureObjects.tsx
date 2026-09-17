@@ -15,19 +15,26 @@ import type { PendingGesture } from '@/lib/measure/gesture';
  * to millimetres) — and separating them is what keeps calibration storable in file-intrinsic
  * units while the drawing stays in whatever space the surface happens to use.
  *
- * Deliberately NOT part of the annotation object model: measurements carry no colour and no
- * stroke width, so they must never reach the markup style picker, and the eraser must not sweep
- * them away mid-review. The host renders this in its own layer and decides when that layer is
- * hit-testable at all — see the `listening` prop at the PDF call site.
+ * Deliberately NOT part of the annotation object model: measurements carry colour (stamped from
+ * the toolbar's colour at the moment they were placed) but NOT stroke width — a width is part
+ * of a drawing, whereas a dimension is chrome that has to stay legible at any zoom — so they
+ * must never reach the markup style picker, and the eraser must not sweep them away mid-review.
+ * The host renders this in its own layer and decides when that layer is hit-testable at all —
+ * see the `listening` prop at the PDF call site.
  */
-
-const STROKE = '#1C2030';
-const SELECTED = '#5B60FF';
 
 /** Sampling of the arc drawn between the two legs of an angle. */
 const ARC_SEGMENTS = 32;
 /** Arc radius as a fraction of the shorter leg — a WHOLE-drawing fraction, never a screen one. */
 const ARC_LEG_FRACTION = 0.28;
+
+/**
+ * The in-progress gesture's click dots and dashed leg have not committed yet, so there is no
+ * `Measurement.color` to draw them in. Tinting that preview to the toolbar's live colour is a
+ * later refinement (the hover-preview task); until then this stays the same fixed ink the
+ * whole tool used to draw in.
+ */
+const PENDING_STROKE = '#1C2030';
 
 export interface MeasureObjectsProps {
   measurements: Measurement[];
@@ -40,6 +47,16 @@ export interface MeasureObjectsProps {
   onSelect: (id: string | null) => void;
   /** Only measurements on this page render. Pass 0 (UNPAGED) for surfaces without pages. */
   page: number;
+  /**
+   * The colour drawn UNDER a selected measurement, wider than the stroke, so selection reads
+   * against any measurement colour on any background.
+   *
+   * A fixed highlight colour is no longer possible: the old #5B60FF is now a colour the user
+   * can pick from the swatch row, and a purple dimension would look identical selected and not.
+   * The value is the host stage's own matte — PDF_MATTE or CANVAS_MATTE — because "the
+   * background" genuinely differs per surface.
+   */
+  haloColor: string;
   /**
    * The host stage's zoom, so lines, dots and labels keep a constant SCREEN size.
    *
@@ -85,6 +102,7 @@ export default function MeasureObjects({
   selectedId,
   onSelect,
   page,
+  haloColor,
   screenScale = 1,
 }: MeasureObjectsProps) {
   // Stage units for a size meant to be read in screen pixels.
@@ -104,8 +122,8 @@ export default function MeasureObjects({
       {measurements
         .filter((m) => m.page === page)
         .map((m) => {
+          const color = m.color;
           const selected = m.id === selectedId;
-          const color = selected ? SELECTED : STROKE;
           const flat = m.points.flat();
           const arc = m.kind === 'angular'
             ? arcPoints(m.points[1], m.points[0], m.points[2])
@@ -115,10 +133,20 @@ export default function MeasureObjects({
             : [(m.points[0][0] + m.points[1][0]) / 2, (m.points[0][1] + m.points[1][1]) / 2];
           return (
             <Group key={m.id} id={m.id} onClick={() => onSelect(m.id)} onTap={() => onSelect(m.id)}>
+              {selected && (
+                <Line
+                  points={flat}
+                  stroke={haloColor}
+                  strokeWidth={px(7)}
+                  lineCap="round"
+                  lineJoin="round"
+                  listening={false}
+                />
+              )}
               <Line
                 points={flat}
                 stroke={color}
-                strokeWidth={px(selected ? 3 : 2)}
+                strokeWidth={px(selected ? 3.5 : 2)}
                 lineCap="round"
                 lineJoin="round"
                 // A 2px line at a fitted sheet's zoom is a sub-pixel click target, and on an
@@ -127,7 +155,12 @@ export default function MeasureObjects({
                 hitStrokeWidth={px(14)}
               />
               {arc.length > 0 && (
-                <Line points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
+                <>
+                  {selected && (
+                    <Line points={arc} stroke={haloColor} strokeWidth={px(7)} listening={false} />
+                  )}
+                  <Line points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
+                </>
               )}
               {m.points.map((p, i) => (
                 <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
@@ -139,8 +172,8 @@ export default function MeasureObjects({
                 fontSize={px(14)}
                 fontFamily="system-ui, sans-serif"
                 fontStyle="600"
-                // `color`, not STROKE: the line, arc and dots all take the selection colour,
-                // and a number left in ink beside an indigo line reads as a different object.
+                // The measurement's own colour, matching the line, arc and dots: a number left
+                // in a fixed ink beside a colourful line would read as a different object.
                 fill={color}
                 // A white plate behind the number, so a dimension stays readable over dark
                 // drawing content instead of disappearing into it.
@@ -158,12 +191,12 @@ export default function MeasureObjects({
               gesture has no feedback at all, and a three-click angular gesture none until the
               second. Same reasoning as the 3D MeasureLayer's pending points. */}
           {pending.points.map((p, i) => (
-            <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={STROKE} />
+            <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={PENDING_STROKE} />
           ))}
           {pending.points.length > 1 && (
             <Line
               points={pending.points.flat()}
-              stroke={STROKE}
+              stroke={PENDING_STROKE}
               strokeWidth={px(1.5)}
               dash={[px(6), px(4)]}
             />

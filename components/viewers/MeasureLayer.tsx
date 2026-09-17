@@ -25,9 +25,14 @@ import type { PendingGesture } from '@/lib/measure/gesture';
  * is the only place where those two frames coincide. See the call site's comment.
  */
 
-const LINE_COLOR = '#1C2030';
-const SELECTED_COLOR = '#5B60FF';
 const ARC_SEGMENTS = 32;
+
+/**
+ * The in-progress gesture's dots and dashed leg have not committed yet, so there is no
+ * `Measurement.color` to draw them in — same reasoning as MeasureObjects' PENDING_STROKE on the
+ * Konva surfaces. Tinting this to the toolbar's live colour is a later refinement.
+ */
+const PENDING_COLOR = '#1C2030';
 
 /**
  * Drawn last, over the model. Set on every object individually and NOT on the wrapping group:
@@ -46,7 +51,14 @@ const PENDING_POINT_PX = 9;
 const PENDING_DASH_FRACTION = 0.02;
 const PENDING_GAP_FRACTION = 0.012;
 
-function makeLabelTexture(text: string): THREE.CanvasTexture | null {
+/**
+ * Unselected is a white pill with text in the measurement's own colour, matching the Konva
+ * surfaces. Selected INVERTS that — a pill filled with the colour, text in white — rather than
+ * drawing a halo, because a 3D scene has no matte to halo against. Inverting is what makes
+ * selection read at a glance whatever the measurement's colour happens to be, including the old
+ * fixed highlight blue now that it is just another swatch choice.
+ */
+function makeLabelTexture(text: string, color: string, selected: boolean): THREE.CanvasTexture | null {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
@@ -66,16 +78,16 @@ function makeLabelTexture(text: string): THREE.CanvasTexture | null {
 
   // Inset by half the stroke width: a rect at 0,0 would have the outer half of its border
   // clipped off by the canvas edge on all four sides.
-  ctx.fillStyle = 'rgba(255,255,255,0.94)';
+  ctx.fillStyle = selected ? color : 'rgba(255,255,255,0.94)';
   ctx.beginPath();
   ctx.roundRect(1, 1, width - 2, height - 2, 14);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(28,32,48,0.18)';
+  ctx.strokeStyle = selected ? 'rgba(255,255,255,0.5)' : 'rgba(28,32,48,0.18)';
   ctx.lineWidth = 2;
   ctx.stroke();
 
   ctx.font = font;
-  ctx.fillStyle = LINE_COLOR;
+  ctx.fillStyle = selected ? '#FFFFFF' : color;
   ctx.textBaseline = 'middle';
   ctx.fillText(text, padding, height / 2);
 
@@ -146,7 +158,10 @@ interface PendingParts {
 interface MeasureEntry {
   id: string;
   lines: THREE.Line[];
-  /** The line materials, held apart so the selected colour can be swapped without a rebuild. */
+  /**
+   * The line materials, held apart from `lines` so the frame loop's clipping-plane binding
+   * below can reach every material without walking three's loosely-typed `Object3D.material`.
+   */
   materials: THREE.LineBasicMaterial[];
   /** Null when there is no reading to show yet — an uncalibrated file's linear measurement. */
   texture: THREE.CanvasTexture | null;
@@ -232,6 +247,7 @@ export default function MeasureLayer({
     };
 
     return measurements.filter(is3D).map((m) => {
+      const selected = m.id === selectedId;
       const materials: THREE.LineBasicMaterial[] = [];
       const lines: THREE.Line[] = [];
 
@@ -241,8 +257,14 @@ export default function MeasureLayer({
       // regardless of renderOrder, so that interaction with SceneGround's transparent disc and
       // ContactShadows is not something reading the code alone can predict. Depth-write-off is
       // the standard pairing for a CAD-style overlay that must always read on top.
+      //
+      // A 3D scene has no matte to halo against, so selection here is expressed on the objects
+      // that already exist instead: the line gets the measurement's colour EITHER WAY, and a
+      // selected entry's linewidth doubles — three ignores linewidth on most platforms, so this
+      // is the weaker half of the signal, and the label pill below carries the reliable half.
       const legMaterial = new THREE.LineBasicMaterial({
-        color: LINE_COLOR,
+        color: m.color,
+        linewidth: selected ? 2 : 1,
         depthTest: false,
         depthWrite: false,
       });
@@ -253,7 +275,8 @@ export default function MeasureLayer({
         const arc = arcPoints(m.points[1], m.points[0], m.points[2]);
         if (arc.length > 0) {
           const arcMaterial = new THREE.LineBasicMaterial({
-            color: LINE_COLOR,
+            color: m.color,
+            linewidth: selected ? 2 : 1,
             depthTest: false,
             depthWrite: false,
           });
@@ -267,7 +290,7 @@ export default function MeasureLayer({
         id: m.id,
         lines,
         materials,
-        texture: text === '' ? null : makeLabelTexture(text),
+        texture: text === '' ? null : makeLabelTexture(text, m.color, selected),
         anchor:
           m.kind === 'angular'
             ? new THREE.Vector3(m.points[1][0], m.points[1][1], m.points[1][2])
@@ -275,8 +298,10 @@ export default function MeasureLayer({
       };
     });
     // `measurements` is replaced whole on every add and remove, and the label text is BAKED
-    // into the texture — so the unit and the scale belong here too.
-  }, [measurements, mmPerUnit, unit]);
+    // into the texture — so the unit and the scale belong here too. `selectedId` joins this list
+    // for the same reason: linewidth and the label's plate/text colours are baked in at
+    // construction, not swapped after the fact, so a selection change has to rebuild the entry.
+  }, [measurements, mmPerUnit, unit, selectedId]);
 
   // The half-placed gesture: a dot per click so far, and a dashed line once there are two.
   // Without the dots the first click of a two-click linear gesture has no feedback at all.
@@ -291,7 +316,7 @@ export default function MeasureLayer({
     // with no unit convention and bounding radii span 1 to 10,000 (see lib/sceneScale.ts), so
     // a world-sized dot would be a speck on one model and swallow another.
     const dotMaterial = new THREE.PointsMaterial({
-      color: LINE_COLOR,
+      color: PENDING_COLOR,
       size: PENDING_POINT_PX,
       sizeAttenuation: false,
       depthTest: false,
@@ -309,7 +334,7 @@ export default function MeasureLayer({
 
     if (points.length > 1) {
       const dashMaterial = new THREE.LineDashedMaterial({
-        color: LINE_COLOR,
+        color: PENDING_COLOR,
         // Dash and gap are WORLD lengths, so they have to be scaled to the model or they are
         // either invisible or one solid line.
         dashSize: radius * PENDING_DASH_FRACTION,
@@ -361,13 +386,6 @@ export default function MeasureLayer({
     },
     [pendingParts],
   );
-
-  useEffect(() => {
-    for (const entry of entries) {
-      const color = entry.id === selectedId ? SELECTED_COLOR : LINE_COLOR;
-      for (const material of entry.materials) material.color.set(color);
-    }
-  }, [entries, selectedId]);
 
   // Identity of the plane array and of the material list last bound together. Rebinding only
   // when one of them changes matters twice over: lib/threeMaterials.ts's setClippingPlanes

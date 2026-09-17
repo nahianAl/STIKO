@@ -12,6 +12,13 @@ import { UNPAGED } from '@/lib/measure/calibration';
 
 export interface Measurement extends MeasurementDraft {
   id: string;
+  /**
+   * The markup colour in force when this was placed. Measurements carry colour but NOT stroke
+   * width: a width is part of a drawing, whereas a dimension is chrome that has to stay legible
+   * at any zoom. This is also why measurements never go through `onSelectionChange` — the
+   * stroke picker must not relabel itself for an object that ignores it.
+   */
+  color: string;
 }
 
 /**
@@ -54,7 +61,7 @@ export function useMeasurements() {
    * leaving a half-finished one on screen — the user's next click should begin cleanly.
    */
   const addPoint = useCallback(
-    (point: number[], minSeparation: number): Measurement | null => {
+    (point: number[], minSeparation: number, color: string): Measurement | null => {
       const current = pendingRef.current;
       if (!current) return null;
 
@@ -67,7 +74,11 @@ export function useMeasurements() {
       setGesture(beginGesture(current.kind, current.page));
       if (result.status === 'rejected') return null;
 
-      const committed: Measurement = { ...result.measurement, id: `measure-${idRef.current++}` };
+      const committed: Measurement = {
+        ...result.measurement,
+        id: `measure-${idRef.current++}`,
+        color,
+      };
       setMeasurements((prev) => [...prev, committed]);
       return committed;
     },
@@ -81,11 +92,27 @@ export function useMeasurements() {
     setSelectedId((current) => (current === id ? null : current));
   }, []);
 
+  /** Restyle one measurement. The colour picker's route to a selected dimension. */
+  const recolor = useCallback((id: string, color: string) => {
+    setMeasurements((prev) => prev.map((m) => (m.id === id ? { ...m, color } : m)));
+  }, []);
+
   const clear = useCallback(() => {
     setMeasurements([]);
     setGesture(null);
     setSelectedId(null);
   }, [setGesture]);
 
-  return { measurements, pending, selectedId, setSelectedId, begin, addPoint, cancel, remove, clear };
+  return {
+    measurements,
+    pending,
+    selectedId,
+    setSelectedId,
+    begin,
+    addPoint,
+    cancel,
+    remove,
+    recolor,
+    clear,
+  };
 }

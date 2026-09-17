@@ -263,6 +263,7 @@ export default function PortalPage() {
     cancel: cancelMeasure,
     clear: clearMeasure,
     remove: removeMeasure,
+    recolor: recolorMeasure,
   } = measure;
   // The page PDFKonvaViewer is showing. Mirrored here rather than pulled off its imperative
   // handle because two things RENDER from it — the toolbar's disabled state and the per-page
@@ -752,8 +753,14 @@ export default function PortalPage() {
 
   const handleColorChange = useCallback((c: string) => {
     setDrawingColor(c);
+    // The markup and measurement selections are already mutually exclusive, so exactly one of
+    // these two branches can ever fire for a given click.
+    if (selectedMeasurementId) {
+      recolorMeasure(selectedMeasurementId, c);
+      return;
+    }
     activeSurface()?.applyStyleToSelection({ color: c });
-  }, [activeSurface]);
+  }, [activeSurface, selectedMeasurementId, recolorMeasure]);
 
   const handleStrokeWidthChange = useCallback((w: number) => {
     setDrawingStrokeWidth(w);
@@ -836,9 +843,9 @@ export default function PortalPage() {
    */
   const handleMeasurePoint = useCallback(
     (point: number[], minSeparation: number) => {
-      addMeasurePoint(point, minSeparation);
+      addMeasurePoint(point, minSeparation, drawingColor);
     },
-    [addMeasurePoint]
+    [addMeasurePoint, drawingColor]
   );
 
   // The master toggle is the only control that removes a cut: switching the tool off clears

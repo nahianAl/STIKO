@@ -713,6 +713,7 @@ function PDFKonvaViewer(
                   onSelect={(id) => onSelectMeasurement?.(id)}
                   // Sheet 1's dimensions must not draw over sheet 2.
                   page={currentPage}
+                  haloColor={PDF_MATTE}
                   screenScale={stageScale}
                 />
               </Layer>
