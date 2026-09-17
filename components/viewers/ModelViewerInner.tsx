@@ -543,6 +543,21 @@ const VERTEX_SNAP_PX = 12;
  */
 const MIN_SEPARATION_FRACTION = 1e-4;
 
+/**
+ * Erase-drag sample spacing for the 3D viewport, in screen pixels — deliberately NOT
+ * `ERASE_SAMPLE_SPACING` from `lib/markup/eraseSweep.ts`. That default (6px) is tuned for the
+ * two Konva surfaces, whose hit areas are full annotation shapes. Here the pick radius is
+ * `radius * MEASURE_LINE_PICK_FRACTION` in WORLD units (see `eraseMeasurementsAt`), which at
+ * default framing projects to roughly 2 screen pixels — smaller than a Konva target, and
+ * smaller again once the user zooms in past "default". A 6px sample spacing can step clean over
+ * a target that narrow on a fast diagonal drag, and that is exactly the case an uncalibrated
+ * file (OBJ/STL/PLY/3DS/DAE) hits hardest: no label sprite there (see `eraseMeasurementsAt`), so
+ * a dimension's leg is the only target there is. Set below the ~2px pick radius, not merely
+ * equal to it, so consecutive sample points still overlap the target after a zoom-in shrinks the
+ * projected radius further.
+ */
+const ERASE_SAMPLE_SPACING_3D = 2;
+
 /** The pin and measurement paths both want real surface geometry, not a wireframe polyline. */
 function isSurfaceHit(hit: THREE.Intersection): boolean {
   return hit.object instanceof THREE.Mesh || hit.object instanceof THREE.SkinnedMesh;
@@ -763,16 +778,33 @@ function SceneInteraction({
       // — and on an uncalibrated file (OBJ/STL/PLY/3DS/DAE) the label sprite is not rendered at
       // all, so the leg and its endpoint dots are the ONLY things the eraser could hit. The line
       // half uses the very fraction the click-to-select path raises the SHARED raycaster by,
-      // imported from MeasureLayer rather than re-typed, so the eraser cannot end up reaching
-      // less than a click does; the endpoint dots get the same figure for consistency, since
-      // nothing else raycasts Points in this scene.
+      // imported from MeasureLayer rather than re-typed, so the two cannot independently drift;
+      // the endpoint dots get the same figure for consistency, since nothing else raycasts Points
+      // in this scene.
       //
       // `radius` is 0 until the model has been measured, which would leave both thresholds at 0
       // — and that is exactly the window in which MeasureLayer is not mounted either, so the
       // `group` guard above has already returned.
+      //
+      // Math.max against the CURRENT value below, not a plain assignment — mirroring
+      // MeasureLayer's own `threshold = Math.max(previous, radius * MEASURE_LINE_PICK_FRACTION)`
+      // effect on the shared raycaster. A plain assignment here would NOT actually match that
+      // path: three.js defaults Line.threshold (and Points.threshold) to 1 world unit, so on a
+      // radius-1 model the click-to-select path sits at max(1, 0.005) = 1 while an unguarded
+      // assignment would leave this raycaster at 0.005 — strictly harder to land than a click,
+      // despite the fraction being shared. Applied to Points too, even though MeasureLayer's
+      // effect never touches Points.threshold (R3F's shared raycaster never picks Points): this
+      // raycaster does, via the endpoint dots, so its own default (also 1) is the "previous" that
+      // needs the same floor.
       const threshold = radius * MEASURE_LINE_PICK_FRACTION;
-      eraseRaycaster.current.params.Line.threshold = threshold;
-      eraseRaycaster.current.params.Points.threshold = threshold;
+      eraseRaycaster.current.params.Line.threshold = Math.max(
+        eraseRaycaster.current.params.Line.threshold,
+        threshold
+      );
+      eraseRaycaster.current.params.Points.threshold = Math.max(
+        eraseRaycaster.current.params.Points.threshold,
+        threshold
+      );
 
       for (const hit of eraseRaycaster.current.intersectObject(group, true)) {
         // The ray lands on a leg, an endpoint dot or a label sprite — never on the group that
@@ -960,8 +992,10 @@ function SceneInteraction({
         if (!erasingRef.current) return;
         const to = { x: e.clientX, y: e.clientY };
         // Interpolated, because pointer events arrive about once a frame and a quick flick
-        // would otherwise jump clean over a dimension between two samples.
-        for (const point of sweepPoints(lastErasePointRef.current, to)) {
+        // would otherwise jump clean over a dimension between two samples. Spacing is
+        // ERASE_SAMPLE_SPACING_3D (2px), not eraseSweep's own 6px default — see that constant's
+        // comment for why this viewport needs a tighter one.
+        for (const point of sweepPoints(lastErasePointRef.current, to, ERASE_SAMPLE_SPACING_3D)) {
           eraseMeasurementsAt(point.x, point.y);
         }
         lastErasePointRef.current = to;

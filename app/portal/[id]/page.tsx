@@ -1414,8 +1414,18 @@ export default function PortalPage() {
 
   // Tag placement, drawing and measuring are mutually exclusive — disarm tagging when a draw or
   // measure tool is selected.
+  //
+  // The eraser is named separately for the same reason it's named separately in the gizmo
+  // exclusion effect below: it's not in DRAW_TOOLS or MEASURE_TOOLS, so without this it would
+  // arm alongside tagging rather than disarming it. On a 3D file `commentToolActive` (in
+  // ModelViewerInner) is `is3DFile && tagging`, and `eraserOwnsPointer` requires
+  // `!commentToolActive` — so a Tag-then-Eraser sequence would leave the Eraser button lit and
+  // the crosshair cursor showing while every click still fell through to the comment-pin branch.
+  // That's the enabled-but-cannot-act inversion this task exists to prevent, except here the
+  // press does something destructive (drops a pin) instead of nothing.
   useEffect(() => {
-    if (DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) setTagging(false);
+    if (DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool) || activeTool === 'eraser')
+      setTagging(false);
   }, [activeTool]);
 
   // The transform gizmo and the comment/draw tools are mutually exclusive too: drei's
