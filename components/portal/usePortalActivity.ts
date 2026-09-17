@@ -9,7 +9,7 @@ const MAX_INTERVAL_MS = 60000;
 // closes) never rejects and never resolves on its own. Without a deadline
 // per request, `inFlight` would stay true forever and nothing — not even
 // returning to the tab — reschedules a poll while it is stuck true.
-const REQUEST_TIMEOUT_MS = 15000;
+const ACTIVITY_REQUEST_TIMEOUT_MS = 15000;
 
 export type ActivityHandlers = Partial<Record<PortalEntity, () => void>>;
 
@@ -36,7 +36,10 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
     let inFlight = false;
     let interval = BASE_INTERVAL_MS;
     let previous: PortalDigest | null = null;
-    const controller = new AbortController();
+    // The controller for whichever request is currently in flight (there is
+    // ever only one, per the `inFlight` guard). Cleanup aborts this one;
+    // nulled once the request settles so a stale reference is never aborted.
+    let active: AbortController | null = null;
 
     const schedule = (ms: number) => {
       if (cancelled) return;
@@ -57,17 +60,26 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
 
       inFlight = true;
 
-      // Chained to the unmount controller (via AbortSignal.any) so a
-      // teardown still cancels an in-flight request, but this timer is the
-      // one that actually fires for a request that just never settles.
-      const timeoutController = new AbortController();
-      const requestTimer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
-      const signal = AbortSignal.any([controller.signal, timeoutController.signal]);
-
+      // Everything that can throw between here and the network call must sit
+      // inside the try. Setup used to happen before it (an `AbortSignal.any`
+      // call, dropped below), and a throw there skipped catch and finally
+      // both: `inFlight` never reset, and nothing — not even a
+      // visibilitychange poll on returning to the tab — could get past that
+      // stuck guard. Only a remount recovered.
+      let requestTimer: ReturnType<typeof setTimeout> | null = null;
       let changed: DigestDiff | null = null;
       try {
+        // Fresh per request rather than chained onto one long-lived signal
+        // (`inFlight` guarantees only one is ever outstanding, so there is
+        // never a need to fan a timeout out across more than one). Cleanup
+        // aborts whatever `active` currently holds; this timer aborts this
+        // one specifically if it runs past its own deadline.
+        const controller = new AbortController();
+        active = controller;
+        requestTimer = setTimeout(() => controller.abort(), ACTIVITY_REQUEST_TIMEOUT_MS);
+
         const res = await fetch(`/api/portals/${portalId}/activity`, {
-          signal,
+          signal: controller.signal,
           cache: 'no-store',
         });
         if (cancelled) return;
@@ -103,7 +115,8 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
         // on the first success above.
         interval = Math.min(interval * 2, MAX_INTERVAL_MS);
       } finally {
-        clearTimeout(requestTimer);
+        if (requestTimer) clearTimeout(requestTimer);
+        active = null;
         inFlight = false;
         schedule(interval);
       }
@@ -115,13 +128,23 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
       // for good, not reported on the next poll.
       if (cancelled || !changed) return;
       for (const key of Object.keys(changed) as PortalEntity[]) {
-        if (changed[key]) handlersRef.current[key]?.();
+        if (!changed[key]) continue;
+        try {
+          handlersRef.current[key]?.();
+        } catch {
+          // One handler's bug must not drop the other entities' refresh for
+          // this tick — `previous` has already advanced, so a change missed
+          // here is never re-reported.
+        }
       }
     };
 
     const onVisibilityChange = () => {
       // Poll at once rather than serving up to six seconds of stale data to
-      // someone who has just come back to the tab.
+      // someone who has just come back to the tab. If a request is already
+      // in flight, its own finally clears this 0ms timer and reschedules a
+      // full-interval one instead, so the immediate poll is skipped — that's
+      // fine, since fresh data had just arrived anyway.
       if (document.visibilityState === 'visible') schedule(0);
     };
 
@@ -132,7 +155,7 @@ export function usePortalActivity(portalId: string | null, handlers: ActivityHan
       cancelled = true;
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      controller.abort();
+      active?.abort();
     };
   }, [portalId]);
 }
