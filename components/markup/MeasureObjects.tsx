@@ -60,6 +60,20 @@ export interface MeasureObjectsProps {
   unit: LengthUnit;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /**
+   * Whether a measurement can be clicked/tapped to select it. Defaults to true.
+   *
+   * False whenever another tool owns the press — concretely, the eraser. On a MOUSE this was
+   * never reachable: the host's Layer `listening` prop already covers pointer-tool-or-eraser,
+   * but Konva's `clickStartShape` identity check silently absorbs the eraser's own `onClick`,
+   * because the mousedown that armed the erase already removed the node `onClick` would have
+   * fired on (see the Layer comment at each host's measure-layer call site). Touch has no
+   * equivalent: `onTap` fires from the same press with nothing to compare identity against, so
+   * without this gate an eraser tap SELECTS the very measurement it was meant to erase. Named
+   * and shaped after MeasureLayer's own `selectable` prop on the 3D surface, which exists for
+   * the identical reason.
+   */
+  selectable?: boolean;
   /** Only measurements on this page render. Pass 0 (UNPAGED) for surfaces without pages. */
   page: number;
   /**
@@ -118,6 +132,7 @@ export default function MeasureObjects({
   unit,
   selectedId,
   onSelect,
+  selectable = true,
   page,
   haloColor,
   screenScale = 1,
@@ -187,7 +202,12 @@ export default function MeasureObjects({
             : [(m.points[0][0] + m.points[1][0]) / 2, (m.points[0][1] + m.points[1][1]) / 2];
           const text = labelFor(m);
           return (
-            <Group key={m.id} id={m.id} onClick={() => onSelect(m.id)} onTap={() => onSelect(m.id)}>
+            <Group
+              key={m.id}
+              id={m.id}
+              onClick={selectable ? () => onSelect(m.id) : undefined}
+              onTap={selectable ? () => onSelect(m.id) : undefined}
+            >
               {selected && (
                 // The halo is a RENDERING detail, not a hit target: no id and listening={false},
                 // so it can be neither selected nor erased. The stroke it sits under is the only
@@ -248,7 +268,13 @@ export default function MeasureObjects({
               {m.points.map((p, i) => (
                 // Erasable for the same reason the legs are: the dot is what the cursor finds at
                 // a vertex, where the two legs of an angle meet and neither stroke is on top.
-                <Circle key={i} id={m.id} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
+                //
+                // Radius doubles on selection — mirroring MeasureLayer.tsx's 3D endpoint dots
+                // (POINT_PX * 2) — because the halo above is invisible on the PDF matte (a grey
+                // surround colour that is ~1.05:1 against the white page it never actually sits
+                // on) and the 1.5px strokeWidth delta is too small to read as a signal on its
+                // own. A size change reads at any colour on any background.
+                <Circle key={i} id={m.id} x={p[0]} y={p[1]} radius={px(selected ? 5.5 : 3.5)} fill={color} />
               ))}
               {text !== '' && pill(anchor, text, color)}
             </Group>

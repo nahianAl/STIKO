@@ -799,6 +799,12 @@ function PDFKonvaViewer(
                   unit={measureUnit}
                   selectedId={selectedMeasurementId}
                   onSelect={(id) => onSelectMeasurement?.(id)}
+                  // The pointer tool is the only tool selection belongs to (see the Layer's own
+                  // `listening`, above, and MeasureObjects' `selectable` doc): with the eraser
+                  // armed the Layer still listens so eraseAt's getIntersection can find a
+                  // measurement, but a touch tap must erase, not select. Konva's mouse-only
+                  // clickStartShape trick already covers mouse; this is what covers touch.
+                  selectable={activeTool === 'pointer'}
                   // Sheet 1's dimensions must not draw over sheet 2.
                   page={currentPage}
                   haloColor={PDF_MATTE}

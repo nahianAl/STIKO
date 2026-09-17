@@ -559,6 +559,11 @@ export default function AnnotationCanvas({
               unit={measureUnit}
               selectedId={selectedMeasurementId}
               onSelect={(id) => onSelectMeasurement?.(id)}
+              // Same reasoning as the PDF surface: the Layer above listens for pointer-or-eraser
+              // so the eraser's getIntersection sweep still finds a measurement, but only the
+              // pointer tool should turn a press into a selection — otherwise a touch tap with
+              // the eraser armed selects instead of erasing.
+              selectable={activeTool === 'pointer'}
               // This surface has no pages; the portal begins every non-PDF gesture on UNPAGED.
               page={UNPAGED}
               haloColor={CANVAS_MATTE}

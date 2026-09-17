@@ -759,8 +759,8 @@ function SceneInteraction({
    * on purpose: a measurement's label sprite is drawn unclipped (see MeasureLayer's
    * spriteMaterial comments), so a dimension inside a cut-away region is still visible and
    * still worth erasing. Adding the test would produce a reading you can see and cannot delete.
-   * It also keeps the eraser reaching exactly what a click can select, which applies no clip
-   * test either.
+   * Click-to-select applies no clip test either, for the same reason — though it and this sweep
+   * otherwise diverge on the label sprite itself; see the `THREE.Sprite` skip below.
    */
   const eraseMeasurementsAt = useCallback(
     (clientX: number, clientY: number) => {
@@ -807,9 +807,17 @@ function SceneInteraction({
       );
 
       for (const hit of eraseRaycaster.current.intersectObject(group, true)) {
-        // The ray lands on a leg, an endpoint dot or a label sprite — never on the group that
-        // carries the id — so walk up to the entry. Bounded at the layer's own root: above it
-        // is the rest of the scene, which can never carry one.
+        // The label sprite is excluded on purpose, unlike click-to-select (MeasureLayer.tsx's
+        // own onClick, a separate path this loop never touches): the sprite is sized at a
+        // fraction of camera distance, which makes it the LARGEST target a dimension has, so a
+        // sweep meant to clip only the number would erase the whole reading. The 2D surface
+        // never had this hazard — MeasureObjects.tsx's pill is `listening={false}` — so this
+        // keeps the two surfaces agreeing on what an erase sweep may hit, at the cost of a
+        // sprite-only sweep not erasing at all. Clicking the number to SELECT it is left alone.
+        if (hit.object instanceof THREE.Sprite) continue;
+        // The ray lands on a leg or an endpoint dot — never on the group that carries the id —
+        // so walk up to the entry. Bounded at the layer's own root: above it is the rest of the
+        // scene, which can never carry one.
         let node: THREE.Object3D | null = hit.object;
         while (node && node !== group && node.userData?.measurementId === undefined) {
           node = node.parent;
