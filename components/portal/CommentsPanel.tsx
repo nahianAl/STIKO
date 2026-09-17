@@ -508,6 +508,14 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
       // setComments and break every .filter below it. Harmless when this ran
       // once on mount; with a poll behind it, one transient failure would take
       // the panel out for the rest of the session.
+      //
+      // Clearing is keyed on firstLoad for the same reason fetchFiles keys it on
+      // !background: on an open or a switch, holding the PREVIOUS file's thread
+      // under the new file is worse than showing nothing — the tag numbers match
+      // no pin in the viewport and the reply buttons target another file. On a
+      // refresh of comments already on screen, one failed request must not wipe
+      // them. loadedFileRef stays un-advanced either way, so the next attempt
+      // retries with a spinner.
       if (!res.ok) {
         if (firstLoad) setComments([]);
         return;
@@ -517,10 +525,10 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
         if (firstLoad) setComments([]);
         return;
       }
-      // On opening or switching files, clear old comments before accepting new
-      // ones (preserveIfUnchanged will restore them if nothing changed). For
-      // background refreshes, don't clear — one failed request shouldn't wipe
-      // working content. See preserveIfUnchanged in lib/portalActivity.ts.
+      // Keep the old array when nothing differs: the feed's comment cursor is
+      // portal-wide, so a comment posted on ANOTHER file refreshes this one and
+      // gets byte-identical data. A new array identity would re-render every pin
+      // for nothing. See preserveIfUnchanged in lib/portalActivity.ts.
       setComments((prev) => preserveIfUnchanged(prev, data));
       loadedFileRef.current = fileId;
     } catch (err) {
