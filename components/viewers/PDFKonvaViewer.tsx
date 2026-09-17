@@ -77,6 +77,17 @@ interface PDFKonvaViewerProps {
    */
   onMeasurePoint?: (point: number[], minSeparation: number) => void;
   /**
+   * The cursor, in PAGE pixels, while a gesture is pending — drawn as a provisional last point
+   * so the leg and its running value follow the pointer between clicks.
+   */
+  measureHoverPoint?: number[] | null;
+  /**
+   * Reports the cursor in PAGE pixels on every mouse move while a gesture is pending, and null
+   * when it resolves to nothing. The same `getPageCoords` the measure CLICK uses, so the
+   * previewed point and the committed one can never land in different places.
+   */
+  onMeasureHover?: (point: number[] | null) => void;
+  /**
    * Millimetres per PDF POINT for the visible page, or null while the page is uncalibrated.
    * Points, not rendered pixels — see PDF_RENDER_SCALE.
    */
@@ -88,7 +99,8 @@ interface PDFKonvaViewerProps {
 
 function PDFKonvaViewer(
     { url, activeTool, color, strokeWidth, onCommentPlace, tagging = false, annotating = false, comments, activeCommentId, onCommentPinClick, handleRef, pendingCommentId, onObjectCreated, onSelectionChange, onReady, onPageChange,
-      measurements = [], pendingMeasurement = null, onMeasurePoint, mmPerIntrinsicUnit = null,
+      measurements = [], pendingMeasurement = null, onMeasurePoint, measureHoverPoint = null,
+      onMeasureHover, mmPerIntrinsicUnit = null,
       measureUnit = DEFAULT_LENGTH_UNIT, selectedMeasurementId = null, onSelectMeasurement }: PDFKonvaViewerProps
   ) {
     // PDF state
@@ -459,11 +471,27 @@ function PDFKonvaViewer(
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
-      // A measure gesture is click-by-click: there is nothing to drag, and the fall-through
-      // below would hand `ann.moveDraw` a tool that is not an AnnTool.
-      if (isMeasureTool(activeTool)) return;
       const stage = e.target.getStage();
       if (!stage) return;
+      // A measure gesture is click-by-click: there is nothing to DRAG, and the fall-through
+      // below would hand `ann.moveDraw` a tool that is not an AnnTool. What a move does mean
+      // here is the live preview — the cursor as a provisional last point.
+      if (isMeasureTool(activeTool)) {
+        // Only once a gesture has a click in it. `beginGesture` starts one with an EMPTY points
+        // array as soon as the tool is armed, so `pendingMeasurement` is non-null for the whole
+        // armed session: gating on null alone would push a state update — and so re-render this
+        // stage — on every idle mouse move, to preview a line with no first point to draw from.
+        if (!pendingMeasurement || pendingMeasurement.points.length === 0) {
+          onMeasureHover?.(null);
+          return;
+        }
+        // The SAME getPageCoords the measure click in handleStageMouseDown uses, undoing the
+        // same zoom and pan. A second conversion here is how the previewed point and the
+        // committed one would end up in different places.
+        const p = getPageCoords(stage);
+        onMeasureHover?.(p ? [p.x, p.y] : null);
+        return;
+      }
       if (activeTool === 'eraser') {
         // A mouseup this stage never received — focus lost mid-press (Cmd-Tab, Mission
         // Control, an OS dialog) and the button released elsewhere — leaves erasingRef armed
@@ -480,7 +508,7 @@ function PDFKonvaViewer(
       }
       const coords = getPageCoords(stage);
       if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
-    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing]);
+    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover]);
 
     const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
 
@@ -705,6 +733,11 @@ function PDFKonvaViewer(
                 <MeasureObjects
                   measurements={measurements}
                   pending={pendingMeasurement}
+                  hoverPoint={measureHoverPoint}
+                  // The markup colour this viewer already draws in, which is the same value the
+                  // portal stamps on the commit — so the preview does not change ink the instant
+                  // it becomes a measurement.
+                  previewColor={color}
                   mmPerIntrinsicUnit={mmPerIntrinsicUnit}
                   // Page pixels to PDF points. The one conversion this whole feature turns on.
                   intrinsicPerStagePixel={pointsPerStagePixel()}

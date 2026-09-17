@@ -256,6 +256,8 @@ export default function PortalPage() {
   const {
     measurements,
     pending: pendingMeasurement,
+    hoverPoint: measureHoverPoint,
+    setHoverPoint: setMeasureHoverPoint,
     selectedId: selectedMeasurementId,
     setSelectedId: setSelectedMeasurementId,
     addPoint: addMeasurePoint,
@@ -2087,6 +2089,11 @@ export default function PortalPage() {
             onMeasurePoint={handleMeasurePoint}
             measurements={measurements}
             pendingMeasurement={pendingMeasurement}
+            // The live preview between clicks. Ungated, exactly like `pendingMeasurement` beside
+            // it: whichever of the two surfaces ViewerContainer mounts is the one this file is
+            // measured on, and each reports hover in its own space.
+            measureHoverPoint={measureHoverPoint}
+            onMeasureHover={setMeasureHoverPoint}
             mmPerUnit={measureScale.mmPerUnit}
             measureUnit={measureUnit}
             selectedMeasurementId={selectedMeasurementId}
@@ -2332,6 +2339,8 @@ export default function PortalPage() {
                 measurements={measuresOnCanvas ? measurements : []}
                 pendingMeasurement={measuresOnCanvas ? pendingMeasurement : null}
                 onMeasurePoint={measuresOnCanvas ? handleMeasurePoint : undefined}
+                measureHoverPoint={measuresOnCanvas ? measureHoverPoint : null}
+                onMeasureHover={measuresOnCanvas ? setMeasureHoverPoint : undefined}
                 mmPerIntrinsicUnit={measuresOnCanvas ? measureScale.mmPerUnit : null}
                 // Millimetres per NATURAL pixel is what measureScale.mmPerUnit holds for an
                 // image file, so this is the rect that turns a stage pixel into one of those.

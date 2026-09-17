@@ -55,6 +55,13 @@ interface ViewerContainerProps {
   onMeasurePoint?: (point: number[], minSeparation: number) => void;
   measurements?: Measurement[];
   pendingMeasurement?: PendingGesture | null;
+  /**
+   * The live preview's provisional last point, in whichever surface's own space the file is
+   * measured in — page pixels for the PDF, the model's frame for 3D. Forwarded to both for the
+   * same reason the rest of this group is: one store, two surfaces, and only one of them mounted.
+   */
+  measureHoverPoint?: number[] | null;
+  onMeasureHover?: (point: number[] | null) => void;
   mmPerUnit?: number | null;
   measureUnit?: LengthUnit;
   selectedMeasurementId?: string | null;
@@ -104,7 +111,8 @@ export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
   partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
-  measureActive, onMeasurePoint, measurements, pendingMeasurement, mmPerUnit, measureUnit,
+  measureActive, onMeasurePoint, measurements, pendingMeasurement, measureHoverPoint,
+  onMeasureHover, mmPerUnit, measureUnit,
   selectedMeasurementId, onSelectMeasurement,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
@@ -184,6 +192,8 @@ export default function ViewerContainer({
         measurements={measurements}
         pendingMeasurement={pendingMeasurement}
         onMeasurePoint={onMeasurePoint}
+        measureHoverPoint={measureHoverPoint}
+        onMeasureHover={onMeasureHover}
         mmPerIntrinsicUnit={mmPerUnit}
         measureUnit={measureUnit}
         selectedMeasurementId={selectedMeasurementId}
@@ -224,6 +234,11 @@ export default function ViewerContainer({
           onMeasurePoint={onMeasurePoint}
           measurements={measurements}
           pendingMeasurement={pendingMeasurement}
+          measureHoverPoint={measureHoverPoint}
+          onMeasureHover={onMeasureHover}
+          // The same markup colour PDFKonvaViewer is handed above, and the same value the
+          // portal stamps on a committed measurement.
+          measurePreviewColor={color ?? '#ef4444'}
           mmPerUnit={mmPerUnit}
           measureUnit={measureUnit}
           selectedMeasurementId={selectedMeasurementId}

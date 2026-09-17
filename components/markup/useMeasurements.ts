@@ -45,9 +45,33 @@ export function useMeasurements() {
   // committed measurement a side effect of rendering.
   const pendingRef = useRef<PendingGesture | null>(null);
 
+  /**
+   * Where the cursor is, in the surface's OWN space, while a gesture is pending.
+   *
+   * Rendered as a provisional last point so the user sees the line and its running value before
+   * committing, instead of clicking once and seeing nothing until the second click. Surface-
+   * agnostic like every other point here: stage pixels from the 2D surfaces, model-frame
+   * coordinates from the 3D one.
+   */
+  const [hoverPoint, setHoverPointState] = useState<number[] | null>(null);
+
+  // Copied on the way in, exactly like `addPoint` copies its point: the 3D surface hands over an
+  // array it derived from a THREE.Vector3 it may well reuse, and holding that array directly
+  // would let a later mutation rewrite state React believes it already rendered.
+  const setHoverPoint = useCallback((point: number[] | null) => {
+    setHoverPointState(point ? [...point] : null);
+  }, []);
+
   const setGesture = useCallback((next: PendingGesture | null) => {
     pendingRef.current = next;
     setPending(next);
+    // A new or cleared gesture invalidates the hover line BY DEFINITION, and this is the one
+    // funnel every gesture change goes through — `begin`, `addPoint`, `cancel` and `clear` all
+    // land here. Clearing here rather than at each of those call sites is what makes "the hover
+    // point never outlives its gesture" a property of the store instead of four things to
+    // remember: tool disarm and a PDF page turn reach it via `cancel`, a file switch and a
+    // stage-resize invalidation via `clear`, and a commit via `addPoint`.
+    setHoverPointState(null);
   }, []);
 
   const begin = useCallback(
@@ -106,6 +130,8 @@ export function useMeasurements() {
   return {
     measurements,
     pending,
+    hoverPoint,
+    setHoverPoint,
     selectedId,
     setSelectedId,
     begin,

@@ -64,6 +64,17 @@ interface AnnotationCanvasProps {
    * other two surfaces', so the store never learns which one called it.
    */
   onMeasurePoint?: (point: number[], minSeparation: number) => void;
+  /**
+   * The cursor, in STAGE pixels, while a gesture is pending — drawn as a provisional last point
+   * so the leg and its running value follow the pointer between clicks.
+   */
+  measureHoverPoint?: number[] | null;
+  /**
+   * Reports the cursor in STAGE pixels on every mouse move while a gesture is pending, and null
+   * when there is none. The same `stage.getPointerPosition()` the measure CLICK uses, so the
+   * previewed point and the committed one can never land in different places.
+   */
+  onMeasureHover?: (point: number[] | null) => void;
   /** Millimetres per NATURAL image pixel, or null while the file is uncalibrated. */
   mmPerIntrinsicUnit?: number | null;
   /**
@@ -90,7 +101,8 @@ interface AnnotationCanvasProps {
 
 export default function AnnotationCanvas({
   backgroundDataUrl, activeTool, color, strokeWidth, handleRef, onObjectCreated, onSelectionChange,
-  measurements = [], pendingMeasurement = null, onMeasurePoint, mmPerIntrinsicUnit = null,
+  measurements = [], pendingMeasurement = null, onMeasurePoint, measureHoverPoint = null,
+  onMeasureHover, mmPerIntrinsicUnit = null,
   imageSpace = null, onIntrinsicScaleChange, measureUnit = DEFAULT_LENGTH_UNIT,
   selectedMeasurementId = null, onSelectMeasurement,
 }: AnnotationCanvasProps) {
@@ -372,9 +384,24 @@ export default function AnnotationCanvas({
     const stage = e.target.getStage();
     const p = stage?.getPointerPosition();
     if (!stage || !p) return;
-    // A measure gesture is click-by-click: there is nothing to drag, and the fall-through below
-    // would hand `ann.moveDraw` a tool that is not an AnnTool.
-    if (isMeasureTool(activeTool)) return;
+    // A measure gesture is click-by-click: there is nothing to DRAG, and the fall-through below
+    // would hand `ann.moveDraw` a tool that is not an AnnTool. What a move does mean here is the
+    // live preview — the cursor as a provisional last point.
+    if (isMeasureTool(activeTool)) {
+      // Only once a gesture has a click in it. `beginGesture` starts one with an EMPTY points
+      // array as soon as the tool is armed, so `pendingMeasurement` is non-null for the whole
+      // armed session: gating on null alone would push a state update — and so re-render this
+      // stage — on every idle mouse move, to preview a line with no first point to draw from.
+      if (!pendingMeasurement || pendingMeasurement.points.length === 0) {
+        onMeasureHover?.(null);
+        return;
+      }
+      // `p` is the SAME stage.getPointerPosition() the measure click in handleMouseDown reads,
+      // in the same untransformed stage space. A second conversion here is how the previewed
+      // point and the committed one would end up in different places.
+      onMeasureHover?.([p.x, p.y]);
+      return;
+    }
     if (activeTool === 'eraser') {
       // A mouseup this stage never received — focus lost mid-press (Cmd-Tab, Mission
       // Control, an OS dialog) and the button released elsewhere — leaves erasingRef armed
@@ -476,6 +503,11 @@ export default function AnnotationCanvas({
             <MeasureObjects
               measurements={measurements}
               pending={pendingMeasurement}
+              hoverPoint={measureHoverPoint}
+              // The markup colour this canvas already draws in, which is the same value the
+              // portal stamps on the commit — so the preview does not change ink the instant it
+              // becomes a measurement.
+              previewColor={color}
               // No resolvable stage-to-natural chain, no length reading — even on a calibrated
               // file. The scale would have to be invented, and an invented one is exactly the
               // plausible-but-wrong number this tool cannot afford. Angles are scale-free and

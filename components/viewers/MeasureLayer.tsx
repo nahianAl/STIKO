@@ -29,13 +29,6 @@ import type { PendingGesture } from '@/lib/measure/gesture';
 const ARC_SEGMENTS = 32;
 
 /**
- * The in-progress gesture's dots and dashed leg have not committed yet, so there is no
- * `Measurement.color` to draw them in — same reasoning as MeasureObjects' PENDING_STROKE on the
- * Konva surfaces. Tinting this to the toolbar's live colour is a later refinement.
- */
-const PENDING_COLOR = '#1C2030';
-
-/**
  * Drawn last, over the model. Set on every object individually and NOT on the wrapping group:
  * three's renderOrder is per object and a group's value is not inherited by its children, so a
  * single value on the group would leave every line and label sorting at the default 0.
@@ -68,10 +61,9 @@ const PENDING_GAP_FRACTION = 0.012;
  * below double in size when selected, which is the reliable signal, so the pill stays one fixed,
  * always-readable look regardless of `selected`.
  */
-function makeLabelTexture(text: string, color: string): THREE.CanvasTexture | null {
-  const canvas = document.createElement('canvas');
+function drawLabel(canvas: HTMLCanvasElement, text: string, color: string): boolean {
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+  if (!ctx) return false;
 
   const padding = 12;
   const fontSize = 40;
@@ -103,7 +95,11 @@ function makeLabelTexture(text: string, color: string): THREE.CanvasTexture | nu
   ctx.textBaseline = 'middle';
   ctx.fillText(text, padding, height / 2);
 
-  const texture = new THREE.CanvasTexture(canvas);
+  return true;
+}
+
+/** Shared by the committed labels and by the ONE reused preview label — see `previewLabel`. */
+function tuneLabelTexture(texture: THREE.CanvasTexture): THREE.CanvasTexture {
   // The canvas holds sRGB colours. Without this three takes them for linear data and the pill
   // renders noticeably washed out against everything else in the scene.
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -111,6 +107,49 @@ function makeLabelTexture(text: string, color: string): THREE.CanvasTexture | nu
   texture.generateMipmaps = false;
   texture.minFilter = THREE.LinearFilter;
   return texture;
+}
+
+/**
+ * A texture of its own per call, for a label whose text never changes again. The live preview
+ * does NOT use this — see `previewLabel` for why a per-change allocation is wrong there.
+ */
+function makeLabelTexture(text: string, color: string): THREE.CanvasTexture | null {
+  const canvas = document.createElement('canvas');
+  if (!drawLabel(canvas, text, color)) return null;
+  return tuneLabelTexture(new THREE.CanvasTexture(canvas));
+}
+
+/**
+ * A linear reading in the display unit.
+ *
+ * One function for the committed entries and for the live preview, so the running value the user
+ * watches between clicks is literally the value the commit keeps rather than a second copy of
+ * the same arithmetic that could drift from it.
+ */
+function lengthLabel(a: number[], b: number[], mmPerUnit: number | null, unit: LengthUnit): string {
+  // No scale, no number. A blank pill would claim a reading exists; showing none says the file
+  // has not been calibrated yet, which is what the toolbar's units chip also reports.
+  if (mmPerUnit === null) return '';
+  return formatLength(distance(a, b) * mmPerUnit, unit);
+}
+
+/**
+ * Sizes a label sprite against the camera so text neither shrinks to nothing on a large model
+ * nor swallows a small one. The distance is taken from the sprite's WORLD position rather than
+ * from its stored anchor: the anchor is in the model's frame, which is displaced from the world
+ * by whatever placement the object carries.
+ */
+function scaleLabelSprite(
+  sprite: THREE.Sprite,
+  width: number,
+  height: number,
+  camera: THREE.Camera,
+  scratch: THREE.Vector3,
+): void {
+  if (!(width > 0) || !(height > 0)) return;
+  sprite.getWorldPosition(scratch);
+  const worldHeight = camera.position.distanceTo(scratch) * LABEL_WORLD_HEIGHT_FRACTION;
+  sprite.scale.set((worldHeight * width) / height, worldHeight, 1);
 }
 
 function toVectors(points: number[][]): THREE.Vector3[] {
@@ -158,13 +197,15 @@ function is3D(m: { points: number[][] }): boolean {
 }
 
 /**
- * The in-progress gesture's objects, with their geometries and materials listed separately so
- * disposal does not have to reach back through three's loose `Object3D.material` typing.
+ * The in-progress gesture's objects, with their geometries listed separately so disposal does
+ * not have to reach back through three's loose `Object3D.material` typing.
+ *
+ * No materials here, unlike the committed `MeasureEntry` below: the preview's geometry is
+ * rebuilt on every pointermove while its materials are not — see `pendingMaterials`.
  */
 interface PendingParts {
   objects: THREE.Object3D[];
   geometries: THREE.BufferGeometry[];
-  materials: THREE.Material[];
 }
 
 interface MeasureEntry {
@@ -197,6 +238,25 @@ interface MeasureEntry {
 interface MeasureLayerProps {
   measurements: Measurement[];
   pending: PendingGesture | null;
+  /**
+   * The cursor, in the MODEL's own frame, while a gesture is pending — drawn as a provisional
+   * last point so the dashed leg and its running value follow the pointer between clicks.
+   *
+   * Already snapped and already converted by the time it arrives: SceneInteraction resolves it
+   * with the very same `pickModel` + `nearestVertexSnap` + `worldToModel` chain its pointerup
+   * commits with, which is what stops the point from jumping at the instant it is clicked.
+   * Null before the first pointermove of a gesture, in which case the placed clicks render alone.
+   */
+  hoverPoint: number[] | null;
+  /**
+   * The toolbar's LIVE colour, for the in-progress gesture only.
+   *
+   * A separate prop rather than `Measurement.color` because the gesture has not committed yet,
+   * so there is no measurement to read a colour off. It must be the colour the commit will stamp
+   * on (the portal passes the same `drawingColor` to both): a preview in a different ink from
+   * the dimension it is about to become flickers at the moment of the click.
+   */
+  previewColor: string;
   /** Null when the file has no usable scale; the reading is then left blank until it calibrates. */
   mmPerUnit: number | null;
   unit: LengthUnit;
@@ -232,6 +292,8 @@ interface MeasureLayerProps {
 export default function MeasureLayer({
   measurements,
   pending,
+  hoverPoint,
+  previewColor,
   mmPerUnit,
   unit,
   selectedId,
@@ -241,6 +303,7 @@ export default function MeasureLayer({
   radius,
 }: MeasureLayerProps) {
   const sprites = useRef(new Map<string, THREE.Sprite>());
+  const previewSprite = useRef<THREE.Sprite | null>(null);
   const worldAnchor = useRef(new THREE.Vector3());
 
   // three's line-raycast threshold defaults to 1 WORLD unit (Raycaster.js), which is only ever
@@ -264,13 +327,10 @@ export default function MeasureLayer({
   }, [raycaster, radius]);
 
   const entries = useMemo<MeasureEntry[]>(() => {
-    const label = (m: Measurement): string => {
-      if (m.kind === 'angular') return formatAngle(angleAt(m.points[1], m.points[0], m.points[2]));
-      // No scale, no number. A blank pill would claim a reading exists; showing none says the
-      // file has not been calibrated yet, which is what the toolbar's units chip also reports.
-      if (mmPerUnit === null) return '';
-      return formatLength(distance(m.points[0], m.points[1]) * mmPerUnit, unit);
-    };
+    const label = (m: Measurement): string =>
+      m.kind === 'angular'
+        ? formatAngle(angleAt(m.points[1], m.points[0], m.points[2]))
+        : lengthLabel(m.points[0], m.points[1], mmPerUnit, unit);
 
     return measurements.filter(is3D).map((m) => {
       const selected = m.id === selectedId;
@@ -353,62 +413,147 @@ export default function MeasureLayer({
     // selection change still has to rebuild the entry.
   }, [measurements, mmPerUnit, unit, selectedId]);
 
-  // The half-placed gesture: a dot per click so far, and a dashed line once there are two.
-  // Without the dots the first click of a two-click linear gesture has no feedback at all.
-  const pendingParts = useMemo<PendingParts>(() => {
-    if (!pending || pending.points.length === 0 || !is3D(pending)) {
-      return { objects: [], geometries: [], materials: [] };
-    }
-    const points = toVectors(pending.points);
-    const parts: PendingParts = { objects: [], geometries: [], materials: [] };
+  /**
+   * The half-placed gesture's points, with the cursor appended as a PROVISIONAL last one.
+   *
+   * Null when there is nothing to preview. `hoverPoint` is null between the click that restarts
+   * a gesture and the next pointermove, so the placed clicks still have to render on their own.
+   * Its length is checked the same way `is3D` checks a measurement's: the store is shared with
+   * the two Konva surfaces, which feed it two-component stage points, and one of those reaching
+   * `toVectors` here would silently become a point at z = undefined.
+   */
+  const preview = useMemo<number[][] | null>(() => {
+    if (!pending || pending.points.length === 0 || !is3D(pending)) return null;
+    if (!hoverPoint || hoverPoint.length < 3) return pending.points;
+    return [...pending.points, hoverPoint];
+  }, [pending, hoverPoint]);
 
+  /**
+   * The in-progress gesture's MATERIALS, held apart from its geometry below.
+   *
+   * Split deliberately, and this is the split that makes a live preview affordable. The preview's
+   * POINTS change on every pointermove — dozens of times a second — while its materials depend
+   * only on the toolbar colour and the model's scale. Built together, every mouse move would
+   * allocate and immediately free two GPU-backed materials for no visual change; built apart, a
+   * move rebuilds nothing but two small BufferGeometries. It also keeps the `materials` list
+   * below stable across a move, so the frame loop's clipping-plane rebind does not re-fire
+   * either.
+   *
+   * Allocated even when no gesture is pending. Two unused materials cost nothing — three compiles
+   * a shader program only when a material is actually rendered — and the alternative is a
+   * nullable memo whose disposal effect has more ways to be wrong than this has to be wasteful.
+   */
+  const pendingMaterials = useMemo(() => {
     // sizeAttenuation false keeps the dot a fixed SCREEN size: geometry in this repo arrives
     // with no unit convention and bounding radii span 1 to 10,000 (see lib/sceneScale.ts), so
     // a world-sized dot would be a speck on one model and swallow another.
-    const dotMaterial = new THREE.PointsMaterial({
-      color: PENDING_COLOR,
+    const dot = new THREE.PointsMaterial({
+      color: previewColor,
       size: POINT_PX,
       sizeAttenuation: false,
       depthTest: false,
       // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
       depthWrite: false,
     });
+    const dash = new THREE.LineDashedMaterial({
+      color: previewColor,
+      // Dash and gap are WORLD lengths, so they have to be scaled to the model or they are
+      // either invisible or one solid line.
+      dashSize: radius * PENDING_DASH_FRACTION,
+      gapSize: radius * PENDING_GAP_FRACTION,
+      depthTest: false,
+      // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
+      depthWrite: false,
+    });
+    return { dot, dash, all: [dot, dash] as THREE.Material[] };
+  }, [previewColor, radius]);
+
+  // The half-placed gesture: a dot per preview point, and a dashed line once there are two.
+  // Without the dots the first click of a two-click linear gesture has no feedback at all, and
+  // the dot on the HOVER point is what makes a vertex snap visible before it is committed —
+  // the snapped position is deliberately not under the cursor.
+  const pendingParts = useMemo<PendingParts>(() => {
+    if (!preview) return { objects: [], geometries: [] };
+    const points = toVectors(preview);
+    const parts: PendingParts = { objects: [], geometries: [] };
+
     const dots = new THREE.Points(
       new THREE.BufferGeometry().setFromPoints(points),
-      dotMaterial,
+      pendingMaterials.dot,
     );
     dots.renderOrder = RENDER_ORDER;
     parts.objects.push(dots);
     parts.geometries.push(dots.geometry);
-    parts.materials.push(dotMaterial);
 
     if (points.length > 1) {
-      const dashMaterial = new THREE.LineDashedMaterial({
-        color: PENDING_COLOR,
-        // Dash and gap are WORLD lengths, so they have to be scaled to the model or they are
-        // either invisible or one solid line.
-        dashSize: radius * PENDING_DASH_FRACTION,
-        gapSize: radius * PENDING_GAP_FRACTION,
-        depthTest: false,
-        // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
-        depthWrite: false,
-      });
-      const line = makeLine(points, dashMaterial);
+      const line = makeLine(points, pendingMaterials.dash);
       // LineDashedMaterial reads a per-vertex `lineDistance` attribute that only this call
       // writes. Without it the line renders perfectly solid, with no error anywhere.
       line.computeLineDistances();
       parts.objects.push(line);
       parts.geometries.push(line.geometry);
-      parts.materials.push(dashMaterial);
     }
 
     return parts;
-  }, [pending, radius]);
+  }, [preview, pendingMaterials]);
+
+  /**
+   * The running reading, and where it hangs.
+   *
+   * Two preview points make a linear reading; three make an angle at the middle one, which is
+   * where `addPoint` puts the vertex. The anchor follows the SAME rule the committed entries use
+   * — vertex for an angle, midpoint for a length — so the pill does not jump across the model at
+   * the instant the gesture commits.
+   */
+  const previewText = useMemo(() => {
+    if (!preview || preview.length < 2) return '';
+    if (preview.length === 3) return formatAngle(angleAt(preview[1], preview[0], preview[2]));
+    return lengthLabel(preview[0], preview[1], mmPerUnit, unit);
+  }, [preview, mmPerUnit, unit]);
+
+  const previewAnchor = useMemo(() => {
+    if (!preview || preview.length < 2) return null;
+    if (preview.length === 3) {
+      return new THREE.Vector3(preview[1][0], preview[1][1], preview[1][2]);
+    }
+    return midpoint(preview[0], preview[preview.length - 1]);
+  }, [preview]);
+
+  /**
+   * ONE canvas and ONE texture for the whole life of this layer, repainted in place.
+   *
+   * A committed entry's text never changes, so `entries` can afford a CanvasTexture each. The
+   * preview's text changes on essentially every pointermove, and a texture per change is a GPU
+   * upload plus an allocation dozens of times a second — a fast leak, not a slow one, and one
+   * that a matching dispose only converts into constant churn. So the pair is allocated once,
+   * `drawLabel` repaints the canvas whenever the text or the colour changes, and `needsUpdate`
+   * re-uploads it. The identity never changes, which also keeps the sprite's `map` prop stable.
+   */
+  const previewLabel = useMemo(
+    () => {
+      const canvas = document.createElement('canvas');
+      return { canvas, texture: tuneLabelTexture(new THREE.CanvasTexture(canvas)) };
+    },
+    [],
+  );
+
+  // The one free matching the one allocation above. Keyed on the memo that made it, like every
+  // other disposal effect here.
+  useEffect(() => () => previewLabel.texture.dispose(), [previewLabel]);
+
+  // Repaint, never reallocate — see previewLabel. Returns the SAME texture every time it has
+  // something to show, so the sprite below never swaps its map.
+  const previewTexture = useMemo(() => {
+    if (previewText === '') return null;
+    if (!drawLabel(previewLabel.canvas, previewText, previewColor)) return null;
+    previewLabel.texture.needsUpdate = true;
+    return previewLabel.texture;
+  }, [previewText, previewColor, previewLabel]);
 
   // Every material this layer owns, for the clipping-plane binding in the frame loop below.
   const materials = useMemo(
-    () => [...entries.flatMap((entry) => entry.materials), ...pendingParts.materials],
-    [entries, pendingParts],
+    () => [...entries.flatMap((entry) => entry.materials), ...pendingMaterials.all],
+    [entries, pendingMaterials],
   );
 
   // three holds no reference to a disposed geometry/material/texture, and R3F only disposes
@@ -433,9 +578,19 @@ export default function MeasureLayer({
   useEffect(
     () => () => {
       for (const geometry of pendingParts.geometries) geometry.dispose();
-      for (const material of pendingParts.materials) material.dispose();
     },
     [pendingParts],
+  );
+
+  // The pending MATERIALS outlive the geometry that uses them — that is the whole point of the
+  // split — so they need their own free, keyed on their own memo. Merged into the effect above
+  // they would be disposed on every pointermove while the next frame was still drawing with
+  // them; split off, they are freed only when the colour, the model scale or the layer changes.
+  useEffect(
+    () => () => {
+      for (const material of pendingMaterials.all) material.dispose();
+    },
+    [pendingMaterials],
   );
 
   // Identity of the plane array and of the material list last bound together. Rebinding only
@@ -455,16 +610,25 @@ export default function MeasureLayer({
     }
 
     // Sprites are scaled against camera distance every frame so a label neither shrinks to
-    // nothing on a large model nor swallows a small one. The distance is taken from the
-    // sprite's WORLD position rather than its stored anchor: the anchor is in the model's
-    // frame, which is displaced from the world by whatever placement the object carries.
+    // nothing on a large model nor swallows a small one — see scaleLabelSprite.
     for (const entry of entries) {
       const sprite = sprites.current.get(entry.id);
       const image = entry.texture?.image as HTMLCanvasElement | undefined;
       if (!sprite || !image) continue;
-      sprite.getWorldPosition(worldAnchor.current);
-      const height = camera.position.distanceTo(worldAnchor.current) * LABEL_WORLD_HEIGHT_FRACTION;
-      sprite.scale.set((height * image.width) / image.height, height, 1);
+      scaleLabelSprite(sprite, image.width, image.height, camera, worldAnchor.current);
+    }
+
+    // The live preview's label gets the same treatment, read off the reused canvas rather than
+    // off a texture of its own. Skipped entirely when there is no reading to show.
+    const sprite = previewSprite.current;
+    if (sprite && previewTexture) {
+      scaleLabelSprite(
+        sprite,
+        previewLabel.canvas.width,
+        previewLabel.canvas.height,
+        camera,
+        worldAnchor.current,
+      );
     }
   });
 
@@ -511,6 +675,20 @@ export default function MeasureLayer({
       {pendingParts.objects.map((object, i) => (
         <primitive key={i} object={object} />
       ))}
+      {previewTexture && previewAnchor && (
+        <sprite
+          ref={(sprite: THREE.Sprite | null) => {
+            previewSprite.current = sprite;
+          }}
+          position={previewAnchor}
+          renderOrder={RENDER_ORDER}
+        >
+          {/* Deliberately unclipped, exactly like a committed entry's label: a cross-section
+              should hide the part of a dimension that runs through cut-away geometry, not the
+              reading itself. */}
+          <spriteMaterial map={previewTexture} depthTest={false} depthWrite={false} transparent />
+        </sprite>
+      )}
     </group>
   );
 }

@@ -151,6 +151,20 @@ export interface ModelViewerInnerProps {
   measurements?: Measurement[];
   /** The half-placed gesture, drawn as dots and a dashed line. */
   pendingMeasurement?: PendingGesture | null;
+  /**
+   * Where the cursor resolves to, in the MODEL's own frame, while a gesture is pending. Drawn as
+   * a provisional last point so the leg and its running value follow the pointer between clicks.
+   */
+  measureHoverPoint?: number[] | null;
+  /**
+   * Reports the cursor's resolved position on every pointermove while a gesture is pending, and
+   * null when it resolves to nothing. Resolved through the very same `pickModel` +
+   * `nearestVertexSnap` + `worldToModel` chain the committing pointerup uses — see
+   * SceneInteraction's `handlePointerMove`.
+   */
+  onMeasureHover?: (point: number[] | null) => void;
+  /** The toolbar's live colour, for the in-progress gesture. See MeasureLayer's `previewColor`. */
+  measurePreviewColor?: string;
   /** Millimetres per model unit, or null when the file has no usable scale yet. */
   mmPerUnit?: number | null;
   /** The unit readings are displayed in. */
@@ -578,6 +592,8 @@ function SceneInteraction({
   gizmoDraggingRef,
   measureActive,
   onMeasurePoint,
+  pendingMeasurement,
+  onMeasureHover,
   radius,
 }: {
   commentToolActive: boolean;
@@ -594,6 +610,12 @@ function SceneInteraction({
   gizmoDraggingRef: React.MutableRefObject<boolean>;
   measureActive: boolean;
   onMeasurePoint?: ModelViewerInnerProps['onMeasurePoint'];
+  /**
+   * The half-placed gesture. Read ONLY to gate the hover raycast below — this is the same prop
+   * MeasureLayer draws from, not a second name for the same thing.
+   */
+  pendingMeasurement: PendingGesture | null;
+  onMeasureHover?: ModelViewerInnerProps['onMeasureHover'];
   /** The model's bounding radius, or 0 until it has been measured. Scales the click floor. */
   radius: number;
 }) {
@@ -751,15 +773,59 @@ function SceneInteraction({
     ]
   );
 
+  /**
+   * The cursor's resolved measurement point, reported on every move while a gesture is live.
+   *
+   * Resolving it is SHARED with handlePointerUp's commit branch above, deliberately and in every
+   * step: the same `pickModel` (so the gizmo-rect exclusion and the clipping test cannot drift
+   * between preview and commit), the same `nearestVertexSnap`, the same `worldToModel`. A second
+   * raycast written beside them would resolve the point a little differently, and the previewed
+   * point would visibly jump somewhere else at the instant the user clicked — worse than showing
+   * no preview at all.
+   *
+   * Unlike the commit this does NOT go through the 4px drag test: a preview that stopped
+   * updating the moment the user began orbiting would be exactly backwards, and nothing is
+   * committed here, so a drag costs at most a stale-looking dashed line for its duration.
+   */
+  const handlePointerMove = useCallback(
+    (e: PointerEvent) => {
+      if (!measureActive || !onMeasureHover) return;
+      // Gated on a gesture that already has a click in it, NOT merely on one existing.
+      // `beginGesture` starts a gesture with an EMPTY points array the moment the tool is armed,
+      // so `pendingMeasurement` is non-null for the whole armed session — testing it for null
+      // alone would raycast the entire model on every idle mouse move, before the first click,
+      // to preview a line that has no first point to draw from.
+      if (!pendingMeasurement || pendingMeasurement.points.length === 0) {
+        onMeasureHover(null);
+        return;
+      }
+
+      // Surface hits only, exactly like the commit: a snap needs a triangle, and a STEP
+      // wireframe polyline has none.
+      const hit = pickModel(e, isSurfaceHit);
+      if (!hit) {
+        onMeasureHover(null);
+        return;
+      }
+
+      const snapped = nearestVertexSnap(hit, camera, gl);
+      const world = snapped ?? hit.point;
+      onMeasureHover(worldToModel([world.x, world.y, world.z], transform));
+    },
+    [measureActive, onMeasureHover, pendingMeasurement, pickModel, camera, gl, transform]
+  );
+
   useEffect(() => {
     const canvas = gl.domElement;
     canvas.addEventListener('pointerdown', handlePointerDown);
     canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointermove', handlePointerMove);
     return () => {
       canvas.removeEventListener('pointerdown', handlePointerDown);
       canvas.removeEventListener('pointerup', handlePointerUp);
+      canvas.removeEventListener('pointermove', handlePointerMove);
     };
-  }, [gl, handlePointerDown, handlePointerUp]);
+  }, [gl, handlePointerDown, handlePointerUp, handlePointerMove]);
 
   // Project world pins to screen space every frame
   useFrame(() => {
@@ -818,6 +884,14 @@ function CleanFrameRenderer({ handleRef }: { handleRef?: Ref<ModelViewerHandle> 
  * list and rebuild every label texture against.
  */
 const NO_MEASUREMENTS: Measurement[] = [];
+
+/**
+ * Fallback ink for the in-progress gesture when a host arms measuring without handing over the
+ * toolbar's colour. The portal always hands it over (`drawingColor`, the same value its
+ * `handleMeasurePoint` stamps on the commit), so this only keeps the preview from rendering
+ * `undefined`; it is the toolbar's own default swatch so the two agree when it does fire.
+ */
+const DEFAULT_MEASURE_COLOR = '#FF6B6B';
 
 // Direction the camera is placed in, relative to the model's centre — the 3/4 view the
 // viewer has always opened on, now expressed as a direction rather than a fixed position.
@@ -1020,6 +1094,9 @@ export default function ModelViewerInner({
   onMeasurePoint,
   measurements = NO_MEASUREMENTS,
   pendingMeasurement = null,
+  measureHoverPoint = null,
+  onMeasureHover,
+  measurePreviewColor = DEFAULT_MEASURE_COLOR,
   mmPerUnit = null,
   measureUnit = DEFAULT_LENGTH_UNIT,
   selectedMeasurementId = null,
@@ -1281,6 +1358,8 @@ export default function ModelViewerInner({
               <MeasureLayer
                 measurements={measurements}
                 pending={pendingMeasurement}
+                hoverPoint={measureHoverPoint}
+                previewColor={measurePreviewColor}
                 mmPerUnit={mmPerUnit}
                 unit={measureUnit}
                 selectedId={selectedMeasurementId}
@@ -1364,6 +1443,10 @@ export default function ModelViewerInner({
             gizmoDraggingRef={gizmoDraggingRef}
             measureActive={measureActive}
             onMeasurePoint={onMeasurePoint}
+            // The same gesture MeasureLayer draws, handed over ONLY so the hover raycast can be
+            // gated on a gesture that has actually started — see handlePointerMove.
+            pendingMeasurement={pendingMeasurement}
+            onMeasureHover={onMeasureHover}
             // 0 until the model has been measured, which is also the value that keeps the
             // measure branch of the pick handler shut: there is no scene scale to size the
             // minimum click separation against yet.

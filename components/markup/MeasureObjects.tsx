@@ -29,17 +29,26 @@ const ARC_SEGMENTS = 32;
 /** Arc radius as a fraction of the shorter leg — a WHOLE-drawing fraction, never a screen one. */
 const ARC_LEG_FRACTION = 0.28;
 
-/**
- * The in-progress gesture's click dots and dashed leg have not committed yet, so there is no
- * `Measurement.color` to draw them in. Tinting that preview to the toolbar's live colour is a
- * later refinement (the hover-preview task); until then this stays the same fixed ink the
- * whole tool used to draw in.
- */
-const PENDING_STROKE = '#1C2030';
-
 export interface MeasureObjectsProps {
   measurements: Measurement[];
   pending: PendingGesture | null;
+  /**
+   * The cursor, in STAGE space, while a gesture is pending — drawn as a provisional last point
+   * so the line and its running value follow the pointer between clicks. Null before the first
+   * pointermove of a gesture, and on a host that reports no hover at all, in which case the
+   * placed clicks still render on their own.
+   */
+  hoverPoint: number[] | null;
+  /**
+   * The toolbar's LIVE colour, for the in-progress gesture only.
+   *
+   * A separate prop rather than `Measurement.color` because the gesture has not committed yet,
+   * so there is no measurement to read a colour off. It has to be the same colour the commit
+   * will stamp on (see the portal's `handleMeasurePoint`, which passes the same value): a
+   * preview drawn in a different ink from the dimension it is about to become makes the whole
+   * thing flicker at the moment of the click.
+   */
+  previewColor: string;
   /** Null when uncalibrated: angular still renders, linear shows no number. */
   mmPerIntrinsicUnit: number | null;
   intrinsicPerStagePixel: number;
@@ -97,6 +106,8 @@ function arcPoints(vertex: number[], a: number[], b: number[]): number[] {
 export default function MeasureObjects({
   measurements,
   pending,
+  hoverPoint,
+  previewColor,
   mmPerIntrinsicUnit,
   intrinsicPerStagePixel,
   unit,
@@ -109,14 +120,51 @@ export default function MeasureObjects({
   // Stage units for a size meant to be read in screen pixels.
   const px = (value: number) => value / (screenScale > 0 ? screenScale : 1);
 
-  const labelFor = (m: Measurement): string => {
-    if (m.kind === 'angular') return formatAngle(angleAt(m.points[1], m.points[0], m.points[2]));
+  /**
+   * A linear reading for two points in STAGE space.
+   *
+   * Extracted so the in-progress preview below and the committed measurements above run the
+   * SAME conversion chain rather than two copies of it. The running value the user watches has
+   * to be the value the commit keeps, and a second copy of `stage px -> intrinsic -> mm` is
+   * exactly how the two would drift.
+   */
+  const lengthLabel = (a: number[], b: number[]): string => {
     // No scale, no number. A wrong reading is worse than none on a tool whose whole purpose is
     // to be trusted; the toolbar's units chip is what says the file is uncalibrated.
     if (mmPerIntrinsicUnit === null) return '';
-    const stagePx = distance(m.points[0], m.points[1]);
-    return formatLength(stagePx * intrinsicPerStagePixel * mmPerIntrinsicUnit, unit);
+    return formatLength(distance(a, b) * intrinsicPerStagePixel * mmPerIntrinsicUnit, unit);
   };
+
+  const labelFor = (m: Measurement): string => {
+    if (m.kind === 'angular') return formatAngle(angleAt(m.points[1], m.points[0], m.points[2]));
+    return lengthLabel(m.points[0], m.points[1]);
+  };
+
+  /**
+   * The reading's pill. One helper, used for both a committed measurement and the preview, so
+   * the two are pixel-identical apart from the colour they are handed.
+   *
+   * A solid pill in the measurement's own colour, not a blur: a white glow behind `fill={color}`
+   * text added nothing against white paper, and for the yellow swatch left the number at ~1.5:1
+   * contrast — effectively invisible. Text colour is picked by luminance (readableTextOn) so
+   * every swatch, including yellow and black, clears 4.5:1. `listening={false}` on the Label
+   * keeps the whole pill (Tag AND Text — listening cascades to children in Konva) out of the hit
+   * graph, so it cannot change what a click or an erase sweep finds; the leg's `hitStrokeWidth`
+   * below remains the only hit target.
+   */
+  const pill = (anchor: number[], text: string, color: string) => (
+    <Label x={anchor[0] + px(8)} y={anchor[1] - px(20)} listening={false}>
+      <Tag fill={color} cornerRadius={px(4)} />
+      <Text
+        text={text}
+        fontSize={px(14)}
+        fontFamily="system-ui, sans-serif"
+        fontStyle="600"
+        fill={readableTextOn(color)}
+        padding={px(6)}
+      />
+    </Label>
+  );
 
   return (
     <>
@@ -174,49 +222,59 @@ export default function MeasureObjects({
               {m.points.map((p, i) => (
                 <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
               ))}
-              {text !== '' && (
-                // A solid pill in the measurement's own colour, not a blur: a white glow behind
-                // `fill={color}` text added nothing against white paper, and for the yellow
-                // swatch left the number at ~1.5:1 contrast — effectively invisible. Text colour
-                // is picked by luminance (readableTextOn) so every swatch, including yellow and
-                // black, clears 4.5:1. `listening={false}` on the Label keeps the whole pill
-                // (Tag AND Text — listening cascades to children in Konva) out of the hit graph,
-                // so it cannot change what a click or an erase sweep finds; the leg's
-                // hitStrokeWidth above remains the only hit target.
-                <Label x={anchor[0] + px(8)} y={anchor[1] - px(20)} listening={false}>
-                  <Tag fill={color} cornerRadius={px(4)} />
-                  <Text
-                    text={text}
-                    fontSize={px(14)}
-                    fontFamily="system-ui, sans-serif"
-                    fontStyle="600"
-                    fill={readableTextOn(color)}
-                    padding={px(6)}
-                  />
-                </Label>
-              )}
+              {text !== '' && pill(anchor, text, color)}
             </Group>
           );
         })}
 
-      {pending && pending.page === page && pending.points.length > 0 && (
-        <Group listening={false}>
-          {/* The dots are not decoration: without them the first click of a two-click linear
-              gesture has no feedback at all, and a three-click angular gesture none until the
-              second. Same reasoning as the 3D MeasureLayer's pending points. */}
-          {pending.points.map((p, i) => (
-            <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={PENDING_STROKE} />
-          ))}
-          {pending.points.length > 1 && (
-            <Line
-              points={pending.points.flat()}
-              stroke={PENDING_STROKE}
-              strokeWidth={px(1.5)}
-              dash={[px(6), px(4)]}
-            />
-          )}
-        </Group>
-      )}
+      {pending && pending.page === page && pending.points.length > 0 && (() => {
+        // The clicks placed so far plus the cursor as a PROVISIONAL last point. `hoverPoint` is
+        // null between the click that restarts a gesture and the next pointermove, so the placed
+        // clicks have to render on their own too — which is also the whole behaviour on a host
+        // that reports no hover.
+        const preview = hoverPoint ? [...pending.points, hoverPoint] : pending.points;
+        const last = preview[preview.length - 1];
+        // Two points make a linear reading; three make an angle at the middle one, which is where
+        // `addPoint` puts the vertex. One point is just the dot.
+        const value =
+          preview.length === 2
+            ? lengthLabel(preview[0], preview[1])
+            : preview.length === 3
+              ? formatAngle(angleAt(preview[1], preview[0], preview[2]))
+              : '';
+        // The SAME anchor rule the committed measurements above use — the vertex for an angle,
+        // the midpoint for a length — so the pill does not jump across the drawing at the instant
+        // the gesture commits. The colour is the toolbar's live colour for the same reason.
+        const anchor =
+          preview.length === 3
+            ? preview[1]
+            : [(preview[0][0] + last[0]) / 2, (preview[0][1] + last[1]) / 2];
+        return (
+          <Group listening={false}>
+            {preview.length > 1 && (
+              <Line
+                points={preview.flat()}
+                stroke={previewColor}
+                strokeWidth={px(1.5)}
+                dash={[px(6), px(4)]}
+                lineCap="round"
+                lineJoin="round"
+              />
+            )}
+            {/* Every preview point, the hovered one included — not just the placed clicks. The
+                dots are not decoration: without them the first click of a two-click linear
+                gesture has no feedback at all, and a three-click angular gesture none until the
+                second. Drawing one at the hover point too is what makes a snapped position
+                visible BEFORE it is committed, which is the only way to see that the click will
+                not land under the cursor. Same reasoning as the 3D MeasureLayer's pending
+                points. */}
+            {preview.map((p, i) => (
+              <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={previewColor} />
+            ))}
+            {value !== '' && pill(anchor, value, previewColor)}
+          </Group>
+        );
+      })()}
     </>
   );
 }
