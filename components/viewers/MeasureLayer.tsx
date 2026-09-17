@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { distance, angleAt } from '@/lib/measure/geometry';
 import { formatLength, formatAngle, type LengthUnit } from '@/lib/measure/units';
+import { readableTextOn } from '@/lib/markup/colors';
 import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 
@@ -57,13 +58,17 @@ const PENDING_DASH_FRACTION = 0.02;
 const PENDING_GAP_FRACTION = 0.012;
 
 /**
- * Unselected is a white pill with text in the measurement's own colour, matching the Konva
- * surfaces. Selected INVERTS that — a pill filled with the colour, text in white — rather than
- * drawing a halo, because a 3D scene has no matte to halo against. Inverting is what makes
- * selection read at a glance whatever the measurement's colour happens to be, including the old
- * fixed highlight blue now that it is just another swatch choice.
+ * Always a solid pill filled with the measurement's own colour, text picked by luminance
+ * (readableTextOn) rather than a fixed white — the same fix as the Konva surfaces'
+ * MeasureObjects. This used to invert on selection (white pill / coloured text, unselected;
+ * coloured pill / white text, selected), which meant a yellow measurement went from a faint
+ * ~1.5:1 reading to a solid yellow pill with white text at the SAME ~1.5:1 — selecting it
+ * destroyed the reading instead of emphasising it, at every swatch light enough for white text
+ * to fail. Selection no longer needs the label at all: the endpoint `points` built in `entries`
+ * below double in size when selected, which is the reliable signal, so the pill stays one fixed,
+ * always-readable look regardless of `selected`.
  */
-function makeLabelTexture(text: string, color: string, selected: boolean): THREE.CanvasTexture | null {
+function makeLabelTexture(text: string, color: string): THREE.CanvasTexture | null {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
@@ -81,18 +86,20 @@ function makeLabelTexture(text: string, color: string, selected: boolean): THREE
   canvas.width = width;
   canvas.height = height;
 
+  const textColor = readableTextOn(color);
+
   // Inset by half the stroke width: a rect at 0,0 would have the outer half of its border
   // clipped off by the canvas edge on all four sides.
-  ctx.fillStyle = selected ? color : 'rgba(255,255,255,0.94)';
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.roundRect(1, 1, width - 2, height - 2, 14);
   ctx.fill();
-  ctx.strokeStyle = selected ? 'rgba(255,255,255,0.5)' : 'rgba(28,32,48,0.18)';
+  ctx.strokeStyle = textColor === '#FFFFFF' ? 'rgba(255,255,255,0.5)' : 'rgba(28,32,48,0.18)';
   ctx.lineWidth = 2;
   ctx.stroke();
 
   ctx.font = font;
-  ctx.fillStyle = selected ? '#FFFFFF' : color;
+  ctx.fillStyle = textColor;
   ctx.textBaseline = 'middle';
   ctx.fillText(text, padding, height / 2);
 
@@ -330,7 +337,7 @@ export default function MeasureLayer({
         lines,
         materials,
         points,
-        texture: text === '' ? null : makeLabelTexture(text, m.color, selected),
+        texture: text === '' ? null : makeLabelTexture(text, m.color),
         anchor:
           m.kind === 'angular'
             ? new THREE.Vector3(m.points[1][0], m.points[1][1], m.points[1][2])
@@ -338,9 +345,12 @@ export default function MeasureLayer({
       };
     });
     // `measurements` is replaced whole on every add and remove, and the label text is BAKED
-    // into the texture — so the unit and the scale belong here too. `selectedId` joins this list
-    // for the same reason: linewidth and the label's plate/text colours are baked in at
-    // construction, not swapped after the fact, so a selection change has to rebuild the entry.
+    // into the texture — so the unit and the scale belong here too. `selectedId` STAYS in this
+    // list even though the label's fill/text colours no longer depend on it (see
+    // `makeLabelTexture`'s doc comment) — `legMaterial`/`arcMaterial`'s `linewidth` and
+    // `pointsMaterial`'s `size` above both still branch on `selected`, and all three are baked
+    // into the material/geometry at construction rather than swapped after the fact, so a
+    // selection change still has to rebuild the entry.
   }, [measurements, mmPerUnit, unit, selectedId]);
 
   // The half-placed gesture: a dot per click so far, and a dashed line once there are two.

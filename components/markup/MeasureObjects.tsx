@@ -1,8 +1,9 @@
 'use client';
 
-import { Line, Text, Circle, Group } from 'react-konva';
+import { Line, Text, Circle, Group, Label, Tag } from 'react-konva';
 import { distance, angleAt } from '@/lib/measure/geometry';
 import { formatLength, formatAngle, type LengthUnit } from '@/lib/measure/units';
+import { readableTextOn } from '@/lib/markup/colors';
 import type { Measurement } from './useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 
@@ -131,6 +132,7 @@ export default function MeasureObjects({
           const anchor = m.kind === 'angular'
             ? m.points[1]
             : [(m.points[0][0] + m.points[1][0]) / 2, (m.points[0][1] + m.points[1][1]) / 2];
+          const text = labelFor(m);
           return (
             <Group key={m.id} id={m.id} onClick={() => onSelect(m.id)} onTap={() => onSelect(m.id)}>
               {selected && (
@@ -157,7 +159,14 @@ export default function MeasureObjects({
               {arc.length > 0 && (
                 <>
                   {selected && (
-                    <Line points={arc} stroke={haloColor} strokeWidth={px(7)} listening={false} />
+                    <Line
+                      points={arc}
+                      stroke={haloColor}
+                      strokeWidth={px(7)}
+                      lineCap="round"
+                      lineJoin="round"
+                      listening={false}
+                    />
                   )}
                   <Line points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
                 </>
@@ -165,22 +174,27 @@ export default function MeasureObjects({
               {m.points.map((p, i) => (
                 <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
               ))}
-              <Text
-                x={anchor[0] + px(8)}
-                y={anchor[1] - px(20)}
-                text={labelFor(m)}
-                fontSize={px(14)}
-                fontFamily="system-ui, sans-serif"
-                fontStyle="600"
-                // The measurement's own colour, matching the line, arc and dots: a number left
-                // in a fixed ink beside a colourful line would read as a different object.
-                fill={color}
-                // A white plate behind the number, so a dimension stays readable over dark
-                // drawing content instead of disappearing into it.
-                shadowColor="#FFFFFF"
-                shadowBlur={px(6)}
-                shadowOpacity={1}
-              />
+              {text !== '' && (
+                // A solid pill in the measurement's own colour, not a blur: a white glow behind
+                // `fill={color}` text added nothing against white paper, and for the yellow
+                // swatch left the number at ~1.5:1 contrast — effectively invisible. Text colour
+                // is picked by luminance (readableTextOn) so every swatch, including yellow and
+                // black, clears 4.5:1. `listening={false}` on the Label keeps the whole pill
+                // (Tag AND Text — listening cascades to children in Konva) out of the hit graph,
+                // so it cannot change what a click or an erase sweep finds; the leg's
+                // hitStrokeWidth above remains the only hit target.
+                <Label x={anchor[0] + px(8)} y={anchor[1] - px(20)} listening={false}>
+                  <Tag fill={color} cornerRadius={px(4)} />
+                  <Text
+                    text={text}
+                    fontSize={px(14)}
+                    fontFamily="system-ui, sans-serif"
+                    fontStyle="600"
+                    fill={readableTextOn(color)}
+                    padding={px(6)}
+                  />
+                </Label>
+              )}
             </Group>
           );
         })}
