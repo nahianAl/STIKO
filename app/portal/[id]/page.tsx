@@ -2098,6 +2098,10 @@ export default function PortalPage() {
             measureUnit={measureUnit}
             selectedMeasurementId={selectedMeasurementId}
             onSelectMeasurement={setSelectedMeasurementId}
+            // The eraser deletes a dimension like any other mark. Ungated for the same reason
+            // `measurements` beside it is: only the surface this file is measured on receives
+            // them, and ViewerContainer hands this to the PDF viewer alone.
+            onEraseMeasurement={removeMeasure}
             onPageChange={setPdfPage}
           />
         </div>
@@ -2349,6 +2353,10 @@ export default function PortalPage() {
                 measureUnit={measureUnit}
                 selectedMeasurementId={measuresOnCanvas ? selectedMeasurementId : null}
                 onSelectMeasurement={measuresOnCanvas ? setSelectedMeasurementId : undefined}
+                // Gated with the rest of the group, and specifically with `measurements`: this
+                // canvas needs it whenever it renders one, or the eraser would select a
+                // dimension instead of deleting it.
+                onEraseMeasurement={measuresOnCanvas ? removeMeasure : undefined}
               />
             )}
 

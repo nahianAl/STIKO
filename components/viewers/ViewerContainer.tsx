@@ -66,6 +66,12 @@ interface ViewerContainerProps {
   measureUnit?: LengthUnit;
   selectedMeasurementId?: string | null;
   onSelectMeasurement?: (id: string | null) => void;
+  /**
+   * Erase one measurement, by id — the eraser's route into the measure store. Forwarded to the
+   * PDF surface ONLY: there is no eraser in the 3D viewer, whose measurements are deleted by
+   * selecting one and pressing Delete.
+   */
+  onEraseMeasurement?: (id: string) => void;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -121,7 +127,7 @@ export default function ViewerContainer({
   partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
   measureActive, onMeasurePoint, measurements, pendingMeasurement, measureHoverPoint,
   onMeasureHover, mmPerUnit, measureUnit,
-  selectedMeasurementId, onSelectMeasurement,
+  selectedMeasurementId, onSelectMeasurement, onEraseMeasurement,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -206,6 +212,7 @@ export default function ViewerContainer({
         measureUnit={measureUnit}
         selectedMeasurementId={selectedMeasurementId}
         onSelectMeasurement={onSelectMeasurement}
+        onEraseMeasurement={onEraseMeasurement}
       />
     );
   }

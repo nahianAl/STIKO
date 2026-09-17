@@ -19,9 +19,14 @@ import type { PendingGesture } from '@/lib/measure/gesture';
  * Deliberately NOT part of the annotation object model: measurements carry colour (stamped from
  * the toolbar's colour at the moment they were placed) but NOT stroke width — a width is part
  * of a drawing, whereas a dimension is chrome that has to stay legible at any zoom — so they
- * must never reach the markup style picker, and the eraser must not sweep them away mid-review.
- * The host renders this in its own layer and decides when that layer is hit-testable at all —
- * see the `listening` prop at the PDF call site.
+ * must never reach the markup style picker.
+ *
+ * The eraser IS allowed to sweep them away, which reverses the original rule deliberately:
+ * requiring click-then-Delete for a dimension while every other mark yields to the eraser is
+ * the more surprising of the two behaviours. It works because each hit-testable shape below
+ * carries the measurement's own `measure-` id, which the hosts' `eraseAt` routes to the measure
+ * store instead of the markup one. The host renders this in its own layer and decides when that
+ * layer is hit-testable at all — see the `listening` prop at the PDF call site.
  */
 
 /** Sampling of the arc drawn between the two legs of an angle. */
@@ -184,6 +189,10 @@ export default function MeasureObjects({
           return (
             <Group key={m.id} id={m.id} onClick={() => onSelect(m.id)} onTap={() => onSelect(m.id)}>
               {selected && (
+                // The halo is a RENDERING detail, not a hit target: no id and listening={false},
+                // so it can be neither selected nor erased. The stroke it sits under is the only
+                // thing the eraser may find — and that stroke's hitStrokeWidth (14) is already
+                // wider than this halo (7), so nothing erasable is lost by keeping it deaf.
                 <Line
                   points={flat}
                   stroke={haloColor}
@@ -194,6 +203,11 @@ export default function MeasureObjects({
                 />
               )}
               <Line
+                // The id goes on the LEAF, not only on the Group above: eraseAt reads
+                // `stage.getIntersection(p)?.id()`, which returns the shape under the cursor, and
+                // a leaf with no id reads as '' — which is how measurements used to be
+                // eraser-proof. The `measure-` prefix is what routes it to the measure store.
+                id={m.id}
                 points={flat}
                 stroke={color}
                 strokeWidth={px(selected ? 3.5 : 2)}
@@ -207,6 +221,10 @@ export default function MeasureObjects({
               {arc.length > 0 && (
                 <>
                   {selected && (
+                    // Halo again: no id, listening={false}. Wider than the arc's own hit band
+                    // (the arc sets no hitStrokeWidth, so Konva hits it at its stroke width),
+                    // which only means an erase passing through the halo's outer edge reaches
+                    // whatever is under it — a halo is never a target, at either width.
                     <Line
                       points={arc}
                       stroke={haloColor}
@@ -216,11 +234,13 @@ export default function MeasureObjects({
                       listening={false}
                     />
                   )}
-                  <Line points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
+                  <Line id={m.id} points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
                 </>
               )}
               {m.points.map((p, i) => (
-                <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
+                // Erasable for the same reason the legs are: the dot is what the cursor finds at
+                // a vertex, where the two legs of an angle meet and neither stroke is on top.
+                <Circle key={i} id={m.id} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
               ))}
               {text !== '' && pill(anchor, text, color)}
             </Group>
