@@ -1474,6 +1474,12 @@ export default function ModelViewerInner({
   // handleTransformCommit always gives `transform` a fresh identity of its own afterwards —
   // on success with the just-dragged values, on failure with the reverted ones (see its comment
   // in page.tsx) — so this effect fires again with the latest value once dragging is over.
+  //
+  // That guarantee is the MODEL gizmo's. The plane gizmo shares this same ref and deliberately
+  // has no onCommit (planes are session-only), so an identity arriving during a plane drag is
+  // skipped with nothing to re-fire it. Harmless, and not worth plumbing for: a plane drag never
+  // mutates THIS group, so the write being skipped would have been a no-op. Do not generalise the
+  // sentence above into "any drag re-applies afterwards" — only one of the two does.
   useEffect(() => {
     const group = transformRef.current;
     if (!group || gizmoDraggingRef.current) return;

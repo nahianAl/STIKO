@@ -1186,6 +1186,11 @@ export default function PortalPage() {
       } catch (err) {
         console.error('Failed to fetch files:', err);
       } finally {
+        // Deliberately NOT staleness-guarded, unlike the two returns above. A stale foreground
+        // response clearing this flashes the empty-file state for one round trip — mildly ugly,
+        // and still better than the wrong version's files. Guarding it is the obvious "fix" and
+        // is worse: when selectedVersionId goes null (deleting the last version) no successor
+        // fetch ever runs, so the spinner would stay up forever.
         if (!background) setFilesLoading(false);
       }
     },
