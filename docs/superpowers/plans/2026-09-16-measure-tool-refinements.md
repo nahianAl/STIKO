@@ -64,6 +64,7 @@
 - Produces:
   - `const MEASURE_SNAP_STEP: number` — `Math.PI / 12`
   - `snapMeasureSegment(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }`
+  - `snapMeasurePoint(anchor: number[] | undefined, point: number[], shiftKey: boolean): number[]`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -72,7 +73,7 @@ Create `scripts/tests/measureSnap.test.mjs`:
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MEASURE_SNAP_STEP, snapMeasureSegment } from '../../lib/measure/snap.ts';
+import { MEASURE_SNAP_STEP, snapMeasureSegment, snapMeasurePoint } from '../../lib/measure/snap.ts';
 
 const deg = (r) => (r * 180) / Math.PI;
 const angleOf = (a, b) => deg(Math.atan2(b.y - a.y, b.x - a.x));
@@ -129,6 +130,22 @@ test('a zero-length segment is returned unchanged', () => {
   const p = snapMeasureSegment(42, 17, 42, 17);
   assert.deepEqual(p, { x: 42, y: 17 });
 });
+
+test('snapMeasurePoint passes the point straight through without Shift', () => {
+  assert.deepEqual(snapMeasurePoint([0, 0], [100, 7], false), [100, 7]);
+});
+
+// The first click of a gesture has nothing to snap about. Shift must be inert there rather
+// than snapping against a stale or absent anchor.
+test('snapMeasurePoint passes through when there is no anchor', () => {
+  assert.deepEqual(snapMeasurePoint(undefined, [100, 7], true), [100, 7]);
+});
+
+test('snapMeasurePoint snaps about the anchor when Shift is held', () => {
+  const [x, y] = snapMeasurePoint([200, 500], [300, 507], true);
+  assert.ok(Math.abs(y - 500) < 1e-9);
+  assert.ok(Math.abs(x - 300) < 1e-9);
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -181,17 +198,39 @@ export function snapMeasureSegment(
   const angle = Math.round(Math.atan2(dy, dx) / MEASURE_SNAP_STEP) * MEASURE_SNAP_STEP;
   return { x: x0 + Math.cos(angle) * length, y: y0 + Math.sin(angle) * length };
 }
+
+/**
+ * Apply Shift to one gesture point, given the point it is being measured from.
+ *
+ * Both 2D surfaces need exactly this, at two call sites each — the committed point and the
+ * hover preview, which must snap identically or the point jumps when you click. Taking the
+ * anchor as an argument is what lets one function serve all four: the surfaces differ only in
+ * where they read the pending gesture from.
+ *
+ * `anchor` is the previous point of the gesture, so for an angular measurement each leg snaps
+ * about the vertex and the resulting angle always lands on a multiple of 15 degrees. Undefined
+ * on the first click, where there is nothing to snap about and Shift must be inert.
+ */
+export function snapMeasurePoint(
+  anchor: number[] | undefined,
+  point: number[],
+  shiftKey: boolean,
+): number[] {
+  if (!shiftKey || !anchor) return point;
+  const snapped = snapMeasureSegment(anchor[0], anchor[1], point[0], point[1]);
+  return [snapped.x, snapped.y];
+}
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test scripts/tests/measureSnap.test.mjs`
-Expected: PASS, 8 tests
+Expected: PASS, 11 tests
 
 - [ ] **Step 5: Run the whole suite**
 
 Run: `npm test`
-Expected: 625 passing (617 + 8).
+Expected: 628 passing (617 + 11).
 
 - [ ] **Step 6: Commit**
 
@@ -610,51 +649,33 @@ git commit -m "feat: live preview with a running value while measuring"
 
 - [ ] **Step 1: Snap on the PDF surface**
 
-In `components/viewers/PDFKonvaViewer.tsx`, add a helper above the handlers:
+Import the shared helper — `import { snapMeasurePoint } from '@/lib/measure/snap';` — and apply
+it at **both** call sites, so the preview shows exactly what will commit. Shift is read fresh
+off each event rather than from held state, matching `updateGeometry`'s contract for the drawing
+tools: pressing or releasing Shift mid-gesture takes effect on the next move, not instantly.
+
+In the mousedown measure branch:
 
 ```ts
-  /**
-   * Shift constrains a measurement leg to 15 degrees about the point it starts from.
-   *
-   * Read fresh off each event rather than from held state, matching `updateGeometry`'s contract
-   * for the drawing tools: pressing or releasing Shift mid-gesture takes effect on the next
-   * move, not instantly. For an angular gesture the anchor is the previous point, so each leg
-   * snaps about the vertex and the resulting angle always lands on a multiple of 15.
-   */
-  const applyMeasureSnap = useCallback(
-    (point: number[], shiftKey: boolean): number[] => {
-      const anchor = pendingMeasurement?.points[pendingMeasurement.points.length - 1];
-      if (!shiftKey || !anchor) return point;
-      const snapped = snapMeasureSegment(anchor[0], anchor[1], point[0], point[1]);
-      return [snapped.x, snapped.y];
-    },
-    [pendingMeasurement]
-  );
-```
-
-Apply it in **both** places, so the preview shows exactly what will commit — in the mousedown
-measure branch:
-
-```ts
-        if (p) onMeasurePoint?.(applyMeasureSnap([p.x, p.y], e.evt.shiftKey), 3);
+        const anchor = pendingMeasurement?.points[pendingMeasurement.points.length - 1];
+        if (p) onMeasurePoint?.(snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey), 3);
 ```
 
 and in the hover branch added by Task 3:
 
 ```ts
-        onMeasureHover?.(p ? applyMeasureSnap([p.x, p.y], e.evt.shiftKey) : null);
+        const anchor = pendingMeasurement?.points[pendingMeasurement.points.length - 1];
+        onMeasureHover?.(p ? snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey) : null);
 ```
-
-Import `snapMeasureSegment` from `@/lib/measure/snap`.
 
 - [ ] **Step 2: Snap on the image surface**
 
-Add the identical helper and the identical two call sites to
-`components/markup/AnnotationCanvas.tsx`, using `stage.getPointerPosition()` for the raw point.
+The same two call sites in `components/markup/AnnotationCanvas.tsx`, using
+`stage.getPointerPosition()` for the raw point. The anchor is read the same way, from that
+surface's own `pendingMeasurement` prop.
 
-The two helpers are four lines each and read from different pending props on different
-surfaces; sharing them through a module would mean threading the pending gesture through an
-argument for no reduction in real duplication.
+Both surfaces call the one tested function in `lib/measure/snap.ts`; nothing about the snap rule
+is written twice.
 
 - [ ] **Step 3: Leave 3D alone — verify, do not implement**
 
