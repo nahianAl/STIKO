@@ -164,7 +164,11 @@ CREATE TABLE IF NOT EXISTS comments (
   page_number INT DEFAULT NULL,
   timestamp DOUBLE PRECISION DEFAULT NULL,
   author TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Set by PUT /api/comments/[id]. Read by the portal's change feed, which
+  -- cannot otherwise see an edit: an edit leaves created_at untouched and the
+  -- row count unchanged. See lib/migrations/013-comment-edits.sql.
+  edited_at TIMESTAMPTZ DEFAULT NULL
 );
 
 -- Legacy per-object markup persistence. Nothing reads or writes this table today — markup is
