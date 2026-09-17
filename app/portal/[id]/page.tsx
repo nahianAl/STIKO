@@ -256,6 +256,8 @@ export default function PortalPage() {
   const {
     measurements,
     pending: pendingMeasurement,
+    hoverPoint: measureHoverPoint,
+    setHoverPoint: setMeasureHoverPoint,
     selectedId: selectedMeasurementId,
     setSelectedId: setSelectedMeasurementId,
     addPoint: addMeasurePoint,
@@ -263,6 +265,7 @@ export default function PortalPage() {
     cancel: cancelMeasure,
     clear: clearMeasure,
     remove: removeMeasure,
+    recolor: recolorMeasure,
   } = measure;
   // The page PDFKonvaViewer is showing. Mirrored here rather than pulled off its imperative
   // handle because two things RENDER from it — the toolbar's disabled state and the per-page
@@ -752,8 +755,14 @@ export default function PortalPage() {
 
   const handleColorChange = useCallback((c: string) => {
     setDrawingColor(c);
+    // The markup and measurement selections are already mutually exclusive, so exactly one of
+    // these two branches can ever fire for a given click.
+    if (selectedMeasurementId) {
+      recolorMeasure(selectedMeasurementId, c);
+      return;
+    }
     activeSurface()?.applyStyleToSelection({ color: c });
-  }, [activeSurface]);
+  }, [activeSurface, selectedMeasurementId, recolorMeasure]);
 
   const handleStrokeWidthChange = useCallback((w: number) => {
     setDrawingStrokeWidth(w);
@@ -836,9 +845,9 @@ export default function PortalPage() {
    */
   const handleMeasurePoint = useCallback(
     (point: number[], minSeparation: number) => {
-      addMeasurePoint(point, minSeparation);
+      addMeasurePoint(point, minSeparation, drawingColor);
     },
-    [addMeasurePoint]
+    [addMeasurePoint, drawingColor]
   );
 
   // The master toggle is the only control that removes a cut: switching the tool off clears
@@ -1405,8 +1414,18 @@ export default function PortalPage() {
 
   // Tag placement, drawing and measuring are mutually exclusive — disarm tagging when a draw or
   // measure tool is selected.
+  //
+  // The eraser is named separately for the same reason it's named separately in the gizmo
+  // exclusion effect below: it's not in DRAW_TOOLS or MEASURE_TOOLS, so without this it would
+  // arm alongside tagging rather than disarming it. On a 3D file `commentToolActive` (in
+  // ModelViewerInner) is `is3DFile && tagging`, and `eraserOwnsPointer` requires
+  // `!commentToolActive` — so a Tag-then-Eraser sequence would leave the Eraser button lit and
+  // the crosshair cursor showing while every click still fell through to the comment-pin branch.
+  // That's the enabled-but-cannot-act inversion this task exists to prevent, except here the
+  // press does something destructive (drops a pin) instead of nothing.
   useEffect(() => {
-    if (DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) setTagging(false);
+    if (DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool) || activeTool === 'eraser')
+      setTagging(false);
   }, [activeTool]);
 
   // The transform gizmo and the comment/draw tools are mutually exclusive too: drei's
@@ -1427,7 +1446,16 @@ export default function PortalPage() {
     // other direction (selecting a plane disarms tagging) already goes through
     // handleSelectPlane; match it here so arming a comment/draw tool fully releases a
     // plane selection too.
-    if (tagging || DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) {
+    //
+    // The eraser is named separately because it is not in DRAW_TOOLS — that list means "tools
+    // that START an annotation session", and the eraser must never start one (see the effect
+    // above). It is still a tool that owns the press, and on a 3D file it now owns the whole
+    // viewport left-drag, so leaving the gizmo armed underneath it means one drag on a handle
+    // both moves the model and erases everything the handle passes over. It also hands
+    // `controls.enabled` a second writer: drei's TransformControls re-enables the camera on
+    // every drag end and TransformGizmo's unmount cleanup restores it unconditionally, either
+    // of which would give the orbit back mid-erase.
+    if (tagging || DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool) || activeTool === 'eraser') {
       setTransformMode(null);
       setSelectedPlane(null);
     }
@@ -2080,10 +2108,26 @@ export default function PortalPage() {
             onMeasurePoint={handleMeasurePoint}
             measurements={measurements}
             pendingMeasurement={pendingMeasurement}
+            // The live preview between clicks. Ungated, exactly like `pendingMeasurement` beside
+            // it: whichever of the two surfaces ViewerContainer mounts is the one this file is
+            // measured on, and each reports hover in its own space.
+            measureHoverPoint={measureHoverPoint}
+            onMeasureHover={setMeasureHoverPoint}
             mmPerUnit={measureScale.mmPerUnit}
             measureUnit={measureUnit}
             selectedMeasurementId={selectedMeasurementId}
             onSelectMeasurement={setSelectedMeasurementId}
+            // The eraser deletes a dimension like any other mark. Ungated for the same reason
+            // `measurements` beside it is: only the surface this file is measured on receives
+            // them, and ViewerContainer hands this to the PDF viewer and the 3D viewer alone.
+            onEraseMeasurement={removeMeasure}
+            // Deliberately NOT also gated on `is3DFile`, for the same reason `measureActive`
+            // above is not: ViewerContainer already forwards this to the 3D branch alone, and
+            // that branch is chosen from its own copy of the extension list. Testing a second
+            // hand-copied list here would add nothing today and, the first time the two drifted,
+            // would silently leave the eraser armed in the toolbar and inert in the viewport —
+            // which is the failure this whole tool keeps producing.
+            eraserActive={activeTool === 'eraser'}
             onPageChange={setPdfPage}
           />
         </div>
@@ -2325,6 +2369,8 @@ export default function PortalPage() {
                 measurements={measuresOnCanvas ? measurements : []}
                 pendingMeasurement={measuresOnCanvas ? pendingMeasurement : null}
                 onMeasurePoint={measuresOnCanvas ? handleMeasurePoint : undefined}
+                measureHoverPoint={measuresOnCanvas ? measureHoverPoint : null}
+                onMeasureHover={measuresOnCanvas ? setMeasureHoverPoint : undefined}
                 mmPerIntrinsicUnit={measuresOnCanvas ? measureScale.mmPerUnit : null}
                 // Millimetres per NATURAL pixel is what measureScale.mmPerUnit holds for an
                 // image file, so this is the rect that turns a stage pixel into one of those.
@@ -2333,6 +2379,10 @@ export default function PortalPage() {
                 measureUnit={measureUnit}
                 selectedMeasurementId={measuresOnCanvas ? selectedMeasurementId : null}
                 onSelectMeasurement={measuresOnCanvas ? setSelectedMeasurementId : undefined}
+                // Gated with the rest of the group, and specifically with `measurements`: this
+                // canvas needs it whenever it renders one, or the eraser would select a
+                // dimension instead of deleting it.
+                onEraseMeasurement={measuresOnCanvas ? removeMeasure : undefined}
               />
             )}
 

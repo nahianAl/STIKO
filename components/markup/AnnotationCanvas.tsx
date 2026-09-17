@@ -11,6 +11,7 @@ import type { PendingGesture } from '@/lib/measure/gesture';
 import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { naturalPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
 import { UNPAGED } from '@/lib/measure/calibration';
+import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from './CanvasTextEditor';
 import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { ERASER_CURSOR } from '@/lib/cursors';
@@ -49,8 +50,9 @@ interface AnnotationCanvasProps {
   // draws what it is given, exactly like PDFKonvaViewer.
   //
   // Deliberately NOT part of the markup object model: a measurement has no colour and no stroke
-  // width, so none of this ever reaches `onSelectionChange`, `applyStyleToSelection` or the
-  // eraser.
+  // width, so none of this ever reaches `onSelectionChange` or `applyStyleToSelection`. The
+  // ERASER is the one crossing point, and it goes through `onEraseMeasurement` below rather than
+  // through the markup store — see `eraseAt`.
   //
   // All optional, and the portal withholds them whenever this canvas is NOT the surface the
   // selected file is measured on — over a frozen 3D viewport, or over a picked attachment. See
@@ -64,6 +66,17 @@ interface AnnotationCanvasProps {
    * other two surfaces', so the store never learns which one called it.
    */
   onMeasurePoint?: (point: number[], minSeparation: number) => void;
+  /**
+   * The cursor, in STAGE pixels, while a gesture is pending — drawn as a provisional last point
+   * so the leg and its running value follow the pointer between clicks.
+   */
+  measureHoverPoint?: number[] | null;
+  /**
+   * Reports the cursor in STAGE pixels on every mouse move while a gesture is pending, and null
+   * when there is none. The same `stage.getPointerPosition()` the measure CLICK uses, so the
+   * previewed point and the committed one can never land in different places.
+   */
+  onMeasureHover?: (point: number[] | null) => void;
   /** Millimetres per NATURAL image pixel, or null while the file is uncalibrated. */
   mmPerIntrinsicUnit?: number | null;
   /**
@@ -86,13 +99,26 @@ interface AnnotationCanvasProps {
   measureUnit?: LengthUnit;
   selectedMeasurementId?: string | null;
   onSelectMeasurement?: (id: string | null) => void;
+  /**
+   * Erase one measurement, by id. The eraser's only route into the measure store: `eraseAt`
+   * sends a `measure-` id here and an `obj-` id to this component's own markup store, so one
+   * sweep clears both kinds.
+   *
+   * A host that renders `measurements` here MUST pass this. Without it a press with the eraser
+   * armed leaves the dimension standing, and — because the measure layer now listens for the
+   * eraser too — MeasureObjects' own onClick selects it on the following mouseup instead, which
+   * is the opposite of what the gesture meant. The portal gates this prop and `measurements`
+   * on the same condition for exactly that reason.
+   */
+  onEraseMeasurement?: (id: string) => void;
 }
 
 export default function AnnotationCanvas({
   backgroundDataUrl, activeTool, color, strokeWidth, handleRef, onObjectCreated, onSelectionChange,
-  measurements = [], pendingMeasurement = null, onMeasurePoint, mmPerIntrinsicUnit = null,
+  measurements = [], pendingMeasurement = null, onMeasurePoint, measureHoverPoint = null,
+  onMeasureHover, mmPerIntrinsicUnit = null,
   imageSpace = null, onIntrinsicScaleChange, measureUnit = DEFAULT_LENGTH_UNIT,
-  selectedMeasurementId = null, onSelectMeasurement,
+  selectedMeasurementId = null, onSelectMeasurement, onEraseMeasurement,
 }: AnnotationCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -114,12 +140,26 @@ export default function AnnotationCanvas({
   const erasingRef = useRef(false);
   const lastErasePointRef = useRef<{ x: number; y: number } | null>(null);
 
-  /** Delete whatever object is under `p`, given in CONTAINER coordinates. */
+  /**
+   * Delete whatever object is under `p`, given in CONTAINER coordinates.
+   *
+   * Markup AND measurements: one sweep, two stores. See the routing note below.
+   */
   const eraseAt = (stage: Konva.Stage, p: { x: number; y: number }) => {
+    // The LEAF shape under the cursor, never the Group wrapping it — which is why every
+    // erasable measurement shape carries its own id and not just its Group (see MeasureObjects).
     const id = stage.getIntersection(p)?.id();
     // Konva returns the Transformer's own handles and any unnamed node too; only our objects
     // carry an id.
-    if (id) ann.deleteObject(id);
+    if (!id) return;
+    // The `obj-` / `measure-` id prefixes are LOAD-BEARING here. They used to be an accident
+    // that merely kept the two stores from colliding; erasing now depends on telling them
+    // apart, because one sweep feeds both. Both prefixes are single-sourced — `useAnnotationObjects`
+    // mints every `obj-N`, `useMeasurements` every `measure-N` — and must stay distinct.
+    // Anything else with an id would fall to `deleteObject`, which filters `ann.objects` by id
+    // and so no-ops on an id it did not mint.
+    if (id.startsWith('measure-')) onEraseMeasurement?.(id);
+    else ann.deleteObject(id);
   };
 
   const stopErasing = () => {
@@ -324,7 +364,12 @@ export default function AnnotationCanvas({
     if (isMeasureTool(activeTool)) {
       // 3 stage pixels, the same floor `endDraw` applies to a drawn object, and the same number
       // the PDF surface passes. Stage space IS screen space here — the stage is untransformed.
-      onMeasurePoint?.([p.x, p.y], 3);
+      //
+      // Shift snaps this point to 15 degrees about the gesture's last placed point — read fresh
+      // off the event, matching moveDraw's contract for the drawing tools below. Must snap
+      // identically to the hover preview in handleMouseMove, or the point jumps at the click.
+      const anchor = pendingMeasurement?.points[pendingMeasurement.points.length - 1];
+      onMeasurePoint?.(snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey), 3);
       return;
     }
 
@@ -372,9 +417,28 @@ export default function AnnotationCanvas({
     const stage = e.target.getStage();
     const p = stage?.getPointerPosition();
     if (!stage || !p) return;
-    // A measure gesture is click-by-click: there is nothing to drag, and the fall-through below
-    // would hand `ann.moveDraw` a tool that is not an AnnTool.
-    if (isMeasureTool(activeTool)) return;
+    // A measure gesture is click-by-click: there is nothing to DRAG, and the fall-through below
+    // would hand `ann.moveDraw` a tool that is not an AnnTool. What a move does mean here is the
+    // live preview — the cursor as a provisional last point.
+    if (isMeasureTool(activeTool)) {
+      // Only once a gesture has a click in it. `beginGesture` starts one with an EMPTY points
+      // array as soon as the tool is armed, so `pendingMeasurement` is non-null for the whole
+      // armed session: gating on null alone would push a state update — and so re-render this
+      // stage — on every idle mouse move, to preview a line with no first point to draw from.
+      if (!pendingMeasurement || pendingMeasurement.points.length === 0) {
+        onMeasureHover?.(null);
+        return;
+      }
+      // `p` is the SAME stage.getPointerPosition() the measure click in handleMouseDown reads,
+      // in the same untransformed stage space. A second conversion here is how the previewed
+      // point and the committed one would end up in different places.
+      //
+      // Same anchor, same Shift-off-the-event read, same helper as the mousedown branch — the
+      // preview must show exactly what a click right now would commit.
+      const anchor = pendingMeasurement.points[pendingMeasurement.points.length - 1];
+      onMeasureHover?.(snapMeasurePoint(anchor, [p.x, p.y], e.evt.shiftKey));
+      return;
+    }
     if (activeTool === 'eraser') {
       // A mouseup this stage never received — focus lost mid-press (Cmd-Tab, Mission
       // Control, an OS dialog) and the button released elsewhere — leaves erasingRef armed
@@ -423,7 +487,7 @@ export default function AnnotationCanvas({
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
-          onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
         >
           <Layer listening={false}>
             {/* Inside the stage, not on the container: toDataURL reads the stage, and JPEG has no
@@ -457,25 +521,35 @@ export default function AnnotationCanvas({
               markup object there would be. Measurements are session-only, so snapshotting one
               into a comment is the only way to keep it.
 
-              `listening` is the pointer tool and nothing else, because the pointer tool is the
-              only state in which selecting a measurement is the gesture the user means. Every
-              other tool owns the click for its own purpose and would fire twice: with a measure
-              tool armed, handleMouseDown drops a gesture point on the very same press, so a click
-              landing on an existing dimension would both place a point AND select that dimension.
-              With the eraser it cuts both ways: this layer contributes nothing to the hit graph,
-              so a drag-erase sweeping the surface can neither delete a dimension nor be shielded
-              by one from the markup underneath it. (eraseAt feeds the hit node's id to
-              ann.deleteObject, which filters `ann.objects` — a `measure-` id is not in that list,
-              so the eraser could not delete one anyway; but the shielding half is real, and a
-              non-listening layer settles both. Verified against THIS component's eraseAt, not
-              assumed from the PDF's.)
+              `listening` is the pointer tool and the ERASER, and nothing else. The pointer tool
+              is the only state in which selecting a measurement is the gesture the user means,
+              and every drawing tool owns the click for its own purpose and would fire twice:
+              with a measure tool armed, handleMouseDown drops a gesture point on the very same
+              press, so a click landing on an existing dimension would both place a point AND
+              select that dimension.
+
+              The eraser is on the list because a dimension is now erasable like any other mark:
+              eraseAt routes a `measure-` id to onEraseMeasurement instead of ann.deleteObject.
+              That also lets a dimension SHIELD the markup under it from the same press — which
+              is what every overlapping shape already does to the one below it, the topmost hit
+              winning, so the thing the user sees under the cursor is the thing that goes.
+              Selecting cannot misfire while erasing: MeasureObjects' Group onClick needs
+              mousedown and mouseup on the SAME Konva node (Stage._pointerup compares
+              clickStartShape by identity), and the press has already destroyed that node —
+              provided the host wired onEraseMeasurement, which is why that prop's doc makes it
+              mandatory alongside `measurements`.
 
               Not listening is NOT not drawn, and not excluded from a snapshot: Konva's
               Stage._toKonvaCanvas skips invisible layers only, never non-listening ones. */}
-          <Layer ref={measureLayerRef} listening={activeTool === 'pointer'}>
+          <Layer ref={measureLayerRef} listening={activeTool === 'pointer' || activeTool === 'eraser'}>
             <MeasureObjects
               measurements={measurements}
               pending={pendingMeasurement}
+              hoverPoint={measureHoverPoint}
+              // The markup colour this canvas already draws in, which is the same value the
+              // portal stamps on the commit — so the preview does not change ink the instant it
+              // becomes a measurement.
+              previewColor={color}
               // No resolvable stage-to-natural chain, no length reading — even on a calibrated
               // file. The scale would have to be invented, and an invented one is exactly the
               // plausible-but-wrong number this tool cannot afford. Angles are scale-free and
@@ -485,8 +559,14 @@ export default function AnnotationCanvas({
               unit={measureUnit}
               selectedId={selectedMeasurementId}
               onSelect={(id) => onSelectMeasurement?.(id)}
+              // Same reasoning as the PDF surface: the Layer above listens for pointer-or-eraser
+              // so the eraser's getIntersection sweep still finds a measurement, but only the
+              // pointer tool should turn a press into a selection — otherwise a touch tap with
+              // the eraser armed selects instead of erasing.
+              selectable={activeTool === 'pointer'}
               // This surface has no pages; the portal begins every non-PDF gesture on UNPAGED.
               page={UNPAGED}
+              haloColor={CANVAS_MATTE}
               // 1, and explicitly so rather than by omission: this Stage carries no scaleX/scaleY
               // and no offset (see the text editor's `scale={1}` below, which relies on the same
               // fact), so a stage pixel IS a screen pixel and labels are already the size they

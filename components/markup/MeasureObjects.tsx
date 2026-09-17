@@ -1,8 +1,9 @@
 'use client';
 
-import { Line, Text, Circle, Group } from 'react-konva';
+import { Line, Text, Circle, Group, Label, Tag } from 'react-konva';
 import { distance, angleAt } from '@/lib/measure/geometry';
 import { formatLength, formatAngle, type LengthUnit } from '@/lib/measure/units';
+import { readableTextOn } from '@/lib/markup/colors';
 import type { Measurement } from './useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 
@@ -15,14 +16,18 @@ import type { PendingGesture } from '@/lib/measure/gesture';
  * to millimetres) — and separating them is what keeps calibration storable in file-intrinsic
  * units while the drawing stays in whatever space the surface happens to use.
  *
- * Deliberately NOT part of the annotation object model: measurements carry no colour and no
- * stroke width, so they must never reach the markup style picker, and the eraser must not sweep
- * them away mid-review. The host renders this in its own layer and decides when that layer is
- * hit-testable at all — see the `listening` prop at the PDF call site.
+ * Deliberately NOT part of the annotation object model: measurements carry colour (stamped from
+ * the toolbar's colour at the moment they were placed) but NOT stroke width — a width is part
+ * of a drawing, whereas a dimension is chrome that has to stay legible at any zoom — so they
+ * must never reach the markup style picker.
+ *
+ * The eraser IS allowed to sweep them away, which reverses the original rule deliberately:
+ * requiring click-then-Delete for a dimension while every other mark yields to the eraser is
+ * the more surprising of the two behaviours. It works because each hit-testable shape below
+ * carries the measurement's own `measure-` id, which the hosts' `eraseAt` routes to the measure
+ * store instead of the markup one. The host renders this in its own layer and decides when that
+ * layer is hit-testable at all — see the `listening` prop at the PDF call site.
  */
-
-const STROKE = '#1C2030';
-const SELECTED = '#5B60FF';
 
 /** Sampling of the arc drawn between the two legs of an angle. */
 const ARC_SEGMENTS = 32;
@@ -32,14 +37,55 @@ const ARC_LEG_FRACTION = 0.28;
 export interface MeasureObjectsProps {
   measurements: Measurement[];
   pending: PendingGesture | null;
+  /**
+   * The cursor, in STAGE space, while a gesture is pending — drawn as a provisional last point
+   * so the line and its running value follow the pointer between clicks. Null before the first
+   * pointermove of a gesture, and on a host that reports no hover at all, in which case the
+   * placed clicks still render on their own.
+   */
+  hoverPoint: number[] | null;
+  /**
+   * The toolbar's LIVE colour, for the in-progress gesture only.
+   *
+   * A separate prop rather than `Measurement.color` because the gesture has not committed yet,
+   * so there is no measurement to read a colour off. It has to be the same colour the commit
+   * will stamp on (see the portal's `handleMeasurePoint`, which passes the same value): a
+   * preview drawn in a different ink from the dimension it is about to become makes the whole
+   * thing flicker at the moment of the click.
+   */
+  previewColor: string;
   /** Null when uncalibrated: angular still renders, linear shows no number. */
   mmPerIntrinsicUnit: number | null;
   intrinsicPerStagePixel: number;
   unit: LengthUnit;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /**
+   * Whether a measurement can be clicked/tapped to select it. Defaults to true.
+   *
+   * False whenever another tool owns the press — concretely, the eraser. On a MOUSE this was
+   * never reachable: the host's Layer `listening` prop already covers pointer-tool-or-eraser,
+   * but Konva's `clickStartShape` identity check silently absorbs the eraser's own `onClick`,
+   * because the mousedown that armed the erase already removed the node `onClick` would have
+   * fired on (see the Layer comment at each host's measure-layer call site). Touch has no
+   * equivalent: `onTap` fires from the same press with nothing to compare identity against, so
+   * without this gate an eraser tap SELECTS the very measurement it was meant to erase. Named
+   * and shaped after MeasureLayer's own `selectable` prop on the 3D surface, which exists for
+   * the identical reason.
+   */
+  selectable?: boolean;
   /** Only measurements on this page render. Pass 0 (UNPAGED) for surfaces without pages. */
   page: number;
+  /**
+   * The colour drawn UNDER a selected measurement, wider than the stroke, so selection reads
+   * against any measurement colour on any background.
+   *
+   * A fixed highlight colour is no longer possible: the old #5B60FF is now a colour the user
+   * can pick from the swatch row, and a purple dimension would look identical selected and not.
+   * The value is the host stage's own matte — PDF_MATTE or CANVAS_MATTE — because "the
+   * background" genuinely differs per surface.
+   */
+  haloColor: string;
   /**
    * The host stage's zoom, so lines, dots and labels keep a constant SCREEN size.
    *
@@ -79,33 +125,74 @@ function arcPoints(vertex: number[], a: number[], b: number[]): number[] {
 export default function MeasureObjects({
   measurements,
   pending,
+  hoverPoint,
+  previewColor,
   mmPerIntrinsicUnit,
   intrinsicPerStagePixel,
   unit,
   selectedId,
   onSelect,
+  selectable = true,
   page,
+  haloColor,
   screenScale = 1,
 }: MeasureObjectsProps) {
   // Stage units for a size meant to be read in screen pixels.
   const px = (value: number) => value / (screenScale > 0 ? screenScale : 1);
 
-  const labelFor = (m: Measurement): string => {
-    if (m.kind === 'angular') return formatAngle(angleAt(m.points[1], m.points[0], m.points[2]));
+  /**
+   * A linear reading for two points in STAGE space.
+   *
+   * Extracted so the in-progress preview below and the committed measurements above run the
+   * SAME conversion chain rather than two copies of it. The running value the user watches has
+   * to be the value the commit keeps, and a second copy of `stage px -> intrinsic -> mm` is
+   * exactly how the two would drift.
+   */
+  const lengthLabel = (a: number[], b: number[]): string => {
     // No scale, no number. A wrong reading is worse than none on a tool whose whole purpose is
     // to be trusted; the toolbar's units chip is what says the file is uncalibrated.
     if (mmPerIntrinsicUnit === null) return '';
-    const stagePx = distance(m.points[0], m.points[1]);
-    return formatLength(stagePx * intrinsicPerStagePixel * mmPerIntrinsicUnit, unit);
+    return formatLength(distance(a, b) * intrinsicPerStagePixel * mmPerIntrinsicUnit, unit);
   };
+
+  const labelFor = (m: Measurement): string => {
+    if (m.kind === 'angular') return formatAngle(angleAt(m.points[1], m.points[0], m.points[2]));
+    return lengthLabel(m.points[0], m.points[1]);
+  };
+
+  /**
+   * The reading's pill. One helper, used for both a committed measurement and the preview, so
+   * the two are pixel-identical apart from the colour they are handed.
+   *
+   * A solid pill in the measurement's own colour, not a blur: a white glow behind `fill={color}`
+   * text added nothing against white paper, and for the yellow swatch left the number at ~1.5:1
+   * contrast — effectively invisible. Text colour is picked by luminance (readableTextOn) so
+   * every swatch, including yellow and black, clears 4.5:1. `listening={false}` on the Label
+   * keeps the whole pill (Tag AND Text — listening cascades to children in Konva) out of the hit
+   * graph, so it cannot change what a click or an erase sweep finds; the leg's `hitStrokeWidth`
+   * below remains the only hit target.
+   */
+  const pill = (anchor: number[], text: string, color: string) => (
+    <Label x={anchor[0] + px(8)} y={anchor[1] - px(20)} listening={false}>
+      <Tag fill={color} cornerRadius={px(4)} />
+      <Text
+        text={text}
+        fontSize={px(14)}
+        fontFamily="system-ui, sans-serif"
+        fontStyle="600"
+        fill={readableTextOn(color)}
+        padding={px(6)}
+      />
+    </Label>
+  );
 
   return (
     <>
       {measurements
         .filter((m) => m.page === page)
         .map((m) => {
+          const color = m.color;
           const selected = m.id === selectedId;
-          const color = selected ? SELECTED : STROKE;
           const flat = m.points.flat();
           const arc = m.kind === 'angular'
             ? arcPoints(m.points[1], m.points[0], m.points[2])
@@ -113,12 +200,37 @@ export default function MeasureObjects({
           const anchor = m.kind === 'angular'
             ? m.points[1]
             : [(m.points[0][0] + m.points[1][0]) / 2, (m.points[0][1] + m.points[1][1]) / 2];
+          const text = labelFor(m);
           return (
-            <Group key={m.id} id={m.id} onClick={() => onSelect(m.id)} onTap={() => onSelect(m.id)}>
+            <Group
+              key={m.id}
+              id={m.id}
+              onClick={selectable ? () => onSelect(m.id) : undefined}
+              onTap={selectable ? () => onSelect(m.id) : undefined}
+            >
+              {selected && (
+                // The halo is a RENDERING detail, not a hit target: no id and listening={false},
+                // so it can be neither selected nor erased. The stroke it sits under is the only
+                // thing the eraser may find — and that stroke's hitStrokeWidth (14) is already
+                // wider than this halo (7), so nothing erasable is lost by keeping it deaf.
+                <Line
+                  points={flat}
+                  stroke={haloColor}
+                  strokeWidth={px(7)}
+                  lineCap="round"
+                  lineJoin="round"
+                  listening={false}
+                />
+              )}
               <Line
+                // The id goes on the LEAF, not only on the Group above: eraseAt reads
+                // `stage.getIntersection(p)?.id()`, which returns the shape under the cursor, and
+                // a leaf with no id reads as '' — which is how measurements used to be
+                // eraser-proof. The `measure-` prefix is what routes it to the measure store.
+                id={m.id}
                 points={flat}
                 stroke={color}
-                strokeWidth={px(selected ? 3 : 2)}
+                strokeWidth={px(selected ? 3.5 : 2)}
                 lineCap="round"
                 lineJoin="round"
                 // A 2px line at a fitted sheet's zoom is a sub-pixel click target, and on an
@@ -127,49 +239,113 @@ export default function MeasureObjects({
                 hitStrokeWidth={px(14)}
               />
               {arc.length > 0 && (
-                <Line points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
+                <>
+                  {selected && (
+                    // Halo again: no id, listening={false}. Same relationship as the leg's halo
+                    // above: the arc's own hitStrokeWidth (14, set below) is already wider than
+                    // this halo (7), so nothing erasable is lost by keeping the halo deaf.
+                    <Line
+                      points={arc}
+                      stroke={haloColor}
+                      strokeWidth={px(7)}
+                      lineCap="round"
+                      lineJoin="round"
+                      listening={false}
+                    />
+                  )}
+                  <Line
+                    id={m.id}
+                    points={arc}
+                    stroke={color}
+                    strokeWidth={px(selected ? 2 : 1.5)}
+                    // Matches the legs' hit band: with no hitStrokeWidth this arc would hit at its
+                    // stroke width (~2 screen px), narrower than ERASE_SAMPLE_SPACING (6), so a
+                    // sweep crossing only the arc could pass between samples and miss it entirely.
+                    hitStrokeWidth={px(14)}
+                  />
+                </>
               )}
               {m.points.map((p, i) => (
-                <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={color} />
+                // Erasable for the same reason the legs are: the dot is what the cursor finds at
+                // a vertex, where the two legs of an angle meet and neither stroke is on top.
+                //
+                // Radius doubles on selection — mirroring MeasureLayer.tsx's 3D endpoint dots
+                // (POINT_PX * 2) — because the halo above is invisible on the PDF matte (a grey
+                // surround colour that is ~1.05:1 against the white page it never actually sits
+                // on) and the 1.5px strokeWidth delta is too small to read as a signal on its
+                // own. A size change reads at any colour on any background.
+                <Circle key={i} id={m.id} x={p[0]} y={p[1]} radius={px(selected ? 5.5 : 3.5)} fill={color} />
               ))}
-              <Text
-                x={anchor[0] + px(8)}
-                y={anchor[1] - px(20)}
-                text={labelFor(m)}
-                fontSize={px(14)}
-                fontFamily="system-ui, sans-serif"
-                fontStyle="600"
-                // `color`, not STROKE: the line, arc and dots all take the selection colour,
-                // and a number left in ink beside an indigo line reads as a different object.
-                fill={color}
-                // A white plate behind the number, so a dimension stays readable over dark
-                // drawing content instead of disappearing into it.
-                shadowColor="#FFFFFF"
-                shadowBlur={px(6)}
-                shadowOpacity={1}
-              />
+              {text !== '' && pill(anchor, text, color)}
             </Group>
           );
         })}
 
-      {pending && pending.page === page && pending.points.length > 0 && (
-        <Group listening={false}>
-          {/* The dots are not decoration: without them the first click of a two-click linear
-              gesture has no feedback at all, and a three-click angular gesture none until the
-              second. Same reasoning as the 3D MeasureLayer's pending points. */}
-          {pending.points.map((p, i) => (
-            <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={STROKE} />
-          ))}
-          {pending.points.length > 1 && (
-            <Line
-              points={pending.points.flat()}
-              stroke={STROKE}
-              strokeWidth={px(1.5)}
-              dash={[px(6), px(4)]}
-            />
-          )}
-        </Group>
-      )}
+      {pending && pending.page === page && pending.points.length > 0 && (() => {
+        // The clicks placed so far plus the cursor as a PROVISIONAL last point. `hoverPoint` is
+        // null between the click that restarts a gesture and the next pointermove, so the placed
+        // clicks have to render on their own too — which is also the whole behaviour on a host
+        // that reports no hover.
+        const preview = hoverPoint ? [...pending.points, hoverPoint] : pending.points;
+        // The reading follows the gesture's KIND, not merely how many points happen to exist —
+        // `pending.points.length` alone can't tell a half-placed angle (one point + hover, which
+        // is also 2 points) from a length (one point + hover). A linear/calibrate gesture reaches
+        // 2 points at most before it commits; an angular one reaches 3. See PendingGesture.
+        const isAngular = pending.kind === 'angular';
+        // Linear/calibrate: a reading once the second (provisional) point exists.
+        // Angular: no reading until the THIRD point exists — a length here would describe a
+        // distance the gesture is not measuring and would pop to an angle the instant the vertex
+        // lands. Nothing (dashed leg + dots) is shown for the one-point-plus-hover case instead.
+        const value = isAngular
+          ? preview.length === 3
+            ? formatAngle(angleAt(preview[1], preview[0], preview[2]))
+            : ''
+          : preview.length === 2
+            ? lengthLabel(preview[0], preview[1])
+            : '';
+        // The arc appears exactly when the angle does, built with the SAME arcPoints() the
+        // committed entries use, so the arc that shows at commit was already on screen.
+        const arc = isAngular && preview.length === 3
+          ? arcPoints(preview[1], preview[0], preview[2])
+          : [];
+        // The SAME anchor rule the committed measurements above use — the vertex for an angle,
+        // the midpoint for a length — so the pill does not jump across the drawing at the instant
+        // the gesture commits. The colour is the toolbar's live colour for the same reason.
+        // (Only meaningful when `value !== ''`, i.e. the pill actually renders — otherwise a
+        // shorter `preview` can leave the other branch's index past the end.)
+        const last = preview[preview.length - 1];
+        const anchor = isAngular
+          ? preview[1]
+          : [(preview[0][0] + last[0]) / 2, (preview[0][1] + last[1]) / 2];
+        return (
+          <Group listening={false}>
+            {preview.length > 1 && (
+              <Line
+                points={preview.flat()}
+                stroke={previewColor}
+                strokeWidth={px(1.5)}
+                dash={[px(6), px(4)]}
+                lineCap="round"
+                lineJoin="round"
+              />
+            )}
+            {arc.length > 0 && (
+              <Line points={arc} stroke={previewColor} strokeWidth={px(1.5)} />
+            )}
+            {/* Every preview point, the hovered one included — not just the placed clicks. The
+                dots are not decoration: without them the first click of a two-click linear
+                gesture has no feedback at all, and a three-click angular gesture none until the
+                second. Drawing one at the hover point too is what makes a snapped position
+                visible BEFORE it is committed, which is the only way to see that the click will
+                not land under the cursor. Same reasoning as the 3D MeasureLayer's pending
+                points. */}
+            {preview.map((p, i) => (
+              <Circle key={i} x={p[0]} y={p[1]} radius={px(3.5)} fill={previewColor} />
+            ))}
+            {value !== '' && pill(anchor, value, previewColor)}
+          </Group>
+        );
+      })()}
     </>
   );
 }

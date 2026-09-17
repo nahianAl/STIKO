@@ -55,15 +55,47 @@ interface ViewerContainerProps {
   onMeasurePoint?: (point: number[], minSeparation: number) => void;
   measurements?: Measurement[];
   pendingMeasurement?: PendingGesture | null;
+  /**
+   * The live preview's provisional last point, in whichever surface's own space the file is
+   * measured in — page pixels for the PDF, the model's frame for 3D. Forwarded to both for the
+   * same reason the rest of this group is: one store, two surfaces, and only one of them mounted.
+   */
+  measureHoverPoint?: number[] | null;
+  onMeasureHover?: (point: number[] | null) => void;
   mmPerUnit?: number | null;
   measureUnit?: LengthUnit;
   selectedMeasurementId?: string | null;
   onSelectMeasurement?: (id: string | null) => void;
+  /**
+   * Erase one measurement, by id — the eraser's route into the measure store. Forwarded to the
+   * PDF surface and to the 3D viewer; whichever of them is mounted is the surface this file is
+   * measured on, so only one can ever receive it.
+   */
+  onEraseMeasurement?: (id: string) => void;
+  /**
+   * True while the eraser is armed. 3D-ONLY, exactly like `measureActive` above and for the
+   * same reason: PDFKonvaViewer reads the armed tool out of `activeTool`, which it already
+   * receives, while the 3D viewer has no `activeTool` at all.
+   *
+   * It means something stronger in the 3D branch than on a Konva stage. There the eraser is one
+   * more tool on a surface that already owns every press; in the live scene it is a viewport
+   * mode that takes the left-drag away from the camera for as long as it is armed. See
+   * ModelViewerInner's `eraserOwnsPointer`.
+   */
+  eraserActive?: boolean;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
   annotating?: boolean;
-  color?: string;
+  /**
+   * The markup toolbar's live colour. Required, not defaulted: the portal is this component's
+   * only caller and always has one (`drawingColor`), so a `?? fallback` here would be
+   * unreachable dead code — and the PDF branch below also hands this to the measure preview
+   * (`measurePreviewColor`), where an unreachable fallback disagreeing with the toolbar's real
+   * default would be worse than merely dead: it would break the one property that prop exists
+   * to guarantee, that the preview ink matches the committed ink.
+   */
+  color: string;
   strokeWidth?: number;
   fileId?: string;
   onCommentPlace?: (x: number, y: number, pageNumber: number) => void;
@@ -104,8 +136,9 @@ export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
   partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
-  measureActive, onMeasurePoint, measurements, pendingMeasurement, mmPerUnit, measureUnit,
-  selectedMeasurementId, onSelectMeasurement,
+  measureActive, onMeasurePoint, measurements, pendingMeasurement, measureHoverPoint,
+  onMeasureHover, mmPerUnit, measureUnit,
+  selectedMeasurementId, onSelectMeasurement, onEraseMeasurement, eraserActive,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -170,7 +203,7 @@ export default function ViewerContainer({
         activeTool={activeTool ?? 'pointer'}
         tagging={tagging}
         annotating={annotating}
-        color={color ?? '#ef4444'}
+        color={color}
         strokeWidth={strokeWidth ?? 4}
         onCommentPlace={onCommentPlace ?? (() => {})}
         comments={comments ?? []}
@@ -184,10 +217,13 @@ export default function ViewerContainer({
         measurements={measurements}
         pendingMeasurement={pendingMeasurement}
         onMeasurePoint={onMeasurePoint}
+        measureHoverPoint={measureHoverPoint}
+        onMeasureHover={onMeasureHover}
         mmPerIntrinsicUnit={mmPerUnit}
         measureUnit={measureUnit}
         selectedMeasurementId={selectedMeasurementId}
         onSelectMeasurement={onSelectMeasurement}
+        onEraseMeasurement={onEraseMeasurement}
       />
     );
   }
@@ -224,10 +260,21 @@ export default function ViewerContainer({
           onMeasurePoint={onMeasurePoint}
           measurements={measurements}
           pendingMeasurement={pendingMeasurement}
+          measureHoverPoint={measureHoverPoint}
+          onMeasureHover={onMeasureHover}
+          // The same markup colour PDFKonvaViewer is handed above, and the same value the
+          // portal stamps on a committed measurement.
+          measurePreviewColor={color}
           mmPerUnit={mmPerUnit}
           measureUnit={measureUnit}
           selectedMeasurementId={selectedMeasurementId}
           onSelectMeasurement={onSelectMeasurement}
+          // The eraser, as a viewport mode. Both halves go over together on purpose: the viewer
+          // folds them into one condition (`eraserOwnsPointer`) and arms nothing without a
+          // handler to send a deletion to, so a caller cannot take the camera away and then
+          // erase nothing.
+          eraserActive={eraserActive}
+          onEraseMeasurement={onEraseMeasurement}
         />
       </ModelErrorBoundary>
     );

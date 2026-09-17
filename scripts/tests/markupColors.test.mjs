@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MARKUP_COLORS, BLACK, isPresetColor, sameColor } from '../../lib/markup/colors.ts';
+import { MARKUP_COLORS, BLACK, isPresetColor, sameColor, readableTextOn } from '../../lib/markup/colors.ts';
 import { PALETTE } from '../../lib/commentColors.ts';
 
 test('the markup row is the five comment pastels plus black, in that order', () => {
@@ -37,6 +37,59 @@ test('sameColor is case-insensitive, both directions', () => {
   assert.ok(sameColor('#FFCF2E', '#ffcf2e'));
   assert.ok(sameColor('#abc123', '#abc123'));
   assert.ok(!sameColor('#ffcf2e', '#111111'));
+});
+
+// WCAG relative luminance / contrast ratio, reimplemented here independently of
+// lib/markup/colors.ts's own arithmetic — so this test cannot pass merely because it shares
+// a bug with the code under test. sRGB channels, 0.03928 linearisation threshold, the
+// 0.2126/0.7152/0.0722 luminance weights, per the WCAG 2.x formula.
+function srgbChannelToLinear(channel255) {
+  const c = channel255 / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance(hex) {
+  const n = hex.replace(/^#/, '');
+  const r = parseInt(n.slice(0, 2), 16);
+  const g = parseInt(n.slice(2, 4), 16);
+  const b = parseInt(n.slice(4, 6), 16);
+  return 0.2126 * srgbChannelToLinear(r) + 0.7152 * srgbChannelToLinear(g) + 0.0722 * srgbChannelToLinear(b);
+}
+
+function contrastRatio(hexA, hexB) {
+  const a = relativeLuminance(hexA);
+  const b = relativeLuminance(hexB);
+  const lighter = Math.max(a, b);
+  const darker = Math.min(a, b);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+test('readableTextOn picks the dark ink for yellow and white for black', () => {
+  // White on #FFCF2E is 1.48:1 (illegible); black-ish ink on #111111 is 1.11:1 — the two ends
+  // of the palette that a fixed text colour cannot serve at once.
+  assert.equal(readableTextOn('#FFCF2E'), '#1C2030');
+  assert.equal(readableTextOn('#111111'), '#FFFFFF');
+});
+
+test('readableTextOn clears 4.5:1 on every swatch in MARKUP_COLORS', () => {
+  // Property test, not a table of expectations: computes the ratio for whatever
+  // readableTextOn picks against whatever MARKUP_COLORS currently contains, so a swatch added
+  // later is checked automatically instead of silently skipped.
+  for (const entry of MARKUP_COLORS) {
+    const text = readableTextOn(entry.accent);
+    const ratio = contrastRatio(entry.accent, text);
+    assert.ok(
+      ratio >= 4.5,
+      `${entry.name} (${entry.accent}) paired with ${text} only reaches ${ratio.toFixed(2)}:1`,
+    );
+  }
+});
+
+test('readableTextOn is case-insensitive on its hex input', () => {
+  // Same bug class sameColor guards against: the picker and MARKUP_COLORS disagree on case.
+  assert.equal(readableTextOn('#ffcf2e'), readableTextOn('#FFCF2E'));
+  assert.equal(readableTextOn('#111111'), readableTextOn(('#111111').toLowerCase()));
+  assert.equal(readableTextOn('#AbCdEf'), readableTextOn('#abcdef'));
 });
 
 import { normalizeHex, hexToRgb, rgbToHex, hsvToHex, hexToHsv } from '../../lib/markup/color.ts';
