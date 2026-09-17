@@ -68,10 +68,21 @@ interface ViewerContainerProps {
   onSelectMeasurement?: (id: string | null) => void;
   /**
    * Erase one measurement, by id — the eraser's route into the measure store. Forwarded to the
-   * PDF surface ONLY: there is no eraser in the 3D viewer, whose measurements are deleted by
-   * selecting one and pressing Delete.
+   * PDF surface and to the 3D viewer; whichever of them is mounted is the surface this file is
+   * measured on, so only one can ever receive it.
    */
   onEraseMeasurement?: (id: string) => void;
+  /**
+   * True while the eraser is armed. 3D-ONLY, exactly like `measureActive` above and for the
+   * same reason: PDFKonvaViewer reads the armed tool out of `activeTool`, which it already
+   * receives, while the 3D viewer has no `activeTool` at all.
+   *
+   * It means something stronger in the 3D branch than on a Konva stage. There the eraser is one
+   * more tool on a surface that already owns every press; in the live scene it is a viewport
+   * mode that takes the left-drag away from the camera for as long as it is armed. See
+   * ModelViewerInner's `eraserOwnsPointer`.
+   */
+  eraserActive?: boolean;
   // PDF annotation props
   activeTool?: ToolType;
   tagging?: boolean;
@@ -127,7 +138,7 @@ export default function ViewerContainer({
   partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
   measureActive, onMeasurePoint, measurements, pendingMeasurement, measureHoverPoint,
   onMeasureHover, mmPerUnit, measureUnit,
-  selectedMeasurementId, onSelectMeasurement, onEraseMeasurement,
+  selectedMeasurementId, onSelectMeasurement, onEraseMeasurement, eraserActive,
 }: ViewerContainerProps) {
   const ext = getExtension(file.filename);
   const [url, setUrl] = useState<string | null>(null);
@@ -258,6 +269,12 @@ export default function ViewerContainer({
           measureUnit={measureUnit}
           selectedMeasurementId={selectedMeasurementId}
           onSelectMeasurement={onSelectMeasurement}
+          // The eraser, as a viewport mode. Both halves go over together on purpose: the viewer
+          // folds them into one condition (`eraserOwnsPointer`) and arms nothing without a
+          // handler to send a deletion to, so a caller cannot take the camera away and then
+          // erase nothing.
+          eraserActive={eraserActive}
+          onEraseMeasurement={onEraseMeasurement}
         />
       </ModelErrorBoundary>
     );

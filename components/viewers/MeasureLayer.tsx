@@ -51,6 +51,19 @@ const PENDING_DASH_FRACTION = 0.02;
 const PENDING_GAP_FRACTION = 0.012;
 
 /**
+ * How wide a measurement's THREE.Line is as a pick target, as a fraction of the model's
+ * bounding radius. See the `raycaster.params.Line.threshold` effect below for why a fixed world
+ * value cannot work here.
+ *
+ * Exported because there are TWO raycasts against this layer, and they must not disagree about
+ * how close counts as a hit: the shared R3F raycaster behind a dimension's onClick (tuned by
+ * that effect) and SceneInteraction's own eraser raycast, which uses a private raycaster whose
+ * thresholds nothing else touches. Two hand-written copies of 5e-3 is exactly how "the eraser
+ * can't reach what a click can" would arrive later with nothing to point at.
+ */
+export const MEASURE_LINE_PICK_FRACTION = 5e-3;
+
+/**
  * Always a solid pill filled with the measurement's own colour, text picked by luminance
  * (readableTextOn) rather than a fixed white — the same fix as the Konva surfaces'
  * MeasureObjects. This used to invert on selection (white pill / coloured text, unselected;
@@ -233,6 +246,21 @@ interface MeasureEntry {
   /** Null when there is no reading to show yet — an uncalibrated file's linear measurement. */
   texture: THREE.CanvasTexture | null;
   anchor: THREE.Vector3;
+  /**
+   * Stamped on this entry's own `<group>` below, so a raycast hit — which lands on a leg, an
+   * endpoint dot or the label sprite, never on the group itself — can be walked back up to the
+   * record it belongs to. The 3D eraser's only route from a pick to an id; see
+   * SceneInteraction's `eraseMeasurementsAt` in ModelViewerInner.tsx.
+   *
+   * Built in the memo rather than written inline in the JSX so its identity is stable across
+   * renders that do not rebuild `entries`: an object literal in the tree would read as a
+   * changed prop on every render and be re-assigned to the group each time.
+   *
+   * The one thing this memo allocates that has NO matching free, and deliberately so — it is a
+   * plain object with no GPU backing. Everything else here (geometries, materials, textures)
+   * still frees in the `[entries]` cleanup effect below.
+   */
+  userData: { measurementId: string };
 }
 
 interface MeasureLayerProps {
@@ -287,6 +315,14 @@ interface MeasureLayerProps {
   clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
   /** The model's bounding radius — scene scale for the dash length and the line-pick threshold. */
   radius: number;
+  /**
+   * The root group, so the 3D eraser can raycast against measurements and nothing else.
+   *
+   * Handed out rather than looked up: SceneInteraction's erase raycast must be scoped to this
+   * subtree alone, because the model must never be an erase target. React nulls it on unmount,
+   * so a file switch cannot leave the eraser pointed at a group that is no longer in the scene.
+   */
+  groupRef?: React.MutableRefObject<THREE.Group | null>;
 }
 
 export default function MeasureLayer({
@@ -301,6 +337,7 @@ export default function MeasureLayer({
   selectable = true,
   clipPlanesRef,
   radius,
+  groupRef,
 }: MeasureLayerProps) {
   const sprites = useRef(new Map<string, THREE.Sprite>());
   const previewSprite = useRef<THREE.Sprite | null>(null);
@@ -320,7 +357,7 @@ export default function MeasureLayer({
   const raycaster = useThree((s) => s.raycaster);
   useEffect(() => {
     const previous = raycaster.params.Line.threshold;
-    raycaster.params.Line.threshold = Math.max(previous, radius * 5e-3);
+    raycaster.params.Line.threshold = Math.max(previous, radius * MEASURE_LINE_PICK_FRACTION);
     return () => {
       raycaster.params.Line.threshold = previous;
     };
@@ -402,6 +439,7 @@ export default function MeasureLayer({
           m.kind === 'angular'
             ? new THREE.Vector3(m.points[1][0], m.points[1][1], m.points[1][2])
             : midpoint(m.points[0], m.points[1]),
+        userData: { measurementId: m.id },
       };
     });
     // `measurements` is replaced whole on every add and remove, and the label text is BAKED
@@ -669,10 +707,14 @@ export default function MeasureLayer({
   });
 
   return (
-    <group>
+    <group ref={groupRef}>
       {entries.map((entry) => (
         <group
           key={entry.id}
+          // The id a raycast hit is traced back to — see MeasureEntry's `userData`. Carried by
+          // the GROUP rather than by each line/dot/sprite so there is exactly one place the
+          // eraser can read it from, whichever of them the ray happens to strike first.
+          userData={entry.userData}
           // No handler at all when another tool owns the click — see `selectable`. This is the
           // 3D equivalent of the PDF measure layer's `listening={activeTool === 'pointer'}`.
           onClick={!selectable ? undefined : (e) => {

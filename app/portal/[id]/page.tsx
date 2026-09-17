@@ -1436,7 +1436,16 @@ export default function PortalPage() {
     // other direction (selecting a plane disarms tagging) already goes through
     // handleSelectPlane; match it here so arming a comment/draw tool fully releases a
     // plane selection too.
-    if (tagging || DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool)) {
+    //
+    // The eraser is named separately because it is not in DRAW_TOOLS — that list means "tools
+    // that START an annotation session", and the eraser must never start one (see the effect
+    // above). It is still a tool that owns the press, and on a 3D file it now owns the whole
+    // viewport left-drag, so leaving the gizmo armed underneath it means one drag on a handle
+    // both moves the model and erases everything the handle passes over. It also hands
+    // `controls.enabled` a second writer: drei's TransformControls re-enables the camera on
+    // every drag end and TransformGizmo's unmount cleanup restores it unconditionally, either
+    // of which would give the orbit back mid-erase.
+    if (tagging || DRAW_TOOLS.includes(activeTool) || isMeasureTool(activeTool) || activeTool === 'eraser') {
       setTransformMode(null);
       setSelectedPlane(null);
     }
@@ -2100,8 +2109,15 @@ export default function PortalPage() {
             onSelectMeasurement={setSelectedMeasurementId}
             // The eraser deletes a dimension like any other mark. Ungated for the same reason
             // `measurements` beside it is: only the surface this file is measured on receives
-            // them, and ViewerContainer hands this to the PDF viewer alone.
+            // them, and ViewerContainer hands this to the PDF viewer and the 3D viewer alone.
             onEraseMeasurement={removeMeasure}
+            // Deliberately NOT also gated on `is3DFile`, for the same reason `measureActive`
+            // above is not: ViewerContainer already forwards this to the 3D branch alone, and
+            // that branch is chosen from its own copy of the extension list. Testing a second
+            // hand-copied list here would add nothing today and, the first time the two drifted,
+            // would silently leave the eraser armed in the toolbar and inert in the viewport —
+            // which is the failure this whole tool keeps producing.
+            eraserActive={activeTool === 'eraser'}
             onPageChange={setPdfPage}
           />
         </div>

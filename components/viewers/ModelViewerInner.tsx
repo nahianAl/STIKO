@@ -32,7 +32,9 @@ import ViewerNavigation from './ViewerNavigation';
 import ApplyCrossSection from './section/ApplyCrossSection';
 import SectionPlaneWidget from './section/SectionPlaneWidget';
 import SectionCaps from './section/SectionCaps';
-import MeasureLayer from './MeasureLayer';
+import MeasureLayer, { MEASURE_LINE_PICK_FRACTION } from './MeasureLayer';
+import { ERASER_CURSOR } from '@/lib/cursors';
+import { sweepPoints } from '@/lib/markup/eraseSweep';
 import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
@@ -179,6 +181,26 @@ export interface ModelViewerInnerProps {
   measureUnit?: LengthUnit;
   selectedMeasurementId?: string | null;
   onSelectMeasurement?: (id: string | null) => void;
+  /**
+   * True while the eraser is the armed tool. A VIEWPORT MODE, not a markup session.
+   *
+   * Everywhere else the eraser is a Konva tool running over a frozen snapshot; here the
+   * measurements it deletes are live scene objects, so the mode has to take the left-drag away
+   * from the camera for as long as it is armed (see `eraserOwnsPointer` below). It deliberately
+   * does NOT start an annotation session — freezing the viewport would turn the very
+   * measurements it exists to remove into pixels in a snapshot — which is why 'eraser' is
+   * absent from the portal page's DRAW_TOOLS and is not a measure tool either.
+   */
+  eraserActive?: boolean;
+  /**
+   * Erase one measurement, by id. The eraser's only route into the measure store.
+   *
+   * Required in practice whenever `eraserActive` can be true: `eraserOwnsPointer` below folds
+   * the two into ONE condition, so a caller that arms the mode without wiring this gets a
+   * viewer that behaves exactly as if the eraser were not armed — camera live, cursor
+   * unchanged — rather than a dead mode that silently swallows drags.
+   */
+  onEraseMeasurement?: (id: string) => void;
 }
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
@@ -603,6 +625,9 @@ function SceneInteraction({
   pendingMeasurement,
   onMeasureHover,
   radius,
+  eraserOwnsPointer,
+  onEraseMeasurement,
+  measureGroupRef,
 }: {
   commentToolActive: boolean;
   onSceneClick?: ModelViewerInnerProps['onSceneClick'];
@@ -626,14 +651,40 @@ function SceneInteraction({
   onMeasureHover?: ModelViewerInnerProps['onMeasureHover'];
   /** The model's bounding radius, or 0 until it has been measured. Scales the click floor. */
   radius: number;
+  /**
+   * The ONE condition under which the eraser owns the viewport's left-drag. Computed by the
+   * caller and handed down whole rather than re-derived here, so the state that DISABLES the
+   * camera, the state that shows the eraser cursor and the state these handlers can actually
+   * erase in cannot drift apart. See `eraserOwnsPointer` in ModelViewerInner.
+   */
+  eraserOwnsPointer: boolean;
+  onEraseMeasurement?: ModelViewerInnerProps['onEraseMeasurement'];
+  /** MeasureLayer's root group — the eraser's raycast scope. Null until the layer mounts. */
+  measureGroupRef: React.MutableRefObject<THREE.Group | null>;
 }) {
-  const { camera, gl } = useThree();
+  // `controls` is drei's CameraControls instance once <CameraControls makeDefault> has published
+  // it — the same handle ViewerNavigation anchors the orbit pivot through.
+  const { camera, gl, controls } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
   const mouse = useRef(new THREE.Vector2());
   const tempVec3 = useRef(new THREE.Vector3());
   // A drag that orbits the camera must not also pick a part: pointerdown records where the
   // gesture started, and the pick raycast on pointerup only runs if it stayed within 4px of it.
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
+  // True between an erase pointerdown and the pointerup/leave that ends it, with the last
+  // sampled screen point the sweep interpolates from. Both mirror the Konva surfaces' refs of
+  // the same names; this is the third eraser, not a second kind of one.
+  const erasingRef = useRef(false);
+  const lastErasePointRef = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * A raycaster of the eraser's OWN, kept apart from `raycaster` above.
+   *
+   * Erasing needs raised Line and Points thresholds (see `eraseMeasurementsAt`) and the model
+   * pick does not — a STEP file's wireframe polylines are THREE.Lines inside `modelRef`, so
+   * widening the shared raycaster's line tolerance would silently change what every pin drop
+   * and part pick considers a hit. Two raycasters, two answers, no coupling.
+   */
+  const eraseRaycaster = useRef(new THREE.Raycaster());
 
   /**
    * The frontmost model intersection under the pointer that survives both guards, or null.
@@ -679,8 +730,95 @@ function SceneInteraction({
     [camera, gl, modelRef, clipPlanesRef]
   );
 
+  /**
+   * Deletes the frontmost measurement under a screen point, if there is one.
+   *
+   * Scoped to MeasureLayer's own group and NOTHING else — deliberately not `scene`, and
+   * deliberately not a filter applied after the fact. The model must never be an erase target,
+   * and the way to guarantee that is for it never to enter the candidate list: an "erase" that
+   * could reach geometry would be a destructive action on the file being reviewed, not a markup
+   * undo. The half-placed gesture's preview dots live in the same group and are skipped by
+   * construction too, since only a COMMITTED entry's group carries `measurementId`.
+   *
+   * Cross-section clipping is NOT tested here, unlike `pickModel` above, and that asymmetry is
+   * on purpose: a measurement's label sprite is drawn unclipped (see MeasureLayer's
+   * spriteMaterial comments), so a dimension inside a cut-away region is still visible and
+   * still worth erasing. Adding the test would produce a reading you can see and cannot delete.
+   * It also keeps the eraser reaching exactly what a click can select, which applies no clip
+   * test either.
+   */
+  const eraseMeasurementsAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const group = measureGroupRef.current;
+      if (!group) return;
+
+      const rect = gl.domElement.getBoundingClientRect();
+      mouse.current.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      eraseRaycaster.current.setFromCamera(mouse.current, camera);
+
+      // three's line/point thresholds are WORLD distances defaulting to 1 (Raycaster.js), which
+      // is only ever right by accident: bounding radii in this app span 1 to 10,000 (see
+      // lib/sceneScale.ts). Left alone, a dimension's leg is a sub-pixel target on a large model
+      // — and on an uncalibrated file (OBJ/STL/PLY/3DS/DAE) the label sprite is not rendered at
+      // all, so the leg and its endpoint dots are the ONLY things the eraser could hit. The line
+      // half uses the very fraction the click-to-select path raises the SHARED raycaster by,
+      // imported from MeasureLayer rather than re-typed, so the eraser cannot end up reaching
+      // less than a click does; the endpoint dots get the same figure for consistency, since
+      // nothing else raycasts Points in this scene.
+      //
+      // `radius` is 0 until the model has been measured, which would leave both thresholds at 0
+      // — and that is exactly the window in which MeasureLayer is not mounted either, so the
+      // `group` guard above has already returned.
+      const threshold = radius * MEASURE_LINE_PICK_FRACTION;
+      eraseRaycaster.current.params.Line.threshold = threshold;
+      eraseRaycaster.current.params.Points.threshold = threshold;
+
+      for (const hit of eraseRaycaster.current.intersectObject(group, true)) {
+        // The ray lands on a leg, an endpoint dot or a label sprite — never on the group that
+        // carries the id — so walk up to the entry. Bounded at the layer's own root: above it
+        // is the rest of the scene, which can never carry one.
+        let node: THREE.Object3D | null = hit.object;
+        while (node && node !== group && node.userData?.measurementId === undefined) {
+          node = node.parent;
+        }
+        const id = node?.userData?.measurementId as string | undefined;
+        // Optional call for the type checker only: `eraserOwnsPointer` already folds in
+        // `!!onEraseMeasurement`, so this is never reached without a handler.
+        if (id) {
+          onEraseMeasurement?.(id);
+          return;
+        }
+      }
+    },
+    [camera, gl, measureGroupRef, onEraseMeasurement, radius]
+  );
+
+  /** Ends an erase gesture. Idempotent, and safe to call when none was running. */
+  const stopErasing = useCallback(() => {
+    erasingRef.current = false;
+    lastErasePointRef.current = null;
+  }, []);
+
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {
+      if (eraserOwnsPointer) {
+        // Left button only — right-drag is the pan gesture, and middle is dolly.
+        if (e.button !== 0) return;
+        // No drag origin is RECORDED — nothing on the pointerup path can fire while the eraser
+        // is armed (see its first branch), and an origin written but never consumed is exactly
+        // the stale value that handler documents as unsafe to leave sitting in the ref. Any
+        // origin already there is cleared for the same reason: a press on this canvas starts a
+        // new gesture, so whatever a previous unmatched press left behind is dead.
+        pointerDownPos.current = null;
+        erasingRef.current = true;
+        lastErasePointRef.current = { x: e.clientX, y: e.clientY };
+        // Erase on the press itself, so a single click with no movement erases; the sweep in
+        // the move handler then continues from here until pointerup.
+        eraseMeasurementsAt(e.clientX, e.clientY);
+        return;
+      }
+
       pointerDownPos.current = { x: e.clientX, y: e.clientY };
 
       if (!commentToolActive || !onSceneClick) return;
@@ -698,11 +836,21 @@ function SceneInteraction({
       const local = worldToModel([point.x, point.y, point.z], transform);
       onSceneClick({ x: local[0], y: local[1], z: local[2] }, screenPercent);
     },
-    [commentToolActive, onSceneClick, camera, pickModel, transform]
+    [commentToolActive, onSceneClick, camera, pickModel, eraseMeasurementsAt, eraserOwnsPointer, transform]
   );
 
   const handlePointerUp = useCallback(
     (e: PointerEvent) => {
+      // The eraser ends its gesture here and consumes the event, so no pin, measurement point
+      // or part pick can fire from the same press. Tested on `erasingRef` as WELL as on the
+      // mode: a gesture that started while the eraser was armed must be closed out even if the
+      // mode was disarmed mid-press, or the ref stays armed and ordinary mouse movement turns
+      // into silent deletion.
+      if (erasingRef.current || eraserOwnsPointer) {
+        stopErasing();
+        return;
+      }
+
       // A pin drop is deliberately NOT one of the branches below: it already happened on
       // pointerdown, so the comment tool consumes the whole gesture and no two of the three
       // can ever fire from one click.
@@ -778,6 +926,8 @@ function SceneInteraction({
       gl,
       transform,
       gizmoDraggingRef,
+      eraserOwnsPointer,
+      stopErasing,
     ]
   );
 
@@ -797,6 +947,27 @@ function SceneInteraction({
    */
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
+      if (eraserOwnsPointer) {
+        // A pointerup this canvas never received — focus lost mid-press (Cmd-Tab, Mission
+        // Control, an OS dialog) and the button released elsewhere — would otherwise leave
+        // erasingRef armed forever, since pointerup and pointerleave are the only other places
+        // that clear it. buttons === 0 means the press has already ended. Same guard, same
+        // reason, as the two Konva surfaces' own eraser move handlers.
+        if (e.buttons === 0) {
+          stopErasing();
+          return;
+        }
+        if (!erasingRef.current) return;
+        const to = { x: e.clientX, y: e.clientY };
+        // Interpolated, because pointer events arrive about once a frame and a quick flick
+        // would otherwise jump clean over a dimension between two samples.
+        for (const point of sweepPoints(lastErasePointRef.current, to)) {
+          eraseMeasurementsAt(point.x, point.y);
+        }
+        lastErasePointRef.current = to;
+        return;
+      }
+
       if (!measureActive || !onMeasureHover) return;
       // Gated on a gesture that already has a click in it, NOT merely on one existing.
       // `beginGesture` starts a gesture with an EMPTY points array the moment the tool is armed,
@@ -820,7 +991,18 @@ function SceneInteraction({
       const world = snapped ?? hit.point;
       onMeasureHover(worldToModel([world.x, world.y, world.z], transform));
     },
-    [measureActive, onMeasureHover, pendingMeasurement, pickModel, camera, gl, transform]
+    [
+      measureActive,
+      onMeasureHover,
+      pendingMeasurement,
+      pickModel,
+      camera,
+      gl,
+      transform,
+      eraserOwnsPointer,
+      eraseMeasurementsAt,
+      stopErasing,
+    ]
   );
 
   /**
@@ -829,9 +1011,14 @@ function SceneInteraction({
    * until the pointer comes back. Mirrors the Konva surfaces' `onMouseLeave`.
    */
   const handlePointerLeave = useCallback(() => {
+    // The pointerup that ends an erase drag off the edge of the canvas is delivered to whatever
+    // element it happened over, never here — so leaving is the last event this listener set will
+    // see, and it has to close the gesture. Unconditional, for the same reason pointerup's
+    // branch tests the ref: what matters is that a gesture was in flight, not what is armed now.
+    stopErasing();
     if (!measureActive || !onMeasureHover) return;
     onMeasureHover(null);
-  }, [measureActive, onMeasureHover]);
+  }, [measureActive, onMeasureHover, stopErasing]);
 
   useEffect(() => {
     const canvas = gl.domElement;
@@ -846,6 +1033,29 @@ function SceneInteraction({
       canvas.removeEventListener('pointerleave', handlePointerLeave);
     };
   }, [gl, handlePointerDown, handlePointerUp, handlePointerMove, handlePointerLeave]);
+
+  /**
+   * Holds the camera off for as long as the eraser owns the pointer.
+   *
+   * `<CameraControls enabled={!eraserOwnsPointer}>` is the primary gate and sets this in the
+   * very commit the tool is armed — but it is a React PROP DIFF, so it is re-applied only when
+   * its own value changes. `controls.enabled` has a second writer that goes behind React's back:
+   * drei's TransformControls sets it true on every drag end, and TransformGizmo's unmount
+   * cleanup restores it unconditionally (see the comment there — it has its own good reason).
+   * Either write landing while the eraser is armed would hand the left-drag back to the camera
+   * for the rest of the session, because `eraserOwnsPointer` has not changed and nothing would
+   * re-apply the prop. That is not hypothetical: arming the eraser makes the portal page disarm
+   * the transform gizmo, which unmounts it, which runs exactly that cleanup one commit later.
+   *
+   * ONE-DIRECTIONAL on purpose. Nothing here ever writes `true`; restoring is the prop's job,
+   * and it fires exactly once on the transition. Re-asserting `true` every frame instead would
+   * break the gizmo's own drag-time disable for every user who is not erasing.
+   */
+  useFrame(() => {
+    if (!eraserOwnsPointer) return;
+    const cc = controls as unknown as CameraControlsImpl | null;
+    if (cc && cc.enabled) cc.enabled = false;
+  });
 
   // Project world pins to screen space every frame
   useFrame(() => {
@@ -1113,6 +1323,8 @@ export default function ModelViewerInner({
   measureUnit = DEFAULT_LENGTH_UNIT,
   selectedMeasurementId = null,
   onSelectMeasurement,
+  eraserActive = false,
+  onEraseMeasurement,
 }: ModelViewerInnerProps) {
   // The write path validates, but a row could still carry something unusable. A NaN here would
   // make the object vanish with no error anywhere, so fall back rather than propagate it.
@@ -1122,8 +1334,31 @@ export default function ModelViewerInner({
   const idleSlots = useMemo(() => emptySlots(), []);
   const slots = sectionSlots ?? idleSlots;
 
+  /**
+   * THE condition for "the eraser owns the viewport's left-drag". One expression, read by all
+   * four things that must agree about it: the camera gate on <CameraControls> below, the
+   * frame-loop hold inside SceneInteraction, that component's pointer handlers, and the cursor.
+   *
+   * Written once and passed down rather than re-derived at each site. Task 5's failure on the
+   * 2D surfaces was precisely these drifting apart — the layer listened in a state the eraser
+   * could not erase in, so it silently became a selection tool — and the shape of that bug here
+   * would be worse: a mode that takes the camera away and then erases nothing.
+   *
+   * `!!onEraseMeasurement` is part of it because a mode with nowhere to send a deletion must not
+   * disable the camera. `!commentToolActive` is the same precedence handlePointerUp already
+   * gives the comment tool: it consumes the whole gesture, so the two can never fire from one
+   * press. There is no `measureActive` clause because there cannot be one — the portal's
+   * `activeTool` is a single value and 'eraser' is not a measure tool, so the two are mutually
+   * exclusive at the source.
+   */
+  const eraserOwnsPointer = eraserActive && !commentToolActive && !!onEraseMeasurement;
+
   const modelRef = useRef<THREE.Group>(null);
   const transformRef = useRef<THREE.Group>(null);
+  // MeasureLayer's root group, so the eraser can raycast against measurements and nothing else.
+  // Null whenever that layer is unmounted (no bounds yet, or a file switch in flight), which is
+  // also exactly when there is nothing on screen to erase.
+  const measureGroupRef = useRef<THREE.Group | null>(null);
   // Held beside the model ref: SceneInteraction needs it to map a click's batchId back to a
   // part key, and it can only come from inside <Model>, where the batches are actually built.
   const [batches, setBatches] = useState<PartBatches | null>(null);
@@ -1201,7 +1436,16 @@ export default function ModelViewerInner({
         // A measure tool places points by clicking exactly the way the comment tool does, so it
         // gets the same cursor. It does NOT freeze the viewport, so the viewer stays orbitable
         // underneath it.
-        cursor: commentToolActive || measureActive ? 'crosshair' : undefined,
+        //
+        // The eraser is the one mode that DOES take the viewport's left-drag (see
+        // `eraserOwnsPointer`), and it is checked first so the cursor promises exactly what the
+        // press will do — the same condition that disables the camera and the same one the
+        // pointer handlers act on, never a fourth opinion about which tool is live.
+        cursor: eraserOwnsPointer
+          ? ERASER_CURSOR
+          : commentToolActive || measureActive
+            ? 'crosshair'
+            : undefined,
       }}
     >
       <Canvas
@@ -1352,7 +1596,12 @@ export default function ModelViewerInner({
                   // [transformMode] effect and SceneInteraction's raw pointerdown listener
                   // above); without this, one click on a visible plane both drops a pin AND
                   // selects the plane, arming Move over the very model being commented on.
-                  selectable={!commentToolActive}
+                  //
+                  // The eraser is on the same list for the same reason: its press already
+                  // deletes whatever dimension is under the cursor, and a plane sheet is a large
+                  // target sitting across the whole model, so without this every erase click
+                  // that grazed one would also leave a plane highlighted behind it.
+                  selectable={!commentToolActive && !eraserOwnsPointer}
                   gizmoDraggingRef={gizmoDraggingRef}
                   objectRef={registerPlaneObject}
                   onSelect={(next) => onSelectPlane?.(next)}
@@ -1380,9 +1629,19 @@ export default function ModelViewerInner({
                 // click. With a measure tool armed the same press also drops a gesture point
                 // (SceneInteraction's pointerup), and with the comment tool armed it drops a
                 // pin — the PDF surface draws exactly the same line with `listening`.
-                selectable={!measureActive && !commentToolActive}
+                //
+                // The eraser is on that list for a sharper reason, and it is the whole lesson of
+                // the 2D eraser: this handler and the erase raycast resolve a hit through
+                // DIFFERENT raycasters, so a dimension the eraser's threshold just missed could
+                // still satisfy R3F's — and the press would select what it was meant to delete.
+                // Erasing removes the node before the click could fire in the normal case, which
+                // is exactly what makes the failure intermittent rather than obvious.
+                selectable={!measureActive && !commentToolActive && !eraserOwnsPointer}
                 clipPlanesRef={clipPlanesRef}
                 radius={bounds.radius}
+                // The eraser's raycast scope. Handed over here and nowhere else, so "what the
+                // eraser can reach" is literally the subtree this layer draws.
+                groupRef={measureGroupRef}
               />
             )}
           </group>
@@ -1463,6 +1722,9 @@ export default function ModelViewerInner({
             // measure branch of the pick handler shut: there is no scene scale to size the
             // minimum click separation against yet.
             radius={bounds?.radius ?? 0}
+            eraserOwnsPointer={eraserOwnsPointer}
+            onEraseMeasurement={onEraseMeasurement}
+            measureGroupRef={measureGroupRef}
           />
         </Suspense>
         {/* Replaces OrbitControls, which cannot express an off-centre orbit pivot: it calls
@@ -1482,6 +1744,21 @@ export default function ModelViewerInner({
           dollyToCursor
           smoothTime={0.15}
           draggingSmoothTime={0.08}
+          // The eraser and the camera want the same left-drag, and camera-controls deliberately
+          // never calls preventDefault() on pointerdown (see its own comment in onPointerDown),
+          // so there is no way for SceneInteraction's listener to take the gesture from it.
+          // Without this an erase drag orbits the model instead of erasing.
+          //
+          // `enabled` rather than a narrower mouseButtons override because it covers touch and
+          // pinch too, and because the setter calls cancel() — a drag already in flight when the
+          // tool is armed is ended cleanly instead of being left half-applied. The cost is that
+          // wheel dolly and right-drag pan are off for as long as the eraser is armed, which is
+          // the deliberate trade: the mode is transient, and one input mapping that is sometimes
+          // live is worse than a viewport that is plainly in eraser mode.
+          //
+          // SceneInteraction re-asserts this every frame while the mode is armed; see the
+          // useFrame there for the second writer this prop alone cannot answer.
+          enabled={!eraserOwnsPointer}
         />
         {/* Two mutually exclusive targets. With a plane selected the gizmo drives that plane
             and commits nothing — a plane's pose is session-only. Otherwise it drives the
