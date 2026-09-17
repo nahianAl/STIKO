@@ -1463,9 +1463,20 @@ export default function ModelViewerInner({
   // the page hands us a transform again (notably after a failed save, where it re-sends the
   // persisted value), re-apply it by hand. Without this the object stays at a pose that was
   // never saved, while the pin maths still uses the persisted one.
+  //
+  // The background poll is what makes this dangerous now: any add/delete elsewhere in the
+  // version hands the page a fresh `transform` identity for every file, including the one on
+  // screen, even though its values are unchanged. Applying that here while gizmoDraggingRef is
+  // true would hard-reset this group out from under a live drag, snapping the object back to its
+  // persisted pose under the user's cursor — and TransformGizmo's onMouseUp would then commit
+  // THAT snapped pose as if the user had dragged it there. Skip while a drag owns this group.
+  // Nothing is lost by skipping: TransformGizmo's onMouseUp always runs onCommit, and
+  // handleTransformCommit always gives `transform` a fresh identity of its own afterwards —
+  // on success with the just-dragged values, on failure with the reverted ones (see its comment
+  // in page.tsx) — so this effect fires again with the latest value once dragging is over.
   useEffect(() => {
     const group = transformRef.current;
-    if (!group) return;
+    if (!group || gizmoDraggingRef.current) return;
     group.position.set(safeTransform.position[0], safeTransform.position[1], safeTransform.position[2]);
     group.rotation.set(safeTransform.rotation[0], safeTransform.rotation[1], safeTransform.rotation[2]);
   }, [safeTransform]);

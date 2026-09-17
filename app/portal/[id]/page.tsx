@@ -429,6 +429,12 @@ export default function PortalPage() {
   const currentFileIdRef = useRef(selectedFileId);
   currentFileIdRef.current = selectedFileId;
 
+  // Same idiom, for fetchFiles: lets an in-flight request notice that the user has since
+  // switched versions, without fetchFiles itself closing over a selectedVersionId that is
+  // frozen at whichever render started the request.
+  const currentVersionIdRef = useRef(selectedVersionId);
+  currentVersionIdRef.current = selectedVersionId;
+
   // Session-only part state resets on a genuine file switch — keyed on selectedFileId ALONE.
   // selectedFile is recomputed by files.find(...) every render, and fetchFiles replaces
   // `files` with brand-new objects from a fresh res.json() whenever ANY file in the version
@@ -1149,6 +1155,15 @@ export default function PortalPage() {
       if (!background) setFilesLoading(true);
       try {
         const res = await fetch(`/api/files?versionId=${versionId}`);
+        // The version this request was FOR may no longer be the one on screen — a poll has no
+        // way to cancel itself, and even a foreground call can be overtaken by a fast version
+        // switch while it is in flight. Either way, a response for a version the user has since
+        // left must not land in state: it would replace the new version's files with the old
+        // one's, and the setSelectedFileId below would open a file that belongs to the wrong
+        // version. currentVersionIdRef (not the `versionId` param, which is fine, and not
+        // selectedVersionId, whose closure here would be frozen at whichever render started
+        // this call) is what makes that check see a switch that happened after the fact.
+        if (currentVersionIdRef.current !== versionId) return;
         // Same failure shape as loadVersions: a 401/403 body is a JSON object,
         // not an array, and would otherwise reach setFiles and blow up render.
         if (!res.ok) {
@@ -1156,6 +1171,7 @@ export default function PortalPage() {
           return;
         }
         const data: FileRecord[] = await res.json();
+        if (currentVersionIdRef.current !== versionId) return;
         setFiles((prev) => preserveIfUnchanged(prev, data));
         if (data.length > 0) {
           // A version change should land on the first file, but a delete that
@@ -1224,6 +1240,10 @@ export default function PortalPage() {
     // which is why there is no second call here.
     comments: () => setCommentsRefreshKey((k) => k + 1),
     participants: fetchParticipants,
+    // Unlike the other three loaders, this one has no preserveIfUnchanged — deliberately. The
+    // feed only calls this when the versions cursor itself moved (a create, delete or publish),
+    // never on a poll tick with nothing new, so there is no steady-state churn to guard against
+    // and every call here is a genuine reason to refresh each version's summary.
     versions: loadVersions,
     files: () => {
       if (selectedVersionId) fetchFiles(selectedVersionId, { background: true });
