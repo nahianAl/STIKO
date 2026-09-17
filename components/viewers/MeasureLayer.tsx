@@ -44,8 +44,13 @@ const RENDER_ORDER = 999;
 /** Label sprites are sized against the camera each frame so text stays legible at any zoom. */
 const LABEL_WORLD_HEIGHT_FRACTION = 0.035;
 
-/** Screen size of the dots marking a half-placed gesture's clicks so far. */
-const PENDING_POINT_PX = 9;
+/**
+ * Screen size of an endpoint dot: the half-placed gesture's clicks so far, and — doubled when
+ * selected — every committed measurement's own endpoints (see `entries` below). Shared between
+ * the two because a committed measurement's dots are built the same way the pending gesture's
+ * are; see the `points` field on `MeasureEntry`.
+ */
+const POINT_PX = 9;
 
 /** Dash and gap of the in-progress line, as a fraction of the model's bounding radius. */
 const PENDING_DASH_FRACTION = 0.02;
@@ -159,10 +164,24 @@ interface MeasureEntry {
   id: string;
   lines: THREE.Line[];
   /**
-   * The line materials, held apart from `lines` so the frame loop's clipping-plane binding
-   * below can reach every material without walking three's loosely-typed `Object3D.material`.
+   * Every material this entry owns — leg/arc lines plus the endpoint `points` below — held
+   * apart from the objects that use them so the frame loop's clipping-plane binding below can
+   * reach every material without walking three's loosely-typed `Object3D.material`.
    */
-  materials: THREE.LineBasicMaterial[];
+  materials: THREE.Material[];
+  /**
+   * Endpoint dots, built the same way the pending gesture's own dots are (see `pendingParts`
+   * below) — same `sizeAttenuation: false`/`depthTest: false`/`depthWrite: false` overlay
+   * pairing, same `renderOrder`. Coloured with the measurement's own colour and sized at
+   * `POINT_PX`, doubled when selected.
+   *
+   * This is the reliable half of the selection signal: `PointsMaterial.size`, unlike
+   * `LineBasicMaterial.linewidth` on the leg/arc above, is honoured on every platform. That
+   * matters most for an uncalibrated linear 3D measurement (OBJ/STL/PLY/3DS/DAE, where
+   * `assumedMmPerUnit` returns null): it has no label (`texture` below is null), so the dots and
+   * the weaker linewidth toggle are the only signals selection has left.
+   */
+  points: THREE.Points;
   /** Null when there is no reading to show yet — an uncalibrated file's linear measurement. */
   texture: THREE.CanvasTexture | null;
   anchor: THREE.Vector3;
@@ -248,7 +267,7 @@ export default function MeasureLayer({
 
     return measurements.filter(is3D).map((m) => {
       const selected = m.id === selectedId;
-      const materials: THREE.LineBasicMaterial[] = [];
+      const materials: THREE.Material[] = [];
       const lines: THREE.Line[] = [];
 
       // depthWrite paired with depthTest: false, matching the sprite material below. An overlay
@@ -261,7 +280,8 @@ export default function MeasureLayer({
       // A 3D scene has no matte to halo against, so selection here is expressed on the objects
       // that already exist instead: the line gets the measurement's colour EITHER WAY, and a
       // selected entry's linewidth doubles — three ignores linewidth on most platforms, so this
-      // is the weaker half of the signal, and the label pill below carries the reliable half.
+      // is the weaker half of the signal. The endpoint `points` built below carry the reliable
+      // half, via `PointsMaterial.size`, which three DOES honour everywhere.
       const legMaterial = new THREE.LineBasicMaterial({
         color: m.color,
         linewidth: selected ? 2 : 1,
@@ -285,11 +305,31 @@ export default function MeasureLayer({
         }
       }
 
+      // Endpoint dots for the points actually measured — conventional on a dimension in its own
+      // right, and (see the `points` field's doc comment on MeasureEntry) the one selection
+      // signal guaranteed to read regardless of platform or whether this measurement has a
+      // label. Built exactly like the pending gesture's own dots below: same
+      // sizeAttenuation/depthTest/depthWrite overlay pairing, same renderOrder.
+      const pointsMaterial = new THREE.PointsMaterial({
+        color: m.color,
+        size: selected ? POINT_PX * 2 : POINT_PX,
+        sizeAttenuation: false,
+        depthTest: false,
+        depthWrite: false,
+      });
+      materials.push(pointsMaterial);
+      const points = new THREE.Points(
+        new THREE.BufferGeometry().setFromPoints(toVectors(m.points)),
+        pointsMaterial,
+      );
+      points.renderOrder = RENDER_ORDER;
+
       const text = label(m);
       return {
         id: m.id,
         lines,
         materials,
+        points,
         texture: text === '' ? null : makeLabelTexture(text, m.color, selected),
         anchor:
           m.kind === 'angular'
@@ -317,7 +357,7 @@ export default function MeasureLayer({
     // a world-sized dot would be a speck on one model and swallow another.
     const dotMaterial = new THREE.PointsMaterial({
       color: PENDING_COLOR,
-      size: PENDING_POINT_PX,
+      size: POINT_PX,
       sizeAttenuation: false,
       depthTest: false,
       // See the depthWrite comment on entries' legMaterial above — same overlay pairing.
@@ -372,6 +412,7 @@ export default function MeasureLayer({
     () => () => {
       for (const entry of entries) {
         for (const line of entry.lines) line.geometry.dispose();
+        entry.points.geometry.dispose();
         for (const material of entry.materials) material.dispose();
         entry.texture?.dispose();
       }
@@ -440,6 +481,7 @@ export default function MeasureLayer({
           {entry.lines.map((line, i) => (
             <primitive key={i} object={line} />
           ))}
+          <primitive object={entry.points} />
           {entry.texture && (
             <sprite
               ref={(sprite: THREE.Sprite | null) => {
