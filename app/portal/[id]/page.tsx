@@ -29,6 +29,7 @@ import { DEFAULT_FOCAL_LENGTH } from '@/lib/focalLength';
 import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlots } from '@/lib/crossSection';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { BRIEF_MIN_COMMENTS } from '@/lib/brief';
+import { preserveIfUnchanged } from '@/lib/portalActivity';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -1133,35 +1134,43 @@ export default function PortalPage() {
     };
   }, [selectedVersionId]);
 
-  // Fetch files when version changes
-  const fetchFiles = useCallback(async (versionId: string) => {
-    setFilesLoading(true);
-    try {
-      const res = await fetch(`/api/files?versionId=${versionId}`);
-      // Same failure shape as loadVersions: a 401/403 body is a JSON object,
-      // not an array, and would otherwise reach setFiles and blow up render.
-      if (!res.ok) {
-        setFiles([]);
-        return;
+  // Fetch files when version changes.
+  //
+  // `background: true` is for a poll-driven refresh: someone else uploading a
+  // file must not flash the sidebar spinner over content that is already on
+  // screen.
+  const fetchFiles = useCallback(
+    async (versionId: string, options?: { background?: boolean }) => {
+      const background = options?.background === true;
+      if (!background) setFilesLoading(true);
+      try {
+        const res = await fetch(`/api/files?versionId=${versionId}`);
+        // Same failure shape as loadVersions: a 401/403 body is a JSON object,
+        // not an array, and would otherwise reach setFiles and blow up render.
+        if (!res.ok) {
+          if (!background) setFiles([]);
+          return;
+        }
+        const data: FileRecord[] = await res.json();
+        setFiles((prev) => preserveIfUnchanged(prev, data));
+        if (data.length > 0) {
+          // A version change should land on the first file, but a delete that
+          // leaves the current selection intact must not throw the viewer back
+          // to file 1.
+          setSelectedFileId((current) =>
+            current && data.some((f) => f.id === current) ? current : data[0].id
+          );
+        } else {
+          setSelectedFileId(null);
+        }
+      } catch (err) {
+        console.error('Failed to fetch files:', err);
+      } finally {
+        if (!background) setFilesLoading(false);
       }
-      const data: FileRecord[] = await res.json();
-      setFiles(data);
-      if (data.length > 0) {
-        // A version change should land on the first file, but a delete that
-        // leaves the current selection intact must not throw the viewer back
-        // to file 1.
-        setSelectedFileId((current) =>
-          current && data.some((f) => f.id === current) ? current : data[0].id
-        );
-      } else {
-        setSelectedFileId(null);
-      }
-    } catch (err) {
-      console.error('Failed to fetch files:', err);
-    } finally {
-      setFilesLoading(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     if (selectedVersionId) {
