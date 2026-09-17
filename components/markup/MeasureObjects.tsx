@@ -221,10 +221,9 @@ export default function MeasureObjects({
               {arc.length > 0 && (
                 <>
                   {selected && (
-                    // Halo again: no id, listening={false}. Wider than the arc's own hit band
-                    // (the arc sets no hitStrokeWidth, so Konva hits it at its stroke width),
-                    // which only means an erase passing through the halo's outer edge reaches
-                    // whatever is under it — a halo is never a target, at either width.
+                    // Halo again: no id, listening={false}. Same relationship as the leg's halo
+                    // above: the arc's own hitStrokeWidth (14, set below) is already wider than
+                    // this halo (7), so nothing erasable is lost by keeping the halo deaf.
                     <Line
                       points={arc}
                       stroke={haloColor}
@@ -234,7 +233,16 @@ export default function MeasureObjects({
                       listening={false}
                     />
                   )}
-                  <Line id={m.id} points={arc} stroke={color} strokeWidth={px(selected ? 2 : 1.5)} />
+                  <Line
+                    id={m.id}
+                    points={arc}
+                    stroke={color}
+                    strokeWidth={px(selected ? 2 : 1.5)}
+                    // Matches the legs' hit band: with no hitStrokeWidth this arc would hit at its
+                    // stroke width (~2 screen px), narrower than ERASE_SAMPLE_SPACING (6), so a
+                    // sweep crossing only the arc could pass between samples and miss it entirely.
+                    hitStrokeWidth={px(14)}
+                  />
                 </>
               )}
               {m.points.map((p, i) => (

@@ -771,8 +771,20 @@ function PDFKonvaViewer(
                   is why that prop's doc makes it mandatory alongside `measurements`.
 
                   Not listening is NOT not drawn, and not excluded from a snapshot: Konva's
-                  Stage._toKonvaCanvas skips invisible layers only, never non-listening ones. */}
-              <Layer ref={measureLayerRef} listening={activeTool === 'pointer' || activeTool === 'eraser'}>
+                  Stage._toKonvaCanvas skips invisible layers only, never non-listening ones.
+
+                  The eraser half is also gated on `annotating`. The eraser branch of
+                  handleStageMouseDown sits BELOW the `!annotating` early return, so outside a
+                  session it never calls eraseAt at all — but this layer would still be listening,
+                  which leaves a measurement's own onClick (MeasureObjects.tsx) as the only handler
+                  that fires, turning a press with the eraser armed into a SELECT on mouseup. Today
+                  that state is latent, not reachable: 'eraser' is not in DRAW_TOOLS so arming it
+                  never starts a session, and the two places that clear `annotating` also reset the
+                  tool to pointer and clear this surface's measurements in the same commit. But that
+                  is an invariant held ~1300 lines away in app/portal/[id]/page.tsx by two call sites
+                  agreeing with each other, not by this component — so it is encoded here directly
+                  rather than left to keep being true by coincidence. */}
+              <Layer ref={measureLayerRef} listening={activeTool === 'pointer' || (annotating && activeTool === 'eraser')}>
                 <MeasureObjects
                   measurements={measurements}
                   pending={pendingMeasurement}
