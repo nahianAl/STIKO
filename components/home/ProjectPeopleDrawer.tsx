@@ -292,20 +292,14 @@ export default function ProjectPeopleDrawer({
             </div>
           )}
 
-          {/* Gated on totalPackageCount, not the visible list: an archived
-              package is deliberately hidden from that list while its versions,
-              files, comments and S3 objects all still exist, so
-              "packages.length === 0" is not "nothing to lose". This only
-              avoids offering a control that would fail — the server enforces
-              the real guarantee and refuses with 409 if any portal exists. */}
-          {isOwner && overview?.totalPackageCount === 0 && (
+          {isOwner && (
             <div className="mt-6">
               <DangerCard
                 rows={[
                   {
                     title: 'Delete project',
                     description:
-                      'Permanently removes this project. This cannot be undone.',
+                      'Deletes this project and all its packages. Recoverable from the trash for 28 days.',
                     actionLabel: 'Delete',
                     onAction: () => setConfirmDelete(true),
                   },
@@ -332,7 +326,7 @@ export default function ProjectPeopleDrawer({
         onConfirm={deleteProject}
         title={`Delete ${project.name}?`}
         name={project.name}
-        consequence="This permanently removes the project. This cannot be undone."
+        consequence="Everyone loses access immediately, including people mid-review. The project and all its packages go to the trash and can be restored for 28 days — until then they still count toward your storage."
         inventory={[]}
         confirmLabel="Delete project"
       />

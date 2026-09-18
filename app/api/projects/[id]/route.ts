@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { isProjectMember, storageKeysForFiles } from '@/lib/access';
-import { deleteObjects } from '@/lib/s3';
+import { isProjectMember } from '@/lib/access';
 
 export async function GET(
   _request: NextRequest,
@@ -36,63 +35,50 @@ export async function DELETE(
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Ownership is checked BEFORE the emptiness guard below, not only in the
-  // DELETE's own WHERE clause. Otherwise the guard's 409 answers "does this
-  // project have packages?" for any project id a stranger cares to try, which
-  // is a fact about someone else's work.
+  // Ownership is checked in its own statement rather than only in the UPDATE's
+  // WHERE clause, so a stranger probing ids gets a flat 404 and learns nothing.
   const owned = await sql`
-    SELECT 1 FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+    SELECT 1 FROM projects
+    WHERE id = ${params.id}
+      AND owner_id = ${session.user.id}
+      AND deleted_at IS NULL
   `;
   if (owned.length === 0) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
 
-  // A project is only deletable while nothing lives under it. The client gate
-  // cannot be trusted for this: it counts VISIBLE packages, and an archived
-  // package is deliberately hidden from the project while its files, comments
-  // and S3 objects all still exist. Archiving is advertised as reversible, so
-  // letting this cascade through one would be a lie told with someone else's
-  // data. Archived or not, any portal blocks the delete.
-  const existing = await sql`
-    SELECT 1 FROM portals WHERE project_id = ${params.id} LIMIT 1
-  `;
-  if (existing.length > 0) {
-    return NextResponse.json(
-      {
-        error:
-          'This project still has packages. Delete or move them before deleting the project.',
-      },
-      { status: 409 }
-    );
-  }
+  const now = new Date().toISOString();
 
-  const doomedFiles = await sql`
-    SELECT f.id
-    FROM files f
-    JOIN versions v ON v.id = f.version_id
-    JOIN portals po ON po.id = v.portal_id
-    WHERE po.project_id = ${params.id}
-  `;
-  const doomedKeys = await storageKeysForFiles(
-    doomedFiles.map((f) => f.id as string)
-  );
+  // The old "this project still has packages" 409 is GONE. It existed because
+  // deletion was irreversible and cascading through an archived package would
+  // have destroyed work silently. Deletion is recoverable now, so sweeping the
+  // packages along is the behaviour the guard was protecting against.
+  //
+  // One transaction: a project marked deleted whose packages were not swept
+  // would leave those packages live but unreachable, since every read path now
+  // checks the project too.
+  //
+  // deleted_with_project = TRUE marks these as carried in, so restoring the
+  // project revives exactly these and not a package deleted on its own earlier.
+  // The deleted_at IS NULL guard is what preserves that distinction.
+  await sql.transaction([
+    sql`
+      UPDATE portals
+      SET deleted_at = ${now},
+          deleted_by = ${session.user.id},
+          deleted_with_project = TRUE
+      WHERE project_id = ${params.id} AND deleted_at IS NULL
+    `,
+    sql`
+      UPDATE projects
+      SET deleted_at = ${now}, deleted_by = ${session.user.id}
+      WHERE id = ${params.id} AND deleted_at IS NULL
+    `,
+  ]);
 
-  // The emptiness condition is repeated INSIDE the delete, not just in the
-  // pre-check above. Those were two separate statements, so a package created
-  // from another tab in the window between them would have been cascaded away
-  // by a delete that had already decided the project was empty. The pre-check
-  // stays, only to tell a 409 apart from a 404.
-  const result = await sql`
-    DELETE FROM projects
-    WHERE id = ${params.id}
-      AND owner_id = ${session.user.id}
-      AND NOT EXISTS (SELECT 1 FROM portals WHERE project_id = projects.id)
-    RETURNING id
-  `;
-  if (!result[0]) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-
-  await deleteObjects(doomedKeys);
-
+  // No deleteObjects call. Nothing leaves storage until the purge runs, which
+  // is the whole point — and the bytes keep counting against the owner's meter
+  // until then, which is honest.
   return NextResponse.json({ success: true });
 }
 
