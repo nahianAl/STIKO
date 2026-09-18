@@ -175,6 +175,13 @@ export default function AccessEditor({
     setCanDownload(false);
     setAllVersions(true);
     setVersionIds([]);
+    // Reset alongside the rest: a mutation left in flight when the drawer
+    // moved on to a new identity (or a new open) never gets to clear its own
+    // `busy` — its generation check now sits above that clear (see every
+    // mutation below), by design, so a stale response cannot yank `busy` out
+    // from under whoever is on screen now. load() running is what guarantees
+    // busy is false whenever a drawer is actually presented.
+    setBusy(false);
     // Reset with the others — this is the one field that fetch below can
     // otherwise leave holding the previous person's (or previous package's)
     // versions for the whole loading spinner, and briefly longer still if the
@@ -269,12 +276,19 @@ export default function AccessEditor({
       portalId,
       role: next,
     });
+    // Checked before clearing busy (or toasting, or touching any other
+    // state): a stale response — this request outliving a close or a move to
+    // someone else's drawer — must not clear `busy` out from under whoever
+    // the drawer has moved on to, mid-mutation of their own, and must not
+    // toast a failure over their drawer either. load() is what guarantees
+    // `busy` starts false for whoever is on screen; this guard is what stops
+    // a late arrival from being the one to flip it after that.
+    if (myGen !== gen.current) return;
     setBusy(false);
     if (!ok) {
       toast('Could not change role');
       return;
     }
-    if (myGen !== gen.current) return;
     setRole(next);
     // An uploader is never scoped — the server clears any narrowing the
     // moment someone is promoted (lib/access.ts), so the editor's own display
@@ -296,12 +310,13 @@ export default function AccessEditor({
       portalId,
       canDownload: next,
     });
+    // See changeRole's comment: generation checked before busy is cleared.
+    if (myGen !== gen.current) return;
     setBusy(false);
     if (!ok) {
       toast('Could not change download access');
       return;
     }
-    if (myGen !== gen.current) return;
     setCanDownload(next);
     toast(next ? 'Download allowed' : 'Download turned off');
     onChanged();
@@ -320,12 +335,13 @@ export default function AccessEditor({
       allVersions: nextAllVersions,
       versionIds: nextVersionIds,
     });
+    // See changeRole's comment: generation checked before busy is cleared.
+    if (myGen !== gen.current) return;
     setBusy(false);
     if (!ok) {
       toast('Could not change which versions they can see');
       return;
     }
-    if (myGen !== gen.current) return;
     setAllVersions(nextAllVersions);
     setVersionIds(nextVersionIds);
     toast('Versions updated');
@@ -386,6 +402,21 @@ export default function AccessEditor({
   };
 
   const resend = async () => {
+    // Refuse before posting, same wording as changeScopeGuarded uses.
+    // Unchecking "All versions" is local-only (see the checkbox handler
+    // below), so the drawer can legitimately be sitting on
+    // allVersions:false, versionIds:[] when this button is clicked, before
+    // any version has been picked. POST /api/participants has no guard of
+    // its own — unlike /api/participants/versions, which 400s this exact
+    // body — so without this check it would mint a token with
+    // all_versions = false and zero scope rows: an invitation that admits
+    // the invitee to nothing. Do not "fix" this by coercing allVersions to
+    // true instead — that would silently widen a grant from a button whose
+    // label promises neither.
+    if (!allVersions && versionIds.length === 0) {
+      toast('Keep at least one version selected, or turn "All versions" back on.');
+      return;
+    }
     // Same pattern as changeRole — but here it also guards the load() call
     // below: without it, a stale resend (Bob's) landing after the drawer has
     // moved on to Alice would call Bob's own load(), which would win the
@@ -394,39 +425,59 @@ export default function AccessEditor({
     // row.
     const myGen = gen.current;
     setBusy(true);
-    // Send the drawer's current canDownload/allVersions/versionIds. Without
-    // this, POST /api/participants defaults any omitted one to
-    // false/true/[] rather than carrying the prior token's grant forward: a
-    // commenter with downloads on and a scope of just V2 would silently get
-    // a fresh token with no downloads and every version — a widening and a
-    // revocation at once, from a button whose label promises neither.
-    const { ok, data } = await postJSON('/api/participants', {
+    // Revoke every prior token at this address BEFORE minting the
+    // replacement, so acceptance cannot leave a redeemable orphan behind.
+    // Order matters: the revoke is address-wide and hits every un-used
+    // token, so it must precede the insert or it would kill the new one too.
+    //
+    // Without this, POST /api/participants only ever INSERTs — it never
+    // revokes the token the original invite or a previous resend created,
+    // and there is no unique constraint on (portal_id, email) — so the prior
+    // token survives with used_at still NULL. Acceptance stamps used_at on
+    // only the clicked token, so removing this person later deletes their
+    // participants row but touches no token: the survivor still looks
+    // unused, the single-use gate is skipped, the binding check passes, and
+    // the row is re-created. A removed person can re-admit themselves by
+    // clicking the older link in their inbox, for up to 14 days. The
+    // survivor also keeps them listed as pending on a package they have
+    // already accepted, and shows two rows for one address after a resend.
+    // Sending the same grants to both tokens (below) only ever made the two
+    // tokens' *contents* agree — it never removed the surviving token as a
+    // redemption path, which is the actual risk.
+    const revoke = await postJSON('/api/participants/role', {
+      userId: email,
       portalId,
-      email,
-      role,
-      canDownload,
-      allVersions,
-      versionIds,
+      role: null,
     });
+    // Non-atomic by necessity — lib/db.ts's neon() client has no ambient
+    // transaction across two routes. If the insert below fails after this
+    // revoke succeeded, the invitee is left with no live invite at all
+    // rather than a permanently redeemable orphan: visible (the toast below
+    // says so) and recoverable (clicking Resend again mints a fresh token),
+    // unlike the silent duplicate this replaces.
+    const { ok, data } = revoke.ok
+      ? await postJSON('/api/participants', {
+          portalId,
+          email,
+          role,
+          canDownload,
+          allVersions,
+          versionIds,
+        })
+      : revoke;
+    // See changeRole's comment: generation checked before busy is cleared.
+    if (myGen !== gen.current) return;
     setBusy(false);
     if (!ok) {
       toast('Could not resend invitation');
       return;
     }
-    if (myGen !== gen.current) return;
     toast(
       data.emailDelivered === false
         ? 'Invitation created — copy the link to share it'
         : 'Invitation resent'
     );
     onChanged();
-    // This route only ever INSERTs — it never revokes the token the original
-    // invite or a previous resend created, and there is no unique constraint
-    // on (portal_id, email), so this leaves two live, redeemable tokens for
-    // the same address. That is a known, accepted limitation, not an
-    // oversight: sending the current grants above is what makes it
-    // survivable, because both tokens then grant exactly the same access —
-    // it no longer matters which one the recipient actually clicks.
     // Reloading afterwards shows the drawer what the server actually did
     // rather than assuming it matches what was sent.
     load();
@@ -543,7 +594,7 @@ export default function AccessEditor({
                         // it checked and say why instead.
                         toast(
                           versionsLoadFailed
-                            ? 'Could not load versions — try again.'
+                            ? 'Could not load versions — close and reopen this drawer to retry.'
                             : 'This package has no published versions to narrow to yet.'
                         );
                         return;
@@ -593,7 +644,7 @@ export default function AccessEditor({
                     {versions.length === 0 && (
                       <p className="text-[11.5px] text-stiko-faint">
                         {versionsLoadFailed
-                          ? 'Could not load versions — try again.'
+                          ? 'Could not load versions — close and reopen this drawer to retry.'
                           : 'No versions published yet.'}
                       </p>
                     )}
