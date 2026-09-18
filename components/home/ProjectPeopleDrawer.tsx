@@ -33,6 +33,7 @@ function toAddPeoplePackages(packages: PackageCard[]): ProjectPackage[] {
     id: pkg.id,
     name: pkg.name,
     tag: pkg.tag,
+    createdAt: new Date(0).toISOString(), // Placeholder; replaced by overview.packages once loaded
     versionNumber: pkg.versionNumber,
     changelog: pkg.changelog,
     // Not carried by PackageCard, and unread by AddPeopleModal.

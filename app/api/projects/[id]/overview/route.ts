@@ -34,7 +34,7 @@ export async function GET(
   }
 
   const packageRows = await sql`
-    SELECT po.id, po.name, po.tag,
+    SELECT po.id, po.name, po.tag, po.created_at AS "createdAt",
            v.id AS "versionId", v.version_number AS "versionNumber",
            v.changelog, v.published_at AS "publishedAt",
            u.name AS "updatedByName"
@@ -160,6 +160,7 @@ export async function GET(
       id,
       name: p.name as string,
       tag: (p.tag as string) ?? null,
+      createdAt: p.createdAt as string,
       versionNumber: p.versionNumber != null ? Number(p.versionNumber) : null,
       changelog: (p.changelog as string) ?? null,
       publishedAt: (p.publishedAt as string) ?? null,
