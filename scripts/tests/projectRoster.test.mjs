@@ -18,9 +18,12 @@ test('someone on two packages is listed once, counted twice', () => {
 
 test('the role shown is the strongest held anywhere', () => {
   // Uploader on one package out of two must not read as commenter.
+  // Order is deliberate: strongest role first, weaker second, so an
+  // implementation that just kept the last role seen (last-value-wins)
+  // fails instead of accidentally passing.
   const r = projectRoster([
-    pkg('A', [person('dana', 'commenter')]),
-    pkg('B', [person('dana', 'uploader')]),
+    pkg('A', [person('dana', 'uploader')]),
+    pkg('B', [person('dana', 'commenter')]),
   ]);
   assert.equal(r[0].role, 'uploader');
 });
@@ -54,16 +57,37 @@ test('pending matching is case-insensitive on the email', () => {
              [{ email: 'mia@acme.com', role: 'viewer' }]),
   ]);
   assert.equal(r.length, 1, 'MIA@ACME.COM and mia@acme.com are one person');
+  assert.equal(r[0].pending, false, 'the surviving entry is the accepted one');
+  assert.equal(r[0].key, 'dana');
 });
 
 test('the same pending email on two packages collapses to one entry', () => {
+  // Strongest role first, weaker second — see the note on the uploader test
+  // above; the same last-value-wins bug would pass this one unchanged if the
+  // stronger role stayed last.
   const r = projectRoster([
-    pkg('A', [], [{ email: 'mia@acme.com', role: 'viewer' }]),
-    pkg('B', [], [{ email: 'mia@acme.com', role: 'commenter' }]),
+    pkg('A', [], [{ email: 'mia@acme.com', role: 'commenter' }]),
+    pkg('B', [], [{ email: 'mia@acme.com', role: 'viewer' }]),
   ]);
   assert.equal(r.length, 1);
   assert.equal(r[0].packageCount, 2);
   assert.equal(r[0].role, 'commenter', 'strongest pending role wins too');
+});
+
+test('accepted on one package, still invited on another: involved, not pending', () => {
+  // Decision, not accident: Dana has turned up (accepted on A), so the open
+  // invite to her address on B does not make her a second, pending entry —
+  // and it does not make her one entry flagged as not-accepted either. The
+  // per-package open invite on B is still visible via pkg.pending; this list
+  // just isn't the place for it. See the `continue` guard in projectRoster.ts.
+  const r = projectRoster([
+    pkg('A', [person('dana', 'commenter')]),
+    pkg('B', [], [{ email: 'dana@x.co', role: 'viewer' }]),
+  ]);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].pending, false);
+  assert.equal(r[0].packageCount, 1);
+  assert.equal(pendingCount(r), 0);
 });
 
 test('accepted people sort above pending, then by role, then by name', () => {

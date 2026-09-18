@@ -39,6 +39,15 @@ export interface RosterEntry {
   email: string;
   /** Strongest role held across the packages counted below. */
   role: string | null;
+  /**
+   * How many packages this count is over depends on which half of the roster
+   * the entry is in. For an accepted entry, it counts packages they have
+   * ACCEPTED on — not packages they are merely invited to. Someone who has
+   * accepted on one package and has a separate, still-open invite on another
+   * is one entry with packageCount 1, because that second invite is folded
+   * into their accepted row (see the `continue` guard below) rather than
+   * counted here. Do not read this number as "involved with N packages."
+   */
   packageCount: number;
   pending: boolean;
 }
@@ -86,9 +95,21 @@ export function projectRoster(packages: RosterPackage[]): RosterEntry[] {
   for (const pkg of packages) {
     for (const inv of pkg.pending ?? []) {
       const email = norm(inv.email);
-      // An invitation the person has already accepted is not pending — it is
-      // just an old row. Showing a pending chip beside someone who is plainly
-      // in the package reads as a bug to whoever sees it.
+      // An invitation the person has already accepted on ANY package is not
+      // pending, even if this particular invite is to a different package
+      // they have not yet accepted. This list answers "who is involved in
+      // this project" — someone who has accepted is involved, full stop; she
+      // is not a pending person, and showing her a second time as pending
+      // (or flagging her as not-accepted) would both be lies. pendingCount
+      // drives a "n not accepted" chip that counts PEOPLE who haven't turned
+      // up, not outstanding invitations, and she has turned up. The
+      // per-package truth — that this package still has an open invite to
+      // her address — is not lost, just not this list's job: the package
+      // rows and the cross-package matrix read pkg.pending directly, and
+      // that is where it belongs. The cost is real and worth stating
+      // plainly: packageCount below counts packages she has accepted, not
+      // packages she is involved with, so it can undercount someone with an
+      // outstanding invite elsewhere.
       if (acceptedEmails.has(email)) continue;
       const seen = pending.get(email);
       if (seen) {
