@@ -105,8 +105,12 @@ export default function AccessEditor({
   /** Distance from the positioned ancestor's left edge, passed straight
    *  through to Drawer's own `offsetLeft` — this always anchors "inline"
    *  beside another panel, and per Drawer's doc the caller owns that
-   *  arithmetic. See VersionDetailDrawer.tsx for the existing consumer. */
-  offsetLeft?: number;
+   *  arithmetic. Required, not optional: the only other inline consumer
+   *  (VersionDetailDrawer.tsx) declares it required too, and an omitted
+   *  value would render this drawer at `left: 0` — on top of the panel it
+   *  is meant to sit beside — with `tsc` never catching the missing prop at
+   *  a mount site, since `undefined` would otherwise be silently valid. */
+  offsetLeft: number;
   /** Refetch the panel; access changed. */
   onChanged: () => void;
 }) {
@@ -119,12 +123,19 @@ export default function AccessEditor({
   const [allVersions, setAllVersions] = useState(true);
   const [versionIds, setVersionIds] = useState<string[]>([]);
   const [versions, setVersions] = useState<VersionOption[]>([]);
+  // Distinguishes "this package genuinely has none" from "the request to
+  // list them failed" — GET /api/versions returning a non-OK status used to
+  // be indistinguishable from an empty package, so the empty-state copy
+  // below could flatly lie about why the box is empty.
+  const [versionsLoadFailed, setVersionsLoadFailed] = useState(false);
 
-  // Bumped at the start of every load() so a response can tell whether it is
-  // still the latest one in flight. Without this, opening on Bob, closing,
-  // and opening on Alice before Bob's slower request lands would let Bob's
-  // response win the race and paint his settings under Alice's name once it
-  // finally resolves. Same shape as components/home/TrashPanel.tsx.
+  // Bumped at the start of every load(), and whenever the drawer closes, so
+  // a response — from load() or from any mutation below — can tell whether
+  // it is still the latest one in flight. Without this, opening on Bob,
+  // toggling something, closing (Escape and a scrim click both bypass
+  // `busy`), and opening on Alice before Bob's slower request lands would
+  // let Bob's response win the race and paint his settings under Alice's
+  // name once it finally resolves. Same shape as components/home/TrashPanel.tsx.
   const gen = useRef(0);
 
   // Every mutation route (/api/participants/role, /download, /versions)
@@ -142,6 +153,15 @@ export default function AccessEditor({
   // branch, matched zero rows, and returned {ok:true} anyway — revoke
   // "succeeded" while the invite token stayed live and redeemable. Do not
   // simplify this back to `userId ?? email`.
+  //
+  // In the other direction: inside the non-pending branch, `userId ?? email`
+  // only falls through to `email` if `userId` were null, which cannot happen
+  // here. GET /api/participants always INNER JOINs users
+  // (`JOIN users u ON u.id = p.user_id`), so every accepted row it returns —
+  // and therefore every `userId` this component is ever mounted with for a
+  // non-pending person — already carries a real `users.id`. The fallback is
+  // dead code, kept only because `userId` is typed `string | null`; it is
+  // not a second path this relies on silently.
   const identityKey = pending ? email : (userId ?? email);
 
   const load = useCallback(() => {
@@ -155,6 +175,12 @@ export default function AccessEditor({
     setCanDownload(false);
     setAllVersions(true);
     setVersionIds([]);
+    // Reset with the others — this is the one field that fetch below can
+    // otherwise leave holding the previous person's (or previous package's)
+    // versions for the whole loading spinner, and briefly longer still if the
+    // /api/versions leg resolves after everything else.
+    setVersions([]);
+    setVersionsLoadFailed(false);
 
     (async () => {
       try {
@@ -170,7 +196,12 @@ export default function AccessEditor({
 
         const versionsList = versionsRes.ok ? await versionsRes.json() : [];
         if (myGen !== gen.current) return;
-        setVersions(Array.isArray(versionsList) ? versionsList : []);
+        const versionsArr = Array.isArray(versionsList) ? versionsList : [];
+        setVersions(versionsArr);
+        // Only a non-OK response (or a malformed body) counts as a failure —
+        // an empty array from a healthy 200 really does mean no published
+        // versions, and the two must read differently below.
+        setVersionsLoadFailed(!versionsRes.ok);
 
         if (!dataRes.ok) {
           setLoadError("Could not load this person's access.");
@@ -210,10 +241,28 @@ export default function AccessEditor({
   }, [portalId, pending, email, userId]);
 
   useEffect(() => {
-    if (isOpen) load();
+    if (isOpen) {
+      load();
+      return;
+    }
+    // A mutation kicked off before Escape or a scrim click — neither of
+    // which `busy` blocks — can still resolve after the drawer is gone.
+    // Bumping here means its captured generation can never match again, so
+    // its success path (below) cannot setState or toast under whoever the
+    // drawer shows next. A reopen on a *different* identity while staying
+    // open is already covered without this: load() bumps on every call it
+    // makes, and it gets called again whenever its own deps
+    // (portalId/pending/email/userId) change.
+    gen.current++;
   }, [isOpen, load]);
 
   const changeRole = async (next: Role) => {
+    // Captured before the await, checked after — same trick as load()'s own
+    // guard. If the drawer closes or moves on to someone else while this is
+    // in flight, gen.current will have moved past myGen by the time the
+    // response lands, and the success path below must not paint under the
+    // wrong name.
+    const myGen = gen.current;
     setBusy(true);
     const { ok } = await postJSON('/api/participants/role', {
       userId: identityKey,
@@ -225,6 +274,7 @@ export default function AccessEditor({
       toast('Could not change role');
       return;
     }
+    if (myGen !== gen.current) return;
     setRole(next);
     // An uploader is never scoped — the server clears any narrowing the
     // moment someone is promoted (lib/access.ts), so the editor's own display
@@ -238,6 +288,8 @@ export default function AccessEditor({
   };
 
   const changeDownload = async (next: boolean) => {
+    // See changeRole's comment on this pattern.
+    const myGen = gen.current;
     setBusy(true);
     const { ok } = await postJSON('/api/participants/download', {
       userId: identityKey,
@@ -249,6 +301,7 @@ export default function AccessEditor({
       toast('Could not change download access');
       return;
     }
+    if (myGen !== gen.current) return;
     setCanDownload(next);
     toast(next ? 'Download allowed' : 'Download turned off');
     onChanged();
@@ -258,6 +311,8 @@ export default function AccessEditor({
   // changeScope: this editor always holds the complete selection, and a diff
   // would need a merge rule for a scope changed in another tab.
   const changeScope = async (nextAllVersions: boolean, nextVersionIds: string[]) => {
+    // See changeRole's comment on this pattern.
+    const myGen = gen.current;
     setBusy(true);
     const { ok } = await postJSON('/api/participants/versions', {
       userId: identityKey,
@@ -270,6 +325,7 @@ export default function AccessEditor({
       toast('Could not change which versions they can see');
       return;
     }
+    if (myGen !== gen.current) return;
     setAllVersions(nextAllVersions);
     setVersionIds(nextVersionIds);
     toast('Versions updated');
@@ -283,7 +339,16 @@ export default function AccessEditor({
   // — what this still guards is deselecting the last remaining chip while
   // mid-edit.
   const changeScopeGuarded = (nextAllVersions: boolean, nextVersionIds: string[]) => {
-    if (!nextAllVersions && nextVersionIds.length === 0) return;
+    if (!nextAllVersions && nextVersionIds.length === 0) {
+      // The one case this still guards: deselecting the last remaining chip
+      // (unchecking "All versions" itself never reaches here — see the
+      // checkbox handler below). Refusing without a word would leave that
+      // chip lit, no state changed, and the "pick at least one" hint unable
+      // to render (it only shows once versionIds is already empty) — the one
+      // interaction the guard protects would look like nothing happened.
+      toast('Keep at least one version selected, or turn "All versions" back on.');
+      return;
+    }
     changeScope(nextAllVersions, nextVersionIds);
   };
 
@@ -314,25 +379,49 @@ export default function AccessEditor({
   };
 
   const resend = async () => {
+    // Same pattern as changeRole — but here it also guards the load() call
+    // below: without it, a stale resend (Bob's) landing after the drawer has
+    // moved on to Alice would call Bob's own load(), which would win the
+    // race outright (load() bumps gen.current itself, becoming the new
+    // "latest") and overwrite Alice's on-screen access with Bob's fetched
+    // row.
+    const myGen = gen.current;
     setBusy(true);
-    const { ok, data } = await postJSON('/api/participants', { portalId, email, role });
+    // Send the drawer's current canDownload/allVersions/versionIds. Without
+    // this, POST /api/participants defaults any omitted one to
+    // false/true/[] rather than carrying the prior token's grant forward: a
+    // commenter with downloads on and a scope of just V2 would silently get
+    // a fresh token with no downloads and every version — a widening and a
+    // revocation at once, from a button whose label promises neither.
+    const { ok, data } = await postJSON('/api/participants', {
+      portalId,
+      email,
+      role,
+      canDownload,
+      allVersions,
+      versionIds,
+    });
     setBusy(false);
     if (!ok) {
       toast('Could not resend invitation');
       return;
     }
+    if (myGen !== gen.current) return;
     toast(
       data.emailDelivered === false
         ? 'Invitation created — copy the link to share it'
         : 'Invitation resent'
     );
     onChanged();
-    // POST /api/participants inserts a NEW token — can_download false,
-    // all_versions true, no scope rows — regardless of what the old one
-    // granted. Without reloading, the toggle and chips below kept showing
-    // the old token's values while the newest live token actually grants
-    // neither. Re-running load() is what makes the drawer show what the
-    // server just did rather than what it did a moment before.
+    // This route only ever INSERTs — it never revokes the token the original
+    // invite or a previous resend created, and there is no unique constraint
+    // on (portal_id, email), so this leaves two live, redeemable tokens for
+    // the same address. That is a known, accepted limitation, not an
+    // oversight: sending the current grants above is what makes it
+    // survivable, because both tokens then grant exactly the same access —
+    // it no longer matters which one the recipient actually clicks.
+    // Reloading afterwards shows the drawer what the server actually did
+    // rather than assuming it matches what was sent.
     load();
   };
 
@@ -435,6 +524,23 @@ export default function AccessEditor({
                         changeScopeGuarded(true, versionIds);
                         return;
                       }
+                      if (versions.length === 0) {
+                        // Nothing to narrow to — this package either has no
+                        // published versions yet, or the list failed to load
+                        // (versionsLoadFailed tells the two apart). Unchecking
+                        // here would leave the box sitting unchecked with no
+                        // chips to pick from, the server still on
+                        // all_versions = true, and — before this fix — nothing
+                        // explaining why: the same silent dead end as the
+                        // last-chip guard above, reached a different way. Keep
+                        // it checked and say why instead.
+                        toast(
+                          versionsLoadFailed
+                            ? 'Could not load versions — try again.'
+                            : 'This package has no published versions to narrow to yet.'
+                        );
+                        return;
+                      }
                       // Unchecking is only an intent, not a commitment.
                       // versionIds is empty for anyone currently on all
                       // versions (the server writes no scope rows for an
@@ -479,7 +585,9 @@ export default function AccessEditor({
                     })}
                     {versions.length === 0 && (
                       <p className="text-[11.5px] text-stiko-faint">
-                        No versions published yet.
+                        {versionsLoadFailed
+                          ? 'Could not load versions — try again.'
+                          : 'No versions published yet.'}
                       </p>
                     )}
                   </div>
