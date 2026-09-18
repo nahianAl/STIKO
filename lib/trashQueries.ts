@@ -141,3 +141,80 @@ export async function getTrash(userId: string): Promise<TrashItem[]> {
     };
   });
 }
+
+/**
+ * Put something back.
+ *
+ * Returns 'not-found' for a missing id, an id the caller does not control, and
+ * an id past its window — all deliberately indistinguishable, so the endpoint
+ * cannot be used to probe what exists.
+ *
+ * The window is re-checked here and not only in the panel: a trash panel left
+ * open overnight must not resurrect something that expired while it sat there.
+ */
+export async function restoreFromTrash(
+  userId: string,
+  kind: 'project' | 'package',
+  id: string
+): Promise<'ok' | 'not-found'> {
+  const cutoff = `${TRASH_RETENTION_DAYS} days`;
+
+  if (kind === 'project') {
+    const result = await sql`
+      UPDATE projects
+      SET deleted_at = NULL, deleted_by = NULL
+      WHERE id = ${id}
+        AND owner_id = ${userId}
+        AND deleted_at IS NOT NULL
+        AND deleted_at > now() - ${cutoff}::interval
+      RETURNING id
+    `;
+    if (!result[0]) return 'not-found';
+
+    // Only the packages this project swept up. One deleted deliberately before
+    // the project was stays in the trash on its own clock — nobody asked for it
+    // back, and reviving it would undo a decision nobody revisited.
+    await sql`
+      UPDATE portals
+      SET deleted_at = NULL, deleted_by = NULL, deleted_with_project = FALSE
+      WHERE project_id = ${id} AND deleted_with_project
+    `;
+    return 'ok';
+  }
+
+  // Restoring a package whose project is also trashed restores the project
+  // too. A package cannot exist without one, every read path checks both, and
+  // the intent is unambiguous — an empty restored project is harmless, an
+  // unreachable restored package is a bug report.
+  //
+  // One transaction, and the project UPDATE is guarded on its own window: a
+  // package inside a project that expired first must not drag a corpse back.
+  const rows = await sql`
+    SELECT po.id, po.project_id AS "projectId"
+    FROM portals po
+    JOIN projects pr ON pr.id = po.project_id
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE po.id = ${id}
+      AND po.deleted_at IS NOT NULL
+      AND po.deleted_at > now() - ${cutoff}::interval
+      AND (pr.deleted_at IS NULL OR pr.deleted_at > now() - ${cutoff}::interval)
+      AND (pr.owner_id = ${userId}
+           OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator'))
+  `;
+  if (!rows[0]) return 'not-found';
+
+  await sql.transaction([
+    sql`
+      UPDATE projects
+      SET deleted_at = NULL, deleted_by = NULL
+      WHERE id = ${rows[0].projectId} AND deleted_at IS NOT NULL
+    `,
+    sql`
+      UPDATE portals
+      SET deleted_at = NULL, deleted_by = NULL, deleted_with_project = FALSE
+      WHERE id = ${id}
+    `,
+  ]);
+  return 'ok';
+}
