@@ -23,9 +23,11 @@ test('a part-day remaining rounds up rather than reading as gone', () => {
   assert.equal(daysRemaining(daysAgo(27.75), NOW), 1);
 });
 
-test('it accepts the ISO strings the HTTP driver returns', () => {
-  // Neon's HTTP driver hands back TIMESTAMPTZ as a string, not a Date, so the
-  // panel would otherwise be doing arithmetic on NaN.
+test('it accepts an ISO string as well as a Date', () => {
+  // The Neon HTTP driver hands back TIMESTAMPTZ as a Date, and getTrash
+  // resolves it to one before calling this. The string branch covers the
+  // exported signature — without it a caller passing a raw ISO string would
+  // be doing arithmetic on NaN.
   assert.equal(daysRemaining(daysAgo(10).toISOString(), NOW), 18);
 });
 
