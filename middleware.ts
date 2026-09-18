@@ -45,6 +45,15 @@ export default auth((req) => {
   const { pathname } = req.nextUrl;
   const isAuthenticated = !!req.auth;
 
+  // Vercel Cron carries no session. This route authenticates itself with
+  // CRON_SECRET and refuses to run without it, so session auth here would only
+  // block the scheduler. Matched exactly, not by prefix: PUBLIC_PATHS uses
+  // startsWith, and a '/api/cron' entry there would also exempt any future
+  // '/api/cron-something' nobody remembered to check.
+  if (pathname === '/api/cron/purge-trash') {
+    return NextResponse.next();
+  }
+
   // Allow public paths through
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
