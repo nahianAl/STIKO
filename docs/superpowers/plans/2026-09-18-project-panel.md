@@ -495,7 +495,11 @@ git commit -m "feat: one access editor for a person on a package"
 
 `TeamMatrix` currently holds `editing: { personId, portalId } | null` and renders its own role menu. Keep the state (it identifies the cell); replace what it renders with `AccessEditor`, passing that cell's `portalId`, the person's `userId`/`email`/name, and `pending`.
 
-Clicking an em-dash (no access) must still grant access — that path currently creates a participant. Route it through the same editor rather than a second code path: open `AccessEditor` for that cell, and let the role selector's first write create the row.
+Clicking an em-dash (no access) must still grant access — but **not** through `AccessEditor`.
+
+*Corrected during execution.* The original instruction here was wrong twice over. `AccessEditor` loads a person's existing access and now shows an error when there is no row, so it cannot render a role selector for someone who has none. And the write it would have used — `POST /api/participants/role` with a non-null role — does an `UPDATE participants SET role`, which matches zero rows for a non-participant and **still returns `{ok:true}`**: exactly the "succeeded but wrote nothing" shape Task 3 had to eliminate elsewhere.
+
+Granting fresh access is an invitation, and `components/people/AddPeopleModal.tsx` already does it through `POST /api/participants`, the route that actually creates the row or token. So an em-dash click opens `AddPeopleModal` pre-scoped to that person and that package. `AccessEditor` opens only for a cell that already has a role.
 
 - [ ] **Step 2: Add pending rows**
 
