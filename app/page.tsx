@@ -8,6 +8,7 @@ import { ProjectListRow } from '@/components/home/ProjectListRow';
 import { ProjectListHeader } from '@/components/home/ProjectListHeader';
 import NewProjectModal from '@/components/home/NewProjectModal';
 import ProjectPeopleDrawer from '@/components/home/ProjectPeopleDrawer';
+import TrashPanel from '@/components/home/TrashPanel';
 import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
 import type { NotificationRow } from '@/components/shell/NotificationTray';
 import ActivityRail from '@/components/home/ActivityRail';
@@ -51,6 +52,7 @@ export default function Home() {
     null
   );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
 
   const [expanded, setExpanded] = useState<string | null>(null);
   // The last non-null selection, so the summary panel keeps its content for
@@ -342,6 +344,33 @@ export default function Home() {
               />
             ))}
           </div>
+
+          <div className="flex justify-start px-[2px] pb-5 pt-4">
+            <button
+              type="button"
+              // The page root deselects on background click. Without this the
+              // click opens the panel and then bubbles up and clears `expanded`
+              // in the same React batch — same trap ProjectListRow documents.
+              onClick={(e) => {
+                e.stopPropagation();
+                setTrashOpen(true);
+              }}
+              className="flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-panel transition duration-150 hover:text-stiko-ink"
+            >
+              <svg
+                className="h-[13px] w-[13px]"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+              </svg>
+              Trash
+            </button>
+          </div>
         </div>
 
         {notifications.length > 0 && (
@@ -372,6 +401,11 @@ export default function Home() {
         isOpen={peoplePanelProjectId !== null}
         onClose={() => setPeoplePanelProjectId(null)}
         onChanged={load}
+      />
+      <TrashPanel
+        isOpen={trashOpen}
+        onClose={() => setTrashOpen(false)}
+        onRestored={load}
       />
       <CommandPalette packages={packages} onNewPackage={newPackage} />
     </Shell>
