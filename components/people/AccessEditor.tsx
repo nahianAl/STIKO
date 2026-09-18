@@ -362,12 +362,19 @@ export default function AccessEditor({
   // an addressed invite (see that route's own comment), so it has no way to
   // reach this row at all.
   const endAccess = async (successMessage: string, failureMessage: string) => {
+    // Generation-guarded like every other mutation, and for a sharper reason
+    // than a stray toast: this one calls onClose(). A stale revoke — Bob's,
+    // landing after the drawer has moved on to Alice — would otherwise shut
+    // Alice's drawer under her, reporting Bob's success while she was part
+    // way through editing someone else's access.
+    const myGen = gen.current;
     setBusy(true);
     const { ok } = await postJSON('/api/participants/role', {
       userId: identityKey,
       portalId,
       role: null,
     });
+    if (myGen !== gen.current) return;
     setBusy(false);
     if (!ok) {
       toast(failureMessage);
