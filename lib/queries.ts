@@ -379,11 +379,14 @@ export interface AccountUsage {
  * So the figure is smaller than the true S3 footprint, on purpose: the number
  * on screen should be one the user can act on by deleting their own content.
  *
- * The project COUNT excludes archived projects while the byte total includes
- * archived packages. That asymmetry is intentional — "how much space am I
- * using" and "how many of my projects are in the way" are different questions.
- * Nothing writes projects.archived_at today; the filter is there so the count
- * stays right when project archiving arrives.
+ * The project COUNT excludes trashed projects while the byte totals include
+ * trashed projects and packages (split out into storage.trashBytes rather
+ * than dropped). That asymmetry is intentional — "how much space am I using"
+ * and "how many projects are in my way" are different questions. A trashed
+ * item still occupies storage for as long as it exists — the 28-day window
+ * in lib/trash.ts governs when the purge job reclaims it, not whether it
+ * counts here — so its bytes stay counted, just moved into the trash figure
+ * instead of the live one.
  *
  * Every byte counted here is client-asserted, not verified. files.file_size
  * is written straight from the request body in app/api/files/complete/route.ts,
@@ -398,7 +401,12 @@ export interface AccountUsage {
 export async function getAccountUsage(userId: string): Promise<AccountUsage> {
   const rows = await sql`
     WITH owned_files AS (
-      SELECT f.id, f.file_size
+      SELECT f.id, f.file_size,
+             -- Trashed either directly or by way of its project. Both keep
+             -- occupying storage, so both count — the user has not actually
+             -- freed anything yet, and saying otherwise would be a lie the
+             -- next invoice corrects.
+             (po.deleted_at IS NOT NULL OR pr.deleted_at IS NOT NULL) AS trashed
       FROM files f
       JOIN versions v ON v.id = f.version_id
       JOIN portals po ON po.id = v.portal_id
@@ -406,7 +414,10 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
       WHERE pr.owner_id = ${userId}
     ),
     file_bytes AS (
-      SELECT COALESCE(SUM(file_size), 0) AS bytes FROM owned_files
+      SELECT
+        COALESCE(SUM(file_size) FILTER (WHERE NOT trashed), 0) AS live,
+        COALESCE(SUM(file_size) FILTER (WHERE trashed), 0) AS trash
+      FROM owned_files
     ),
     attachment_bytes AS (
       -- Two hazards here, both of which raise rather than return NULL:
@@ -416,11 +427,17 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
       --   them; a WHERE would be applied too late to help.
       --   ::numeric, not ::bigint, because a JSONB number need not be an
       --   integer and '1234.5'::bigint is an error.
-      SELECT COALESCE(SUM(
-        CASE WHEN jsonb_typeof(att->'size') = 'number'
-             THEN (att->>'size')::numeric
-             ELSE 0 END
-      ), 0) AS bytes
+      SELECT
+        COALESCE(SUM(
+          CASE WHEN jsonb_typeof(att->'size') = 'number' AND NOT f.trashed
+               THEN (att->>'size')::numeric
+               ELSE 0 END
+        ), 0) AS live,
+        COALESCE(SUM(
+          CASE WHEN jsonb_typeof(att->'size') = 'number' AND f.trashed
+               THEN (att->>'size')::numeric
+               ELSE 0 END
+        ), 0) AS trash
       FROM comments c
       JOIN owned_files f ON f.id = c.file_id
       CROSS JOIN LATERAL jsonb_array_elements(
@@ -429,8 +446,14 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
              ELSE '[]'::jsonb END
       ) AS att
     )
-    SELECT (SELECT bytes FROM file_bytes) AS "fileBytes",
-           (SELECT bytes FROM attachment_bytes) AS "attachmentBytes",
+    SELECT (SELECT live  FROM file_bytes)       AS "fileBytes",
+           (SELECT trash FROM file_bytes)       AS "fileTrashBytes",
+           (SELECT live  FROM attachment_bytes) AS "attachmentBytes",
+           (SELECT trash FROM attachment_bytes) AS "attachmentTrashBytes",
+           -- Trashed projects are excluded from the COUNT while their bytes are
+           -- included above. That asymmetry is intentional and pre-existing:
+           -- "how much space am I using" and "how many projects are in my way"
+           -- are different questions.
            (SELECT COUNT(*) FROM projects
              WHERE owner_id = ${userId} AND deleted_at IS NULL) AS "projectCount",
            (SELECT plan FROM users WHERE id = ${userId}) AS "planId"
@@ -443,10 +466,8 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
   const projectBytes =
     Number(row.fileBytes ?? 0) + Number(row.attachmentBytes ?? 0);
 
-  // Trash does not exist yet, so this is a real zero rather than a placeholder.
-  // When it ships, this becomes the same sum over soft-deleted rows and nothing
-  // downstream changes.
-  const trashBytes = 0;
+  const trashBytes =
+    Number(row.fileTrashBytes ?? 0) + Number(row.attachmentTrashBytes ?? 0);
 
   const plan = planFor(row.planId ?? null);
 
