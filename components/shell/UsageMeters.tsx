@@ -15,7 +15,7 @@ export type UsagePayload = AccountUsage;
 
 /** Projects segment. */
 const PROJECT_COLOR = '#5B60FF'; // stiko.primary
-/** Trash segment — deliberately quiet; it is zero until trash ships. */
+/** Trash segment — deliberately quiet; it is zero for an empty trash. */
 const TRASH_COLOR = '#A2A7B8'; // stiko.faint
 /**
  * Over quota. The palette has no amber fill token, and this is the colour the

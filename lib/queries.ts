@@ -368,8 +368,8 @@ export interface AccountUsage {
  * coordinators for the same bytes.
  *
  * What counts, and why:
- *   - Files in archived packages DO count. The bytes are still in S3, and
- *     archiving is not deleting.
+ *   - Files in TRASHED packages and projects DO count. The bytes are still in
+ *     S3 until the purge job runs, and deleting is not yet erasing.
  *   - Files in unpublished drafts DO count, for the same reason.
  *   - Converted derivatives (files.converted_storage_key) do NOT. No byte size
  *     is recorded for them anywhere, and they are bytes the product generated
