@@ -216,7 +216,43 @@ export default function Home() {
             Waiting on an invite instead? It&apos;ll arrive by email — nothing to
             set up here.
           </p>
+
+          {/* Deleting your only project lands you right back on this screen —
+              /api/home excludes deleted content, so an empty dashboard and an
+              empty-of-anything-visible dashboard look identical. The trash
+              still holds that project for 28 days, and this is the only door
+              to it here: unlike the populated view below, there is no
+              deselect-on-background-click handler on this branch to guard
+              against, so the button needs no stopPropagation of its own. Left
+              unconditionally visible, matching the populated view, rather
+              than hidden when empty — this component has no cheap way to know
+              the trash is empty without fetching it, and getting that guess
+              wrong would recreate the exact unreachable-trash bug this exists
+              to fix. */}
+          <button
+            type="button"
+            onClick={() => setTrashOpen(true)}
+            className="mt-4 flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-panel transition duration-150 hover:text-stiko-ink"
+          >
+            <svg
+              className="h-[13px] w-[13px]"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+            </svg>
+            Trash
+          </button>
         </Column>
+        <TrashPanel
+          isOpen={trashOpen}
+          onClose={() => setTrashOpen(false)}
+          onRestored={load}
+        />
         <CommandPalette packages={packages} onNewPackage={newPackage} />
       </Shell>
     );
