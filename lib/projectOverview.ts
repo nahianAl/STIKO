@@ -51,7 +51,13 @@ export interface ProjectOverview {
     isYou: boolean;
   }[];
   packages: ProjectPackage[];
-  /** Every portal under the project, ARCHIVED INCLUDED — the delete gate. */
+  /**
+   * Every portal under the project, TRASHED INCLUDED — unlike
+   * `packages` above, which excludes them. Trashed content still holds
+   * files, comments and S3 objects until the purge runs, so this
+   * deliberately over-counts the live list: it is a "how much is really
+   * sitting here" count, not a display count.
+   */
   totalPackageCount: number;
   disclosure: {
     packagesInProject: number;

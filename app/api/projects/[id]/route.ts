@@ -72,7 +72,7 @@ export async function DELETE(
     sql`
       UPDATE projects
       SET deleted_at = ${now}, deleted_by = ${session.user.id}
-      WHERE id = ${params.id} AND deleted_at IS NULL
+      WHERE id = ${params.id} AND owner_id = ${session.user.id} AND deleted_at IS NULL
     `,
   ]);
 
@@ -98,8 +98,13 @@ export async function PATCH(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // A trashed project must not accept writes: the disable branch below
+  // hard-DELETEs version_summaries and project_summaries, and restore cannot
+  // bring those back — an item the trash promises is fully recoverable would
+  // come back with its AI briefs permanently gone.
   const owns = await sql`
-    SELECT 1 FROM projects WHERE id = ${params.id} AND owner_id = ${session.user.id}
+    SELECT 1 FROM projects
+    WHERE id = ${params.id} AND owner_id = ${session.user.id} AND deleted_at IS NULL
   `;
   if (owns.length === 0) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });

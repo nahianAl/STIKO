@@ -24,15 +24,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'id required' }, { status: 400 });
   }
 
-  const outcome = await restoreFromTrash(session.user.id, kind, id);
-  if (outcome === 'not-found') {
-    // Covers gone, not yours, and expired — kept indistinguishable so this
-    // endpoint cannot be used to probe what exists.
-    return NextResponse.json(
-      { error: 'That item is no longer in your trash.' },
-      { status: 404 }
-    );
-  }
+  try {
+    const outcome = await restoreFromTrash(session.user.id, kind, id);
+    if (outcome === 'not-found') {
+      // Covers gone, not yours, and expired — kept indistinguishable so this
+      // endpoint cannot be used to probe what exists.
+      return NextResponse.json(
+        { error: 'That item is no longer in your trash.' },
+        { status: 404 }
+      );
+    }
 
-  return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[api/trash/restore] failed:', message);
+
+    // Same courtesy /api/home extends: a missing column almost always means
+    // migration 014 has not been applied, and an opaque 500 sends whoever is
+    // debugging this to entirely the wrong place.
+    if (/column .* does not exist/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            'The database is missing columns this version needs. Run `npm run migrate` to apply lib/migrations.',
+          detail: message,
+        },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json({ error: 'Could not restore that item.' }, { status: 500 });
+  }
 }

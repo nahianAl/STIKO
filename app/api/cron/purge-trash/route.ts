@@ -118,13 +118,17 @@ export async function GET(request: NextRequest) {
   // kinds of object are orphaned in the bucket permanently the moment this
   // purge runs, with nothing left in the database ever able to name them
   // again.
+  // Casts on every ANY() below: these lists are EMPTY on the normal daily run
+  // (nothing expired), and the Neon HTTP driver sends parameters as text, so
+  // Postgres cannot infer an empty array's element type without help. Same
+  // trap and same fix as scopeList in app/api/portals/[id]/activity/route.ts.
   const doomedFiles = await sql`
     SELECT f.id
     FROM files f
     JOIN versions v ON v.id = f.version_id
     JOIN portals po ON po.id = v.portal_id
-    WHERE po.id = ANY(${portalIds})
-       OR po.project_id = ANY(${projectIds})
+    WHERE po.id = ANY(${portalIds}::text[])
+       OR po.project_id = ANY(${projectIds}::text[])
   `;
   const doomedKeys = await storageKeysForFiles(
     doomedFiles.map((f) => f.id as string)
@@ -138,10 +142,10 @@ export async function GET(request: NextRequest) {
   // same portal rows first, silently, before this statement ever ran against
   // them — purgedPackages would under-report while nothing looks wrong.
   const packages = await sql`
-    DELETE FROM portals WHERE id = ANY(${portalIds}) RETURNING id
+    DELETE FROM portals WHERE id = ANY(${portalIds}::text[]) RETURNING id
   `;
   const projects = await sql`
-    DELETE FROM projects WHERE id = ANY(${projectIds}) RETURNING id
+    DELETE FROM projects WHERE id = ANY(${projectIds}::text[]) RETURNING id
   `;
 
   // Last, and never inside a transaction with the two DELETEs above: this

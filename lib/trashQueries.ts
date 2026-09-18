@@ -168,7 +168,7 @@ export async function restoreFromTrash(
     // DELETE (owner-only) because restoring is non-destructive — the trash
     // exists so an owner or coordinator can undo a mistake either of them
     // made.
-    const owned = await sql`
+    const authorized = await sql`
       SELECT pr.id
       FROM projects pr
       LEFT JOIN project_members pm
@@ -179,7 +179,7 @@ export async function restoreFromTrash(
         AND (pr.owner_id = ${userId}
              OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator'))
     `;
-    if (!owned[0]) return 'not-found';
+    if (!authorized[0]) return 'not-found';
 
     // One transaction, matching the DELETE handler's shape: a failure between
     // the two writes must not leave the project live while its swept packages
