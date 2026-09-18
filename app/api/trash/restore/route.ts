@@ -8,7 +8,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { kind, id } = await request.json().catch(() => ({}));
+  // A literal `null` body makes request.json() RESOLVE with null rather than
+  // reject, so the .catch alone would not save the destructure below from a
+  // TypeError. Cover both a rejection and a null resolution the same way.
+  const body = (await request.json().catch(() => null)) ?? {};
+  const { kind, id } = body;
 
   if (kind !== 'project' && kind !== 'package') {
     return NextResponse.json(

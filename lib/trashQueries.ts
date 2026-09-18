@@ -160,25 +160,42 @@ export async function restoreFromTrash(
   const cutoff = `${TRASH_RETENTION_DAYS} days`;
 
   if (kind === 'project') {
-    const result = await sql`
-      UPDATE projects
-      SET deleted_at = NULL, deleted_by = NULL
-      WHERE id = ${id}
-        AND owner_id = ${userId}
-        AND deleted_at IS NOT NULL
-        AND deleted_at > now() - ${cutoff}::interval
-      RETURNING id
+    // Authorisation and the window are both decided here, before any write,
+    // so an unauthorised or expired caller changes no rows — the same shape
+    // as the package path below. Scoped to owner OR coordinator, matching
+    // the "mine" CTE in getTrash exactly: anything visible in the trash must
+    // be restorable by the same person. This is deliberately broader than
+    // DELETE (owner-only) because restoring is non-destructive — the trash
+    // exists so an owner or coordinator can undo a mistake either of them
+    // made.
+    const owned = await sql`
+      SELECT pr.id
+      FROM projects pr
+      LEFT JOIN project_members pm
+        ON pm.project_id = pr.id AND pm.user_id = ${userId}
+      WHERE pr.id = ${id}
+        AND pr.deleted_at IS NOT NULL
+        AND pr.deleted_at > now() - ${cutoff}::interval
+        AND (pr.owner_id = ${userId}
+             OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator'))
     `;
-    if (!result[0]) return 'not-found';
+    if (!owned[0]) return 'not-found';
 
-    // Only the packages this project swept up. One deleted deliberately before
-    // the project was stays in the trash on its own clock — nobody asked for it
-    // back, and reviving it would undo a decision nobody revisited.
-    await sql`
-      UPDATE portals
-      SET deleted_at = NULL, deleted_by = NULL, deleted_with_project = FALSE
-      WHERE project_id = ${id} AND deleted_with_project
-    `;
+    // One transaction, matching the DELETE handler's shape: a failure between
+    // the two writes must not leave the project live while its swept packages
+    // stay marked deleted.
+    await sql.transaction([
+      sql`
+        UPDATE projects
+        SET deleted_at = NULL, deleted_by = NULL
+        WHERE id = ${id} AND deleted_at IS NOT NULL
+      `,
+      sql`
+        UPDATE portals
+        SET deleted_at = NULL, deleted_by = NULL, deleted_with_project = FALSE
+        WHERE project_id = ${id} AND deleted_with_project
+      `,
+    ]);
     return 'ok';
   }
 
@@ -187,8 +204,12 @@ export async function restoreFromTrash(
   // the intent is unambiguous — an empty restored project is harmless, an
   // unreachable restored package is a bug report.
   //
-  // One transaction, and the project UPDATE is guarded on its own window: a
-  // package inside a project that expired first must not drag a corpse back.
+  // One transaction below. The project's window is enforced up here, in this
+  // SELECT (pr.deleted_at IS NULL OR pr.deleted_at > cutoff) — a package
+  // inside a project that expired first must not drag a corpse back. The
+  // UPDATE itself carries no window check of its own, only deleted_at IS NOT
+  // NULL, because authorisation and the window are both already decided by
+  // the time we get there.
   const rows = await sql`
     SELECT po.id, po.project_id AS "projectId"
     FROM portals po
