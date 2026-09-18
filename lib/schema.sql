@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL,
   description TEXT,
   archived_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ,
+  deleted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -65,6 +67,9 @@ CREATE TABLE IF NOT EXISTS portals (
   name TEXT NOT NULL,
   tag TEXT,
   archived_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ,
+  deleted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  deleted_with_project BOOLEAN NOT NULL DEFAULT FALSE,
   link_access BOOLEAN NOT NULL DEFAULT FALSE,
   last_version_number INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
