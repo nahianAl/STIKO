@@ -53,7 +53,10 @@ Trashed bytes remain in S3 and keep counting toward the storage meter, which is 
 
 ### Expiry is computed at read time; the purge job is only cleanup
 
-Every read filters `deleted_at > now() - 28 days`. An item past its window is invisible and unrestorable the moment it expires, whether or not the purge has run.
+Two different filters, and conflating them would be a bug:
+
+- **Ordinary read paths filter `deleted_at IS NULL`.** A trashed item is inaccessible the instant it is deleted. No window arithmetic — it is simply gone.
+- **The trash's own reads filter `deleted_at > now() - 28 days`.** An item past its window is invisible and unrestorable the moment it expires, whether or not the purge has run.
 
 This matters more than the scheduler choice. Migrations here have been forgotten twice and there is no staging environment; a missed cron should cost storage, not correctness. It also means no user ever sees "−3 days left" or restores something that should already be gone.
 
@@ -147,7 +150,9 @@ Mirror all of this into `lib/schema.sql`.
 
 Call sites that must gain the filter:
 
-- `lib/access.ts` — `getPackageAccess`, and the `archived_at IS NULL` at line 181. **The critical one:** if a trashed package still resolves access, every route that trusts `getPackageAccess` serves it.
+- `lib/access.ts` — `getPackageAccess`, `isProjectMember`, `visiblePackageIds`. **`getPackageAccess` is the critical one:** if a trashed package still resolves access, every route that trusts it serves the package.
+
+  Worth stating plainly, because it inverts the obvious approach: **`getPackageAccess` and `isProjectMember` do not filter `archived_at` at all today.** Their `WHERE` clauses are `po.id = $1` and `pr.id = $1`. Archive only ever hid things from *lists*; a direct id has always resolved. So grepping for `archived_at` finds `visiblePackageIds` and misses the two functions that matter most.
 - `lib/queries.ts` — `getHomeData`'s `visible` CTE, the `emptyProjectRows` query, and `getAccountUsage`'s project count
 - `app/api/projects/route.ts`, `app/api/projects/[id]/route.ts`, `app/api/projects/[id]/overview/route.ts`
 - `app/api/portals/route.ts`, `app/api/portals/[id]/route.ts`
@@ -217,13 +222,13 @@ Button at the bottom-left of the dashboard shell, count badge only when non-empt
 
 `npm test` runs `node --test scripts/tests/*.mjs`. **Tested modules must not use the `@/` alias, and `lib/queries` must be imported as `import type`** — both rules have bitten this repo before.
 
-Pure-logic tests, no database:
+Pure-logic tests, no database — but only where the logic actually lives in TypeScript:
 
-- `lib/trash.ts` — the cutoff helper across the boundary: 27 days is live, 28 is expired, 29 is expired
-- Restore resolution — given a project and a mixed set of packages, restoring the project revives only `deleted_with_project` rows. The Sep 1 / Sep 10 / Sep 15 case above is the fixture.
-- Trash card shaping — swept counts, byte totals, days-remaining arithmetic
+- `lib/trash.ts` — `daysRemaining` across the boundary and its failure modes: rounding up so a part-day never reads as zero, clamping rather than going negative, accepting the ISO strings the Neon HTTP driver returns rather than Dates, and returning 0 instead of NaN for a null or unparseable timestamp
 
-Queries and routes are covered by the existing manual pass against a real database, as elsewhere in this codebase.
+Deliberately **not** unit-tested, because the logic is in SQL rather than TypeScript: the 28-day window (`now() - '28 days'::interval`) and the restore resolution (`WHERE project_id = $1 AND deleted_with_project`). Both belong in the database — the window because it must use the database's clock, not whichever serverless instance answered, and the restore filter because it has to be atomic with the UPDATE. A TypeScript twin of either would have no caller and would be a second source of truth that can silently disagree.
+
+The Sep 1 / Sep 10 / Sep 15 case is therefore verified by hand against a real database, as a scripted step in the plan rather than a unit test. Queries and routes are covered the same way, as elsewhere in this codebase.
 
 ## Rollout
 
