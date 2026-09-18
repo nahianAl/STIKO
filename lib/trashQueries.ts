@@ -44,12 +44,23 @@ export async function getTrash(userId: string): Promise<TrashItem[]> {
          OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator')
     ),
     -- Bytes per package, counted once and reused by both halves below.
-    -- Attachments are excluded deliberately, matching getAccountUsage's note:
-    -- their keys carry no portal segment, so they are not safely attributable.
+    -- Attachments are excluded deliberately, mirroring the note on
+    -- storageKeysForFiles in lib/access.ts: their storage keys are minted flat
+    -- (snapshots/{uuid}, comment-attachments/{uuid}) with no project or portal
+    -- segment, so a byte count cannot be safely attributed to one portal.
+    -- (getAccountUsage in lib/queries.ts, unlike this query, DOES count
+    -- attachment bytes, via its own attachment_bytes CTE.)
+    --
+    -- Scoped through the "mine" CTE so an empty trash does not full-scan
+    -- files joined to versions for every user's files: this CTE is
+    -- referenced twice below, and Postgres 12+ materializes rather than
+    -- pushing the filter down into a twice-referenced CTE.
     pkg_bytes AS (
-      SELECT v.portal_id, COALESCE(SUM(f.file_size), 0) AS bytes
+      SELECT v.portal_id, SUM(f.file_size) AS bytes
       FROM files f
       JOIN versions v ON v.id = f.version_id
+      JOIN portals po ON po.id = v.portal_id
+      JOIN mine ON mine.id = po.project_id
       GROUP BY v.portal_id
     )
     SELECT * FROM (
@@ -59,9 +70,14 @@ export async function getTrash(userId: string): Promise<TrashItem[]> {
              NULL::text AS "projectName",
              (SELECT COUNT(*) FROM portals po2
                WHERE po2.project_id = pr.id AND po2.deleted_with_project) AS "sweptPackageCount",
+             -- Must describe the SAME set as sweptPackageCount above, or a
+             -- package deleted independently before its project gets its
+             -- bytes double-counted (once on its own card, once here) and,
+             -- once past its own 28-day window, counted here with no card of
+             -- its own to reconcile against.
              (SELECT COALESCE(SUM(b.bytes), 0) FROM portals po3
                 LEFT JOIN pkg_bytes b ON b.portal_id = po3.id
-               WHERE po3.project_id = pr.id) AS bytes,
+               WHERE po3.project_id = pr.id AND po3.deleted_with_project) AS bytes,
              pr.deleted_at AS "deletedAt",
              u.name AS "deletedByName"
       FROM projects pr
@@ -88,25 +104,40 @@ export async function getTrash(userId: string): Promise<TrashItem[]> {
       LEFT JOIN users u ON u.id = po.deleted_by
       LEFT JOIN pkg_bytes b ON b.portal_id = po.id
       WHERE po.deleted_at IS NOT NULL
-        AND NOT po.deleted_with_project
+        -- A swept package (flag TRUE) is normally hidden here and counted on
+        -- its project's card instead. But if a DIFFERENT package deleted on
+        -- its own is restored, its live project comes back too, live projects
+        -- carry no trash card, and the swept sibling's flag is untouched by
+        -- that restore. Without the "project no longer trashed" escape hatch
+        -- that sibling would be invisible in trash AND gone from the
+        -- dashboard — unrestorable until the purge job destroys it.
+        AND (NOT po.deleted_with_project OR pr.deleted_at IS NULL)
         AND po.deleted_at > now() - ${cutoff}::interval
     ) t
-    ORDER BY "deletedAt" DESC
+    ORDER BY "deletedAt" DESC, id
   `;
 
   const now = new Date();
-  return rows.map((r) => ({
-    id: r.id as string,
-    kind: r.kind as 'project' | 'package',
-    name: r.name as string,
-    projectName: (r.projectName as string | null) ?? null,
-    // BIGINT and COUNT come back from the HTTP driver as strings. Without
-    // Number() these concatenate instead of adding, which is how "10485760"
-    // becomes "1048576010485760" downstream.
-    sweptPackageCount: Number(r.sweptPackageCount ?? 0),
-    bytes: Number(r.bytes ?? 0),
-    deletedAt: String(r.deletedAt),
-    deletedByName: (r.deletedByName as string | null) ?? null,
-    daysLeft: daysRemaining(String(r.deletedAt), now),
-  }));
+  return rows.map((r) => {
+    // The Neon HTTP driver returns TIMESTAMPTZ as a Date object, not a
+    // string (see toIso() in app/api/portals/[id]/activity/route.ts). Resolve
+    // once and reuse for both fields below, so they describe the same instant.
+    const at =
+      r.deletedAt instanceof Date ? r.deletedAt : new Date(String(r.deletedAt));
+
+    return {
+      id: r.id as string,
+      kind: r.kind as 'project' | 'package',
+      name: r.name as string,
+      projectName: (r.projectName as string | null) ?? null,
+      // BIGINT and COUNT come back from the HTTP driver as strings. Without
+      // Number() these concatenate instead of adding, which is how "10485760"
+      // becomes "1048576010485760" downstream.
+      sweptPackageCount: Number(r.sweptPackageCount ?? 0),
+      bytes: Number(r.bytes ?? 0),
+      deletedAt: at.toISOString(),
+      deletedByName: (r.deletedByName as string | null) ?? null,
+      daysLeft: daysRemaining(at, now),
+    };
+  });
 }

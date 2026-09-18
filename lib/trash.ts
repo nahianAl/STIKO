@@ -32,7 +32,8 @@ export function daysRemaining(
   now: Date
 ): number {
   if (deletedAt === null || deletedAt === undefined) return 0;
-  // Neon's HTTP driver returns TIMESTAMPTZ as a string, not a Date.
+  // Neon's HTTP driver may hand back TIMESTAMPTZ as a Date or as a string,
+  // depending on the call site; this check normalises either into a Date.
   const at = deletedAt instanceof Date ? deletedAt : new Date(deletedAt);
   // Fails closed rather than propagating NaN into the UI as "NaN days left".
   if (Number.isNaN(at.getTime())) return 0;
