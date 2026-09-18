@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Button from '@/components/ui/Button';
 import {
   Avatar,
@@ -48,15 +48,32 @@ interface GuestRow {
  *  read an accepted person's still-open invite as ordinary accepted access,
  *  and opening AccessEditor on it would send `pending: false` with their real
  *  `userId` against a package they have not accepted — GET /api/participants
- *  would find no row and the editor would show its load error. */
+ *  would find no row and the editor would show its load error.
+ *
+ *  Matched on email, not `g.key`: `g.key` is `RosterEntry.key`, which
+ *  lib/projectRoster.ts sets to `users.id` for anyone who has accepted on ANY
+ *  package — comparing that to a normalised email could never match, so the
+ *  invited branch used to be reachable only for guests who had never
+ *  accepted anywhere (a case the row's own `pending` flag already covered).
+ *  Matching `norm(i.email)` against `norm(g.email)` instead reaches the case
+ *  this function exists for: an accepted person with a separate, still-open
+ *  invite on a different package.
+ *
+ *  The returned `email` is the invite's (or participant's) own raw address,
+ *  not `g.email` — for a pending guest `g.email` is projectRoster's
+ *  normalised key, and passing that on to AccessEditor would send a
+ *  lower-cased address to routes that match email case-sensitively. */
 function roleForCell(
   g: GuestRow,
   pkg: ProjectPackage
-): { role: Role; invited: boolean } | null {
+): { role: Role; invited: boolean; email: string } | null {
   const accepted = pkg.people.find((p) => p.id === g.key);
-  if (accepted) return { role: accepted.role as Role, invited: false };
-  const invited = pkg.pending.find((i) => norm(i.email) === g.key);
-  return invited ? { role: invited.role as Role, invited: true } : null;
+  if (accepted)
+    return { role: accepted.role as Role, invited: false, email: accepted.email };
+  const invited = pkg.pending.find((i) => norm(i.email) === norm(g.email));
+  return invited
+    ? { role: invited.role as Role, invited: true, email: invited.email }
+    : null;
 }
 
 /**
@@ -86,6 +103,8 @@ export function TeamMatrix({
   packages,
   onChanged,
   onAddPeople,
+  offsetLeft = 0,
+  onSubSurfaceChange,
 }: {
   members: {
     id: string;
@@ -98,6 +117,19 @@ export function TeamMatrix({
   packages: ProjectPackage[];
   onChanged: () => void;
   onAddPeople: () => void;
+  /** Distance from the positioned ancestor's left edge, passed straight
+   *  through to AccessEditor's own `offsetLeft` (and from there to Drawer's).
+   *  This matrix is a child of whatever panel mounts it — it cannot see what
+   *  is to its left, so per Drawer's own doc the caller owns that arithmetic.
+   *  Defaults to 0 for a mount with nothing beside it. */
+  offsetLeft?: number;
+  /** Called whenever this matrix's own sub-surfaces (AccessEditor or
+   *  AddPeopleModal) open or close. Drawer registers an unconditional
+   *  `document` Escape handler, so a container that mounts this matrix inside
+   *  its own Escape-closeable surface must fold this into its own
+   *  `closeOnEscape` guard — otherwise one Escape press closes both this
+   *  matrix's sub-surface and the container itself. */
+  onSubSurfaceChange?: (open: boolean) => void;
 }) {
   const [editing, setEditing] = useState<{
     personId: string;
@@ -165,6 +197,18 @@ export function TeamMatrix({
     : undefined;
   const editingCell =
     editingGuest && editingPkg ? roleForCell(editingGuest, editingPkg) : null;
+
+  // Either sub-surface counts as "open" for the container's Escape guard:
+  // AccessEditor only actually mounts below when editingCell also resolves
+  // (Fix 6), so this mirrors that same condition rather than the looser
+  // `editing !== null`, which could report open a beat after the row it
+  // pointed at has disappeared and the editor has already declined to mount.
+  const subSurfaceOpen =
+    Boolean(editingGuest && editingPkg && editingCell) || addInvitePkg !== null;
+
+  useEffect(() => {
+    onSubSurfaceChange?.(subSurfaceOpen);
+  }, [subSurfaceOpen, onSubSurfaceChange]);
 
   const onCellClick = (g: GuestRow, pkg: ProjectPackage) => {
     const cell = roleForCell(g, pkg);
@@ -368,30 +412,34 @@ export function TeamMatrix({
 
       {/* Mounted only while a cell with an existing row is being edited —
           matches VersionDetailDrawer.tsx's own inline-Drawer consumer, which
-          likewise unmounts on close rather than animating out.
-          offsetLeft: this matrix is rendered inside ProjectPeopleDrawer's own
-          Drawer (a fixed, right-anchored panel with no rail or sidebar to its
-          left) rather than beside a persistent rail the way
-          VersionDetailDrawer sits beside the version list. There is nothing
-          here to skip past, so 0 is the deliberately computed answer, not an
-          unexamined default: AccessEditor's `inline` Drawer resolves against
-          the nearest positioned ancestor, which is that outer Drawer's own
-          panel, and left:0 there sits flush inside its padded content column
-          — the same column this matrix already renders in — well within its
-          width, rather than at the true window edge an omitted prop would
-          produce. */}
-      {editingGuest && editingPkg && (
+          likewise unmounts on close rather than animating out. Gated on
+          `editingCell` too, not just `editingGuest`/`editingPkg`: if the row
+          disappears out from under an open editor (a refetch mid-edit),
+          there is no cell left to derive `userId`/`pending`/`email` from, and
+          mounting anyway would risk breaching AccessEditor's documented
+          contract that `pending` alone decides which identifier is sent.
+          email/pending/userId all come from `editingCell` (Fix 2/3), not from
+          `editingGuest`: for a pending row `editingGuest.email` is
+          projectRoster's normalised key, not the address as stored, and
+          `editingGuest.pending` is the roster's whole-person flag, which can
+          disagree with this specific cell (someone accepted elsewhere with a
+          separate open invite here).
+          offsetLeft: this matrix cannot see what is to its left — only the
+          container that mounts it knows the width of whatever this sits
+          beside — so the value is threaded straight through from this
+          component's own `offsetLeft` prop rather than reasoned about here. */}
+      {editingGuest && editingPkg && editingCell && (
         <AccessEditor
           isOpen
           onClose={() => setEditing(null)}
           portalId={editingPkg.id}
           packageName={editingPkg.name}
-          userId={editingCell?.invited ? null : editingGuest.key}
-          email={editingGuest.email}
-          displayName={editingGuest.pending ? editingGuest.email : editingGuest.name}
-          pending={editingCell?.invited ?? editingGuest.pending}
+          userId={editingCell.invited ? null : editingGuest.key}
+          email={editingCell.email}
+          displayName={editingGuest.pending ? editingCell.email : editingGuest.name}
+          pending={editingCell.invited}
           canManage={canManage}
-          offsetLeft={0}
+          offsetLeft={offsetLeft}
           onChanged={onChanged}
         />
       )}
@@ -409,14 +457,27 @@ export function TeamMatrix({
           here. `projectName` is genuinely required by AddPeopleModal but this
           matrix is never handed the project's name — the clicked package's
           own name fills that slot instead, which reads sensibly as the
-          modal's subtitle given the invite is scoped to just that package. */}
-      <AddPeopleModal
-        isOpen={addInvitePkg !== null}
-        onClose={() => setAddInvitePkg(null)}
-        projectName={addInvitePkg?.name ?? ''}
-        packages={addInvitePkg ? [addInvitePkg] : []}
-        onDone={onChanged}
-      />
+          modal's subtitle given the invite is scoped to just that package.
+          Mounted only when there is a package to scope it to, rather than
+          unconditionally with `packages={addInvitePkg ? [addInvitePkg] : []}`:
+          AddPeopleModal seeds `selection` (and therefore `singlePackage`) from
+          `packages` in a `useState` initializer, which runs once at mount —
+          nothing re-seeds it later. An always-mounted instance is born with
+          `packages={[]}`, so `singlePackage` is false, `selection` stays `{}`
+          forever, and clicking an em-dash would hide the package checklist
+          (because `singlePackage` looks true by then) while `chosen` stays
+          empty — Send invitation disabled with no control left to enable it.
+          Mounting fresh each time also clears any stale email/note text an
+          always-mounted instance would otherwise retain between opens. */}
+      {addInvitePkg && (
+        <AddPeopleModal
+          isOpen
+          onClose={() => setAddInvitePkg(null)}
+          projectName={addInvitePkg.name}
+          packages={[addInvitePkg]}
+          onDone={onChanged}
+        />
+      )}
     </div>
   );
 }
