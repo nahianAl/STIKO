@@ -224,7 +224,7 @@ export default function PackageSettings() {
           rows={[
             {
               title: 'Delete package',
-              description: `All ${data.counts.versions} version${data.counts.versions === 1 ? '' : 's'}, ${data.counts.files} file${data.counts.files === 1 ? '' : 's'} and ${data.counts.comments} comment${data.counts.comments === 1 ? '' : 's'} are permanently removed.`,
+              description: `All ${data.counts.versions} version${data.counts.versions === 1 ? '' : 's'}, ${data.counts.files} file${data.counts.files === 1 ? '' : 's'} and ${data.counts.comments} comment${data.counts.comments === 1 ? '' : 's'} go to the trash and can be restored for 28 days.`,
               actionLabel: 'Delete',
               onAction: () => setConfirmDelete(true),
             },

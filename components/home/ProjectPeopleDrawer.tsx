@@ -327,7 +327,7 @@ export default function ProjectPeopleDrawer({
         title={`Delete ${project.name}?`}
         name={project.name}
         consequence="Everyone loses access immediately, including people mid-review. The project and all its packages go to the trash and can be restored for 28 days — until then they still count toward your storage."
-        inventory={[]}
+        inventory={[{ label: 'Packages', value: overview?.totalPackageCount ?? 0 }]}
         confirmLabel="Delete project"
       />
     </>
