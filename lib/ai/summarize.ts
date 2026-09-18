@@ -104,7 +104,7 @@ export async function summarizeProject(
            v.id AS "versionId", v.version_number AS "versionNumber",
            vs.headline, vs.generated_at AS "generatedAt"
     FROM projects p
-    JOIN portals po ON po.project_id = p.id AND po.archived_at IS NULL
+    JOIN portals po ON po.project_id = p.id AND po.deleted_at IS NULL AND p.deleted_at IS NULL
     JOIN versions v ON v.portal_id = po.id
     JOIN version_summaries vs ON vs.version_id = v.id
     WHERE p.id = ${projectId}
@@ -186,14 +186,14 @@ export async function readProjectBrief(projectId: string): Promise<{
            ps.covered_through AS "coveredThrough",
            ps.generated_at AS "generatedAt",
            -- Must scope to the same packages summarizeProject's roll-up joins
-           -- (AND po.archived_at IS NULL) — otherwise an archived package can
+           -- (AND po.deleted_at IS NULL) — otherwise a deleted package can
            -- hold the newest generated_at while being excluded from the
            -- roll-up's covered_through, making 'stale' permanently true with
            -- no regeneration able to clear it.
            (SELECT MAX(vs.generated_at)
               FROM version_summaries vs
               JOIN versions v ON v.id = vs.version_id
-              JOIN portals po ON po.id = v.portal_id AND po.archived_at IS NULL
+              JOIN portals po ON po.id = v.portal_id AND po.deleted_at IS NULL
              WHERE po.project_id = ${projectId}) AS "newestVersionBrief"
     FROM project_summaries ps
     WHERE ps.project_id = ${projectId}

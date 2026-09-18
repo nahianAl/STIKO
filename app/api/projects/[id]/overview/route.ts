@@ -46,17 +46,18 @@ export async function GET(
       ORDER BY version_number DESC LIMIT 1
     ) v ON TRUE
     LEFT JOIN users u ON u.id = v.created_by
-    WHERE po.project_id = ${params.id} AND po.archived_at IS NULL
+    WHERE po.project_id = ${params.id} AND po.deleted_at IS NULL
     ORDER BY po.created_at ASC
   `;
 
   const packageIds = packageRows.map((p) => p.id as string);
 
-  // Every portal under the project, archived included — unlike packageRows
-  // above, which deliberately excludes them. The delete control on the
-  // project page needs this: an archived package is hidden from the list but
-  // still has files, comments and S3 objects, so "packages.length === 0" is
-  // not the same question as "is there really nothing left to delete".
+  // Every portal under the project, trashed included — unlike packageRows
+  // above, which deliberately excludes them via deleted_at IS NULL. The
+  // delete control on the project page needs this: a trashed package is
+  // hidden from the list but still has files, comments and S3 objects (it's
+  // soft-deleted, not destroyed), so "packages.length === 0" is not the same
+  // question as "is there really nothing left to delete".
   const totalPackageCountRows = await sql`
     SELECT COUNT(*) AS n FROM portals WHERE project_id = ${params.id}
   `;

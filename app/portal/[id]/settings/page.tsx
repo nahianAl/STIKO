@@ -93,31 +93,6 @@ export default function PackageSettings() {
     toast(next ? 'Package muted' : 'Package unmuted');
   };
 
-  const archive = async () => {
-    const res = await fetch(`/api/portals/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ archived: true }),
-    });
-    if (!res.ok) {
-      toast('Could not archive this package');
-      return;
-    }
-    // Reversible, so it gets an Undo on the toast rather than a confirm.
-    toast('Package archived', {
-      label: 'Undo',
-      onClick: async () => {
-        await fetch(`/api/portals/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ archived: false }),
-        });
-        load();
-      },
-    });
-    load();
-  };
-
   const remove = async () => {
     const res = await fetch(`/api/portals/${id}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -248,16 +223,8 @@ export default function PackageSettings() {
         <DangerCard
           rows={[
             {
-              title: 'Archive package',
-              description:
-                'Read-only for everyone, hidden from the project. Reversible.',
-              actionLabel: 'Archive',
-              variant: 'secondary',
-              onAction: archive,
-            },
-            {
               title: 'Delete package',
-              description: `All ${data.counts.versions} version${data.counts.versions === 1 ? '' : 's'}, ${data.counts.files} file${data.counts.files === 1 ? '' : 's'} and ${data.counts.comments} comment${data.counts.comments === 1 ? '' : 's'} are permanently removed.`,
+              description: `All ${data.counts.versions} version${data.counts.versions === 1 ? '' : 's'}, ${data.counts.files} file${data.counts.files === 1 ? '' : 's'} and ${data.counts.comments} comment${data.counts.comments === 1 ? '' : 's'} go to the trash and can be restored for 28 days.`,
               actionLabel: 'Delete',
               onAction: () => setConfirmDelete(true),
             },
@@ -271,7 +238,7 @@ export default function PackageSettings() {
         onConfirm={remove}
         title={`Delete ${data.package.name}?`}
         name={data.package.name}
-        consequence="This cannot be undone. Everyone loses access immediately, including people mid-review."
+        consequence="Everyone loses access immediately, including people mid-review. It goes to the trash and can be restored for 28 days — until then it still counts toward your storage."
         inventory={[
           { label: 'Versions', value: data.counts.versions },
           { label: 'Files', value: data.counts.files },
@@ -282,7 +249,6 @@ export default function PackageSettings() {
             urgent: true,
           },
         ]}
-        reversibleHint="Archiving keeps everything read-only instead — and you can undo it."
         confirmLabel="Delete package"
       />
     </SettingsShell>

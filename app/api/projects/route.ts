@@ -16,7 +16,7 @@ export async function GET() {
     FROM projects pr
     LEFT JOIN project_members pm
       ON pm.project_id = pr.id AND pm.user_id = ${session.user.id}
-    WHERE pr.archived_at IS NULL
+    WHERE pr.deleted_at IS NULL
       AND (pr.owner_id = ${session.user.id} OR pm.user_id IS NOT NULL)
     ORDER BY pr.created_at DESC
   `;

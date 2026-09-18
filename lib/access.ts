@@ -51,7 +51,13 @@ export async function getPackageAccess(
       ON pm.project_id = pr.id AND pm.user_id = ${userId}
     LEFT JOIN participants pa
       ON pa.portal_id = po.id AND pa.user_id = ${userId}
+    -- Both, not just the package: a package whose PROJECT is in the trash must
+    -- be just as unreachable as one trashed directly. This function has never
+    -- filtered archived_at — archive only hid things from lists, and a direct
+    -- id always resolved — so there was no existing clause to extend here.
     WHERE po.id = ${portalId}
+      AND po.deleted_at IS NULL
+      AND pr.deleted_at IS NULL
   `;
 
   const row = rows[0];
@@ -124,6 +130,7 @@ export async function isProjectMember(
     LEFT JOIN project_members pm
       ON pm.project_id = pr.id AND pm.user_id = ${userId}
     WHERE pr.id = ${projectId}
+      AND pr.deleted_at IS NULL
       AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL)
     LIMIT 1
   `;
@@ -178,7 +185,10 @@ export async function visiblePackageIds(userId: string): Promise<string[]> {
       ON pm.project_id = pr.id AND pm.user_id = ${userId}
     LEFT JOIN participants pa
       ON pa.portal_id = po.id AND pa.user_id = ${userId}
-    WHERE po.archived_at IS NULL
+    -- archived_at is retired here: archive is being removed, so anything
+    -- previously archived becomes visible again rather than being stranded.
+    WHERE po.deleted_at IS NULL
+      AND pr.deleted_at IS NULL
       AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL OR pa.user_id IS NOT NULL)
   `;
   return rows.map((r) => r.id as string);

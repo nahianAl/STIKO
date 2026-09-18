@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getPackageAccess, isProjectMember, storageKeysForFiles } from '@/lib/access';
-import { deleteObjects } from '@/lib/s3';
+import { getPackageAccess, isProjectMember } from '@/lib/access';
 
 export async function GET(
   _request: NextRequest,
@@ -18,7 +17,7 @@ export async function GET(
 
   const rows = await sql`
     SELECT id, project_id AS "projectId", name, tag,
-           link_access AS "linkAccess", archived_at AS "archivedAt",
+           link_access AS "linkAccess",
            created_at AS "createdAt"
     FROM portals WHERE id = ${params.id}
   `;
@@ -27,7 +26,7 @@ export async function GET(
   return NextResponse.json(rows[0]);
 }
 
-/** PATCH — name, tag, project, link access, archive (3l). */
+/** PATCH — name, tag, project, link access (3l). */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -42,7 +41,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, tag, projectId, linkAccess, archived } = await request.json();
+  const { name, tag, projectId, linkAccess } = await request.json();
 
   if (name !== undefined) {
     if (!String(name).trim()) {
@@ -72,15 +71,6 @@ export async function PATCH(
   if (linkAccess !== undefined) {
     await sql`UPDATE portals SET link_access = ${Boolean(linkAccess)} WHERE id = ${params.id}`;
   }
-  if (archived !== undefined) {
-    // Archiving is reversible, which is why it is offered as the alternative to
-    // deletion on every destructive confirm.
-    await sql`
-      UPDATE portals SET archived_at = ${archived ? new Date().toISOString() : null}
-      WHERE id = ${params.id}
-    `;
-  }
-
   return NextResponse.json({ ok: true });
 }
 
@@ -100,26 +90,17 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // Collected before the delete: the rows are gone afterwards, and nothing
-  // left would name these objects.
-  const doomedFiles = await sql`
-    SELECT f.id
-    FROM files f
-    JOIN versions v ON v.id = f.version_id
-    WHERE v.portal_id = ${params.id}
-  `;
-  const doomedKeys = await storageKeysForFiles(
-    doomedFiles.map((f) => f.id as string)
-  );
-
-  // Versions, files, comments, markups and participants all cascade.
   const result = await sql`
-    DELETE FROM portals WHERE id = ${params.id} RETURNING id
+    UPDATE portals
+    SET deleted_at = ${new Date().toISOString()},
+        deleted_by = ${session.user.id},
+        -- FALSE: deleted on its own, so it keeps its own clock and its own
+        -- trash card, and restoring its project will not revive it.
+        deleted_with_project = FALSE
+    WHERE id = ${params.id} AND deleted_at IS NULL
+    RETURNING id
   `;
   if (!result[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-
-  // Until now this left every file in the bucket forever.
-  await deleteObjects(doomedKeys);
 
   return NextResponse.json({ success: true });
 }

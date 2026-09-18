@@ -1,0 +1,59 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@/lib/auth';
+import { restoreFromTrash } from '@/lib/trashQueries';
+
+export async function POST(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // A literal `null` body makes request.json() RESOLVE with null rather than
+  // reject, so the .catch alone would not save the destructure below from a
+  // TypeError. Cover both a rejection and a null resolution the same way.
+  const body = (await request.json().catch(() => null)) ?? {};
+  const { kind, id } = body;
+
+  if (kind !== 'project' && kind !== 'package') {
+    return NextResponse.json(
+      { error: 'kind must be "project" or "package"' },
+      { status: 400 }
+    );
+  }
+  if (typeof id !== 'string' || !id) {
+    return NextResponse.json({ error: 'id required' }, { status: 400 });
+  }
+
+  try {
+    const outcome = await restoreFromTrash(session.user.id, kind, id);
+    if (outcome === 'not-found') {
+      // Covers gone, not yours, and expired — kept indistinguishable so this
+      // endpoint cannot be used to probe what exists.
+      return NextResponse.json(
+        { error: 'That item is no longer in your trash.' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[api/trash/restore] failed:', message);
+
+    // Same courtesy /api/home extends: a missing column almost always means
+    // migration 014 has not been applied, and an opaque 500 sends whoever is
+    // debugging this to entirely the wrong place.
+    if (/column .* does not exist/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            'The database is missing columns this version needs. Run `npm run migrate` to apply lib/migrations.',
+          detail: message,
+        },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json({ error: 'Could not restore that item.' }, { status: 500 });
+  }
+}
