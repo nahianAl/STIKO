@@ -104,7 +104,7 @@ export async function summarizeProject(
            v.id AS "versionId", v.version_number AS "versionNumber",
            vs.headline, vs.generated_at AS "generatedAt"
     FROM projects p
-    JOIN portals po ON po.project_id = p.id AND po.deleted_at IS NULL
+    JOIN portals po ON po.project_id = p.id AND po.deleted_at IS NULL AND p.deleted_at IS NULL
     JOIN versions v ON v.portal_id = po.id
     JOIN version_summaries vs ON vs.version_id = v.id
     WHERE p.id = ${projectId}
