@@ -23,7 +23,8 @@
 | Set version scope | `POST /api/participants/versions` | |
 | Versions to pick from | `GET /api/versions?portalId=` | |
 | Pending invites | `GET /api/invites?portalId=` | |
-| Revoke an invite | `DELETE /api/invites` | |
+| Revoke an addressed invite | `POST /api/participants/role` | `userId` = the **email**, `role: null`. Sets `invite_tokens.revoked_at` server-side. |
+| Revoke a share link | `DELETE /api/invites` | Needs a `token`, which `GET /api/invites` returns only for share links — **not** for addressed invites |
 | Invite / resend | `POST /api/participants` | Re-POSTing the same email resends |
 
 `GET /api/participants` already withholds `allVersions`/`versionIds` from anyone without `canManagePeople`, using an allowlist rather than a blocklist. Do not weaken that.
@@ -460,7 +461,7 @@ Sections, in this order:
 5. **Downloads** — a toggle bound to `canDownload`.
 6. **Danger strip** — "Remove from {packageName}", calling `POST /api/participants/role` with `role: null`.
 
-For a **pending** person: role and scope still apply (they are stored on the invite), but show `Resend invitation` and `Revoke invitation` instead of the remove control. Resend is `POST /api/participants` with the same email and role; revoke is `DELETE /api/invites`. Read the settings page's `revoke` handler — it does *two* calls, and the second is the one that actually matters.
+For a **pending** person: role and scope still apply (they are stored on the invite), but show `Resend invitation` and `Revoke invitation` instead of the remove control. Resend is `POST /api/participants` with the same email and role; revoke is `DELETE /api/invites`. Read the settings page's `revoke` handler: it is an **if/else, not two calls**. An addressed invite is revoked through `POST /api/participants/role` with the **email** as `userId` and `role: null` — that route sets `invite_tokens.revoked_at` itself. `DELETE /api/invites` is the share-link branch, and needs a token `GET /api/invites` never returns for an addressed invite. (Corrected during execution; the plan originally had this wrong.)
 
 Every mutation calls `onChanged()` on success and shows a toast on failure. Use `useToast`.
 
