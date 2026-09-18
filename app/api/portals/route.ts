@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     const rows = await sql`
       SELECT id, project_id AS "projectId", name, tag, created_at AS "createdAt"
       FROM portals
-      WHERE project_id = ${projectId} AND archived_at IS NULL
+      WHERE project_id = ${projectId} AND deleted_at IS NULL
       ORDER BY created_at DESC
     `;
     return NextResponse.json(rows);

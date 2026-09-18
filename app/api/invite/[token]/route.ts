@@ -27,7 +27,14 @@ export async function GET(
     JOIN portals po ON po.id = t.portal_id
     JOIN projects pr ON pr.id = po.project_id
     LEFT JOIN users inviter ON inviter.id = t.invited_by
+    -- A trashed package's invitation is indistinguishable from a bad token.
+    -- This route is public and hands back the package name, project name,
+    -- changelog, filenames and the existing roster, so "this package was
+    -- deleted" is itself more than a stranger with a forwarded link should
+    -- learn. The INNER JOINs above are what make the project leg bite.
     WHERE t.token = ${params.token}
+      AND po.deleted_at IS NULL
+      AND pr.deleted_at IS NULL
   `;
 
   const invite = rows[0];
@@ -150,6 +157,22 @@ export async function POST(
   }
   if (new Date(invite.expires_at as string) < new Date()) {
     return NextResponse.json({ error: 'expired' }, { status: 410 });
+  }
+
+  // The GET's join cannot help here — this path resolves the token alone. A
+  // trashed package must not accept new participants: the row would be created
+  // against content nobody can reach, and would then come back to life if the
+  // package were restored, silently admitting someone the owner never
+  // re-approved. 404 rather than a specific error, matching the GET.
+  const livePackage = await sql`
+    SELECT 1 FROM portals po
+    JOIN projects pr ON pr.id = po.project_id
+    WHERE po.id = ${invite.portal_id}
+      AND po.deleted_at IS NULL
+      AND pr.deleted_at IS NULL
+  `;
+  if (livePackage.length === 0) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
   // An addressed invitation is not a bearer token. Without this, a forwarded link

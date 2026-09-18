@@ -78,7 +78,8 @@ export async function getHomeData(userId: string): Promise<{
         ON pm.project_id = pr.id AND pm.user_id = ${userId}
       LEFT JOIN participants pa
         ON pa.portal_id = po.id AND pa.user_id = ${userId}
-      WHERE po.archived_at IS NULL
+      WHERE po.deleted_at IS NULL
+        AND pr.deleted_at IS NULL
         AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL OR pa.user_id IS NOT NULL)
     ),
     latest AS (
@@ -205,7 +206,7 @@ export async function getHomeData(userId: string): Promise<{
     LEFT JOIN users owner ON owner.id = pr.owner_id
     LEFT JOIN project_members pm
       ON pm.project_id = pr.id AND pm.user_id = ${userId}
-    WHERE pr.archived_at IS NULL
+    WHERE pr.deleted_at IS NULL
       AND (pr.owner_id = ${userId} OR pm.user_id IS NOT NULL)
     ORDER BY pr.created_at DESC
   `;
@@ -431,7 +432,7 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
     SELECT (SELECT bytes FROM file_bytes) AS "fileBytes",
            (SELECT bytes FROM attachment_bytes) AS "attachmentBytes",
            (SELECT COUNT(*) FROM projects
-             WHERE owner_id = ${userId} AND archived_at IS NULL) AS "projectCount",
+             WHERE owner_id = ${userId} AND deleted_at IS NULL) AS "projectCount",
            (SELECT plan FROM users WHERE id = ${userId}) AS "planId"
   `;
 

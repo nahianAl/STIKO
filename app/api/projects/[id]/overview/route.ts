@@ -46,7 +46,7 @@ export async function GET(
       ORDER BY version_number DESC LIMIT 1
     ) v ON TRUE
     LEFT JOIN users u ON u.id = v.created_by
-    WHERE po.project_id = ${params.id} AND po.archived_at IS NULL
+    WHERE po.project_id = ${params.id} AND po.deleted_at IS NULL
     ORDER BY po.created_at ASC
   `;
 
