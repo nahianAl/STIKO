@@ -236,9 +236,17 @@ export default function ProjectPanel({
   // anything on every later open. `locallyDeleted` has the same problem one
   // level up: delete a package, close, restore it from the Trash panel,
   // reopen this same project — its row would stay hidden with nothing left
-  // to clear it. Resetting all seven here, keyed only on `isOpen`, is the one
-  // guard that covers every path into a closed panel, not just the ones this
-  // file happens to think of today.
+  // to clear it. `overview`/`aiEnabled`/`confirmedAi` have the same problem
+  // from a different angle: own project A, be a package guest on project B —
+  // open A's panel (canManage true, overview loads), close it, open B's
+  // panel (canManage false, the fetch effect below returns before ever
+  // touching these) and A's overview, AI-checkbox state and confirmed value
+  // are all still sitting there, painted under B's name — including
+  // `isOwner`, which reads `overview.members`, so B would also show the
+  // Delete-project card and AI checkbox as if the viewer owned it. Resetting
+  // all ten here, keyed only on `isOpen`, is the one guard that covers every
+  // path into a closed panel, not just the ones this file happens to think
+  // of today.
   useEffect(() => {
     if (isOpen) return;
     setMatrixSubSurfaceOpen(false);
@@ -248,6 +256,9 @@ export default function ProjectPanel({
     setConfirmDeleteProject(false);
     setDeleteTarget(null);
     setLocallyDeleted(new Set());
+    setOverview(null);
+    setAiEnabled(true);
+    confirmedAi.current = true;
   }, [isOpen]);
 
   // A guest can neither invite nor open the overview — /api/projects/[id]/overview
@@ -313,8 +324,15 @@ export default function ProjectPanel({
   );
 
   useEffect(() => {
-    if (!isOpen || !projectId || !canManage) return;
+    // Cleared before the guard below, not after: a guest opening project B
+    // right after closing project A they own must not keep A's overview
+    // (and the isOwner/Delete-project card it drives) painted under B's
+    // name just because B's `canManage` is false and this effect returns
+    // before reaching a line that used to sit below the guard. The
+    // `[isOpen]` reset effect above also clears this on close, as a second
+    // guard against the same staleness from the other direction.
     setOverview(null);
+    if (!isOpen || !projectId || !canManage) return;
     setAiError(null);
     // Shared with loadOverview's own generation below: the overview leg was
     // already guarded against a stale response landing after a reopen on a
@@ -495,6 +513,30 @@ export default function ProjectPanel({
         subtitle={headerParts.join(' · ')}
         width={520}
         closeOnEscape={closeOnEscape}
+        // Danger strip, pinned outside the scrolling body regardless of
+        // which view is showing — DELETE /api/projects/[id] checks owner_id,
+        // not project_members, so this is `isOwner`-gated rather than
+        // `canManage`: a coordinator can manage packages but cannot delete
+        // the project out from under its owner. As the last element of the
+        // body instead of this slot, it scrolled out of view on a project
+        // with many packages — re-burying the one control this whole panel
+        // exists to surface. Drawer's `footer` is the slot the drawer this
+        // panel replaced already used for a persistently-visible control,
+        // rendered outside the scroller rather than as its last child.
+        footer={
+          isOwner ? (
+            <DangerCard
+              rows={[
+                {
+                  title: 'Delete project',
+                  description: `${packages.length} ${packages.length === 1 ? 'package goes' : 'packages go'} with it. Recoverable from the trash for 28 days — until then it still counts toward your storage.`,
+                  actionLabel: 'Delete',
+                  onAction: () => setConfirmDeleteProject(true),
+                },
+              ]}
+            />
+          ) : undefined
+        }
       >
         <div className="flex flex-col gap-5">
           {/* The drawer's own header (above) already carries the project
@@ -693,7 +735,15 @@ export default function ProjectPanel({
                                       setDeleteTarget({
                                         id: rich.id,
                                         name: rich.name,
-                                        peopleCount: rich.people.length,
+                                        // Accepted participants AND pending
+                                        // invitees — a pending invite is
+                                        // portal-scoped (invite_tokens.portal_id),
+                                        // so it stops resolving to anything the
+                                        // moment this package is trashed. Someone
+                                        // mid-invite loses access exactly like
+                                        // someone already on the package.
+                                        peopleCount:
+                                          rich.people.length + rich.pending.length,
                                       })
                                     }
                                   >
@@ -776,24 +826,6 @@ export default function ProjectPanel({
                 <p className="mt-1 text-[11px] text-note-red-text">{aiError}</p>
               )}
             </div>
-          )}
-
-          {/* Danger strip, pinned as the last thing in the body regardless of
-              which view is showing — DELETE /api/projects/[id] checks
-              owner_id, not project_members, so this is `isOwner`-gated rather
-              than `canManage`: a coordinator can manage packages but cannot
-              delete the project out from under its owner. */}
-          {isOwner && (
-            <DangerCard
-              rows={[
-                {
-                  title: 'Delete project',
-                  description: `${packages.length} ${packages.length === 1 ? 'package goes' : 'packages go'} with it. Recoverable from the trash for 28 days — until then it still counts toward your storage.`,
-                  actionLabel: 'Delete',
-                  onAction: () => setConfirmDeleteProject(true),
-                },
-              ]}
-            />
           )}
 
           {/* This editor's `absolute`/`left: offsetLeft` positioning resolves

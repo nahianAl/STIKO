@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import Modal from '@/components/ui/Modal';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
@@ -300,7 +301,15 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
           <p className="mt-1.5 text-[11px] text-stiko-faint">
             Anyone with the link can sign in and join as {linkRole}. It stays
             usable by more than one person, expires in 14 days, and can be
-            revoked from People.
+            revoked from{' '}
+            <Link
+              href={`/portal/${portalId}/settings`}
+              onClick={onClose}
+              className="font-bold text-stiko-primary hover:text-stiko-primary-hover"
+            >
+              Settings
+            </Link>
+            .
           </p>
         </div>
 

@@ -94,6 +94,7 @@ export default function PortalTopBar({
             notVisibleTo={info.notVisibleTo}
             linkAccess={info.package.linkAccess}
             canManage={info.access.canManagePeople}
+            portalId={portalId}
           />
         )}
 
