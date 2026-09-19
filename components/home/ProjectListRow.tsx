@@ -43,7 +43,7 @@ export function ProjectListRow({
   const canManage = project.ownedByMe || project.myRole === 'coordinator';
 
   return (
-    <div className="box-border min-w-[760px] border-b border-stiko-border">
+    <div className="box-border min-w-[805px] border-b border-stiko-border">
       <div
         className={`group relative transition-colors duration-[160ms] ${
           expanded ? 'bg-stiko-app' : 'bg-white hover:bg-stiko-app'
@@ -142,7 +142,13 @@ export function ProjectListRow({
                 onOpenPanel(project.id);
               }}
               aria-label={`Manage ${project.name}`}
-              className={`pointer-events-auto rounded-lg p-1 text-[13px] leading-none text-stiko-muted transition-opacity duration-150 hover:text-stiko-ink group-hover:opacity-100 ${
+              title={`Manage ${project.name}`}
+              // focus:opacity-100 + focus-visible:shadow-stiko-focus is the
+              // same pattern FileTreeSidebar's own hover-revealed row button
+              // uses: this stays in the tab order (opacity-0 alone does, but
+              // app/globals.css has no global focus ring), so without these a
+              // keyboard user who tabs here loses all visible focus.
+              className={`pointer-events-auto rounded-lg p-1 text-[13px] leading-none text-stiko-muted transition-opacity duration-150 hover:text-stiko-ink focus:opacity-100 focus:outline-none focus-visible:shadow-stiko-focus group-hover:opacity-100 ${
                 expanded ? 'opacity-100' : 'opacity-0'
               }`}
             >

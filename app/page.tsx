@@ -393,7 +393,7 @@ export default function Home() {
           </div>
 
           {/* overflow-x on the container with min-w on every child: below
-              760px the list scrolls sideways rather than crushing the project
+              805px the list scrolls sideways rather than crushing the project
               name. Every child carries box-border too — a mixed box model here
               drifts the columns out of alignment and stops the row dividers
               short of the row edge once scrolled. */}

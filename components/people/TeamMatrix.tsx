@@ -144,12 +144,12 @@ export function TeamMatrix({
   );
 
   // This matrix is only ever mounted by a caller that has already confirmed
-  // the viewer can manage the project (ProjectPeopleDrawer.tsx gates on its
-  // own `canManage` before rendering this at all). Re-deriving it here rather
+  // the viewer can manage the project (ProjectPanel.tsx gates on its own
+  // `canManage` before rendering this at all). Re-deriving it here rather
   // than assuming it — from the same members list the caller already hands
-  // in, the same way ProjectPeopleDrawer itself derives it from the project
-  // record — means AccessEditor is never handed a hardcoded `true`: a future
-  // caller that mounts this for a non-manager still gets an honest value.
+  // in, the same way ProjectPanel itself derives it from the project record
+  // — means AccessEditor is never handed a hardcoded `true`: a future caller
+  // that mounts this for a non-manager still gets an honest value.
   const canManage = members.some(
     (m) => m.isYou && (m.role === 'owner' || m.role === 'coordinator')
   );

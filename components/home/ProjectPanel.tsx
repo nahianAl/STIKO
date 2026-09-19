@@ -22,8 +22,8 @@ import { ROLE_RANK } from '@/lib/roles';
 import type { ProjectGroup } from '@/lib/home';
 // Type-only: lib/queries.ts imports lib/db, which throws at module load
 // without DATABASE_URL. A type-only import is erased, so this client
-// component never pulls a database connection in. ProjectPeopleDrawer.tsx
-// (the component this replaces) does the same for the same reason.
+// component never pulls a database connection in — the same reasoning
+// applied to the drawer this panel replaced.
 import type { PackageCard } from '@/lib/queries';
 import type { ProjectOverview, ProjectPackage } from '@/lib/projectOverview';
 
@@ -156,17 +156,18 @@ interface DeleteTarget {
  * The project panel — a project's packages, everyone on them, and both
  * delete controls, in one drawer.
  *
- * This replaces ProjectPeopleDrawer, reorganised around packages rather than
- * a flat people list: that drawer could not see pending invitations at the
- * project level, and the per-package settings page it also partly replaces
- * (Task 7) can only ever see one package at a time. The overview fetch, the
- * AI-summaries toggle, the delete-project flow and the `canManage` gating are
- * lifted from ProjectPeopleDrawer verbatim — they are already correct. The
- * generation-guarded reload below is new: unlike ProjectPeopleDrawer, which
- * fetches its overview once per open and lets it go stale, this panel keeps
- * mutating (add people, edit access, delete a package) while it stays open,
- * so its overview fetch needs to be safely re-invocable — the same shape
- * TrashPanel.tsx already settled on for its own repeatedly-reloaded list.
+ * This replaced the project's earlier people-only drawer, reorganised around
+ * packages rather than a flat people list: that drawer could not see pending
+ * invitations at the project level, and the per-package settings page it also
+ * partly replaces (Task 7) can only ever see one package at a time. The
+ * overview fetch, the AI-summaries toggle, the delete-project flow and the
+ * `canManage` gating are carried over from that drawer verbatim — they were
+ * already correct. The generation-guarded reload below is new: unlike that
+ * drawer, which fetched its overview once per open and let it go stale, this
+ * panel keeps mutating (add people, edit access, delete a package) while it
+ * stays open, so its overview fetch needs to be safely re-invocable — the
+ * same shape TrashPanel.tsx already settled on for its own repeatedly-reloaded
+ * list.
  */
 export default function ProjectPanel({
   group,
@@ -191,6 +192,12 @@ export default function ProjectPanel({
   const [aiError, setAiError] = useState<string | null>(null);
   const confirmedAi = useRef(true);
   const [retained, setRetained] = useState<ProjectGroup | null>(group);
+  // Read (not depended on) by the initialView effect below, so a mid-session
+  // package-count change can never re-fire that effect and stomp a manual
+  // view switch — only isOpen/initialView/projectId/canManage may do that.
+  // Kept fresh by its own effect, keyed on `group` alone, that never touches
+  // `view` itself.
+  const packageCountRef = useRef(group?.packages.length ?? 0);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
@@ -207,6 +214,10 @@ export default function ProjectPanel({
 
   useEffect(() => {
     if (group) setRetained(group);
+  }, [group]);
+
+  useEffect(() => {
+    if (group) packageCountRef.current = group.packages.length;
   }, [group]);
 
   const projectId = group?.project.id ?? null;
@@ -258,18 +269,28 @@ export default function ProjectPanel({
   // empty state for a view whose one job is to show manager-only data — and
   // still lands the guest somewhere real: the packages list already renders
   // honestly for them from `group.packages` alone.
+  //
+  // The same downgrade applies with one package, mirroring this panel's own
+  // "See everyone across packages" link (`canManage && packages.length >= 2`,
+  // below) exactly: with one package there is no grid to draw. Without this,
+  // an owner of a single-package project who clicks the avatar stack would
+  // land directly on a one-column TeamMatrix the panel itself refuses to
+  // link to. Package count comes from the ref above, not `group` directly,
+  // so a mid-session refetch that changes the count can't re-run this effect
+  // and override a view the user already chose by hand.
   useEffect(() => {
     if (!isOpen) return;
     const requested = initialView ?? 'packages';
-    setView(requested === 'everyone' && !canManage ? 'packages' : requested);
+    const canSeeEveryone = canManage && packageCountRef.current >= 2;
+    setView(requested === 'everyone' && !canSeeEveryone ? 'packages' : requested);
   }, [isOpen, initialView, projectId, canManage]);
 
   // Bumped at the start of every load, so a response can tell whether it is
   // still the latest one in flight — same shape as TrashPanel.tsx's own
-  // `gen`. Needed here because, unlike ProjectPeopleDrawer's one-shot fetch,
-  // this panel calls this again after every mutation it makes while it stays
-  // open (see `refresh` below), so an in-flight reload from an earlier
-  // mutation must not win a race against a later one.
+  // `gen`. Needed here because, unlike the one-shot fetch this panel's
+  // predecessor used, this panel calls this again after every mutation it
+  // makes while it stays open (see `refresh` below), so an in-flight reload
+  // from an earlier mutation must not win a race against a later one.
   const gen = useRef(0);
 
   const loadOverview = useCallback(
@@ -425,10 +446,10 @@ export default function ProjectPanel({
     !deleteTarget &&
     !matrixSubSurfaceOpen;
 
-  // Same reasoning as ProjectPeopleDrawer's own `shown`: the caller derives
-  // `group` by looking up the selected id, so it goes null the instant the
-  // drawer is dismissed — which would unmount Drawer before its own exit
-  // animation has a frame to run in.
+  // Same reasoning that shaped the drawer this panel replaced: the caller
+  // derives `group` by looking up the selected id, so it goes null the
+  // instant the drawer is dismissed — which would unmount Drawer before its
+  // own exit animation has a frame to run in.
   const shown = group ?? retained;
   if (!shown) return null;
 
@@ -471,21 +492,21 @@ export default function ProjectPanel({
         isOpen={isOpen}
         onClose={onClose}
         title={project.name}
+        subtitle={headerParts.join(' · ')}
         width={520}
         closeOnEscape={closeOnEscape}
       >
         <div className="flex flex-col gap-5">
-          {/* Header block */}
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-[18px] font-extrabold text-stiko-ink">
-                {project.name}
-              </h2>
-              <RoleTag role={project.myRole} />
-            </div>
-            <p className="mt-1 text-[12px] text-stiko-muted">
-              {headerParts.join(' · ')}
-            </p>
+          {/* The drawer's own header (above) already carries the project
+              name and the package/people/created summary via `subtitle` — so
+              this block's only job is the one fact that header can't show:
+              what the viewer themself can do here. Drawer's `subtitle` is a
+              plain string, so the role tag (its own coloured chip) can't move
+              into that slot with it; it stays visible here instead, first
+              thing in the body, rather than disappearing along with the
+              now-removed second copy of the project name. */}
+          <div className="flex items-center gap-2">
+            <RoleTag role={project.myRole} />
           </div>
 
           {view === 'packages' ? (
