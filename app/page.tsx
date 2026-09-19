@@ -7,7 +7,7 @@ import { Column, Shell, TopBar } from '@/components/ui/Shell';
 import { ProjectListRow } from '@/components/home/ProjectListRow';
 import { ProjectListHeader } from '@/components/home/ProjectListHeader';
 import NewProjectModal from '@/components/home/NewProjectModal';
-import ProjectPeopleDrawer from '@/components/home/ProjectPeopleDrawer';
+import ProjectPanel from '@/components/home/ProjectPanel';
 import TrashPanel from '@/components/home/TrashPanel';
 import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
 import type { NotificationRow } from '@/components/shell/NotificationTray';
@@ -51,6 +51,14 @@ export default function Home() {
   const [peoplePanelProjectId, setPeoplePanelProjectId] = useState<string | null>(
     null
   );
+  // The ⤢ control on each row opens the same panel, landing on the
+  // cross-package view instead of the avatar stack's people view. Separate
+  // state rather than a shared id + view pair: only one of the two is ever
+  // non-null at a time (nothing opens both at once), and closing the panel
+  // clears both together below.
+  const [managePanelProjectId, setManagePanelProjectId] = useState<
+    string | null
+  >(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
 
@@ -83,6 +91,20 @@ export default function Home() {
     // rail is never overridden in the other direction.
     setRailOpen(true);
     window.localStorage.setItem('stiko.railOpen', 'true');
+  }, []);
+
+  // Two entry points share one ProjectPanel instance (see panelProjectId /
+  // panelView below). Each clears the other's id on open, not just on close —
+  // without that, opening one while the other is still set from a previous
+  // open (never closed, just superseded) would leave both non-null and the
+  // people-takes-precedence merge below would show the wrong view.
+  const openPeoplePanel = useCallback((id: string) => {
+    setManagePanelProjectId(null);
+    setPeoplePanelProjectId(id);
+  }, []);
+  const openManagePanel = useCallback((id: string) => {
+    setPeoplePanelProjectId(null);
+    setManagePanelProjectId(id);
   }, []);
 
   const load = useCallback(async () => {
@@ -270,6 +292,13 @@ export default function Home() {
 
   const summaryGroup = groups.find((g) => g.project.id === lastId) ?? null;
 
+  // Whichever entry point was used last — the avatar stack (people) or the
+  // row's ⤢ control (manage) — wins; the other is always null at that point,
+  // since opening either sets the other back to null via the shared onClose.
+  const panelProjectId = peoplePanelProjectId ?? managePanelProjectId;
+  const panelView: 'everyone' | 'packages' =
+    peoplePanelProjectId !== null ? 'everyone' : 'packages';
+
   return (
     <Shell>
       <TopBar right={topBarRight} />
@@ -376,7 +405,8 @@ export default function Home() {
                 group={group}
                 expanded={expanded === group.project.id}
                 onToggle={toggleProject}
-                onOpenPeople={setPeoplePanelProjectId}
+                onOpenPeople={openPeoplePanel}
+                onOpenPanel={openManagePanel}
               />
             ))}
           </div>
@@ -432,11 +462,15 @@ export default function Home() {
         onClose={() => setNewProjectOpen(false)}
         onCreated={load}
       />
-      <ProjectPeopleDrawer
-        group={groups.find((g) => g.project.id === peoplePanelProjectId) ?? null}
-        isOpen={peoplePanelProjectId !== null}
-        onClose={() => setPeoplePanelProjectId(null)}
+      <ProjectPanel
+        group={groups.find((g) => g.project.id === panelProjectId) ?? null}
+        isOpen={panelProjectId !== null}
+        onClose={() => {
+          setPeoplePanelProjectId(null);
+          setManagePanelProjectId(null);
+        }}
         onChanged={load}
+        initialView={panelView}
       />
       <TrashPanel
         isOpen={trashOpen}

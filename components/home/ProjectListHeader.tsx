@@ -11,6 +11,11 @@ export function ProjectListHeader() {
       <span className="w-[84px] shrink-0 text-right">Packages</span>
       <span className="w-[200px] shrink-0 text-right">Open</span>
       <span className="w-[96px] shrink-0 text-right">People</span>
+      {/* Matches ProjectListRow's trailing ⤢ (manage) cell — empty here the
+          same way the chevron spacer above is, so the flex-grow Project
+          column doesn't absorb its width and drag every column after it out
+          of alignment with the row below. */}
+      <span className="w-6 shrink-0" />
     </div>
   );
 }

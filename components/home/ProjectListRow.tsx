@@ -24,11 +24,13 @@ export function ProjectListRow({
   expanded,
   onToggle,
   onOpenPeople,
+  onOpenPanel,
 }: {
   group: ProjectGroup;
   expanded: boolean;
   onToggle: (id: string) => void;
   onOpenPeople: (id: string) => void;
+  onOpenPanel: (id: string) => void;
 }) {
   const router = useRouter();
   const { project, packages, packageCount, openComments, people } = group;
@@ -125,6 +127,27 @@ export function ProjectListRow({
                 <AvatarStack people={people} size={24} />
               </button>
             )}
+          </span>
+
+          <span className="flex w-6 shrink-0 justify-end">
+            <button
+              type="button"
+              // Same trap as the People button above: this sits in the
+              // pointer-events-none layer, so it needs pointer-events-auto on
+              // its own cell, and stopPropagation before onOpenPanel or the
+              // page root's deselect-on-background-click handler clears
+              // `expanded` right back in the same React batch.
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenPanel(project.id);
+              }}
+              aria-label={`Manage ${project.name}`}
+              className={`pointer-events-auto rounded-lg p-1 text-[13px] leading-none text-stiko-muted transition-opacity duration-150 hover:text-stiko-ink group-hover:opacity-100 ${
+                expanded ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              ⤢
+            </button>
           </span>
         </div>
       </div>
