@@ -117,7 +117,6 @@ export default function PackageSettings() {
 
   const rail = [
     { key: 'general', label: 'General', href: `/portal/${id}/settings` },
-    { key: 'people', label: 'People', href: `/portal/${id}/settings/people` },
   ];
 
   return (

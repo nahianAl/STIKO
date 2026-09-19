@@ -24,7 +24,6 @@ export function WhoCanSeeThis({
   notVisibleTo,
   linkAccess,
   canManage,
-  portalId,
 }: {
   packageName: string;
   people: {
@@ -37,7 +36,6 @@ export function WhoCanSeeThis({
   notVisibleTo: { id: string; name: string }[];
   linkAccess: boolean;
   canManage: boolean;
-  portalId: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -129,7 +127,12 @@ export function WhoCanSeeThis({
 
         <PopoverFooter>
           {canManage ? (
-            <Link href={`/portal/${portalId}/settings/people`} className="font-bold">
+            // /portal/[id]/settings/people is retired — everything it did now
+            // lives in the project panel on the dashboard (see
+            // PortalTopBar's own comment on why there's no project page to
+            // deep-link into here: resolving this package's project id would
+            // need a database read this popover has no reason to make).
+            <Link href="/" className="font-bold">
               Manage people
             </Link>
           ) : (
