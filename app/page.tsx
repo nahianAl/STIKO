@@ -61,6 +61,7 @@ export default function Home() {
   >(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [hasTrash, setHasTrash] = useState(false);
 
   const [expanded, setExpanded] = useState<string | null>(null);
   // The last non-null selection, so the summary panel keeps its content for
@@ -147,6 +148,29 @@ export default function Home() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The first-run screen is also where you land after deleting your only
+  // project, so the trash cannot simply be absent from it — that would strand
+  // 28 days of recoverable content behind no door at all. But a real
+  // first-run user's trash is empty and the button there is pure noise, so
+  // the screen asks before offering it. Scoped to the branch that renders
+  // that screen: the populated dashboard never pays for this call.
+  const dashboardIsEmpty =
+    !loading && packages.length === 0 && projects.length === 0;
+
+  useEffect(() => {
+    if (!dashboardIsEmpty) return;
+    let cancelled = false;
+    fetch('/api/trash')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((body) => {
+        if (!cancelled) setHasTrash(Array.isArray(body) && body.length > 0);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardIsEmpty]);
 
   const groups = useMemo(
     () => groupProjects(packages, projects),
@@ -239,37 +263,13 @@ export default function Home() {
             set up here.
           </p>
 
-          {/* Deleting your only project lands you right back on this screen —
-              /api/home excludes deleted content, so an empty dashboard and an
-              empty-of-anything-visible dashboard look identical. The trash
-              still holds that project for 28 days, and this is the only door
-              to it here: unlike the populated view below, there is no
-              deselect-on-background-click handler on this branch to guard
-              against, so the button needs no stopPropagation of its own. Left
-              unconditionally visible, matching the populated view, rather
-              than hidden when empty — this component has no cheap way to know
-              the trash is empty without fetching it, and getting that guess
-              wrong would recreate the exact unreachable-trash bug this exists
-              to fix. */}
-          <button
-            type="button"
-            onClick={() => setTrashOpen(true)}
-            className="mt-4 flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-panel transition duration-150 hover:text-stiko-ink"
-          >
-            <svg
-              className="h-[13px] w-[13px]"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-            </svg>
-            Trash
-          </button>
         </Column>
+
+        {/* Absent for a real first run — see the dashboardIsEmpty effect
+            above. It reappears only if this screen is the aftermath of
+            deleting everything, which is the one case where the trash has
+            something in it and no other door. */}
+        {hasTrash && <TrashButton onClick={() => setTrashOpen(true)} />}
         <TrashPanel
           isOpen={trashOpen}
           onClose={() => setTrashOpen(false)}
@@ -411,32 +411,10 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="flex justify-start px-[2px] pb-5 pt-4">
-            <button
-              type="button"
-              // The page root deselects on background click. Without this the
-              // click opens the panel and then bubbles up and clears `expanded`
-              // in the same React batch — same trap ProjectListRow documents.
-              onClick={(e) => {
-                e.stopPropagation();
-                setTrashOpen(true);
-              }}
-              className="flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-panel transition duration-150 hover:text-stiko-ink"
-            >
-              <svg
-                className="h-[13px] w-[13px]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2.2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-              </svg>
-              Trash
-            </button>
-          </div>
+          {/* Clearance for the fixed trash button, which floats over this
+              column's bottom-left corner. Without it the last project row
+              sits under the button at the end of the scroll. */}
+          <div className="h-16 shrink-0" />
         </div>
 
         {notifications.length > 0 && (
@@ -472,6 +450,7 @@ export default function Home() {
         onChanged={load}
         initialView={panelView}
       />
+      <TrashButton onClick={() => setTrashOpen(true)} />
       <TrashPanel
         isOpen={trashOpen}
         onClose={() => setTrashOpen(false)}
@@ -479,5 +458,57 @@ export default function Home() {
       />
       <CommandPalette packages={packages} onNewPackage={newPackage} />
     </Shell>
+  );
+}
+
+/**
+ * The trash door — pinned to the bottom-left corner of the window.
+ *
+ * Fixed rather than in the flow under the list: the list is as long as the
+ * user's projects make it, and a control that scrolls out of reach is one
+ * they have to go hunting for. `bottom-3 left-3` lands it on the shell's own
+ * 12px gutter (Shell is `p-3`), so it reads as part of the frame.
+ *
+ * `fixed` resolves against the viewport here because nothing above it carries
+ * a transform, filter or will-change — Shell is a plain flex column. Putting
+ * one on an ancestor later would silently re-anchor this button to it.
+ *
+ * z-30 is chosen, not inherited: above everything the dashboard itself
+ * paints, and below Drawer (z-58/59) so the trash panel's own scrim covers
+ * this button once it is open rather than leaving it floating on top of the
+ * thing it just opened.
+ *
+ * Rendered by this file and nowhere else — the trash belongs to the projects
+ * dashboard, so it never follows the user into a portal, a settings page or
+ * the review viewport.
+ */
+function TrashButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      // The page root deselects on background click. Without this the click
+      // opens the panel and then bubbles up and clears `expanded` in the same
+      // React batch — the same trap ProjectListRow documents. Harmless on the
+      // first-run branch, which has no such handler.
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title="Deleted projects and packages"
+      className="fixed bottom-3 left-3 z-30 flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-lift transition duration-150 hover:text-stiko-ink hover:shadow-stiko-sheet focus:outline-none focus-visible:shadow-stiko-focus"
+    >
+      <svg
+        className="h-[13px] w-[13px]"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+      </svg>
+      Trash
+    </button>
   );
 }

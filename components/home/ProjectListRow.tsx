@@ -43,7 +43,7 @@ export function ProjectListRow({
   const canManage = project.ownedByMe || project.myRole === 'coordinator';
 
   return (
-    <div className="box-border min-w-[805px] border-b border-stiko-border">
+    <div className="box-border min-w-[813px] border-b border-stiko-border">
       <div
         className={`group relative transition-colors duration-[160ms] ${
           expanded ? 'bg-stiko-app' : 'bg-white hover:bg-stiko-app'
@@ -91,45 +91,60 @@ export function ProjectListRow({
             <RoleChip ownedByMe={project.ownedByMe} myRole={project.myRole} />
           </span>
 
-          <span className="w-[84px] shrink-0 text-right text-[11.5px] font-bold text-stiko-secondary">
-            {packageCount === 1 ? '1 package' : `${packageCount} packages`}
-          </span>
+          {/* People, Packages and Open travel as one block: on hover, or
+              while the row is selected, they slide left together and open a
+              gap in front of the ⤢ control. The control itself deliberately
+              stays put — the gap exists to separate it from the data, so
+              moving both would defeat it. Only this group shifts, which is
+              also why the Project column (flex-grow, to its left) does not
+              reflow: a transform paints, it does not lay out. */}
+          <span
+            className={`flex shrink-0 items-center gap-3 transition-transform duration-[180ms] ease-[cubic-bezier(.4,0,.2,1)] ${
+              expanded
+                ? '-translate-x-[14px]'
+                : 'group-hover:-translate-x-[14px]'
+            }`}
+          >
+            <span className="flex w-[96px] shrink-0 justify-end">
+              {people.length > 0 && (
+                <button
+                  type="button"
+                  title="People on this project"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenPeople(project.id);
+                  }}
+                  className="pointer-events-auto rounded-pill"
+                >
+                  <AvatarStack people={people} size={24} />
+                </button>
+              )}
+            </span>
 
-          <span className="flex w-[200px] shrink-0 items-center justify-end gap-2">
-            {attention && (
-              <AttentionPill
-                label={attention.label}
-                bg={attention.bg}
-                fg={attention.fg}
-              />
-            )}
-            <span
-              className="whitespace-nowrap text-[11.5px] font-bold"
-              style={{ color: openComments > 0 ? '#B23A52' : '#8A90A6' }}
-            >
-              {openComments === 0
-                ? 'Nothing open'
-                : `${openComments} open ${openComments === 1 ? 'comment' : 'comments'}`}
+            <span className="w-[84px] shrink-0 text-right text-[11.5px] font-bold text-stiko-secondary">
+              {packageCount === 1 ? '1 package' : `${packageCount} packages`}
+            </span>
+
+            <span className="flex w-[200px] shrink-0 items-center justify-end gap-2">
+              {attention && (
+                <AttentionPill
+                  label={attention.label}
+                  bg={attention.bg}
+                  fg={attention.fg}
+                />
+              )}
+              <span
+                className="whitespace-nowrap text-[11.5px] font-bold"
+                style={{ color: openComments > 0 ? '#B23A52' : '#8A90A6' }}
+              >
+                {openComments === 0
+                  ? 'Nothing open'
+                  : `${openComments} open ${openComments === 1 ? 'comment' : 'comments'}`}
+              </span>
             </span>
           </span>
 
-          <span className="flex w-[96px] shrink-0 justify-end">
-            {people.length > 0 && (
-              <button
-                type="button"
-                title="People on this project"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenPeople(project.id);
-                }}
-                className="pointer-events-auto rounded-pill"
-              >
-                <AvatarStack people={people} size={24} />
-              </button>
-            )}
-          </span>
-
-          <span className="flex w-6 shrink-0 justify-end">
+          <span className="flex w-8 shrink-0 justify-end">
             <button
               type="button"
               // Same trap as the People button above: this sits in the
@@ -142,17 +157,43 @@ export function ProjectListRow({
                 onOpenPanel(project.id);
               }}
               aria-label={`Manage ${project.name}`}
-              title={`Manage ${project.name}`}
-              // focus:opacity-100 + focus-visible:shadow-stiko-focus is the
-              // same pattern FileTreeSidebar's own hover-revealed row button
-              // uses: this stays in the tab order (opacity-0 alone does, but
-              // app/globals.css has no global focus ring), so without these a
-              // keyboard user who tabs here loses all visible focus.
-              className={`pointer-events-auto rounded-lg p-1 text-[13px] leading-none text-stiko-muted transition-opacity duration-150 hover:text-stiko-ink focus:opacity-100 focus:outline-none focus-visible:shadow-stiko-focus group-hover:opacity-100 ${
-                expanded ? 'opacity-100' : 'opacity-0'
-              }`}
+              // No `title`: the hover label below carries the same word
+              // without the browser tooltip's ~1s delay, and having both
+              // renders "Manage" twice, one on top of the other.
+              //
+              // focus-visible:shadow-stiko-focus is not optional —
+              // app/globals.css has no global focus ring, so without it a
+              // keyboard user who tabs here has nothing to see.
+              className="group/manage pointer-events-auto relative flex h-7 w-7 items-center justify-center rounded-[9px] border-[1.5px] border-transparent text-stiko-muted transition duration-150 hover:border-stiko-border-strong hover:bg-white hover:text-stiko-ink hover:shadow-stiko-panel focus:outline-none focus-visible:shadow-stiko-focus"
             >
-              ⤢
+              <svg
+                className="h-[15px] w-[15px]"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M15 3h6v6M21 3l-7 7M9 21H3v-6M3 21l7-7" />
+              </svg>
+
+              {/* ABOVE the button, not beside it. Beside was tried and is
+                  wrong: the Open column's text is right-aligned and ends
+                  exactly where the label would start, so "13 open comments"
+                  came out as "13 open com▮MANAGE▮". The 14px hover slide is
+                  breathing room, nowhere near label-sized, and widening it
+                  is not available either — the Project column's role chip
+                  sits at ITS right edge, so a bigger slide drives the avatars
+                  straight into "OWNER".
+                  Nothing clips this: the row carries no overflow of its own,
+                  and the list container in app/page.tsx (overflow-y-hidden)
+                  only cuts at its OWN edges — the label rises into the row
+                  above, or for the first row into the column header, both of
+                  which are inside that box. */}
+              <span className="pointer-events-none absolute bottom-[calc(100%+5px)] right-0 z-10 whitespace-nowrap rounded-[7px] bg-stiko-ink px-[7px] py-[3px] text-[10px] font-extrabold uppercase tracking-label text-white opacity-0 shadow-stiko-lift transition-opacity duration-150 group-hover/manage:opacity-100">
+                Manage
+              </span>
             </button>
           </span>
         </div>

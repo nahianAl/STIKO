@@ -124,7 +124,7 @@ export default function TrashPanel({
       isOpen={isOpen}
       onClose={onClose}
       title="Trash"
-      subtitle={`Deleted items go for good after ${TRASH_RETENTION_DAYS} days — until then they still count toward your storage.`}
+      subtitle={`Deleted items are permanently removed after ${TRASH_RETENTION_DAYS} days`}
     >
       {error && (
         <p className="px-1 py-6 text-center text-[12.5px] text-note-red-text">
