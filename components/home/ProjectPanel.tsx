@@ -149,7 +149,6 @@ interface EditingAccess {
 interface DeleteTarget {
   id: string;
   name: string;
-  fileCount: number;
   peopleCount: number;
 }
 
@@ -216,9 +215,29 @@ export default function ProjectPanel({
     setLocallyDeleted(new Set());
   }, [projectId]);
 
+  // Every sub-surface this panel can open, plus the optimistic-delete set
+  // above, must not outlive one open/close cycle. TeamMatrix reports its own
+  // sub-surface state through an effect with no cleanup, so it never reports
+  // `false` on unmount — if the panel closes (its own X, or Escape) while
+  // that sub-surface (or one of this panel's own: the ⋯ editor, either
+  // confirm, either add-person flow) is still open behind it,
+  // `matrixSubSurfaceOpen` sticks `true` forever and Escape stops closing
+  // anything on every later open. `locallyDeleted` has the same problem one
+  // level up: delete a package, close, restore it from the Trash panel,
+  // reopen this same project — its row would stay hidden with nothing left
+  // to clear it. Resetting all seven here, keyed only on `isOpen`, is the one
+  // guard that covers every path into a closed panel, not just the ones this
+  // file happens to think of today.
   useEffect(() => {
-    if (isOpen) setView(initialView ?? 'packages');
-  }, [isOpen, initialView, projectId]);
+    if (isOpen) return;
+    setMatrixSubSurfaceOpen(false);
+    setEditingAccess(null);
+    setAddOpen(false);
+    setAddPersonPkg(null);
+    setConfirmDeleteProject(false);
+    setDeleteTarget(null);
+    setLocallyDeleted(new Set());
+  }, [isOpen]);
 
   // A guest can neither invite nor open the overview — /api/projects/[id]/overview
   // is member-gated and would 404/403. `myRole === 'coordinator'` is safe here
@@ -228,6 +247,23 @@ export default function ProjectPanel({
     group && (group.project.ownedByMe || group.project.myRole === 'coordinator')
   );
 
+  // `initialView` is a documented prop and the dashboard's avatar-stack
+  // button that lands here with initialView='everyone' is shown to every
+  // viewer, not just a manager — but the everyone view is built entirely
+  // from `overview`, and `overview` is never fetched for `!canManage` (see
+  // the effect below). Left alone, a guest landing directly on 'everyone'
+  // would see two grey skeleton bars that no response is ever coming to
+  // resolve. Falling back to the packages view here keeps that promise
+  // intact — this panel does not grow a second "sorry, you can't see this"
+  // empty state for a view whose one job is to show manager-only data — and
+  // still lands the guest somewhere real: the packages list already renders
+  // honestly for them from `group.packages` alone.
+  useEffect(() => {
+    if (!isOpen) return;
+    const requested = initialView ?? 'packages';
+    setView(requested === 'everyone' && !canManage ? 'packages' : requested);
+  }, [isOpen, initialView, projectId, canManage]);
+
   // Bumped at the start of every load, so a response can tell whether it is
   // still the latest one in flight — same shape as TrashPanel.tsx's own
   // `gen`. Needed here because, unlike ProjectPeopleDrawer's one-shot fetch,
@@ -236,27 +272,45 @@ export default function ProjectPanel({
   // mutation must not win a race against a later one.
   const gen = useRef(0);
 
-  const loadOverview = useCallback(() => {
-    if (!projectId || !canManage) return;
-    const myGen = ++gen.current;
-    fetch(`/api/projects/${projectId}/overview`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body: ProjectOverview | null) => {
-        if (myGen !== gen.current) return;
-        if (body) setOverview(body);
-      })
-      .catch(() => {});
-  }, [projectId, canManage]);
+  const loadOverview = useCallback(
+    (myGen?: number) => {
+      if (!projectId || !canManage) return;
+      // A default parameter would evaluate `++gen.current` even on this
+      // early return above, bumping the generation for no reason — so the
+      // bump lives here instead, after the guard, same as before this
+      // function grew an optional external generation (Fix F).
+      const thisGen = myGen ?? ++gen.current;
+      fetch(`/api/projects/${projectId}/overview`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body: ProjectOverview | null) => {
+          if (thisGen !== gen.current) return;
+          if (body) setOverview(body);
+        })
+        .catch(() => {});
+    },
+    [projectId, canManage]
+  );
 
   useEffect(() => {
     if (!isOpen || !projectId || !canManage) return;
     setOverview(null);
     setAiError(null);
-    loadOverview();
+    // Shared with loadOverview's own generation below: the overview leg was
+    // already guarded against a stale response landing after a reopen on a
+    // different project (or projectId, since `gen` is bumped per effect run,
+    // not per project); this leg populates the AI-summaries checkbox from a
+    // sibling fetch in the same effect and used to have no such guard, so a
+    // slow response for project A landing after a reopen on project B could
+    // paint B's checkbox — and `confirmedAi.current` — with A's value, and a
+    // later failed save would then roll back to the wrong state. Passing the
+    // same `myGen` to both fetches keeps them rising and falling together.
+    const myGen = ++gen.current;
+    loadOverview(myGen);
 
     fetch(`/api/projects/${projectId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
+        if (myGen !== gen.current) return;
         if (body && typeof body.aiSummariesEnabled === 'boolean') {
           setAiEnabled(body.aiSummariesEnabled);
           confirmedAi.current = body.aiSummariesEnabled;
@@ -384,7 +438,16 @@ export default function ProjectPanel({
     (overview?.packages ?? []).map((p) => [p.id, p] as const)
   );
 
-  const roster = projectRoster(overview?.packages ?? packages.map(fallbackPackage));
+  // Filtered the same way `packages` above already is: between a successful
+  // package delete and the overview refetch landing, `overview.packages`
+  // still carries the deleted package, and without this filter it would keep
+  // showing up in the everyone-strip avatars/count and the Add-people
+  // checklist for that window.
+  const overviewPackages = (overview?.packages ?? packages.map(fallbackPackage)).filter(
+    (p) => !locallyDeleted.has(p.id)
+  );
+
+  const roster = projectRoster(overviewPackages);
   const pending = pendingCount(roster);
 
   const headerParts = [
@@ -400,7 +463,7 @@ export default function ProjectPanel({
     headerParts.push(`created ${shortDate(overview.project.createdAt)}`);
   }
 
-  const modalPackages = overview?.packages ?? packages.map(fallbackPackage);
+  const modalPackages = overviewPackages;
 
   return (
     <>
@@ -609,7 +672,6 @@ export default function ProjectPanel({
                                       setDeleteTarget({
                                         id: rich.id,
                                         name: rich.name,
-                                        fileCount: rich.fileCount,
                                         peopleCount: rich.people.length,
                                       })
                                     }
@@ -712,6 +774,36 @@ export default function ProjectPanel({
               ]}
             />
           )}
+
+          {/* This editor's `absolute`/`left: offsetLeft` positioning resolves
+              against its nearest positioned ancestor, so it MUST be a DOM
+              descendant of this panel's own `<aside>` — Drawer does not
+              portal, it renders its scrim and `<aside>` in place. Mounted as
+              a sibling after `</Drawer>` it would instead resolve against
+              whatever ProjectPanel's own mount point happens to sit inside
+              (Shell's static root has no positioned ancestor at all), landing
+              in the window's top-left corner, below the panel in z-order, and
+              — since closing the panel does not clear `editingAccess` on its
+              own (see the isOpen-reset effect above) — left on screen with
+              its full-viewport scrim after the panel itself is gone. Mounted
+              here instead, `offsetLeft={0}` resolves against this drawer's
+              own `<aside>` exactly as TeamMatrix's own nested mount above
+              describes. */}
+          {editingAccess && (
+            <AccessEditor
+              isOpen
+              onClose={() => setEditingAccess(null)}
+              portalId={editingAccess.portalId}
+              packageName={editingAccess.packageName}
+              userId={editingAccess.userId}
+              email={editingAccess.email}
+              displayName={editingAccess.displayName}
+              pending={editingAccess.pending}
+              canManage={canManage}
+              offsetLeft={0}
+              onChanged={refresh}
+            />
+          )}
         </div>
       </Drawer>
 
@@ -741,26 +833,6 @@ export default function ProjectPanel({
         />
       )}
 
-      {/* offsetLeft: same conclusion as TeamMatrix's own mount above — this
-          editor is opened directly by a package row here, not through
-          TeamMatrix, but it resolves against the same containing block (this
-          panel's own <aside>), so the same reasoning applies unchanged. */}
-      {editingAccess && (
-        <AccessEditor
-          isOpen
-          onClose={() => setEditingAccess(null)}
-          portalId={editingAccess.portalId}
-          packageName={editingAccess.packageName}
-          userId={editingAccess.userId}
-          email={editingAccess.email}
-          displayName={editingAccess.displayName}
-          pending={editingAccess.pending}
-          canManage={canManage}
-          offsetLeft={0}
-          onChanged={refresh}
-        />
-      )}
-
       <DestructiveConfirm
         isOpen={confirmDeleteProject}
         onClose={() => setConfirmDeleteProject(false)}
@@ -779,10 +851,19 @@ export default function ProjectPanel({
         title={deleteTarget ? `Delete ${deleteTarget.name}?` : ''}
         name={deleteTarget?.name ?? ''}
         consequence="Everyone loses access immediately, including people mid-review. It goes to the trash and can be restored for 28 days — until then it still counts toward your storage."
+        // No Files line here (unlike the project-delete confirm above): the
+        // only file count this panel has is `rich.fileCount`, which the
+        // package settings page's own delete confirm counts across every
+        // version while this one — via /api/projects/[id]/overview — counts
+        // published versions only. The two would show different numbers for
+        // the same package on a destructive confirm, and this one is always
+        // the lower of the two — understating what is at stake. Neither
+        // `overview` nor `PackageCard` (`fallbackPackage`'s source) carries
+        // an all-versions count, so rather than add a new request just for
+        // this dialog, it shows only the count it can stand behind.
         inventory={
           deleteTarget
             ? [
-                { label: 'Files', value: deleteTarget.fileCount },
                 {
                   label: 'People who lose access',
                   value: deleteTarget.peopleCount,
