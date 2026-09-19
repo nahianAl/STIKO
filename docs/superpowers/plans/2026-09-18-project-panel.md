@@ -23,7 +23,8 @@
 | Set version scope | `POST /api/participants/versions` | |
 | Versions to pick from | `GET /api/versions?portalId=` | |
 | Pending invites | `GET /api/invites?portalId=` | |
-| Revoke an invite | `DELETE /api/invites` | |
+| Revoke an addressed invite | `POST /api/participants/role` | `userId` = the **email**, `role: null`. Sets `invite_tokens.revoked_at` server-side. |
+| Revoke a share link | `DELETE /api/invites` | Needs a `token`, which `GET /api/invites` returns only for share links — **not** for addressed invites |
 | Invite / resend | `POST /api/participants` | Re-POSTing the same email resends |
 
 `GET /api/participants` already withholds `allVersions`/`versionIds` from anyone without `canManagePeople`, using an allowlist rather than a blocklist. Do not weaken that.
@@ -460,7 +461,7 @@ Sections, in this order:
 5. **Downloads** — a toggle bound to `canDownload`.
 6. **Danger strip** — "Remove from {packageName}", calling `POST /api/participants/role` with `role: null`.
 
-For a **pending** person: role and scope still apply (they are stored on the invite), but show `Resend invitation` and `Revoke invitation` instead of the remove control. Resend is `POST /api/participants` with the same email and role; revoke is `DELETE /api/invites`. Read the settings page's `revoke` handler — it does *two* calls, and the second is the one that actually matters.
+For a **pending** person: role and scope still apply (they are stored on the invite), but show `Resend invitation` and `Revoke invitation` instead of the remove control. Resend is `POST /api/participants` with the same email and role; revoke is `DELETE /api/invites`. Read the settings page's `revoke` handler: it is an **if/else, not two calls**. An addressed invite is revoked through `POST /api/participants/role` with the **email** as `userId` and `role: null` — that route sets `invite_tokens.revoked_at` itself. `DELETE /api/invites` is the share-link branch, and needs a token `GET /api/invites` never returns for an addressed invite. (Corrected during execution; the plan originally had this wrong.)
 
 Every mutation calls `onChanged()` on success and shows a toast on failure. Use `useToast`.
 
@@ -494,7 +495,11 @@ git commit -m "feat: one access editor for a person on a package"
 
 `TeamMatrix` currently holds `editing: { personId, portalId } | null` and renders its own role menu. Keep the state (it identifies the cell); replace what it renders with `AccessEditor`, passing that cell's `portalId`, the person's `userId`/`email`/name, and `pending`.
 
-Clicking an em-dash (no access) must still grant access — that path currently creates a participant. Route it through the same editor rather than a second code path: open `AccessEditor` for that cell, and let the role selector's first write create the row.
+Clicking an em-dash (no access) must still grant access — but **not** through `AccessEditor`.
+
+*Corrected during execution.* The original instruction here was wrong twice over. `AccessEditor` loads a person's existing access and now shows an error when there is no row, so it cannot render a role selector for someone who has none. And the write it would have used — `POST /api/participants/role` with a non-null role — does an `UPDATE participants SET role`, which matches zero rows for a non-participant and **still returns `{ok:true}`**: exactly the "succeeded but wrote nothing" shape Task 3 had to eliminate elsewhere.
+
+Granting fresh access is an invitation, and `components/people/AddPeopleModal.tsx` already does it through `POST /api/participants`, the route that actually creates the row or token. So an em-dash click opens `AddPeopleModal` pre-scoped to that person and that package. `AccessEditor` opens only for a cell that already has a role.
 
 - [ ] **Step 2: Add pending rows**
 

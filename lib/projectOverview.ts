@@ -24,6 +24,8 @@ export interface ProjectPackage {
   id: string;
   name: string;
   tag: string | null;
+  /** ISO timestamp. The panel shows when each package was created. */
+  createdAt: string;
   versionNumber: number | null;
   changelog: string | null;
   publishedAt: string | null;

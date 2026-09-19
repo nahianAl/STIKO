@@ -18,7 +18,15 @@ import {
   Toggle,
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
+import { relativeTime } from '@/lib/design';
 import type { VersionStatus } from '@/lib/status';
+
+interface ShareLink {
+  token: string;
+  role: string;
+  createdAt: string;
+  expiresAt: string;
+}
 
 interface Settings {
   package: {
@@ -55,6 +63,8 @@ export default function PackageSettings() {
   const [linkAccess, setLinkAccess] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
+  const [revokingToken, setRevokingToken] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/portals/${id}/settings`);
@@ -65,6 +75,34 @@ export default function PackageSettings() {
     setTag(d.package.tag ?? '');
     setMuted(d.muted);
     setLinkAccess(d.package.linkAccess);
+
+    // GET /api/invites 404s for anyone this page itself would 404 for (both
+    // gate on the same canManagePeople), so reaching this line already means
+    // the caller may see it — no separate access check needed here.
+    const linksRes = await fetch(`/api/invites?portalId=${id}`);
+    if (linksRes.ok) {
+      const rows: {
+        token: string | null;
+        role: string;
+        multiUse: boolean;
+        createdAt: string;
+        expiresAt: string;
+      }[] = await linksRes.json();
+      // A share link is the only row here with a token — an addressed
+      // invite's revoke path is the people editor (POST
+      // /api/participants/role, role: null), reached from the dashboard's
+      // project panel, not this list.
+      setShareLinks(
+        rows
+          .filter((r): r is typeof r & { token: string } => r.multiUse && Boolean(r.token))
+          .map((r) => ({
+            token: r.token,
+            role: r.role,
+            createdAt: r.createdAt,
+            expiresAt: r.expiresAt,
+          }))
+      );
+    }
   }, [id]);
 
   useEffect(() => {
@@ -93,6 +131,22 @@ export default function PackageSettings() {
     toast(next ? 'Package muted' : 'Package unmuted');
   };
 
+  const revokeShareLink = async (token: string) => {
+    setRevokingToken(token);
+    const res = await fetch('/api/invites', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portalId: id, token }),
+    });
+    setRevokingToken(null);
+    if (!res.ok) {
+      toast('Could not revoke this link');
+      return;
+    }
+    setShareLinks((prev) => prev.filter((l) => l.token !== token));
+    toast('Share link revoked');
+  };
+
   const remove = async () => {
     const res = await fetch(`/api/portals/${id}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -117,7 +171,6 @@ export default function PackageSettings() {
 
   const rail = [
     { key: 'general', label: 'General', href: `/portal/${id}/settings` },
-    { key: 'people', label: 'People', href: `/portal/${id}/settings/people` },
   ];
 
   return (
@@ -219,6 +272,40 @@ export default function PackageSettings() {
         </div>
       </SettingsCard>
 
+      {data.access.canManagePeople && shareLinks.length > 0 && (
+        <SettingsCard
+          heading="Share links"
+          description="Anyone holding one of these can sign in and join as the role shown, until it's revoked or it expires."
+        >
+          <div className="flex flex-col gap-2">
+            {shareLinks.map((link) => (
+              <div
+                key={link.token}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-panel bg-stiko-app px-4 py-[14px]"
+              >
+                <div className="min-w-0">
+                  <div className="text-[13px] font-bold capitalize text-stiko-ink">
+                    {link.role} link
+                  </div>
+                  <div className="mt-[2px] text-[12px] text-stiko-muted">
+                    Created {relativeTime(link.createdAt)} · expires{' '}
+                    {formatExpiry(link.expiresAt)}
+                  </div>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => revokeShareLink(link.token)}
+                  disabled={revokingToken === link.token}
+                  className="shrink-0"
+                >
+                  {revokingToken === link.token ? 'Revoking…' : 'Revoke'}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </SettingsCard>
+      )}
+
       {data.access.canManagePeople && (
         <DangerCard
           rows={[
@@ -253,6 +340,19 @@ export default function PackageSettings() {
       />
     </SettingsShell>
   );
+}
+
+/** "in 3d" / "in 6h" — the retired people page's own `hoursLeft` treatment,
+ *  generalised past its one-day cutoff since this list has no reason to hide
+ *  a link that expires further out. `relativeTime` (used for `createdAt`
+ *  above) only ever counts backward from now, so it can't be reused here. */
+function formatExpiry(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const hours = (then - Date.now()) / 3_600_000;
+  if (hours <= 0) return 'expired';
+  if (hours < 24) return `in ${Math.max(1, Math.round(hours))}h`;
+  return `in ${Math.round(hours / 24)}d`;
 }
 
 function statusPhrase(status: VersionStatus): string {

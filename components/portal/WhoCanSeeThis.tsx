@@ -37,6 +37,7 @@ export function WhoCanSeeThis({
   notVisibleTo: { id: string; name: string }[];
   linkAccess: boolean;
   canManage: boolean;
+  /** This package's id — needed to link into its settings page below. */
   portalId: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -129,8 +130,14 @@ export function WhoCanSeeThis({
 
         <PopoverFooter>
           {canManage ? (
-            <Link href={`/portal/${portalId}/settings/people`} className="font-bold">
-              Manage people
+            // People management moved to the dashboard's project panel, but
+            // this package's own settings — including the "Anyone with the
+            // link can view" toggle right below this popover's own linkAccess
+            // line, and the share-link list — are still page-only. Unlike a
+            // dashboard deep-link, this one costs no extra database read:
+            // portalId is already this popover's own prop.
+            <Link href={`/portal/${portalId}/settings`} className="font-bold">
+              Package settings
             </Link>
           ) : (
             <span className="text-stiko-faint">Invite-only</span>
