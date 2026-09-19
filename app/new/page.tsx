@@ -39,6 +39,8 @@ function NewPackage() {
   const [files, setFiles] = useState<FileWithPath[]>([]);
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  const [projectNameTouched, setProjectNameTouched] = useState(false);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectId, setProjectId] = useState<string | null>(presetProjectId);
   const [emails, setEmails] = useState('');
@@ -72,6 +74,13 @@ function NewPackage() {
   );
   const effectiveName = nameTouched ? name : derived;
 
+  // A new project defaults to the package's name, so the fast path is still
+  // one field for anyone who doesn't care what the project is called. But it
+  // is a DEFAULT, not a rule: the moment this is typed in it stops tracking,
+  // and clearing it is allowed — create() asks for a name rather than
+  // quietly resurrecting the one the user just deleted.
+  const effectiveProjectName = projectNameTouched ? projectName : effectiveName;
+
   const parsedEmails = emails
     .split(/[,\s]+/)
     .map((e) => e.trim())
@@ -87,18 +96,25 @@ function NewPackage() {
       setError('Give the package a name.');
       return;
     }
+    // Only when one is about to be created — picking an existing project
+    // never reads this field, and it is hidden in that case.
+    if (!projectId && !effectiveProjectName.trim()) {
+      setError('Give the project a name.');
+      return;
+    }
 
     setPhase('uploading');
 
     try {
-      // 1. Project — defaults to a new one named after the package, so the
-      //    project layer never blocks the fast path.
+      // 1. Project — a new one unless an existing was picked. Its name is
+      //    the user's if they typed one, and the package's if they did not,
+      //    so the project layer still never blocks the fast path.
       let targetProject = projectId;
       if (!targetProject) {
         const res = await fetch('/api/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: effectiveName.trim() }),
+          body: JSON.stringify({ name: effectiveProjectName.trim() }),
         });
         if (!res.ok) throw new Error('Could not create the project');
         targetProject = (await res.json()).id;
@@ -289,17 +305,12 @@ function NewPackage() {
                           'Existing project'}
                       </span>
                     ) : (
-                      <>
-                        <span
-                          className="rounded-chip px-[6px] py-[3px] text-[10px] font-extrabold uppercase"
-                          style={{ background: '#F1F3FF', color: '#5B60FF' }}
-                        >
-                          New project
-                        </span>
-                        <span className="truncate text-[12.5px] text-stiko-muted">
-                          Same name as the package
-                        </span>
-                      </>
+                      <span
+                        className="rounded-chip px-[6px] py-[3px] text-[10px] font-extrabold uppercase"
+                        style={{ background: '#F1F3FF', color: '#5B60FF' }}
+                      >
+                        New project
+                      </span>
                     )}
                   </div>
 
@@ -318,6 +329,26 @@ function NewPackage() {
                     </select>
                   )}
                 </div>
+
+                {/* A new project used to be named after the package with no
+                    way to say otherwise — the row just read "Same name as the
+                    package". And a first-time user has no existing projects,
+                    so the select above does not even render for them: that
+                    was the ONLY path they had, and it named their project
+                    for them. The field below is pre-filled, never
+                    read-only. */}
+                {!projectId && (
+                  <Input
+                    value={effectiveProjectName}
+                    onChange={(e) => {
+                      setProjectNameTouched(true);
+                      setProjectName(e.target.value);
+                    }}
+                    aria-label="Project name"
+                    placeholder="Name the project"
+                    className="mt-2"
+                  />
+                )}
               </div>
 
               <div>

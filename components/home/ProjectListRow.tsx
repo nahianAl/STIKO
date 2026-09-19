@@ -161,10 +161,19 @@ export function ProjectListRow({
               // without the browser tooltip's ~1s delay, and having both
               // renders "Manage" twice, one on top of the other.
               //
-              // focus-visible:shadow-stiko-focus is not optional —
-              // app/globals.css has no global focus ring, so without it a
-              // keyboard user who tabs here has nothing to see.
-              className="group/manage pointer-events-auto relative flex h-7 w-7 items-center justify-center rounded-[9px] border-[1.5px] border-transparent text-stiko-muted transition duration-150 hover:border-stiko-border-strong hover:bg-white hover:text-stiko-ink hover:shadow-stiko-panel focus:outline-none focus-visible:shadow-stiko-focus"
+              // Hidden until the row is hovered — it appears into the gap the
+              // columns open for it, so the two motions are one gesture. It
+              // stays visible while the row is SELECTED because the columns
+              // stay slid left then too; hiding it would leave that gap
+              // standing empty with nothing in it.
+              //
+              // focus:opacity-100 keeps it usable by keyboard: opacity-0
+              // leaves an element in the tab order, so without this a tab
+              // lands on something nobody can see. focus-visible:shadow-stiko-focus
+              // is the ring itself — app/globals.css defines no global one.
+              className={`group/manage pointer-events-auto relative flex h-7 w-7 items-center justify-center rounded-[9px] border-[1.5px] border-transparent text-stiko-muted transition duration-150 hover:border-stiko-border-strong hover:bg-white hover:text-stiko-ink hover:shadow-stiko-panel focus:opacity-100 focus:outline-none focus-visible:shadow-stiko-focus group-hover:opacity-100 ${
+                expanded ? 'opacity-100' : 'opacity-0'
+              }`}
             >
               <svg
                 className="h-[15px] w-[15px]"
