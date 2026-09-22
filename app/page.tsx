@@ -99,6 +99,7 @@ export default function Home() {
   // to leave the grid, and a Packages panel for a card nobody can see has no
   // visible owner.
   const changeFilter = (key: HomeFilter) => {
+    if (key === filter) return;
     setFilter(key);
     setSelected(null);
   };
@@ -185,6 +186,16 @@ export default function Home() {
     () => groupProjects(packages, projects),
     [packages, projects]
   );
+
+  // A reload can remove the selected project (deleted, or access revoked).
+  // Clear the selection with it; otherwise `selected` keeps pointing at the
+  // gone id and both panels spring back open, unprompted, if it is restored.
+  useEffect(() => {
+    if (selected !== null && !groups.some((g) => g.project.id === selected)) {
+      setSelected(null);
+    }
+  }, [groups, selected]);
+
   const visible = useMemo(() => {
     // The pills unmount when there is nothing to filter; without this the last
     // selection would keep filtering a grid the user can no longer unfilter.
@@ -436,7 +447,7 @@ export default function Home() {
               TrashButton) and this row collapses to nothing.
               pointer-events-none so the strip never blocks the cards behind
               it; the button re-enables its own. */}
-          <div className="pointer-events-none z-10 shrink-0 lg:sticky lg:bottom-0 lg:mt-auto lg:flex lg:justify-end lg:px-1 lg:pt-4">
+          <div className="pointer-events-none shrink-0 lg:sticky lg:bottom-0 lg:z-10 lg:mt-auto lg:flex lg:justify-end lg:px-1 lg:pt-4">
             <TrashButton docked onClick={() => setTrashOpen(true)} />
           </div>
         </div>
@@ -451,7 +462,7 @@ export default function Home() {
             summary={
               <ProjectSummaryPanel
                 group={panelGroup}
-                open={selected !== null}
+                open={panelOpen}
                 onClose={() => setSelected(null)}
               />
             }
@@ -464,6 +475,13 @@ export default function Home() {
           onClose={() => setSelected(null)}
           onOpenPeople={openPeoplePanel}
         />
+
+        {/* Below lg Trash is fixed to the window corner, so the end of this
+            scroll needs room for it — without this the last card's ⤢ (or the
+            rail's last row, when there is one) sits permanently under the
+            button. From lg up the sticky Trash row inside the grid column
+            takes its own space, so this is hidden there. */}
+        <div className="h-10 shrink-0 lg:hidden" />
       </div>
 
       <NewProjectModal
