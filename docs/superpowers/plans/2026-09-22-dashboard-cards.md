@@ -14,7 +14,7 @@
 
 - No API route, query, schema or migration changes.
 - UI copy says **"Package"**; code keeps the `portal` names it already uses (e.g. `/portal/{id}` routes).
-- Every click handler inside a card or panel calls `e.stopPropagation()`. The page root deselects on background click, so without it a click selects and then deselects in one React batch.
+- No click inside a card, the rail or the Packages panel may reach the page root, which deselects on background click; otherwise a click selects and then deselects in one React batch. Cards stop it in each handler (their buttons sit in a pointer-events layer); the rail and the Packages panel stop it once, on their outer wrapper.
 - `visibility` transitions get their own `0s` duration, delayed by the close duration, and are always listed last.
 - Motion easing is `cubic-bezier(.32,.72,0,1)`: 520ms for the panel/summary/glide, 320ms for card states. The rail keeps `cubic-bezier(.4,0,.2,1)` at 340ms.
 - Anything that moves carries the `stiko-motion` class, which honours `prefers-reduced-motion` (see `app/globals.css`).
