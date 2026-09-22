@@ -957,7 +957,10 @@ export default function PackagesPanel({
     <div
       // Clicks inside must not reach the page root's deselect handler.
       onClick={(e) => e.stopPropagation()}
-      aria-hidden={!open}
+      // No aria-hidden: the delayed `visibility: hidden` below already takes
+      // the closed panel out of the accessibility tree and the tab order.
+      // aria-hidden would flip at the START of the close, while the panel is
+      // still visible and its own Close button still holds focus.
       className={`stiko-motion fixed inset-y-3 right-3 z-40 w-[min(372px,calc(100vw_-_24px))] lg:static lg:z-auto lg:h-full lg:shrink-0 lg:translate-x-0 lg:overflow-hidden ${
         open
           ? 'translate-x-0 opacity-100 lg:w-[var(--stiko-packages-w)]'
