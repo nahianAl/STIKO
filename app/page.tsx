@@ -352,8 +352,11 @@ export default function Home() {
             column-count change makes the browser shift scrollTop to keep the
             first visible card in place — in the same layout pass, before
             useGridGlide's ResizeObserver runs — so every glide would start a
-            row away from where the card was painted: a snap, then a slide. */}
-        <div className="flex min-h-0 flex-none flex-col [overflow-anchor:none] lg:min-w-[240px] lg:flex-1 lg:overflow-y-auto lg:px-2">
+            row away from where the card was painted: a snap, then a slide.
+            `relative` makes this column the grid's offsetParent, so the
+            grid's offsetTop — which useGridGlide reads to catch the header
+            re-wrapping — does not change as the column scrolls. */}
+        <div className="relative flex min-h-0 flex-none flex-col [overflow-anchor:none] lg:min-w-[240px] lg:flex-1 lg:overflow-y-auto lg:px-2">
           <div className="flex shrink-0 flex-wrap items-end justify-between gap-4 px-[2px] pb-4 pt-5">
             <div>
               {/* Title and count share a baseline rather than stacking: the

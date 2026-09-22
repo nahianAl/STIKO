@@ -68,3 +68,13 @@ test('a mid-glide card whose layout did not move is left to finish', () => {
   const inFlight = pts({ a: { x: 50, y: 0 } });
   assert.deepEqual(planGlides(prev, next, true, inFlight), []);
 });
+
+test('a grid that moved as a whole glides every card by the same amount', () => {
+  // The header above re-wrapped and pushed the grid down 46px; no column change.
+  const prev = pts({ a: { x: 4, y: 71 }, b: { x: 246, y: 71 } });
+  const next = pts({ a: { x: 4, y: 117 }, b: { x: 246, y: 117 } });
+  assert.deepEqual(planGlides(prev, next, true), [
+    { key: 'a', dx: 0, dy: -46 },
+    { key: 'b', dx: 0, dy: -46 },
+  ]);
+});

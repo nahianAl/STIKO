@@ -19,11 +19,22 @@ const GLIDE_EASE = 'cubic-bezier(.32,.72,0,1)';
  * this hook's ResizeObserver runs, so every glide would start from the wrong
  * place.
  *
+ * The grid's OWN offsetTop matters too, and for the same scroll-independence
+ * reason: an element's offsetTop relative to a scrollable offsetParent does
+ * not change as that parent scrolls, only as the element itself moves within
+ * it. That is only true here because the grid's offsetParent is its scroll
+ * container (or inside it) — the page makes the centre column `position:
+ * relative` so it is. A jump, then, is either the column count changing or
+ * the grid itself moving vertically — e.g. the header above it re-wrapping
+ * and pushing the whole grid down a row — and both are folded into each
+ * card's measured position below.
+ *
  * Why a ResizeObserver rather than a measure-before/after-commit FLIP: the
  * side panels animate `width`, so at commit time nothing has moved yet. The
- * jump happens mid-transition, on whichever frame the column count changes,
- * and only an observer that runs on every frame of the resize sees it. The
- * design prototype's commit-time FLIP never fires for exactly this reason.
+ * jump happens mid-transition, on whichever frame the column count changes
+ * (or the grid moves), and only an observer that runs on every frame of the
+ * resize sees it. The design prototype's commit-time FLIP never fires for
+ * exactly this reason.
  *
  * ResizeObserver callbacks run after layout and before paint, and a new
  * animation applies its first keyframe at once, so the frame that lays a card
@@ -40,11 +51,14 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
     const cards = () =>
       Array.from(grid.querySelectorAll<HTMLElement>('[data-glide]'));
 
+    const gridTop = () => grid.offsetTop;
+
     const measure = () => {
+      const top = gridTop();
       const points = new Map<string, GlidePoint>();
       for (const el of cards()) {
         const key = el.dataset.glide;
-        if (key) points.set(key, { x: el.offsetLeft, y: el.offsetTop });
+        if (key) points.set(key, { x: el.offsetLeft, y: top + el.offsetTop });
       }
       return points;
     };
@@ -54,6 +68,7 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
 
     let prev = measure();
     let prevColumns = columns();
+    let prevTop = gridTop();
 
     // A filter change or a reload swaps the cards without resizing the grid,
     // which would leave `prev` describing cards that have since moved or gone.
@@ -63,14 +78,18 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
     const mutations = new MutationObserver(() => {
       prev = measure();
       prevColumns = columns();
+      prevTop = gridTop();
     });
     mutations.observe(grid, { childList: true });
 
     const resizes = new ResizeObserver(() => {
       const next = measure();
       const nextColumns = columns();
+      const nextTop = gridTop();
+      const jumped =
+        nextColumns !== prevColumns || Math.abs(nextTop - prevTop) >= 1;
 
-      if (nextColumns !== prevColumns && !reduceMotion.matches) {
+      if (jumped && !reduceMotion.matches) {
         const byKey = new Map(
           cards().map((el) => [el.dataset.glide ?? '', el] as const)
         );
@@ -114,6 +133,7 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
 
       prev = next;
       prevColumns = nextColumns;
+      prevTop = nextTop;
     });
     resizes.observe(grid);
 
