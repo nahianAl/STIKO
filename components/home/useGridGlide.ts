@@ -13,7 +13,11 @@ const GLIDE_EASE = 'cubic-bezier(.32,.72,0,1)';
  *
  * Cards opt in with `data-glide="<stable key>"`. The grid must be
  * `position: relative`, so each card's offsetParent is the grid and
- * offsetLeft/offsetTop are grid coordinates that ignore transforms.
+ * offsetLeft/offsetTop are grid coordinates that ignore transforms. The grid's
+ * scroll container must also set `overflow-anchor: none`, because scroll
+ * anchoring in a scrolled container makes the browser adjust `scrollTop` before
+ * this hook's ResizeObserver runs, so every glide would start from the wrong
+ * place.
  *
  * Why a ResizeObserver rather than a measure-before/after-commit FLIP: the
  * side panels animate `width`, so at commit time nothing has moved yet. The
@@ -88,15 +92,22 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
           const el = byKey.get(key);
           if (!el) continue;
           running.get(key)?.cancel();
-          running.set(
-            key,
-            el.animate(
-              [
-                { transform: `translate(${dx}px, ${dy}px)` },
-                { transform: 'none' },
-              ],
-              { duration: GLIDE_MS, easing: GLIDE_EASE }
-            )
+          const animation = el.animate(
+            [
+              { transform: `translate(${dx}px, ${dy}px)` },
+              { transform: 'none' },
+            ],
+            { duration: GLIDE_MS, easing: GLIDE_EASE }
+          );
+          running.set(key, animation);
+          // Drop it once done so a card that unmounts mid-glide is not held
+          // until the next column change. cancel() rejects `finished`, hence
+          // the no-op rejection handler.
+          animation.finished.then(
+            () => {
+              if (running.get(key) === animation) running.delete(key);
+            },
+            () => {}
           );
         }
       }
