@@ -6,14 +6,17 @@ import type { NotificationRow } from '@/components/shell/NotificationTray';
 import type { PackageCard } from '@/lib/queries';
 
 /**
- * The right-hand rail: an AI summary panel stacked over the activity feed.
+ * The left-hand rail: an AI summary panel stacked over the activity feed.
  *
- * The wrapper animates its width while the inner column stays a fixed 344px —
- * that is what stops the feed's contents from reflowing on every frame of the
- * open/close. Below lg the rail is a full-width block stacked under the project
- * list instead, and hiding it is a plain unmount: animating a width on a
- * stacked block animates nothing the user can see, and the fixed inner width
- * would overflow a phone.
+ * The wrapper animates its width while the inner column holds the rail's full
+ * open width (--stiko-rail-w, app/globals.css) — that is what stops the feed's
+ * contents from reflowing on every frame of the open/close.
+ *
+ * `lg:order-first` puts it on the left while it stays AFTER the card grid in
+ * the DOM. Below lg, where the columns stack, that keeps it under the grid
+ * rather than above it, and at every size keyboard focus reaches the projects
+ * first. Below lg it is a full-width block, and hiding it animates max-height
+ * instead: a width on a stacked block animates nothing anyone can see.
  */
 export default function ActivityRail({
   notifications,
@@ -32,16 +35,14 @@ export default function ActivityRail({
   onCollapse: () => void;
 }) {
   // Deliberately NOT unmounted when closed: an unmount cannot animate, and the
-  // rail has to slide rather than vanish. Width carries the motion from lg up,
-  // where it is a column; below lg it is a stacked block whose width says
-  // nothing, so height carries it there instead.
+  // rail has to slide rather than vanish.
   return (
     <div
       onClick={(e) => e.stopPropagation()}
       aria-hidden={!railOpen}
-      className={`stiko-motion w-full shrink-0 overflow-hidden ease-[cubic-bezier(.4,0,.2,1)] lg:h-full lg:max-h-none ${
+      className={`stiko-motion w-full shrink-0 overflow-hidden ease-[cubic-bezier(.4,0,.2,1)] lg:order-first lg:h-full lg:max-h-none ${
         railOpen
-          ? 'max-h-[3000px] opacity-100 lg:w-[356px]'
+          ? 'max-h-[3000px] opacity-100 lg:w-[var(--stiko-rail-w)]'
           : 'max-h-0 opacity-0 lg:w-0'
       }`}
       style={{
@@ -57,7 +58,7 @@ export default function ActivityRail({
         transitionDelay: railOpen ? '0s' : '0s, 0s, 0s, 340ms',
       }}
     >
-      <aside className="flex h-full w-full flex-col overflow-hidden lg:w-[344px]">
+      <aside className="flex h-full w-full flex-col overflow-hidden lg:w-[var(--stiko-rail-w)]">
         {summary}
         <ActivityFeedPanel
           notifications={notifications}

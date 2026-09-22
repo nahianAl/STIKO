@@ -84,8 +84,9 @@ export default function ActivityFeedPanel({
             aria-label="Hide activity"
             className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-stiko-app text-stiko-muted transition duration-150 hover:bg-stiko-idle hover:text-stiko-ink"
           >
+            {/* Points left: toward the edge the rail collapses into. */}
             <svg
-              className="h-[13px] w-[13px]"
+              className="h-[13px] w-[13px] rotate-180"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
