@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import EmptyState from '@/components/ui/EmptyState';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
-import { ProjectListRow } from '@/components/home/ProjectListRow';
-import { ProjectListHeader } from '@/components/home/ProjectListHeader';
+import { ProjectGrid } from '@/components/home/ProjectGrid';
+import PackagesPanel from '@/components/home/PackagesPanel';
 import NewProjectModal from '@/components/home/NewProjectModal';
 import ProjectPanel from '@/components/home/ProjectPanel';
 import TrashPanel from '@/components/home/TrashPanel';
@@ -28,12 +28,12 @@ import type { PackageCard, ProjectSummary } from '@/lib/queries';
 import { useSession } from 'next-auth/react';
 
 /**
- * Owner home. Two states: first run, and the project list.
+ * Owner home. Two states: first run, and the project cards.
  *
- * The list covers every populated case — one package or fifty, owned or
- * invited. Packages stay hidden until their project is selected, which is what
- * keeps the screen readable at five packages per project and above; the card
- * grid that preceded this listed every package inline and did not.
+ * The cards cover every populated case — one package or fifty, owned or
+ * invited. A project's packages never appear in the grid: selecting a card
+ * opens them in the Packages panel docked on the right, which is what keeps a
+ * card the same size at five packages as at one.
  */
 export default function Home() {
   const router = useRouter();
@@ -51,7 +51,7 @@ export default function Home() {
   const [peoplePanelProjectId, setPeoplePanelProjectId] = useState<string | null>(
     null
   );
-  // The ⤢ control on each row opens the same panel, landing on the
+  // The ⤢ control on each card opens the same panel, landing on the
   // cross-package view instead of the avatar stack's people view. Separate
   // state rather than a shared id + view pair: only one of the two is ever
   // non-null at a time (nothing opens both at once), and closing the panel
@@ -63,9 +63,10 @@ export default function Home() {
   const [trashOpen, setTrashOpen] = useState(false);
   const [hasTrash, setHasTrash] = useState(false);
 
-  const [expanded, setExpanded] = useState<string | null>(null);
-  // The last non-null selection, so the summary panel keeps its content for
-  // the whole close animation instead of flashing empty on the way down.
+  const [selected, setSelected] = useState<string | null>(null);
+  // The last non-null selection, so the summary and Packages panels keep
+  // their content for the whole close animation instead of emptying on the
+  // way out.
   const [lastId, setLastId] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(true);
 
@@ -85,7 +86,7 @@ export default function Home() {
   }, []);
 
   const toggleProject = useCallback((id: string) => {
-    setExpanded((current) => (current === id ? null : id));
+    setSelected((current) => (current === id ? null : id));
     setLastId(id);
     // Forced open, never forced closed: otherwise the summary panel would
     // animate open behind a hidden rail. The user's own choice to hide the
@@ -93,6 +94,15 @@ export default function Home() {
     setRailOpen(true);
     window.localStorage.setItem('stiko.railOpen', 'true');
   }, []);
+
+  // Changing the filter clears the selection: the selected card may be about
+  // to leave the grid, and a Packages panel for a card nobody can see has no
+  // visible owner.
+  const changeFilter = (key: HomeFilter) => {
+    if (key === filter) return;
+    setFilter(key);
+    setSelected(null);
+  };
 
   // Two entry points share one ProjectPanel instance (see panelProjectId /
   // panelView below). Each clears the other's id on open, not just on close —
@@ -176,6 +186,16 @@ export default function Home() {
     () => groupProjects(packages, projects),
     [packages, projects]
   );
+
+  // A reload can remove the selected project (deleted, or access revoked).
+  // Clear the selection with it; otherwise `selected` keeps pointing at the
+  // gone id and both panels spring back open, unprompted, if it is restored.
+  useEffect(() => {
+    if (selected !== null && !groups.some((g) => g.project.id === selected)) {
+      setSelected(null);
+    }
+  }, [groups, selected]);
+
   const visible = useMemo(() => {
     // The pills unmount when there is nothing to filter; without this the last
     // selection would keep filtering a grid the user can no longer unfilter.
@@ -290,10 +310,13 @@ export default function Home() {
     .filter(Boolean)
     .join(' · ');
 
-  const summaryGroup = groups.find((g) => g.project.id === lastId) ?? null;
+  // The last selection, not the current one — both panels keep rendering it
+  // while they animate shut.
+  const panelGroup = groups.find((g) => g.project.id === lastId) ?? null;
+  const panelOpen = selected !== null && panelGroup !== null;
 
   // Whichever entry point was used last — the avatar stack (people) or the
-  // row's ⤢ control (manage) — wins; the other is always null at that point,
+  // card's ⤢ control (manage) — wins; the other is always null at that point,
   // since opening either sets the other back to null via the shared onClose.
   const panelProjectId = peoplePanelProjectId ?? managePanelProjectId;
   const panelView: 'everyone' | 'packages' =
@@ -304,22 +327,42 @@ export default function Home() {
       <TopBar right={topBarRight} />
 
       {/* Clicking the page background deselects. Everything that would be
-          closing the thing you just clicked inside of — the expansion panel,
-          the rail, the header's own controls — stops the event itself. */}
+          closing the thing you just clicked inside of — a card, the panels,
+          the rail, the header's own controls — stops the event itself.
+
+          From lg up this is a row: rail (left, via its own lg:order-first),
+          card grid, Packages panel. Below lg it is a scrolling column of grid
+          then rail, and the Packages panel is a fixed overlay.
+
+          The Packages panel comes before the rail in the DOM on purpose: tab
+          and screen-reader order reach the selected project's packages right
+          after the grid, not after the whole activity feed. The rail's own
+          lg:order-first is what still puts it on the left visually. */}
       <div
-        onClick={() => setExpanded(null)}
+        onClick={() => setSelected(null)}
         className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-1 lg:flex-row lg:gap-3 lg:overflow-visible"
       >
         {/* flex-none (not flex-1) below lg: this is a flex column here, and
             the rail is shrink-0 with a content-driven height — once the rail's
             content is taller than this row (a handful of notifications is
             enough on a phone), flex-1's flex-basis:0% has nothing to grow into
-            and the column collapses to 0px, rendering the list UNDER the rail
+            and the column collapses to 0px, rendering the grid UNDER the rail
             instead of above it. flex-none makes this column size to its own
             content. lg:flex-1 restores fill-remaining-space once the layout is
-            a row. */}
-        <div className="min-h-0 flex-none lg:flex-1 lg:overflow-y-auto lg:pr-2">
-          <div className="flex flex-wrap items-end justify-between gap-4 px-[2px] pb-4 pt-5">
+            a row. Every child is shrink-0: this is a scrolling flex column
+            from lg up, and a shrinkable child would be squashed instead of
+            scrolled. */}
+        {/* [overflow-anchor:none] is load-bearing for the card glide. With
+            scroll anchoring on (the default), once this column is scrolled a
+            column-count change makes the browser shift scrollTop to keep the
+            first visible card in place — in the same layout pass, before
+            useGridGlide's ResizeObserver runs — so every glide would start a
+            row away from where the card was painted: a snap, then a slide.
+            `relative` makes this column the grid's offsetParent, so the
+            grid's offsetTop — which useGridGlide reads to catch the header
+            re-wrapping — does not change as the column scrolls. */}
+        <div className="relative flex min-h-0 flex-none flex-col [overflow-anchor:none] lg:min-w-[240px] lg:flex-1 lg:overflow-y-auto lg:px-2">
+          <div className="flex shrink-0 flex-wrap items-end justify-between gap-4 px-[2px] pb-4 pt-5">
             <div>
               {/* Title and count share a baseline rather than stacking: the
                   count is an attribute of the title, not a second heading, and
@@ -356,7 +399,7 @@ export default function Home() {
                   ).map(([key, label]) => (
                     <button
                       key={key}
-                      onClick={() => setFilter(key)}
+                      onClick={() => changeFilter(key)}
                       className={`rounded-[9px] border-[1.5px] px-[11px] py-[6px] text-[12px] font-bold transition duration-150 ${
                         filter === key
                           ? 'border-stiko-border-strong bg-white text-stiko-ink'
@@ -392,30 +435,37 @@ export default function Home() {
             </div>
           </div>
 
-          {/* overflow-x on the container with min-w on every child: below
-              805px the list scrolls sideways rather than crushing the project
-              name. Every child carries box-border too — a mixed box model here
-              drifts the columns out of alignment and stops the row dividers
-              short of the row edge once scrolled. */}
-          <div className="overflow-x-auto overflow-y-hidden rounded-panel border border-stiko-sheet bg-white shadow-stiko-panel">
-            <ProjectListHeader />
-            {visible.map((group) => (
-              <ProjectListRow
-                key={group.project.id}
-                group={group}
-                expanded={expanded === group.project.id}
-                onToggle={toggleProject}
-                onOpenPeople={openPeoplePanel}
-                onOpenPanel={openManagePanel}
-              />
-            ))}
-          </div>
+          <ProjectGrid
+            groups={visible}
+            selectedId={selected}
+            onToggle={toggleProject}
+            onOpenPeople={openPeoplePanel}
+            onOpenPanel={openManagePanel}
+          />
 
-          {/* Clearance for the fixed trash button, which floats over this
-              column's bottom-left corner. Without it the last project row
-              sits under the button at the end of the scroll. */}
-          <div className="h-16 shrink-0" />
+          {/* Trash's row. From lg up it is the column's last child: mt-auto
+              drops it to the column's bottom when the grid is short, and
+              sticky bottom-0 pins it there while a long grid scrolls under
+              it. Being inside the scroll container's content box is what
+              lines it up with the cards' right edge and keeps it off the
+              scrollbar — and as the Packages panel opens and this column
+              narrows, it travels left with the column's edge. It also takes
+              space at the end of the content, so the last row of cards always
+              scrolls clear of it. Below lg the button is fixed instead (see
+              TrashButton) and this row collapses to nothing.
+              pointer-events-none so the strip never blocks the cards behind
+              it; the button re-enables its own. */}
+          <div className="pointer-events-none shrink-0 lg:sticky lg:bottom-0 lg:z-10 lg:mt-auto lg:flex lg:justify-end lg:px-1 lg:pt-4">
+            <TrashButton docked onClick={() => setTrashOpen(true)} />
+          </div>
         </div>
+
+        <PackagesPanel
+          group={panelGroup}
+          open={panelOpen}
+          onClose={() => setSelected(null)}
+          onOpenPeople={openPeoplePanel}
+        />
 
         {notifications.length > 0 && (
           <ActivityRail
@@ -426,13 +476,20 @@ export default function Home() {
             onCollapse={toggleRail}
             summary={
               <ProjectSummaryPanel
-                group={summaryGroup}
-                open={expanded !== null}
-                onClose={() => setExpanded(null)}
+                group={panelGroup}
+                open={panelOpen}
+                onClose={() => setSelected(null)}
               />
             }
           />
         )}
+
+        {/* Below lg Trash is fixed to the window corner, so the end of this
+            scroll needs room for it — without this the last card's ⤢ (or the
+            rail's last row, when there is one) sits permanently under the
+            button. From lg up the sticky Trash row inside the grid column
+            takes its own space, so this is hidden there. */}
+        <div className="h-10 shrink-0 lg:hidden" />
       </div>
 
       <NewProjectModal
@@ -450,7 +507,6 @@ export default function Home() {
         onChanged={load}
         initialView={panelView}
       />
-      <TrashButton onClick={() => setTrashOpen(true)} />
       <TrashPanel
         isOpen={trashOpen}
         onClose={() => setTrashOpen(false)}
@@ -462,40 +518,50 @@ export default function Home() {
 }
 
 /**
- * The trash door — pinned to the bottom-left corner of the window.
+ * The trash door — bottom-right.
  *
- * Fixed rather than in the flow under the list: the list is as long as the
- * user's projects make it, and a control that scrolls out of reach is one
- * they have to go hunting for. `bottom-3 left-3` lands it on the shell's own
- * 12px gutter (Shell is `p-3`), so it reads as part of the frame.
+ * `docked` is the populated dashboard. From lg up the button sits static in
+ * the sticky row at the foot of the card-grid column (see the note at that
+ * row), so it is pinned to that column's bottom-right rather than to the
+ * window and glides left, never over the Packages panel, as the panel opens.
  *
- * `fixed` resolves against the viewport here because nothing above it carries
- * a transform, filter or will-change — Shell is a plain flex column. Putting
- * one on an ancestor later would silently re-anchor this button to it.
+ * Everywhere else — the welcome screen, and the dashboard below lg where the
+ * column is not a fixed-height scroller — it is fixed to the window's corner,
+ * on the shell's own 12px gutter. `fixed` resolves against the viewport
+ * because no ancestor carries a transform, filter or will-change: the card
+ * glides animate transforms on the CARDS, which are siblings, not ancestors.
+ * Putting one on an ancestor later would silently re-anchor this button.
  *
- * z-30 is chosen, not inherited: above everything the dashboard itself
- * paints, and below Drawer (z-58/59) so the trash panel's own scrim covers
- * this button once it is open rather than leaving it floating on top of the
- * thing it just opened.
+ * z-30 is chosen, not inherited: above everything the dashboard paints, below
+ * the Packages overlay (z-40) that covers it below lg, and below Drawer
+ * (z-58/59) so the trash panel's own scrim covers this button once it opens.
  *
  * Rendered by this file and nowhere else — the trash belongs to the projects
  * dashboard, so it never follows the user into a portal, a settings page or
  * the review viewport.
  */
-function TrashButton({ onClick }: { onClick: () => void }) {
+function TrashButton({
+  onClick,
+  docked = false,
+}: {
+  onClick: () => void;
+  docked?: boolean;
+}) {
   return (
     <button
       type="button"
       // The page root deselects on background click. Without this the click
-      // opens the panel and then bubbles up and clears `expanded` in the same
-      // React batch — the same trap ProjectListRow documents. Harmless on the
-      // first-run branch, which has no such handler.
+      // opens the panel and then bubbles up and clears the selection in the
+      // same React batch. Harmless on the first-run branch, which has no such
+      // handler.
       onClick={(e) => {
         e.stopPropagation();
         onClick();
       }}
       title="Deleted projects and packages"
-      className="fixed bottom-3 left-3 z-30 flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-lift transition duration-150 hover:text-stiko-ink hover:shadow-stiko-sheet focus:outline-none focus-visible:shadow-stiko-focus"
+      className={`pointer-events-auto fixed bottom-3 right-3 z-30 flex items-center gap-2 rounded-[10px] border border-stiko-sheet bg-white px-[13px] py-2 text-[12.5px] font-bold text-stiko-secondary shadow-stiko-lift transition duration-150 hover:text-stiko-ink hover:shadow-stiko-sheet focus:outline-none focus-visible:shadow-stiko-focus ${
+        docked ? 'lg:static' : ''
+      }`}
     >
       <svg
         className="h-[13px] w-[13px]"

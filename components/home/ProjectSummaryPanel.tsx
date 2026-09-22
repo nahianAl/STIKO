@@ -150,7 +150,7 @@ export default function ProjectSummaryPanel({
 
   return (
     <div
-      className="stiko-motion shrink-0 overflow-hidden transition-[max-height,opacity,margin-bottom,transform] duration-[380ms] ease-[cubic-bezier(.32,.72,0,1)]"
+      className="stiko-motion shrink-0 overflow-hidden transition-[max-height,opacity,margin-bottom,transform] duration-[520ms] ease-[cubic-bezier(.32,.72,0,1)]"
       style={{
         maxHeight: visible ? panelHeight : 0,
         opacity: visible ? 1 : 0,
@@ -160,11 +160,9 @@ export default function ProjectSummaryPanel({
         // animates shut, then leaves the tab order entirely.
         visibility: visible ? 'visible' : 'hidden',
         transitionProperty: 'max-height, opacity, margin-bottom, transform, visibility',
-        // visibility is a 0s step — see the note in ActivityRail. Given a real
-        // duration it lands at duration+delay and holds the panel focusable
-        // long after it has gone.
-        transitionDuration: '380ms, 260ms, 380ms, 380ms, 0s',
-        transitionDelay: visible ? '0s' : '0s, 0s, 0s, 0s, 380ms',
+        // 520ms to match the Packages panel it opens alongside (opacity 340ms).
+        transitionDuration: '520ms, 340ms, 520ms, 520ms, 0s',
+        transitionDelay: visible ? '0s' : '0s, 0s, 0s, 0s, 520ms',
       }}
       aria-hidden={!visible}
     >

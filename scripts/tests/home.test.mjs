@@ -10,6 +10,10 @@ import {
   homeStats,
   packageAttention,
   projectAttention,
+  packagesLabel,
+  openCommentsLabel,
+  packageMeta,
+  packageCountLabel,
 } from '../../lib/home.ts';
 
 const pkg = (over = {}) => ({
@@ -251,4 +255,63 @@ test('a project where nothing needs you has no pill', () => {
 
 test('a project with no packages has no pill', () => {
   assert.equal(projectAttention([]), null);
+});
+
+/* ---------------------------------------------------------------- labels -- */
+
+test('the package count is singular only for one', () => {
+  assert.equal(packagesLabel(0), '0 packages');
+  assert.equal(packagesLabel(1), '1 package');
+  assert.equal(packagesLabel(4), '4 packages');
+});
+
+test('the open-comments line says Nothing open at zero', () => {
+  assert.equal(openCommentsLabel(0), 'Nothing open');
+  assert.equal(openCommentsLabel(1), '1 open comment');
+  assert.equal(openCommentsLabel(13), '13 open comments');
+});
+
+const NOW = Date.parse('2026-09-22T12:00:00Z');
+
+test('package meta joins version, quoted changelog and age', () => {
+  assert.equal(
+    packageMeta(
+      pkg({
+        versionNumber: 4,
+        changelog: 'Gutter detail added',
+        updatedAt: '2026-09-22T10:00:00Z',
+      }),
+      NOW
+    ),
+    'V4 · "Gutter detail added" · 2h ago'
+  );
+});
+
+test('package meta drops a missing changelog', () => {
+  assert.equal(
+    packageMeta(
+      pkg({ versionNumber: 3, changelog: null, updatedAt: '2026-09-19T12:00:00Z' }),
+      NOW
+    ),
+    'V3 · 3d ago'
+  );
+});
+
+test('package meta drops a missing or unparseable time', () => {
+  assert.equal(packageMeta(pkg({ versionNumber: 2, updatedAt: null }), NOW), 'V2');
+  assert.equal(packageMeta(pkg({ versionNumber: 2, updatedAt: 'nope' }), NOW), 'V2');
+});
+
+test('a package with no version asks for files', () => {
+  assert.equal(
+    packageMeta(pkg({ versionNumber: null, changelog: 'ignored' }), NOW),
+    'No files yet — add some'
+  );
+});
+
+test('the count prefers open comments, then files, then empty', () => {
+  assert.equal(packageCountLabel(pkg({ openComments: 7, fileCount: 12 })), '7 open');
+  assert.equal(packageCountLabel(pkg({ openComments: 0, fileCount: 1 })), '1 file');
+  assert.equal(packageCountLabel(pkg({ openComments: 0, fileCount: 9 })), '9 files');
+  assert.equal(packageCountLabel(pkg({ openComments: 0, fileCount: 0 })), 'empty');
 });

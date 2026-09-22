@@ -1,4 +1,5 @@
 import { highestRole, ROLE_RANK, type ProjectRole } from './roles.ts';
+import { relativeTime } from './design.ts';
 // `import type` is load-bearing: lib/queries.ts imports lib/db, which throws at
 // module load without DATABASE_URL. A type-only import is erased, so the unit
 // tests never pull a database connection in. Do not turn this into a plain
@@ -208,6 +209,48 @@ export function homeStats(packages: PackageCard[]): {
     openComments: packages.reduce((n, p) => n + p.openComments, 0),
     inReview: packages.filter((p) => p.status === 'in_review').length,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Labels                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** The card footer: "1 package" / "N packages". */
+export function packagesLabel(count: number): string {
+  return count === 1 ? '1 package' : `${count} packages`;
+}
+
+/** The Packages panel header's open-comment line. */
+export function openCommentsLabel(count: number): string {
+  if (count === 0) return 'Nothing open';
+  return `${count} open ${count === 1 ? 'comment' : 'comments'}`;
+}
+
+/**
+ * A package item's second line: `V4 · "Gutter detail added" · 2h ago`.
+ *
+ * The changelog and age clauses drop out when absent. A package with no
+ * version yet has nothing to describe, so it says what to do instead.
+ */
+export function packageMeta(pkg: PackageCard, now: number = Date.now()): string {
+  if (pkg.versionNumber == null) return 'No files yet — add some';
+  return [
+    `V${pkg.versionNumber}`,
+    pkg.changelog ? `"${pkg.changelog}"` : null,
+    // relativeTime returns '' for an unparseable date, which filter drops.
+    pkg.updatedAt ? relativeTime(pkg.updatedAt, now) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Open comments win; otherwise the file count; otherwise "empty". */
+export function packageCountLabel(pkg: PackageCard): string {
+  if (pkg.openComments > 0) return `${pkg.openComments} open`;
+  if (pkg.fileCount > 0) {
+    return `${pkg.fileCount} ${pkg.fileCount === 1 ? 'file' : 'files'}`;
+  }
+  return 'empty';
 }
 
 /* -------------------------------------------------------------------------- */
