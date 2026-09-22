@@ -1670,7 +1670,13 @@ export default function Home() {
             a row. Every child is shrink-0: this is a scrolling flex column
             from lg up, and a shrinkable child would be squashed instead of
             scrolled. */}
-        <div className="flex min-h-0 flex-none flex-col lg:min-w-[240px] lg:flex-1 lg:overflow-y-auto lg:px-2">
+        {/* [overflow-anchor:none] is load-bearing for the card glide. With
+            scroll anchoring on (the default), once this column is scrolled a
+            column-count change makes the browser shift scrollTop to keep the
+            first visible card in place — in the same layout pass, before
+            useGridGlide's ResizeObserver runs — so every glide would start a
+            row away from where the card was painted: a snap, then a slide. */}
+        <div className="flex min-h-0 flex-none flex-col [overflow-anchor:none] lg:min-w-[240px] lg:flex-1 lg:overflow-y-auto lg:px-2">
           <div className="flex shrink-0 flex-wrap items-end justify-between gap-4 px-[2px] pb-4 pt-5">
             <div>
               {/* Title and count share a baseline rather than stacking: the
@@ -2035,6 +2041,8 @@ Expected:
 - `trashAfter[0]` < `trashBefore[0]`: Trash moved left with the column
 - `trashClearsPanel` is `true`
 - `trashBefore[1]` and `trashAfter[1]` are both `viewportBottom − 12` (±1)
+
+Then deselect, resize to 1440×700 so the grid scrolls, scroll the centre column down by one card row, and repeat the select. Sample the selected card's `getBoundingClientRect().top` every 16ms from the click. Expected: no single-frame jump larger than ~40px before the glide starts. A jump about one row tall means scroll anchoring is back: check the column still carries `[overflow-anchor:none]`.
 
 Take a screenshot. It should match the handoff's layout: summary panel over the feed on the left, the selected card with a 2px border, and the Packages panel on the right. The panel shows three packages with the "2 mentions" and "New version" pills, "NO FILES YET" hidden on the unversioned package, and "Add a package" at the bottom.
 
