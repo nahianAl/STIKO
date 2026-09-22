@@ -332,7 +332,12 @@ export default function Home() {
 
           From lg up this is a row: rail (left, via its own lg:order-first),
           card grid, Packages panel. Below lg it is a scrolling column of grid
-          then rail, and the Packages panel is a fixed overlay. */}
+          then rail, and the Packages panel is a fixed overlay.
+
+          The Packages panel comes before the rail in the DOM on purpose: tab
+          and screen-reader order reach the selected project's packages right
+          after the grid, not after the whole activity feed. The rail's own
+          lg:order-first is what still puts it on the left visually. */}
       <div
         onClick={() => setSelected(null)}
         className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-1 lg:flex-row lg:gap-3 lg:overflow-visible"
@@ -455,6 +460,13 @@ export default function Home() {
           </div>
         </div>
 
+        <PackagesPanel
+          group={panelGroup}
+          open={panelOpen}
+          onClose={() => setSelected(null)}
+          onOpenPeople={openPeoplePanel}
+        />
+
         {notifications.length > 0 && (
           <ActivityRail
             notifications={notifications}
@@ -471,13 +483,6 @@ export default function Home() {
             }
           />
         )}
-
-        <PackagesPanel
-          group={panelGroup}
-          open={panelOpen}
-          onClose={() => setSelected(null)}
-          onOpenPeople={openPeoplePanel}
-        />
 
         {/* Below lg Trash is fixed to the window corner, so the end of this
             scroll needs room for it — without this the last card's ⤢ (or the

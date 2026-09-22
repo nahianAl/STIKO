@@ -79,8 +79,12 @@ export function HomeSkeleton() {
             ))}
           </div>
         </div>
+        {/* Mirrors ActivityRail's lg:order-first, so the placeholder rail
+            sits on the left at lg — without it the skeleton draws the rail
+            on the right and the real rail swaps it to the left the moment
+            /api/home resolves. */}
         <aside
-          className="hidden shrink-0 rounded-panel bg-white p-3 shadow-stiko-panel lg:block"
+          className="hidden shrink-0 rounded-panel bg-white p-3 shadow-stiko-panel lg:block lg:order-first"
           style={{ width: 344 }}
         >
           <SkeletonBar width={120} height={18} />
