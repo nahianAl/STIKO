@@ -86,6 +86,10 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
       const next = measure();
       const nextColumns = columns();
       const nextTop = gridTop();
+      // Vertical only, on purpose: the rail's slide moves the column's left
+      // edge continuously, which is drift, and folding x in here would turn
+      // that into a false jump if the grid's offsetParent ever sat outside
+      // the column.
       const jumped =
         nextColumns !== prevColumns || Math.abs(nextTop - prevTop) >= 1;
 
@@ -120,8 +124,8 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
           );
           running.set(key, animation);
           // Drop it once done so a card that unmounts mid-glide is not held
-          // until the next column change. cancel() rejects `finished`, hence
-          // the no-op rejection handler.
+          // until the next jump. cancel() rejects `finished`, hence the
+          // no-op rejection handler.
           animation.finished.then(
             () => {
               if (running.get(key) === animation) running.delete(key);
@@ -136,6 +140,19 @@ export function useGridGlide(gridRef: RefObject<HTMLElement>): void {
       prevTop = nextTop;
     });
     resizes.observe(grid);
+
+    // Whatever sits above the grid (the page header) can change height with
+    // neither the grid resizing nor its cards changing — a reload that adds
+    // "· N need you" to the subline can re-wrap it. Observing it makes that
+    // frame an observed one, so the grid's move is caught as a jump then
+    // rather than surfacing as a stale `prevTop` on the next resize.
+    for (
+      let sibling = grid.previousElementSibling;
+      sibling;
+      sibling = sibling.previousElementSibling
+    ) {
+      resizes.observe(sibling);
+    }
 
     return () => {
       resizes.disconnect();

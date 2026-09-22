@@ -7,17 +7,17 @@
  * - Between column-count changes they DRIFT: every track narrows or widens a
  *   little each frame and the cards follow. That is the layout animating, it
  *   is already smooth, and it must be left alone.
- * - When the column count changes, or the grid itself moves — e.g. the header
- *   above it re-wraps as the column narrows and pushes the whole grid down a
- *   row — cards JUMP: a card changes row, column, or just vertical position
- *   between one frame and the next. That movement has no frames of its own,
- *   so it is the only one that gets a glide.
+ * - When the column count changes, or the grid itself makes a vertical move —
+ *   e.g. the header above it re-wraps as the column narrows and pushes the
+ *   whole grid down a row — cards JUMP: a card changes row, column, or just
+ *   vertical position between one frame and the next. That movement has no
+ *   frames of its own, so it is the only one that gets a glide.
  *
- * The trigger is discrete (a column-count change or a grid move), not a
- * distance threshold. A card that stays in column 1 across a 4→3 change still
- * moves by the change in track width (≈80px at 1440px), and one fast frame of
- * drift can move a far-right card nearly as far. No single distance separates
- * the two; the discrete trigger does.
+ * The trigger is discrete (a column-count change or a vertical move of the
+ * grid), not a distance threshold. A card that stays in column 1 across a
+ * 4→3 change still moves by the change in track width (≈80px at 1440px), and
+ * one fast frame of drift can move a far-right card nearly as far. No single
+ * distance separates the two; the discrete trigger does.
  */
 
 export interface GlidePoint {
@@ -47,12 +47,13 @@ export function columnCount(template: string): number {
  * Which cards glide, and from how far.
  *
  * `prev` and `next` are LAYOUT positions in the grid's offsetParent's
- * coordinates — the grid's own offset plus the card's offset within the grid
- * (offsetLeft/offsetTop), which ignore transforms, so an unfinished glide
- * never pollutes them. `inFlight` is the translate a card is showing right
- * now from a glide that has not finished; adding it means a card caught by a
- * second jump starts from where it visibly IS rather than snapping to where
- * its layout was.
+ * coordinates. y includes the grid's own vertical offset on top of the
+ * card's offsetTop within the grid, so a vertical move of the whole grid
+ * registers; x is just the card's offsetLeft within the grid. Both ignore
+ * transforms, so an unfinished glide never pollutes them. `inFlight` is the
+ * translate a card is showing right now from a glide that has not finished;
+ * adding it means a card caught by a second jump starts from where it
+ * visibly IS rather than snapping to where its layout was.
  *
  * Only cards whose LAYOUT moved glide. A mid-glide card whose cell did not
  * change keeps its current animation rather than restarting it.
