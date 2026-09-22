@@ -35,11 +35,16 @@ Settled with the user on 2026-09-22. Do not relitigate.
 
 The handoff writes the side widths as `clamp(…, 28%, …)`. They are expressed in `vw` here so the **inner** element of each side column can be given the same fixed open width. The wrapper animates `width` with `overflow: hidden` while the inner content keeps its open width, so nothing inside reflows during the slide. `100vw − 32px` is the body row's width: the shell's 12px padding on each side plus the body's 4px on each side. The page itself never scrolls at this size (`h-screen`), so `100vw` carries no page scrollbar.
 
-The centre column is two elements: a `relative` wrapper that does not scroll, and inside it the scroll container holding the header, the grid and a 64px bottom spacer. Trash is absolutely positioned on the wrapper, so it stays pinned to the bottom-right as the grid scrolls underneath. Its right edge lines up with the cards' right edge, clear of the scroll container's scrollbar. The 64px spacer lets the last row of cards scroll clear of it.
+The centre column is a flex column that scrolls. Its last child is a `sticky bottom-0` row with `margin-top: auto` that holds Trash, right-aligned:
+
+- **Short grid:** the auto margin pushes the row to the column's bottom edge.
+- **Long grid:** the row sticks to the bottom of the scroll area while the cards scroll under it.
+
+The row sits inside the scroll container's content box, so Trash lines up with the cards' right edge and can never land on the scrollbar. An absolutely-positioned button on a non-scrolling wrapper can't guarantee either. The row itself takes space at the end of the content, so the last row of cards always scrolls clear of it, and no spacer is needed.
 
 ### Below lg: stacked, with the panel as an overlay
 
-The grid comes first and the rail stacks below it. This is today's behaviour, including the load-bearing `flex-none` fix documented in `app/page.tsx`. The Packages panel becomes a `fixed` overlay inside the shell's 12px gutter: full height, `width: min(372px, 100vw − 24px)`. It slides in from the right with `transform` and has no scrim. Stacked below a long grid, it would open where nobody could see it. Trash here is `fixed bottom-3 right-3 z-30`, because below lg the column is not a fixed-height scroller and an absolute anchor would land at the bottom of the whole page. The overlay sits above Trash (z-40).
+The grid comes first and the rail stacks below it. This is today's behaviour, including the load-bearing `flex-none` fix documented in `app/page.tsx`. The Packages panel becomes a `fixed` overlay inside the shell's 12px gutter: full height, `width: min(372px, 100vw − 24px)`. It slides in from the right with `transform` and has no scrim. Stacked below a long grid, it would open where nobody could see it. Trash here is `fixed bottom-3 right-3 z-30`, because below lg the column is not a fixed-height scroller, so a sticky row would scroll away with the grid once the page scrolls past it into the rail. The overlay sits above Trash (z-40).
 
 ### Welcome screen
 
@@ -53,6 +58,7 @@ No grid, so Trash is `fixed bottom-3 right-3 z-30`. The existing guard is unchan
 | `components/home/PackagesPanel.tsx` | **New.** The docked/overlay panel and its package items. Replaces `PackageListRow`. |
 | `components/home/RoleChip.tsx` | **New.** Moved out of `ProjectListRow` unchanged, and shared by the card. |
 | `components/home/useGridGlide.ts` | **New.** The reflow motion hook (see Motion). |
+| `components/home/ProjectGrid.tsx` | **New.** Owns the grid element and calls the hook. The hook has to live in the component that mounts the grid: the page renders a skeleton first, so an effect on the page would run before the grid exists and never run again. |
 | `lib/gridGlide.ts` | **New.** Pure jump-detection maths for the hook, unit-tested. |
 | `lib/home.ts` | Gains the label helpers the components currently inline (package meta line, count label, "N packages", "N open comments"), so they are tested once. |
 | `components/home/ActivityRail.tsx` | Left side; the vw-based widths above; inner content holds its open width. |
@@ -133,17 +139,17 @@ All timings come from the handoff's table:
 **Grid glide (`useGridGlide`).** A `ResizeObserver` on the grid fires on every frame of any width change: the Packages panel opening or closing, the rail toggling, a window resize. On each callback:
 
 1. Read every `[data-glide]` card's **layout** position from `offsetLeft`/`offsetTop`. These ignore transforms, so an in-flight glide doesn't pollute the measurement.
-2. Compare each card with its previous layout position. Small per-frame drift is ordinary layout following the shrinking column and is left alone. A **jump** is a move of more than half the card's width horizontally or half its height vertically, which only happens when the column count changes. Each jumping card gets a WAAPI `translate(dx, dy) → none`, 520ms `cubic-bezier(.32,.72,0,1)`.
+2. Read the grid's column count from its resolved `grid-template-columns`. If the count is unchanged, the cards only **drifted**: every track narrowed a little and the cards followed. That is ordinary layout, already smooth, and is left alone. If the count changed, the cards **jumped** to new rows or columns, and every card whose layout position moved by 1px or more gets a WAAPI `translate(dx, dy) → none`, 520ms `cubic-bezier(.32,.72,0,1)`. The trigger is the column count, not a distance threshold. A card that stays in column 1 across a 4→3 change still moves by the change in track width (≈80px at 1440px), and one fast frame of drift can move a far-right card nearly as far, so no single distance separates the two cases.
 3. If a card is already gliding when it jumps again, it starts from where it is **visually**: its old layout position plus its current in-flight translate, read from the computed transform. Then it cancels the old animation. Otherwise it snaps.
 4. Store the new layout positions.
 
 Cards with no previous position (first render, or appearing after a filter change) don't animate. Under `prefers-reduced-motion: reduce` the hook does nothing, and the side columns and the Packages overlay carry `.stiko-motion`. The ResizeObserver callback runs after layout and before paint, so a glide starts on the same frame as the jump, with no one-frame flash at the new position.
 
-`lib/gridGlide.ts` holds step 2's decision as a pure function. It takes previous and next positions and sizes and returns the `{ key, dx, dy }` list to animate. It is tested without a DOM.
+`lib/gridGlide.ts` holds step 2's decision and step 3's arithmetic as pure functions, `columnCount` and `planGlides`. They take previous and next layout positions, whether the column count changed, and each in-flight card's current translate, and return the `{ key, dx, dy }` list to animate. They are tested without a DOM. The cards change without the grid resizing after a filter change or a reload. For those, a `MutationObserver` on the grid's children retakes the baseline as a microtask straight after React's commit, before the next layout, so no resize frame ever compares against positions from before the swap.
 
 ## Testing
 
-- **Unit (`node --test`).** `lib/gridGlide.ts` cases: drift below threshold ignored, a column-count jump detected, row changes, new and removed keys. Also the new `lib/home.ts` label helpers. `lib/` modules keep relative `.ts` imports and no `@/` alias (the `node --test` import rules).
+- **Unit (`node --test`).** `lib/gridGlide.ts` cases: movement ignored when the column count is unchanged, moved cards glide when it changes, unmoved cards don't, new and removed keys, and in-flight offsets. Also the new `lib/home.ts` label helpers. `lib/` modules keep relative `.ts` imports and no `@/` alias (the `node --test` import rules).
 - **Static.** `tsc --noEmit`, lint, the full suite, and the production build with dummy env vars for the six required settings.
 - **Browser (required, not optional).** The signed-in local account has zero projects, so stub `/api/home` in `initScript` with 5+ projects mixing owned and invited, a project with no packages, and a package with no version. Check:
   - select and deselect, including background click and the filter change
