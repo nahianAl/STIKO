@@ -123,3 +123,14 @@ a:hover {
     transform: none !important;
   }
 }
+
+/* Dashboard side columns (app/page.tsx). Written in vw rather than % so the
+   INNER element of each column can be given the same open width: the wrapper
+   animates `width` under overflow:hidden while its content keeps its size, so
+   nothing inside reflows on any frame of the slide. 100vw - 32px is the body
+   row's width — Shell's 12px padding plus the row's 4px, on each side. The
+   page never scrolls at lg (h-screen), so 100vw carries no page scrollbar. */
+:root {
+  --stiko-rail-w: clamp(264px, calc((100vw - 32px) * 0.28), 356px);
+  --stiko-packages-w: clamp(280px, calc((100vw - 32px) * 0.3), 372px);
+}
