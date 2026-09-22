@@ -145,6 +145,8 @@ All timings come from the handoff's table:
 
 Cards with no previous position (first render, or appearing after a filter change) don't animate. Under `prefers-reduced-motion: reduce` the hook does nothing, and the side columns and the Packages overlay carry `.stiko-motion`. The ResizeObserver callback runs after layout and before paint, so a glide starts on the same frame as the jump, with no one-frame flash at the new position.
 
+**Second trigger, found in the browser pass:** the grid itself moving. At 1440px, opening the Packages panel narrows the column until the header's filter buttons re-wrap onto a second row, and the whole grid drops 46px in one frame. So card positions include the grid's own `offsetTop`, and a vertical move of the grid of 1px or more counts as a jump alongside a column-count change. This needs the grid's offsetParent to be its scroll container or inside it, so the centre column is `position: relative`. With a scrollable offsetParent, `offsetTop` doesn't change as the column scrolls. The check is vertical only: the rail's slide moves the column's left edge continuously, which is drift.
+
 `lib/gridGlide.ts` holds step 2's decision and step 3's arithmetic as pure functions, `columnCount` and `planGlides`. They take previous and next layout positions, whether the column count changed, and each in-flight card's current translate, and return the `{ key, dx, dy }` list to animate. They are tested without a DOM. The cards change without the grid resizing after a filter change or a reload. For those, a `MutationObserver` on the grid's children retakes the baseline as a microtask straight after React's commit, before the next layout, so no resize frame ever compares against positions from before the swap.
 
 ## Testing
