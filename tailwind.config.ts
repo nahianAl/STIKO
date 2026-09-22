@@ -54,6 +54,12 @@ const config: Config = {
 
           // Matrix "no access" em-dash
           "no-access": "#D8DCE8",
+
+          // Project cards (dashboard). The rest line is the hot line mixed
+          // halfway to the field, so a grid of cards reads as one set.
+          "card-line": "#AEB9F7",
+          "card-line-hot": "#7480F2",
+          "manage-line": "#E6E4FA",
         },
 
         // The five sticky notes. Each pastel pairs with a dark text colour and
@@ -102,6 +108,15 @@ const config: Config = {
         "stiko-note": "0 8px 20px -6px rgba(28,32,48,0.22)",
         "stiko-tab": "0 1px 3px rgba(28,32,48,0.08)",
         "stiko-focus": "0 0 0 3px rgba(91,96,255,0.12)",
+        // Project cards: ambient on all four sides (a zero-offset blur plus a
+        // small downward layer), deepening from rest to hover to selected.
+        // Distinct from stiko-card above, which other screens still use.
+        "stiko-card-rest":
+          "0 0 12px rgba(28,32,48,0.045), 0 3px 10px rgba(28,32,48,0.045)",
+        "stiko-card-hover":
+          "0 0 16px rgba(28,32,48,0.06), 0 5px 16px rgba(28,32,48,0.065)",
+        "stiko-card-selected":
+          "0 0 18px rgba(28,32,48,0.07), 0 6px 20px rgba(28,32,48,0.08)",
       },
       backgroundImage: {
         "stiko-primary": "linear-gradient(135deg, #8094F5, #5B60FF)",
