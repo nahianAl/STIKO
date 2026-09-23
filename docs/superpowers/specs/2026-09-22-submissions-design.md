@@ -119,7 +119,12 @@ The versions cursor in `app/api/portals/[id]/activity/route.ts` is currently `GR
   - **Enter** or **blur** saves. **Escape** cancels and restores the title.
   - Saving an unchanged value sends nothing.
   - Clearing the field and saving stores NULL, so the title goes back to "Submission N". That is the defaults-are-editable rule: the default can be erased, and whatever the user types replaces it.
-- **Escape must not close the drawer while editing.** `Drawer` and the page both listen for Escape on `document`. The page passes `closeOnEscape={!confirmOpen && !editingName}`, so the editing state has to be lifted into the page or reported to it through a callback. This is the same trap the delete confirm hit (see `closeOnEscape` in `Drawer.tsx`).
+- **Escape must not close the drawer while editing.** The input's Escape handler calls `stopPropagation()`, so the drawer's `document` listener never sees the key. Gating `closeOnEscape` on an editing flag, the way the delete confirm does, would **not** work here:
+  - The input's React handler runs before the drawer's `document` listener.
+  - React flushes the state update, and the effect that re-registers that listener, in between.
+  - So the drawer is listening with `closeOnEscape` back on by the time the event reaches it.
+
+  The plan (Task 3) has the details. `closeOnEscape={!confirmOpen}` stays as it is.
 - **Save:**
   - Nothing optimistic. The input stays and shows a busy state until the PATCH returns.
   - On success, the page's `versions` state is updated with the returned name, so the rail and the drawer change together.
