@@ -35,6 +35,12 @@ export interface Version {
   /** Display name of whoever created the version. Null when that user row was
    *  deleted — the created_by FK is ON DELETE SET NULL. */
   createdByName: string | null;
+  /** What someone named it. Null means unnamed: render submissionTitle(),
+   *  which falls back to "Submission N". Never compare this to a default. */
+  name: string | null;
+  /** Server's verdict on whether this caller may rename it. Never re-derived
+   *  client-side. */
+  canRename?: boolean;
   /** Server's verdict on whether this caller may delete it. Never re-derived
    *  client-side. */
   canDelete?: boolean;

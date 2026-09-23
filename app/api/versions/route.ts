@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { canDeleteContent, canSeeVersion, getPackageAccess } from '@/lib/access';
+import { canDeleteContent, canRenameVersion, canSeeVersion, getPackageAccess } from '@/lib/access';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
         SELECT v.id, v.portal_id AS "portalId",
                v.version_number AS "versionNumber",
                v.changelog, v.published_at AS "publishedAt",
+               v.name,
                v.created_at AS "createdAt", u.name AS "createdByName"
         FROM versions v
         LEFT JOIN users u ON u.id = v.created_by
@@ -45,6 +46,7 @@ export async function GET(request: NextRequest) {
         SELECT v.id, v.portal_id AS "portalId",
                v.version_number AS "versionNumber",
                v.changelog, v.published_at AS "publishedAt",
+               v.name,
                v.created_at AS "createdAt", u.name AS "createdByName"
         FROM versions v
         LEFT JOIN users u ON u.id = v.created_by
@@ -93,6 +95,7 @@ export async function GET(request: NextRequest) {
         isOwnUpload: false,
         isPublished: row.publishedAt !== null,
       }),
+      canRename: canRenameVersion(access.role),
       fileCount: countsById.get(row.id as string)?.fileCount ?? 0,
       commentCount: countsById.get(row.id as string)?.commentCount ?? 0,
     }))
