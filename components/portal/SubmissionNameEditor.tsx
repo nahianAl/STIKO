@@ -147,11 +147,15 @@ export default function SubmissionNameEditor({
             // (see next/dist/client/app-index.js), the same node the
             // Drawer's keydown listener uses, and React's was registered
             // first, at hydration — so this event reaches the Drawer's
-            // listener too, not just window. stopPropagation only stops
-            // propagation to nodes further up (it still blocks the window
-            // listener that would otherwise re-arm a measure gesture once
-            // this input unmounts); stopImmediatePropagation is what stops
-            // the Drawer's same-node listener from closing the drawer.
+            // listener too, not just window. nativeEvent.stopImmediatePropagation()
+            // also sets the native stop-propagation flag, so on its own it
+            // already stops the Drawer's same-node listener and everything
+            // above `document`, including `window` — a separate
+            // stopPropagation call adds nothing there. e.stopPropagation() is
+            // kept anyway, because it is React's own synthetic-event call:
+            // it is what stops this Escape from also reaching onKeyDown
+            // handlers on any React ancestor of this input, which
+            // stopImmediatePropagation on the native event does not reach.
             e.preventDefault();
             e.stopPropagation();
             e.nativeEvent.stopImmediatePropagation();

@@ -14,8 +14,8 @@ test('an unnamed submission is called by its number', () => {
 });
 
 test('a missing name reads the same as a null one', () => {
-  // The share and access pickers get versions from routes that do not select
-  // the name at all.
+  // Not every payload carries a name — the /api/home package cards and the
+  // invite page don't.
   assert.equal(submissionTitle({ versionNumber: 2 }), 'Submission 2');
 });
 

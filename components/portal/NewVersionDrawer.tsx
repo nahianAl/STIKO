@@ -232,7 +232,7 @@ export function NewVersionDrawer({
             onFilesChange={setFiles}
             compact
             title="Drop replacement files"
-            hint="Matching filenames are versioned, new ones are added · PDF, DWG, DXF, GLB, STEP, OBJ, STL, images, video"
+            hint="Files with a matching name replace the earlier copy; new ones are added · PDF, DWG, DXF, GLB, STEP, OBJ, STL, images, video"
           />
         )}
 

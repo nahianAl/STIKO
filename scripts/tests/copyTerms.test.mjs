@@ -10,9 +10,10 @@ import ts from 'typescript';
  * is the same rule as portal -> package (see the 2026-09-22 submissions spec).
  *
  * Walks every string literal, template-literal chunk and JSX text under app/,
- * components/ and lib/, and fails on any that still says "version", or that
- * renders a V-badge (`V${n}`, or V{n} in JSX), outside the short list below of
- * strings that are not about submissions at all.
+ * components/ and lib/, and fails on any that still says "version", "versions",
+ * "versioned" or "versioning", or that renders a V- or v-badge (`V${n}`, or
+ * V{n} in JSX), outside the short list below of strings that are not about
+ * submissions at all.
  *
  * Skipped by construction: the text of sql`` templates (table and column
  * names; templates nested in their ${} are still checked), import specifiers,
@@ -20,9 +21,9 @@ import ts from 'typescript';
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const WORD = /\bversions?\b/i;
-// "V" right before an interpolation: `V${n}` in a template, V{n} in JSX.
-const BADGE_TAIL = /(^|[^A-Za-z])V\s*$/;
+const WORD = /\bversion(s|ed|ing)?\b/i;
+// A V- or v-badge right before an interpolation: `V${n}` in a template, V{n} in JSX.
+const BADGE_TAIL = /(^|[^A-Za-z])[Vv]\s*$/;
 
 /** Strings that say "version" and mean something other than a submission. */
 const ALLOWED = [

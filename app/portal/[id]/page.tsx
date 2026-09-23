@@ -1281,9 +1281,9 @@ export default function PortalPage() {
       return fetchParticipants();
     },
     // Unlike the other three loaders, this one has no preserveIfUnchanged — deliberately. The
-    // feed only calls this when the versions cursor itself moved (a create, delete or publish),
-    // never on a poll tick with nothing new, so there is no steady-state churn to guard against
-    // and every call here is a genuine reason to refresh each version's summary.
+    // feed only calls this when the versions cursor itself moved (a create, delete, publish or
+    // rename), never on a poll tick with nothing new, so there is no steady-state churn to guard
+    // against and every call here is a genuine reason to refresh each version's summary.
     versions: () => loadVersions({ background: true }),
     files: () => {
       if (selectedVersionId) fetchFiles(selectedVersionId, { background: true });

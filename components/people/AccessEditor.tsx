@@ -6,7 +6,7 @@ import Button from '@/components/ui/Button';
 import { Avatar, SectionLabel, SkeletonBar, Toggle } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { roleLabel } from '@/lib/roles';
-import { submissionBadge } from '@/lib/submissionName';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 
@@ -39,6 +39,7 @@ interface PendingRow extends AccessFields {
 interface VersionOption {
   id: string;
   versionNumber: number;
+  name?: string | null;
 }
 
 async function postJSON(
@@ -623,6 +624,7 @@ export default function AccessEditor({
                         <button
                           key={v.id}
                           type="button"
+                          title={submissionTitle(v)}
                           disabled={busy}
                           onClick={() =>
                             changeScopeGuarded(

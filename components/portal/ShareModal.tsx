@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/ui/Modal';
-import { submissionBadge } from '@/lib/submissionName';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 const ROLES: Role[] = ['viewer', 'commenter', 'uploader'];
@@ -34,7 +34,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
   // without ever showing a scope control in that section.
   const [linkAllVersions, setLinkAllVersions] = useState(true);
   const [linkScopeIds, setLinkScopeIds] = useState<string[]>([]);
-  const [versions, setVersions] = useState<{ id: string; versionNumber: number }[]>([]);
+  const [versions, setVersions] = useState<{ id: string; versionNumber: number; name?: string | null }[]>([]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -202,6 +202,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
                       <button
                         key={v.id}
                         type="button"
+                        title={submissionTitle(v)}
                         onClick={() =>
                           setScopeIds((prev) =>
                             prev.includes(v.id) ? prev.filter((x) => x !== v.id) : [...prev, v.id]
@@ -278,6 +279,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
                       <button
                         key={v.id}
                         type="button"
+                        title={submissionTitle(v)}
                         onClick={() =>
                           setLinkScopeIds((prev) =>
                             prev.includes(v.id) ? prev.filter((x) => x !== v.id) : [...prev, v.id]

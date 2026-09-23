@@ -15,9 +15,9 @@ export const SUBMISSION_NAME_MAX = 80;
 /**
  * The name someone gave it, or "Submission N" when nobody has.
  *
- * `name` is optional because not every payload carries it (the share and
- * access pickers read versions from routes that never select it), and a
- * missing name means the same as a null one.
+ * `name` is optional because not every payload carries it (the `/api/home`
+ * package cards and the invite page don't), and a missing name means the
+ * same as a null one.
  */
 export function submissionTitle(v: { name?: string | null; versionNumber: number }): string {
   const name = v.name?.trim();

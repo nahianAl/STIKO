@@ -6,7 +6,7 @@ import Button from '@/components/ui/Button';
 import { Field, Input, Note, Textarea } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import type { ProjectPackage } from '@/lib/projectOverview';
-import { submissionBadge } from '@/lib/submissionName';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 type PackageGrant = {
@@ -56,7 +56,7 @@ export function AddPeopleModal({
       : {}
   );
   const [versionsByPackage, setVersionsByPackage] = useState<
-    Record<string, { id: string; versionNumber: number }[]>
+    Record<string, { id: string; versionNumber: number; name?: string | null }[]>
   >({});
 
   useEffect(() => {
@@ -292,6 +292,7 @@ export function AddPeopleModal({
                               <button
                                 key={v.id}
                                 type="button"
+                                title={submissionTitle(v)}
                                 onClick={() =>
                                   setSelection((prev) => {
                                     const cur = prev[pkg.id];

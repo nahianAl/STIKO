@@ -228,7 +228,7 @@ export function openCommentsLabel(count: number): string {
 }
 
 /**
- * A package item's second line: `V4 · "Gutter detail added" · 2h ago`.
+ * A package item's second line: `S4 · "Gutter detail added" · 2h ago`.
  *
  * The changelog and age clauses drop out when absent. A package with no
  * version yet has nothing to describe, so it says what to do instead.

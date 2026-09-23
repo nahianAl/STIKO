@@ -14,7 +14,7 @@ export interface UploadItem {
   progress: number;
   bytes: number;
   state: UploadState;
-  /** 2e: a file that supersedes an existing one carries a REPLACES V4 chip. */
+  /** 2e: a file that supersedes an existing one carries a REPLACES S4 chip. */
   replacesVersion?: number | null;
 }
 
