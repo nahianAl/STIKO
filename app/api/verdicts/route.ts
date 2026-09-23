@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
   // about yet.
   if (!version.publishedAt) {
     return NextResponse.json(
-      { error: 'This version has not been published yet' },
+      { error: 'This submission has not been published yet' },
       { status: 409 }
     );
   }
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
         VALUES (
           ${uuidv4()}, ${u.user_id ?? u.owner_id}, 'changes_requested',
           ${version.portalId}, ${session.user.id},
-          ${`${session.user.name ?? 'Someone'} requested changes on V${version.versionNumber} of ${portalName[0]?.name ?? 'a package'}`},
+          ${`${session.user.name ?? 'Someone'} requested changes on Submission ${version.versionNumber} of ${portalName[0]?.name ?? 'a package'}`},
           ${`/portal/${version.portalId}`}
         )
       `;

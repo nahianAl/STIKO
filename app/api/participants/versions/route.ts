@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
   // resolve into a silent lockout.
   if (!allVersions && ids.length === 0) {
     return NextResponse.json(
-      { error: 'Choose at least one version, or allow all versions' },
+      { error: 'Choose at least one submission, or allow all submissions' },
       { status: 400 }
     );
   }
