@@ -45,7 +45,7 @@ function NewPackage() {
   const [projectId, setProjectId] = useState<string | null>(presetProjectId);
   const [emails, setEmails] = useState('');
   const [role, setRole] = useState<Role>('commenter');
-  const [changelog, setChangelog] = useState('First version');
+  const [changelog, setChangelog] = useState('First submission');
   const [phase, setPhase] = useState<'compose' | 'uploading'>('compose');
   const [error, setError] = useState<string | null>(null);
   // Held so a retry that succeeds can still publish the draft it belongs to.
@@ -138,7 +138,7 @@ function NewPackage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ portalId: pkg.id }),
       });
-      if (!versionRes.ok) throw new Error('Could not start the version');
+      if (!versionRes.ok) throw new Error('Could not start the submission');
       const version = await versionRes.json();
       setDraft({ portalId: pkg.id, versionId: version.id });
       draftRef.current = { portalId: pkg.id, versionId: version.id };
@@ -183,13 +183,13 @@ function NewPackage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         versionId,
-        changelog: changelog.trim() || 'First version',
+        changelog: changelog.trim() || 'First submission',
         notify: false, // nobody is on the package yet
       }),
     });
     if (!publishRes.ok) {
       const data = await publishRes.json().catch(() => ({}));
-      setError(data.error ?? 'Could not publish the version');
+      setError(data.error ?? 'Could not publish the submission');
       setPublishing(false);
       return;
     }
@@ -261,8 +261,8 @@ function NewPackage() {
               ))}
 
               <Note>
-                The version is published only when every file lands — a failure
-                here never leaves a half-empty V1 for your reviewers.
+                The submission is published only when every file lands — a failure
+                here never leaves a half-empty S1 for your reviewers.
               </Note>
 
               {/* Once every retry has landed, the draft still needs
@@ -381,11 +381,11 @@ function NewPackage() {
                 )}
               </div>
 
-              <Field label="What changed" hint="shown on the version">
+              <Field label="What changed" hint="shown on the submission">
                 <Input
                   value={changelog}
                   onChange={(e) => setChangelog(e.target.value)}
-                  placeholder="First version"
+                  placeholder="First submission"
                 />
               </Field>
             </div>

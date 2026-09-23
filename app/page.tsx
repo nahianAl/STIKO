@@ -379,7 +379,7 @@ export default function Home() {
                   one is pushed. */}
               {isGuestOnly && (
                 <p className="mt-[3px] text-[12.5px] text-stiko-muted">
-                  You&apos;ll get an email whenever a new version lands.
+                  You&apos;ll get an email whenever a new submission lands.
                 </p>
               )}
             </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/ui/Modal';
+import { submissionBadge } from '@/lib/submissionName';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 const ROLES: Role[] = ['viewer', 'commenter', 'uploader'];
@@ -182,7 +183,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
           {inviteScopable && versions.length > 0 && (
             <div className="mt-2">
               <span className="mb-[6px] block text-[12px] font-bold text-stiko-secondary">
-                Versions they can see
+                Submissions they can see
               </span>
               <label className="flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
                 <input
@@ -191,7 +192,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
                   onChange={(e) => setAllVersions(e.target.checked)}
                   className="h-[15px] w-[15px] accent-stiko-primary"
                 />
-                All versions, including future ones
+                All submissions, including future ones
               </label>
               {!allVersions && (
                 <div className="mt-1 flex flex-wrap gap-1.5">
@@ -212,7 +213,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
                             : 'bg-stiko-app text-stiko-secondary hover:text-stiko-ink'
                         }`}
                       >
-                        V{v.versionNumber}
+                        {submissionBadge(v.versionNumber)}
                       </button>
                     );
                   })}
@@ -258,7 +259,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
           {linkScopable && versions.length > 0 && (
             <div className="mt-2">
               <span className="mb-[6px] block text-[12px] font-bold text-stiko-secondary">
-                Versions they can see
+                Submissions they can see
               </span>
               <label className="flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
                 <input
@@ -267,7 +268,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
                   onChange={(e) => setLinkAllVersions(e.target.checked)}
                   className="h-[15px] w-[15px] accent-stiko-primary"
                 />
-                All versions, including future ones
+                All submissions, including future ones
               </label>
               {!linkAllVersions && (
                 <div className="mt-1 flex flex-wrap gap-1.5">
@@ -288,7 +289,7 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
                             : 'bg-stiko-app text-stiko-secondary hover:text-stiko-ink'
                         }`}
                       >
-                        V{v.versionNumber}
+                        {submissionBadge(v.versionNumber)}
                       </button>
                     );
                   })}

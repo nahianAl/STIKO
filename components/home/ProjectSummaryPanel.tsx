@@ -217,7 +217,7 @@ export default function ProjectSummaryPanel({
               <p className="text-[12.5px] leading-[1.55] text-stiko-secondary">
                 {data && !data.configured
                   ? 'Summaries aren’t configured for this deployment.'
-                  : 'No summary yet. Stiko can read this project’s comments and versions and write one.'}
+                  : 'No summary yet. Stiko can read this project’s comments and submissions and write one.'}
               </p>
               {(!data || data.configured) && (
                 <button
@@ -295,7 +295,7 @@ function Brief({
       <p className="mt-[14px] text-[10.5px] text-stiko-faint">
         Drafted from {brief.sections.length}{' '}
         {brief.sections.length === 1 ? 'package' : 'packages'} and {versions}{' '}
-        {versions === 1 ? 'version' : 'versions'}
+        {versions === 1 ? 'submission' : 'submissions'}
         {generatedAt ? ` · updated ${relativeTime(generatedAt)}` : ''}
       </p>
     </>

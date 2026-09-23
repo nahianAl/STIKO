@@ -22,6 +22,7 @@ import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import { messageForStatus } from '@/lib/submitErrors';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 import type { Comment, FileRecord, Version } from '@/lib/types';
 import PartsPanel from '@/components/viewers/PartsPanel';
 import { autoColors, BASE_GREY } from '@/lib/model/autoColor';
@@ -1781,11 +1782,11 @@ export default function PortalPage() {
 
     const res = await fetch(`/api/versions/${target.id}`, { method: 'DELETE' });
     if (!res.ok) {
-      toast('Could not delete this version');
+      toast('Could not delete this submission');
       return;
     }
 
-    toast(`Version ${target.versionNumber} deleted`);
+    toast(`${submissionTitle(target)} deleted`);
     // The drawer resolves its version from `versions`, so loadVersions() below
     // would close it anyway — but only after a round trip. Clearing it here
     // means the drawer does not linger over the confirm's dismissal.
@@ -2660,14 +2661,14 @@ export default function PortalPage() {
           isOpen
           onClose={() => setVersionToDelete(null)}
           onConfirm={confirmDeleteVersion}
-          title={`Delete version ${versionToDelete.versionNumber}?`}
-          name={`V${versionToDelete.versionNumber}`}
-          consequence="This cannot be undone. Everyone loses this version and every comment on it, including people mid-review."
+          title={`Delete "${submissionTitle(versionToDelete)}"?`}
+          name={submissionBadge(versionToDelete.versionNumber)}
+          consequence="This cannot be undone. Everyone loses this submission and every comment on it, including people mid-review."
           inventory={[
             { label: 'Files', value: versionToDelete.fileCount ?? 0 },
             { label: 'Comments', value: versionToDelete.commentCount ?? 0, urgent: (versionToDelete.commentCount ?? 0) > 0 },
           ]}
-          confirmLabel="Delete version"
+          confirmLabel="Delete submission"
         />
       )}
     </div>

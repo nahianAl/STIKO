@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { useUpload } from '@/lib/useUpload';
+import { submissionBadge } from '@/lib/submissionName';
 
 /**
  * 2e — the new-version drawer.
@@ -127,7 +128,7 @@ export function NewVersionDrawer({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ portalId }),
         });
-        if (!res.ok) throw new Error('Could not start the version');
+        if (!res.ok) throw new Error('Could not start the submission');
         versionId = (await res.json()).id as string;
         setDraftVersionId(versionId);
       }
@@ -170,12 +171,12 @@ export function NewVersionDrawer({
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setError(data.error ?? 'Could not publish the version');
+      setError(data.error ?? 'Could not publish the submission');
       setBusy(false);
       return;
     }
 
-    toast(`Version ${nextVersionNumber} published`);
+    toast(`Submission ${nextVersionNumber} published`);
     setBusy(false);
     reset();
     onPublished();
@@ -186,7 +187,7 @@ export function NewVersionDrawer({
     <Drawer
       isOpen={isOpen}
       onClose={close}
-      title={`Submit version ${nextVersionNumber}`}
+      title={`Add submission ${nextVersionNumber}`}
       subtitle={packageName}
       footer={
         <>
@@ -198,7 +199,7 @@ export function NewVersionDrawer({
               ? 'Publishing…'
               : upload.anyFailed
                 ? 'Retry failed files'
-                : `Publish version ${nextVersionNumber}`}
+                : `Publish submission ${nextVersionNumber}`}
           </Button>
         </>
       }
@@ -259,7 +260,7 @@ export function NewVersionDrawer({
           />
         </Field>
         <p className="-mt-3 text-[11.5px] text-stiko-faint">
-          Shown on the version and in the notification your reviewers receive.
+          Shown on the submission and in the notification your reviewers receive.
         </p>
 
         {participants.length > 0 && (
@@ -292,8 +293,11 @@ export function NewVersionDrawer({
 
         {openComments > 0 && (
           <Note>
-            {openComments} open comment{openComments === 1 ? '' : 's'} on V
-            {currentVersionNumber} will carry over and stay pinned to their
+            {openComments} open comment{openComments === 1 ? '' : 's'} on{' '}
+            {currentVersionNumber != null
+              ? submissionBadge(currentVersionNumber)
+              : 'the current submission'}{' '}
+            will carry over and stay pinned to their
             positions.
           </Note>
         )}
