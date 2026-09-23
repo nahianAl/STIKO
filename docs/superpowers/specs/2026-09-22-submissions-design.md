@@ -119,12 +119,11 @@ The versions cursor in `app/api/portals/[id]/activity/route.ts` is currently `GR
   - **Enter** or **blur** saves. **Escape** cancels and restores the title.
   - Saving an unchanged value sends nothing.
   - Clearing the field and saving stores NULL, so the title goes back to "Submission N". That is the defaults-are-editable rule: the default can be erased, and whatever the user types replaces it.
-- **Escape must not close the drawer while editing.** The input's Escape handler calls `stopPropagation()`, so the drawer's `document` listener never sees the key. Gating `closeOnEscape` on an editing flag, the way the delete confirm does, would **not** work here:
-  - The input's React handler runs before the drawer's `document` listener.
-  - React flushes the state update, and the effect that re-registers that listener, in between.
-  - So the drawer is listening with `closeOnEscape` back on by the time the event reaches it.
-
-  The plan (Task 3) has the details. `closeOnEscape={!confirmOpen}` stays as it is.
+- **Escape must not close the drawer while editing.** The input's Escape handler calls `e.stopPropagation()` **and** `e.nativeEvent.stopImmediatePropagation()`. `closeOnEscape={!confirmOpen}` stays as it is.
+  - **Why both.** Next 14's App Router hydrates React onto `document` itself (`next/dist/client/app-index.js`, `const appElement = document`). That puts React's key listener on the same node as the drawer's, and React's is registered first, at hydration.
+  - `stopPropagation` cannot stop a listener on the same node; `stopImmediatePropagation` stops the drawer's.
+  - `stopPropagation` is still needed, because it stops `window` listeners such as the page's measure-tool Escape.
+  - Corrected 2026-09-23 during the Task 3 review: the first version of this spec assumed a React root below `document`, and its mechanism would have let the drawer close.
 - **Save:**
   - Nothing optimistic. The input stays and shows a busy state until the PATCH returns.
   - On success, the page's `versions` state is updated with the returned name, so the rail and the drawer change together.
