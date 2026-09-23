@@ -90,6 +90,34 @@ export function canDeleteContent(ctx: DeleteContext): boolean {
   }
 }
 
+/**
+ * Who may rename a submission.
+ *
+ * Not canDeleteContent's rule. A rename destroys nothing and can be undone, so
+ * there is no reason to cut uploaders off at publication. It matches who may
+ * transform a 3D object: the other change that alters what everyone sees
+ * without removing anything.
+ */
+export function canRenameVersion(role: EffectiveRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'coordinator':
+    case 'uploader':
+      return true;
+    case 'commenter':
+    case 'viewer':
+      return false;
+    default: {
+      // Same two guarantees as capabilitiesFor: a role added to EffectiveRole
+      // without a case here fails to typecheck, and one that reaches this
+      // through an unchecked cast is denied rather than falling through.
+      const unhandled: never = role;
+      void unhandled;
+      return false;
+    }
+  }
+}
+
 export interface DownloadContext {
   role: EffectiveRole;
   /** The caller uploaded this file. */

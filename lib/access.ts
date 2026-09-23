@@ -1,7 +1,7 @@
 import { sql } from '@/lib/db';
-import { capabilitiesFor, canDeleteContent, canDownloadFile, canSeeVersion, type Capabilities, type DeleteContext, type DownloadContext, type EffectiveRole, type PackageRole, type ProjectRole, type VersionScope } from '@/lib/capabilities';
+import { capabilitiesFor, canDeleteContent, canDownloadFile, canRenameVersion, canSeeVersion, type Capabilities, type DeleteContext, type DownloadContext, type EffectiveRole, type PackageRole, type ProjectRole, type VersionScope } from '@/lib/capabilities';
 
-export { capabilitiesFor, canDeleteContent, canDownloadFile, canSeeVersion };
+export { capabilitiesFor, canDeleteContent, canDownloadFile, canRenameVersion, canSeeVersion };
 export type { Capabilities, DeleteContext, DownloadContext, EffectiveRole, PackageRole, ProjectRole, VersionScope };
 
 /**

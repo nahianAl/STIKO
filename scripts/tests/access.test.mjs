@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capabilitiesFor, canDeleteContent, canDownloadFile, canSeeVersion } from '../../lib/capabilities.ts';
+import { capabilitiesFor, canDeleteContent, canDownloadFile, canRenameVersion, canSeeVersion } from '../../lib/capabilities.ts';
 
 // Who may reposition an object everyone else reviews. Kept explicit rather than
 // derived from canUpload: "may add a file" and "may change how everyone sees an
@@ -205,4 +205,19 @@ test('an empty list sees nothing', () => {
   // Reachable: deleting a version cascades its scope rows away, so someone
   // scoped to one deleted version ends up here. Seeing nothing is correct.
   assert.equal(canSeeVersion([], 'v1'), false);
+});
+
+// --- Renaming a submission --------------------------------------------------
+
+test('owner, coordinator and uploader can rename a submission; nobody else can', () => {
+  // Deliberately not canDeleteContent's rule. A rename destroys nothing and can
+  // be undone, so uploaders keep it after publication.
+  const allowed = Object.keys(EXPECTED).filter((r) => canRenameVersion(r));
+  assert.deepEqual(allowed.sort(), ['coordinator', 'owner', 'uploader']);
+});
+
+test('an unrecognised role cannot rename', () => {
+  // Reaches the function through an unchecked cast from a DB CHECK constraint
+  // that gained a role before the union did.
+  assert.equal(canRenameVersion('admin'), false);
 });
