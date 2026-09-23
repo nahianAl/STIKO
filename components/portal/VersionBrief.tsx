@@ -158,7 +158,7 @@ export default function VersionBrief({
         </h3>
         <p className="mt-2 text-[12px] leading-[1.5] text-stiko-muted">
           {data.configured
-            ? `No brief yet. Summarise the ${f.commentCount} comments on this version into themes.`
+            ? `No brief yet. Summarise the ${f.commentCount} comments on this submission into themes.`
             : 'Summarising is not configured for this deployment.'}
         </p>
         {data.configured && (

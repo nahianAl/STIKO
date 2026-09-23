@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import { Avatar, SectionLabel, SkeletonBar, Toggle } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { roleLabel } from '@/lib/roles';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 
@@ -14,7 +15,7 @@ type Role = 'viewer' | 'commenter' | 'uploader';
 const ROLE_HELP: Record<Role, string> = {
   viewer: 'Viewers can open every file and read every comment.',
   commenter: 'Commenters can do everything a viewer can, and leave comments.',
-  uploader: 'Uploaders can do everything a commenter can, and publish versions.',
+  uploader: 'Uploaders can do everything a commenter can, and publish submissions.',
 };
 
 interface AccessFields {
@@ -38,6 +39,7 @@ interface PendingRow extends AccessFields {
 interface VersionOption {
   id: string;
   versionNumber: number;
+  name?: string | null;
 }
 
 async function postJSON(
@@ -339,12 +341,12 @@ export default function AccessEditor({
     if (myGen !== gen.current) return;
     setBusy(false);
     if (!ok) {
-      toast('Could not change which versions they can see');
+      toast('Could not change which submissions they can see');
       return;
     }
     setAllVersions(nextAllVersions);
     setVersionIds(nextVersionIds);
-    toast('Versions updated');
+    toast('Submissions updated');
     onChanged();
   };
 
@@ -362,7 +364,7 @@ export default function AccessEditor({
       // chip lit, no state changed, and the "pick at least one" hint unable
       // to render (it only shows once versionIds is already empty) — the one
       // interaction the guard protects would look like nothing happened.
-      toast('Keep at least one version selected, or turn "All versions" back on.');
+      toast('Keep at least one submission selected, or turn "All submissions" back on.');
       return;
     }
     changeScope(nextAllVersions, nextVersionIds);
@@ -414,7 +416,7 @@ export default function AccessEditor({
     // true instead — that would silently widen a grant from a button whose
     // label promises neither.
     if (!allVersions && versionIds.length === 0) {
-      toast('Keep at least one version selected, or turn "All versions" back on.');
+      toast('Keep at least one submission selected, or turn "All submissions" back on.');
       return;
     }
     // Same pattern as changeRole — but here it also guards the load() call
@@ -568,7 +570,7 @@ export default function AccessEditor({
                 actually narrowed to one version. */}
             {canManage && role !== 'uploader' && (
               <div>
-                <SectionLabel>Versions they can see</SectionLabel>
+                <SectionLabel>Submissions they can see</SectionLabel>
                 <label className="mt-2 flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
                   <input
                     type="checkbox"
@@ -594,8 +596,8 @@ export default function AccessEditor({
                         // it checked and say why instead.
                         toast(
                           versionsLoadFailed
-                            ? 'Could not load versions — close and reopen this drawer to retry.'
-                            : 'This package has no published versions to narrow to yet.'
+                            ? 'Could not load submissions — close and reopen this drawer to retry.'
+                            : 'This package has no published submissions to narrow to yet.'
                         );
                         return;
                       }
@@ -612,7 +614,7 @@ export default function AccessEditor({
                     }}
                     className="h-[15px] w-[15px] accent-stiko-primary"
                   />
-                  All versions, including future ones
+                  All submissions, including future ones
                 </label>
                 {!allVersions && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -622,6 +624,7 @@ export default function AccessEditor({
                         <button
                           key={v.id}
                           type="button"
+                          title={submissionTitle(v)}
                           disabled={busy}
                           onClick={() =>
                             changeScopeGuarded(
@@ -637,22 +640,22 @@ export default function AccessEditor({
                               : 'bg-stiko-app text-stiko-secondary hover:text-stiko-ink'
                           }`}
                         >
-                          V{v.versionNumber}
+                          {submissionBadge(v.versionNumber)}
                         </button>
                       );
                     })}
                     {versions.length === 0 && (
                       <p className="text-[11.5px] text-stiko-faint">
                         {versionsLoadFailed
-                          ? 'Could not load versions — close and reopen this drawer to retry.'
-                          : 'No versions published yet.'}
+                          ? 'Could not load submissions — close and reopen this drawer to retry.'
+                          : 'No submissions published yet.'}
                       </p>
                     )}
                   </div>
                 )}
                 {!allVersions && versionIds.length === 0 && versions.length > 0 && (
                   <p className="mt-1.5 text-[11.5px] text-stiko-muted">
-                    Pick at least one version — nothing is sent until you do.
+                    Pick at least one submission — nothing is sent until you do.
                   </p>
                 )}
               </div>

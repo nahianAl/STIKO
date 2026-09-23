@@ -20,6 +20,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/design';
 import type { VersionStatus } from '@/lib/status';
+import { submissionBadge } from '@/lib/submissionName';
 
 interface ShareLink {
   token: string;
@@ -186,7 +187,7 @@ export default function PackageSettings() {
     >
       <SettingsCard
         heading="General"
-        description={`${data.package.name} · ${data.counts.versions} version${data.counts.versions === 1 ? '' : 's'} · ${data.counts.openComments} open comment${data.counts.openComments === 1 ? '' : 's'}`}
+        description={`${data.package.name} · ${data.counts.versions} submission${data.counts.versions === 1 ? '' : 's'} · ${data.counts.openComments} open comment${data.counts.openComments === 1 ? '' : 's'}`}
         actions={
           <>
             <Button variant="ghost" onClick={load}>
@@ -225,9 +226,9 @@ export default function PackageSettings() {
               Review status
             </div>
             <div className="mt-[2px] text-[12px] text-stiko-muted">
-              Set on the version, not here
+              Set on the submission, not here
               {data.latestVersionNumber != null
-                ? ` — V${data.latestVersionNumber} currently ${statusPhrase(data.status)}.`
+                ? ` — ${submissionBadge(data.latestVersionNumber)} currently ${statusPhrase(data.status)}.`
                 : '.'}
             </div>
           </div>
@@ -235,7 +236,7 @@ export default function PackageSettings() {
             <StatusChip status={data.status} />
             {data.latestVersionNumber != null && (
               <Link href={`/portal/${id}`} className="text-[12.5px] font-bold">
-                Open V{data.latestVersionNumber}
+                Open {submissionBadge(data.latestVersionNumber)}
               </Link>
             )}
           </div>
@@ -311,7 +312,7 @@ export default function PackageSettings() {
           rows={[
             {
               title: 'Delete package',
-              description: `All ${data.counts.versions} version${data.counts.versions === 1 ? '' : 's'}, ${data.counts.files} file${data.counts.files === 1 ? '' : 's'} and ${data.counts.comments} comment${data.counts.comments === 1 ? '' : 's'} go to the trash and can be restored for 28 days.`,
+              description: `All ${data.counts.versions} submission${data.counts.versions === 1 ? '' : 's'}, ${data.counts.files} file${data.counts.files === 1 ? '' : 's'} and ${data.counts.comments} comment${data.counts.comments === 1 ? '' : 's'} go to the trash and can be restored for 28 days.`,
               actionLabel: 'Delete',
               onAction: () => setConfirmDelete(true),
             },
@@ -327,7 +328,7 @@ export default function PackageSettings() {
         name={data.package.name}
         consequence="Everyone loses access immediately, including people mid-review. It goes to the trash and can be restored for 28 days — until then it still counts toward your storage."
         inventory={[
-          { label: 'Versions', value: data.counts.versions },
+          { label: 'Submissions', value: data.counts.versions },
           { label: 'Files', value: data.counts.files },
           { label: 'Comments', value: data.counts.comments },
           {

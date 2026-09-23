@@ -72,7 +72,7 @@ export function WhoCanSeeThis({
             Who can see {packageName}
           </h3>
           <p className="mt-[3px] text-[12px] text-stiko-muted">
-            Everything here — files, versions and every comment.
+            Everything here — files, submissions and every comment.
           </p>
         </div>
 

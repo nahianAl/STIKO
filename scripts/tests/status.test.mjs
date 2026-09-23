@@ -95,7 +95,7 @@ test('mentions pluralise', () => {
 test('a new version shows only when nothing needs you', () => {
   assert.equal(
     deriveAttention({ mentions: 0, needsYou: 0, hasUnseenVersion: true }).label,
-    'NEW VERSION'
+    'NEW SUBMISSION'
   );
   assert.equal(
     deriveAttention({ mentions: 0, needsYou: 2, hasUnseenVersion: true }).label,

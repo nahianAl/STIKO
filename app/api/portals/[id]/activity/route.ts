@@ -52,7 +52,7 @@ export async function GET(
   // or against an empty array.
   const rows = await sql`
     WITH visible_versions AS (
-      SELECT v.id, v.created_at, v.published_at
+      SELECT v.id, v.created_at, v.published_at, v.renamed_at
       FROM versions v
       WHERE v.portal_id = ${params.id}
         AND (${includeDrafts}::boolean OR v.published_at IS NOT NULL)
@@ -81,7 +81,9 @@ export async function GET(
       -- would go on offering the light wording for it.
       -- GREATEST skips NULLs (see the note on the comment stamp), so an
       -- all-draft package still yields the created_at maximum.
-      (SELECT GREATEST(MAX(created_at), MAX(published_at)) FROM visible_versions) AS "versionsAt",
+      -- renamed_at is folded in for the same reason: a rename changes a row in
+      -- place, so without it nobody else's rail would show the new name.
+      (SELECT GREATEST(MAX(created_at), MAX(published_at), MAX(renamed_at)) FROM visible_versions) AS "versionsAt",
       (SELECT COUNT(*) FROM visible_files) AS "filesN",
       (SELECT MAX(created_at) FROM visible_files) AS "filesAt",
       (SELECT COUNT(*) FROM visible_comments) AS "commentsN",

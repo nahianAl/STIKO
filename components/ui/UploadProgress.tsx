@@ -3,6 +3,7 @@
 import React from 'react';
 import { FileChip } from './Primitives';
 import { formatBytes } from '@/lib/design';
+import { submissionBadge } from '@/lib/submissionName';
 
 export type UploadState = 'pending' | 'uploading' | 'optimizing' | 'done' | 'failed';
 
@@ -13,7 +14,7 @@ export interface UploadItem {
   progress: number;
   bytes: number;
   state: UploadState;
-  /** 2e: a file that supersedes an existing one carries a REPLACES V4 chip. */
+  /** 2e: a file that supersedes an existing one carries a REPLACES S4 chip. */
   replacesVersion?: number | null;
 }
 
@@ -48,7 +49,7 @@ export function UploadProgressRow({
               className="shrink-0 rounded-chip px-[6px] py-[3px] text-[10px] font-extrabold uppercase"
               style={{ background: '#FFFCCE', color: '#7A5E00' }}
             >
-              Replaces V{item.replacesVersion}
+              Replaces {submissionBadge(item.replacesVersion)}
             </span>
           )}
         </div>

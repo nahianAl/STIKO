@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import { Field, Input, Note, Textarea } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import type { ProjectPackage } from '@/lib/projectOverview';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 type PackageGrant = {
@@ -55,7 +56,7 @@ export function AddPeopleModal({
       : {}
   );
   const [versionsByPackage, setVersionsByPackage] = useState<
-    Record<string, { id: string; versionNumber: number }[]>
+    Record<string, { id: string; versionNumber: number; name?: string | null }[]>
   >({});
 
   useEffect(() => {
@@ -225,7 +226,7 @@ export function AddPeopleModal({
                         {pkg.people.length}{' '}
                         {pkg.people.length === 1 ? 'person' : 'people'}
                         {pkg.versionNumber != null
-                          ? ` · V${pkg.versionNumber}`
+                          ? ` · ${submissionBadge(pkg.versionNumber)}`
                           : ''}
                       </div>
                     </div>
@@ -267,7 +268,7 @@ export function AddPeopleModal({
                   {scopable && pkgVersions.length > 0 && (
                     <div className="ml-9 mb-1 mt-1 pl-[3px]">
                       <span className="mb-[6px] block text-[12px] font-bold text-stiko-secondary">
-                        Versions they can see
+                        Submissions they can see
                       </span>
                       <label className="flex items-center gap-2 text-[12.5px] font-semibold text-stiko-secondary">
                         <input
@@ -281,7 +282,7 @@ export function AddPeopleModal({
                           }
                           className="h-[15px] w-[15px] accent-stiko-primary"
                         />
-                        All versions, including future ones
+                        All submissions, including future ones
                       </label>
                       {!grant.allVersions && (
                         <div className="mt-1 flex flex-wrap gap-1.5">
@@ -291,6 +292,7 @@ export function AddPeopleModal({
                               <button
                                 key={v.id}
                                 type="button"
+                                title={submissionTitle(v)}
                                 onClick={() =>
                                   setSelection((prev) => {
                                     const cur = prev[pkg.id];
@@ -306,7 +308,7 @@ export function AddPeopleModal({
                                     : 'bg-stiko-app text-stiko-secondary hover:text-stiko-ink'
                                 }`}
                               >
-                                V{v.versionNumber}
+                                {submissionBadge(v.versionNumber)}
                               </button>
                             );
                           })}

@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
   if (version.publishedAt) {
     return NextResponse.json(
-      { error: 'This version is already published' },
+      { error: 'This submission is already published' },
       { status: 409 }
     );
   }
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   `;
   if (Number(fileCount[0].n) === 0) {
     return NextResponse.json(
-      { error: 'This version has no files yet' },
+      { error: 'This submission has no files yet' },
       { status: 409 }
     );
   }
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
         VALUES (
           ${uuidv4()}, ${r.id}, 'new_version', ${version.portalId},
           ${session.user.id},
-          ${`Version ${version.versionNumber} published in ${packageName}`},
+          ${`Submission ${version.versionNumber} published in ${packageName}`},
           ${note}, ${link}
         )
       `;

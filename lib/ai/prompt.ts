@@ -62,13 +62,13 @@ const SYSTEM = `You summarise design-review feedback on engineering and architec
 
 Return ONLY a JSON object with this shape:
 {
-  "headline": "one sentence on where this version stands",
+  "headline": "one sentence on where this submission stands",
   "themes": [
     {
       "title": "short label",
       "body": "one or two sentences",
       "commentIds": ["<ids of the comments this theme is built from>"],
-      "firstSeenVersionId": "<a version id from PRIOR THEMES, or null>"
+      "firstSeenVersionId": "<a submission id from PRIOR THEMES, or null>"
     }
   ]
 }
@@ -89,7 +89,7 @@ export function buildVersionPrompt(input: {
 }): { system: string; user: string } {
   const lines: string[] = [];
 
-  lines.push(`VERSION ${input.versionNumber}`);
+  lines.push(`SUBMISSION ${input.versionNumber}`);
   lines.push(
     `Facts: ${input.facts.commentCount} comments, ${input.facts.openThreadCount} unanswered threads, ` +
       `${input.facts.approvedCount} approved, ${input.facts.changesRequestedCount} requested changes, ` +
@@ -106,7 +106,7 @@ export function buildVersionPrompt(input: {
   }
 
   if (input.priorThemes.length > 0) {
-    lines.push('', 'PRIOR THEMES (from earlier versions):');
+    lines.push('', 'PRIOR THEMES (from earlier submissions):');
     for (const t of input.priorThemes) {
       lines.push(`- [${t.versionId}] ${t.title}: ${t.body}`);
     }
@@ -121,18 +121,18 @@ export function buildVersionPrompt(input: {
   return { system: SYSTEM, user: lines.join('\n') };
 }
 
-const PROJECT_SYSTEM = `You write a short status brief for a design project, from per-version summaries.
+const PROJECT_SYSTEM = `You write a short status brief for a design project, from per-submission summaries.
 
 Return ONLY a JSON object with this shape:
 {
   "headline": "one sentence on where the project stands",
   "sections": [
-    { "portalId": "<a package id supplied below>", "body": "one or two sentences", "versionIds": ["<version ids supplied below>"] }
+    { "portalId": "<a package id supplied below>", "body": "one or two sentences", "versionIds": ["<submission ids supplied below>"] }
   ]
 }
 
 Rules:
-- Use only the package and version ids supplied below. Never invent one.
+- Use only the package and submission ids supplied below. Never invent one.
 - One section per package that has activity. Say whether it is converging or stuck, and what is blocking.
 - Be neutral and factual.`;
 
@@ -149,7 +149,7 @@ export function buildProjectPrompt(input: {
   for (const pkg of input.packages) {
     lines.push(`PACKAGE ${pkg.name} (portalId=${pkg.portalId}):`);
     for (const v of pkg.versions) {
-      lines.push(`  - [${v.versionId}] v${v.versionNumber}: ${v.headline}`);
+      lines.push(`  - [${v.versionId}] submission ${v.versionNumber}: ${v.headline}`);
     }
     lines.push('');
   }
@@ -157,18 +157,18 @@ export function buildProjectPrompt(input: {
   return { system: PROJECT_SYSTEM, user: lines.join('\n') };
 }
 
-const CHANGELOG_SYSTEM = `You draft a short changelog entry for a new version of a design package.
+const CHANGELOG_SYSTEM = `You draft a short changelog entry for a new submission of a design package.
 
 Return ONLY a JSON object: { "changelog": "one or two sentences" }
 
-Write what the new version addresses, based on the open concerns from the previous
-version. Be concrete and plain. No preamble, no bullet points, no marketing tone.`;
+Write what the new submission addresses, based on the open concerns from the previous
+submission. Be concrete and plain. No preamble, no bullet points, no marketing tone.`;
 
 export function buildChangelogPrompt(input: {
   previousVersionNumber: number;
   openThemes: Array<{ title: string; body: string }>;
 }): { system: string; user: string } {
-  const lines = [`Open concerns from version ${input.previousVersionNumber}:`];
+  const lines = [`Open concerns from submission ${input.previousVersionNumber}:`];
   for (const t of input.openThemes) {
     lines.push(`- ${t.title}: ${t.body}`);
   }

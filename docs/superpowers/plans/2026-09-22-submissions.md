@@ -592,11 +592,17 @@ Expected output includes a `015-submission-names.sql` line with its two `ALTER T
   - `<SubmissionNameEditor version onRenamed />`
   - `VersionDetailDrawer` prop `onRenamed: (versionId: string, name: string | null) => void`
 
-**The Escape trap. Read this before touching the key handler.** Escape in the name field must cancel the edit **without** closing the drawer. Gating the drawer's `closeOnEscape` on an `editing` flag, the way the delete confirm does, **does not work here**, for two reasons:
-- The input's React `onKeyDown` runs at React's root container, *before* the event bubbles to the drawer's `document` listener.
-- React flushes a keydown's state update synchronously in a microtask between those two points, including the effect that re-registers the drawer's listener.
+**The Escape trap. Read this before touching the key handler.** *(Corrected 2026-09-23 after the Task 3 review. The first version of this paragraph got the mechanism wrong.)*
 
-So by the time the event reaches `document`, the drawer is listening with `closeOnEscape` back to `true`, and it closes. (The delete confirm is the opposite case: its handler is itself a `document` listener that runs after the drawer's.) The fix is `e.stopPropagation()` in the input's Escape branch, which stops the native event at the root so no `document` or `window` listener sees it. `VersionDetailDrawer` keeps `closeOnEscape={!confirmOpen}` unchanged. That's a deliberate departure from the spec's wording, which assumed the gate would work.
+Escape in the name field must cancel the edit **without** closing the drawer. Next 14's App Router hydrates React onto `document` itself (`node_modules/next/dist/client/app-index.js:42`, `const appElement = document`). That puts React's delegated `keydown` listener on the **same node** as the drawer's `document` listener, and React's is registered first, at hydration.
+
+- `e.stopPropagation()` only stops the event reaching *later* nodes, so on its own it does not stop the drawer.
+- `e.nativeEvent.stopImmediatePropagation()` stops the drawer's listener and every node above `document`, including the page's `window` measure-tool listener.
+- React's `e.stopPropagation()` is kept too; it also stops `onKeyDown` handlers on React ancestors.
+- Also ignore Escape while a save is in flight (after stopping the event), so the busy input stays until the PATCH returns.
+- `VersionDetailDrawer` keeps `closeOnEscape={!confirmOpen}` unchanged.
+
+As built, see `components/portal/SubmissionNameEditor.tsx` (commits 8283f6f, 3b82896, 5f30c4f). The last adds: focus returns to the pencil only after a keyboard-ended edit, IME composition still stops Escape, and a window switch doesn't save. The code block in Step 2 below is the original, pre-review version.
 
 - [ ] **Step 1: Give `Drawer` a heading slot**
 

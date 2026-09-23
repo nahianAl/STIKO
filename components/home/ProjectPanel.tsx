@@ -26,6 +26,7 @@ import type { ProjectGroup } from '@/lib/home';
 // applied to the drawer this panel replaced.
 import type { PackageCard } from '@/lib/queries';
 import type { ProjectOverview, ProjectPackage } from '@/lib/projectOverview';
+import { submissionBadge } from '@/lib/submissionName';
 
 type View = 'packages' | 'everyone';
 
@@ -628,7 +629,7 @@ export default function ProjectPanel({
                         </span>
                         {pkg.versionNumber != null ? (
                           <span className="shrink-0 rounded-chip bg-stiko-app px-[8px] py-[3px] text-[10.5px] font-bold text-stiko-secondary">
-                            V{pkg.versionNumber}
+                            {submissionBadge(pkg.versionNumber)}
                           </span>
                         ) : (
                           <span className="shrink-0 text-[10.5px] text-stiko-faint">

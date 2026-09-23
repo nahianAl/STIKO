@@ -108,14 +108,14 @@ test('a real changelog needs no fallback', () => {
 test('a published version with no changelog says nothing was written', () => {
   assert.equal(
     changelogFallback({ changelog: null, isPublished: true }),
-    'No description was written for this version.'
+    'No description was written for this submission.'
   );
 });
 
 test('whitespace is not a changelog', () => {
   assert.equal(
     changelogFallback({ changelog: '   \n  ', isPublished: true }),
-    'No description was written for this version.'
+    'No description was written for this submission.'
   );
 });
 

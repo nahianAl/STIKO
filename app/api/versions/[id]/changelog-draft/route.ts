@@ -45,7 +45,7 @@ export async function POST(
   const { brief } = await readVersionBrief(params.id);
   if (!brief || brief.themes.length === 0) {
     return NextResponse.json(
-      { error: 'The previous version has no summary to draw from' },
+      { error: 'The previous submission has no summary to draw from' },
       { status: 409 }
     );
   }

@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS versions (
   changelog TEXT,
   published_at TIMESTAMPTZ,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  name TEXT,
+  renamed_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS participant_versions (

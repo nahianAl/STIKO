@@ -120,7 +120,7 @@ export function deriveAttention(input: AttentionInput): AttentionPill {
     return { label: `${input.needsYou} NEED YOU`, bg: '#FFE2E2', fg: '#B23A52' };
   }
   if (input.hasUnseenVersion) {
-    return { label: 'NEW VERSION', bg: '#FFFCCE', fg: '#7A5E00' };
+    return { label: 'NEW SUBMISSION', bg: '#FFFCCE', fg: '#7A5E00' };
   }
   return { label: 'UP TO DATE', bg: '#EFEFF4', fg: '#8A90A6' };
 }

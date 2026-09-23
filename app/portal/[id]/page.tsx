@@ -22,6 +22,7 @@ import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import { messageForStatus } from '@/lib/submitErrors';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 import type { Comment, FileRecord, Version } from '@/lib/types';
 import PartsPanel from '@/components/viewers/PartsPanel';
 import { autoColors, BASE_GREY } from '@/lib/model/autoColor';
@@ -1280,9 +1281,9 @@ export default function PortalPage() {
       return fetchParticipants();
     },
     // Unlike the other three loaders, this one has no preserveIfUnchanged — deliberately. The
-    // feed only calls this when the versions cursor itself moved (a create, delete or publish),
-    // never on a poll tick with nothing new, so there is no steady-state churn to guard against
-    // and every call here is a genuine reason to refresh each version's summary.
+    // feed only calls this when the versions cursor itself moved (a create, delete, publish or
+    // rename), never on a poll tick with nothing new, so there is no steady-state churn to guard
+    // against and every call here is a genuine reason to refresh each version's summary.
     versions: () => loadVersions({ background: true }),
     files: () => {
       if (selectedVersionId) fetchFiles(selectedVersionId, { background: true });
@@ -1781,11 +1782,11 @@ export default function PortalPage() {
 
     const res = await fetch(`/api/versions/${target.id}`, { method: 'DELETE' });
     if (!res.ok) {
-      toast('Could not delete this version');
+      toast('Could not delete this submission');
       return;
     }
 
-    toast(`Version ${target.versionNumber} deleted`);
+    toast(`${submissionTitle(target)} deleted`);
     // The drawer resolves its version from `versions`, so loadVersions() below
     // would close it anyway — but only after a round trip. Clearing it here
     // means the drawer does not linger over the confirm's dismissal.
@@ -2566,6 +2567,11 @@ export default function PortalPage() {
           onDeleteFile={openFileDelete}
           onDownloadFile={downloadFile}
           onDeleteVersion={openVersionDelete}
+          onRenamed={(versionId, name) =>
+            setVersions((prev) =>
+              prev.map((v) => (v.id === versionId ? { ...v, name } : v))
+            )
+          }
         />
       </div>
 
@@ -2655,14 +2661,14 @@ export default function PortalPage() {
           isOpen
           onClose={() => setVersionToDelete(null)}
           onConfirm={confirmDeleteVersion}
-          title={`Delete version ${versionToDelete.versionNumber}?`}
-          name={`V${versionToDelete.versionNumber}`}
-          consequence="This cannot be undone. Everyone loses this version and every comment on it, including people mid-review."
+          title={`Delete "${submissionTitle(versionToDelete)}"?`}
+          name={submissionBadge(versionToDelete.versionNumber)}
+          consequence="This cannot be undone. Everyone loses this submission and every comment on it, including people mid-review."
           inventory={[
             { label: 'Files', value: versionToDelete.fileCount ?? 0 },
             { label: 'Comments', value: versionToDelete.commentCount ?? 0, urgent: (versionToDelete.commentCount ?? 0) > 0 },
           ]}
-          confirmLabel="Delete version"
+          confirmLabel="Delete submission"
         />
       )}
     </div>

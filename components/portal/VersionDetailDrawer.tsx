@@ -3,6 +3,7 @@
 import React from 'react';
 import Drawer from '@/components/ui/Drawer';
 import VersionBrief from '@/components/portal/VersionBrief';
+import SubmissionNameEditor from '@/components/portal/SubmissionNameEditor';
 import { SkeletonBar } from '@/components/ui/Primitives';
 import { getFileChip } from '@/lib/fileChips';
 import {
@@ -10,6 +11,7 @@ import {
   fileMetaLine,
   versionSubtitle,
 } from '@/lib/versionDetail';
+import { submissionTitle } from '@/lib/submissionName';
 import type { FileRecord, Version } from '@/lib/types';
 
 /**
@@ -162,6 +164,7 @@ export default function VersionDetailDrawer({
   onDeleteFile,
   onDownloadFile,
   onDeleteVersion,
+  onRenamed,
 }: {
   version: Version | null;
   isCurrent: boolean;
@@ -183,6 +186,10 @@ export default function VersionDetailDrawer({
   onDeleteFile?: (file: FileRecord) => void;
   onDownloadFile?: (file: FileRecord) => void;
   onDeleteVersion?: (version: Version) => void;
+  /** The server stored a new name (null = back to the default). The page
+   *  updates its `versions` list, which is what both the rail and this drawer
+   *  render from. */
+  onRenamed: (versionId: string, name: string | null) => void;
 }) {
   // Open is derived from the version being resolvable, not from a boolean the
   // page has to remember to clear. Deleting the version removes it from the
@@ -201,7 +208,10 @@ export default function VersionDetailDrawer({
       // bounded to the rail's own height instead of the full window.
       anchor="inline"
       offsetLeft={offsetLeft}
-      title={`Version ${version.versionNumber}`}
+      title={submissionTitle(version)}
+      // Keyed by id so an edit in progress can never carry over to a
+      // different submission's title.
+      heading={<SubmissionNameEditor key={version.id} version={version} onRenamed={onRenamed} />}
       subtitle={versionSubtitle({
         isCurrent,
         isPublished,
@@ -222,7 +232,7 @@ export default function VersionDetailDrawer({
               <SkeletonBar height={52} secondary />
             </div>
           ) : files.length === 0 ? (
-            <p className="text-[12.5px] text-stiko-faint">No files in this version.</p>
+            <p className="text-[12.5px] text-stiko-faint">No files in this submission.</p>
           ) : (
             files.map((file) => (
               <FileCard
@@ -240,7 +250,7 @@ export default function VersionDetailDrawer({
         </section>
 
         <section>
-          <SectionLabel>What changed in this version</SectionLabel>
+          <SectionLabel>What changed in this submission</SectionLabel>
           {fallback ? (
             <p className="rounded-[11px] bg-stiko-subtle p-[11px_12px] text-[12.5px] italic leading-[1.55] text-stiko-faint">
               {fallback}
@@ -268,7 +278,7 @@ export default function VersionDetailDrawer({
             onClick={() => onDeleteVersion(version)}
             className={`w-full rounded-[11px] border border-stiko-chip-red bg-white p-[10px] text-[12.5px] font-bold text-note-red-text transition hover:bg-note-red ${FOCUS}`}
           >
-            Delete Version {version.versionNumber} and everything in it
+            Delete this submission and everything in it
           </button>
         )}
       </div>

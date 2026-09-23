@@ -25,6 +25,7 @@ export default function Drawer({
   isOpen,
   onClose,
   title,
+  heading,
   subtitle,
   footer,
   width = 452,
@@ -36,6 +37,10 @@ export default function Drawer({
   isOpen: boolean;
   onClose: () => void;
   title: string;
+  /** Replaces the plain <h2> title when given, e.g. a title that can be
+   *  edited in place. `title` is still required: it names the dialog for
+   *  screen readers (aria-label), which a control-bearing node cannot do. */
+  heading?: React.ReactNode;
   subtitle?: string;
   footer?: React.ReactNode;
   width?: number;
@@ -121,8 +126,10 @@ export default function Drawer({
         }}
       >
         <header className="flex items-start justify-between border-b border-stiko-border px-[22px] py-[18px]">
-          <div>
-            <h2 className="text-[17px] font-extrabold text-stiko-ink">{title}</h2>
+          <div className="min-w-0 flex-1">
+            {heading ?? (
+              <h2 className="text-[17px] font-extrabold text-stiko-ink">{title}</h2>
+            )}
             {subtitle && (
               <p className="mt-[2px] text-[12.5px] text-stiko-muted">{subtitle}</p>
             )}

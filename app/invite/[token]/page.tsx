@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/Primitives';
 import { PasswordStrength } from '@/components/auth/AuthShell';
 import { InviteProblem } from '@/components/invite/InviteProblem';
+import { submissionBadge } from '@/lib/submissionName';
 
 interface InviteInfo {
   token: string;
@@ -203,7 +204,7 @@ function WaitingSummary({
         <SectionLabel>Waiting for you</SectionLabel>
         <p className="mt-2 text-[12.5px] text-stiko-muted">
           No files have been published yet — you&apos;ll get an email when the
-          first version lands.
+          first submission lands.
         </p>
       </div>
     );
@@ -219,7 +220,7 @@ function WaitingSummary({
       <div className="flex items-center justify-between">
         <SectionLabel>Waiting for you</SectionLabel>
         <span className="rounded-pill bg-stiko-tint px-2 py-[3px] text-[10px] font-extrabold text-stiko-primary">
-          V{invite.version.versionNumber}
+          {submissionBadge(invite.version.versionNumber)}
           {invite.version.publishedAt
             ? ` · ${new Date(invite.version.publishedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
             : ''}

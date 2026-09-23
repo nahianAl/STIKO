@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { getFileChip } from '@/lib/fileChips';
 import { SkeletonBar } from '@/components/ui/Primitives';
 import type { FileRecord, Version } from '@/lib/types';
+import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 
 interface FileTreeSidebarProps {
   versions: Version[];
@@ -204,7 +205,7 @@ export default function FileTreeSidebar({
         <button
           onClick={onToggleCollapse}
           className="p-1.5 rounded-lg hover:bg-stiko-subtle transition-colors text-stiko-muted"
-          title="Expand versions"
+          title="Expand submissions"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -225,7 +226,7 @@ export default function FileTreeSidebar({
   return (
     <div className="flex flex-col h-full bg-white rounded-panel shadow-stiko-panel p-[18px_14px] gap-5 overflow-hidden">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-stiko-faint">Versions</span>
+        <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-stiko-faint">Submissions</span>
         {onToggleCollapse && (
           <button onClick={onToggleCollapse} title="Collapse" className="p-1 rounded-lg text-stiko-faint hover:bg-stiko-subtle transition-colors">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
@@ -244,7 +245,7 @@ export default function FileTreeSidebar({
           ) : (
             <p className="text-[13px] text-stiko-faint py-2">
               {onSubmitVersion
-                ? 'Submit your first version to get started'
+                ? 'Add your first submission to get started'
                 : 'Nothing in this package has been shared with you yet'}
             </p>
           )
@@ -252,6 +253,7 @@ export default function FileTreeSidebar({
           versions.map((version) => {
             const isSelected = version.id === selectedVersionId;
             const isCurrent = version.versionNumber === maxVersion;
+            const title = submissionTitle(version);
             return (
               <div key={version.id}>
                 {/* A div with two sibling buttons, not a button containing a
@@ -271,13 +273,23 @@ export default function FileTreeSidebar({
                         ? { background: 'linear-gradient(135deg, #8094F5, #5B60FF)', color: '#fff' }
                         : { background: '#FFFFFF', color: '#5A6076' }}
                     >
-                      V{version.versionNumber}
+                      {submissionBadge(version.versionNumber)}
                     </span>
                     <span className="flex-1 min-w-0">
+                      {/* The name leads on every card, the newest included. It
+                          used to read "Current" there, which would now hide the
+                          name on the submission people look at most. */}
                       <span className={`block text-[14px] truncate ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-ink'}`}>
-                        {isCurrent ? 'Current' : `Version ${version.versionNumber}`}
+                        {submissionTitle(version)}
                       </span>
-                      <span className="block text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
+                      <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-stiko-muted">
+                        {isCurrent && (
+                          <span className="flex-shrink-0 rounded-chip bg-white px-[5px] py-[1px] text-[9px] font-extrabold uppercase tracking-[0.06em] text-stiko-primary">
+                            Current
+                          </span>
+                        )}
+                        <span className="truncate">{formatDate(version.createdAt)}</span>
+                      </span>
                       {headlines?.[version.id] && (
                         <span className="mt-0.5 block truncate text-xs font-normal text-gray-500">
                           {headlines[version.id]}
@@ -292,8 +304,8 @@ export default function FileTreeSidebar({
                       file rows used before their controls moved in here. */}
                   <button
                     onClick={() => onOpenVersionDetails(version)}
-                    aria-label={`Open version ${version.versionNumber} details`}
-                    title={`Version ${version.versionNumber} details`}
+                    aria-label={`Open submission details for ${title}`}
+                    title={`${title} details`}
                     className="flex-shrink-0 rounded-[8px] p-1.5 text-stiko-primary opacity-0 transition hover:bg-stiko-primary/20 focus:opacity-100 focus:outline-none focus-visible:shadow-stiko-focus group-hover:opacity-100"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -306,7 +318,7 @@ export default function FileTreeSidebar({
                 {isSelected && (
                   <div className="mt-2 mb-1 pl-3 flex flex-col gap-1">
                     {files.length === 0 ? (
-                      <p className="text-[12px] text-stiko-faint px-1 py-1">No files in this version</p>
+                      <p className="text-[12px] text-stiko-faint px-1 py-1">No files in this submission</p>
                     ) : (
                       <>
                         {tree.rootFiles.map((file) => (
@@ -336,7 +348,7 @@ export default function FileTreeSidebar({
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          Submit new version
+          Add new submission
         </button>
       )}
     </div>

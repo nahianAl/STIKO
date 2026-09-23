@@ -30,7 +30,7 @@ export const NOTIFICATION_EVENTS: NotificationEvent[] = [
   },
   {
     key: 'new_version',
-    label: 'A new version is published',
+    label: 'A new submission is published',
     note: 'On packages you’re a participant in.',
     inApp: true,
     email: true,
