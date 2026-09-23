@@ -68,7 +68,7 @@ export function changelogFallback({
 }): string | null {
   if (changelog && changelog.trim()) return null;
   return isPublished
-    ? 'No description was written for this version.'
+    ? 'No description was written for this submission.'
     : 'Not published yet.';
 }
 

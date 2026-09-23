@@ -5,6 +5,7 @@ import { relativeTime } from './design.ts';
 // tests never pull a database connection in. Do not turn this into a plain
 // import.
 import type { PackageCard, ProjectSummary } from './queries.ts';
+import { submissionBadge } from './submissionName.ts';
 
 /**
  * Every derivation the home screen needs, as pure functions over the payload
@@ -181,7 +182,7 @@ export function packageAttention(pkg: PackageCard): Attention | null {
     };
   }
 
-  return { kind: 'new_version', label: 'New version', bg: '#FFFCCE', fg: '#7A5E00' };
+  return { kind: 'new_version', label: 'New submission', bg: '#FFFCCE', fg: '#7A5E00' };
 }
 
 /**
@@ -235,7 +236,7 @@ export function openCommentsLabel(count: number): string {
 export function packageMeta(pkg: PackageCard, now: number = Date.now()): string {
   if (pkg.versionNumber == null) return 'No files yet — add some';
   return [
-    `V${pkg.versionNumber}`,
+    submissionBadge(pkg.versionNumber),
     pkg.changelog ? `"${pkg.changelog}"` : null,
     // relativeTime returns '' for an unparseable date, which filter drops.
     pkg.updatedAt ? relativeTime(pkg.updatedAt, now) : null,

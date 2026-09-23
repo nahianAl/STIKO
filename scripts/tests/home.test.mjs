@@ -228,7 +228,7 @@ test('a single mention reads singular', () => {
 test('an unseen version with no mentions is a new-version pill', () => {
   const a = packageAttention(pkg({ mentions: 0, seenLatest: false, versionNumber: 3 }));
   assert.equal(a.kind, 'new_version');
-  assert.equal(a.label, 'New version');
+  assert.equal(a.label, 'New submission');
   assert.equal(a.bg, '#FFFCCE');
   assert.equal(a.fg, '#7A5E00');
 });
@@ -283,7 +283,7 @@ test('package meta joins version, quoted changelog and age', () => {
       }),
       NOW
     ),
-    'V4 · "Gutter detail added" · 2h ago'
+    'S4 · "Gutter detail added" · 2h ago'
   );
 });
 
@@ -293,13 +293,13 @@ test('package meta drops a missing changelog', () => {
       pkg({ versionNumber: 3, changelog: null, updatedAt: '2026-09-19T12:00:00Z' }),
       NOW
     ),
-    'V3 · 3d ago'
+    'S3 · 3d ago'
   );
 });
 
 test('package meta drops a missing or unparseable time', () => {
-  assert.equal(packageMeta(pkg({ versionNumber: 2, updatedAt: null }), NOW), 'V2');
-  assert.equal(packageMeta(pkg({ versionNumber: 2, updatedAt: 'nope' }), NOW), 'V2');
+  assert.equal(packageMeta(pkg({ versionNumber: 2, updatedAt: null }), NOW), 'S2');
+  assert.equal(packageMeta(pkg({ versionNumber: 2, updatedAt: 'nope' }), NOW), 'S2');
 });
 
 test('a package with no version asks for files', () => {

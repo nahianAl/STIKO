@@ -25,7 +25,7 @@ test('no note means no heading and no stray empty quotes', () => {
 
     assert.doesNotMatch(mail.body, /What changed/, `changelog=${JSON.stringify(changelog)}`);
     assert.doesNotMatch(mail.body, /""/, `changelog=${JSON.stringify(changelog)}`);
-    assert.match(mail.body, /Dana published version 4 of Level 3 Framing\./);
+    assert.match(mail.body, /Dana published submission 4 of Level 3 Framing\./);
     assert.match(mail.body, /Review it here: https:\/\/stiko\.example\/portal\/abc/);
   }
 });
@@ -37,7 +37,7 @@ test('the subject line is the same with or without a note', () => {
   assert.equal(withNote.subject, without.subject);
   assert.equal(
     withNote.subject,
-    'Version 4 of Level 3 Framing is ready to review'
+    'Submission 4 of Level 3 Framing is ready to review'
   );
 });
 

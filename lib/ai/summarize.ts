@@ -27,7 +27,7 @@ export async function summarizeVersion(
   const meta = await sql`
     SELECT version_number AS "versionNumber" FROM versions WHERE id = ${versionId}
   `;
-  if (!meta[0]) return { ok: false, reason: 'Version not found' };
+  if (!meta[0]) return { ok: false, reason: 'Submission not found' };
 
   // Coverage is read alongside the comments so the watermark describes the
   // same snapshot the prompt was built from.

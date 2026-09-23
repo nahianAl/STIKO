@@ -149,13 +149,13 @@ export function newVersionEmail(opts: {
   // Built by pushing rather than filter(Boolean) like inviteEmail above: the
   // blank separators here are meaningful, and filter(Boolean) eats them.
   const lines = [
-    `${opts.publisherName} published version ${opts.versionNumber} of ${opts.packageName}.`,
+    `${opts.publisherName} published submission ${opts.versionNumber} of ${opts.packageName}.`,
   ];
   if (note) lines.push(``, `What changed:`, `"${note}"`);
   lines.push(``, `Review it here: ${opts.link}`);
 
   return {
-    subject: `Version ${opts.versionNumber} of ${opts.packageName} is ready to review`,
+    subject: `Submission ${opts.versionNumber} of ${opts.packageName} is ready to review`,
     body: lines.join('\n'),
   };
 }
