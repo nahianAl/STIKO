@@ -276,20 +276,13 @@ export default function FileTreeSidebar({
                       {submissionBadge(version.versionNumber)}
                     </span>
                     <span className="flex-1 min-w-0">
-                      {/* The name leads on every card, the newest included. It
-                          used to read "Current" there, which would now hide the
-                          name on the submission people look at most. */}
+                      {/* The name leads on every card, the newest included. The
+                          newest is marked by its gradient badge and bold title
+                          alone — no "Current" word or pill. */}
                       <span className={`block text-[14px] truncate ${isCurrent ? 'font-bold text-stiko-ink' : 'font-semibold text-stiko-ink'}`}>
-                        {submissionTitle(version)}
+                        {title}
                       </span>
-                      <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-stiko-muted">
-                        {isCurrent && (
-                          <span className="flex-shrink-0 rounded-chip bg-white px-[5px] py-[1px] text-[9px] font-extrabold uppercase tracking-[0.06em] text-stiko-primary">
-                            Current
-                          </span>
-                        )}
-                        <span className="truncate">{formatDate(version.createdAt)}</span>
-                      </span>
+                      <span className="block truncate text-[11px] text-stiko-muted">{formatDate(version.createdAt)}</span>
                       {headlines?.[version.id] && (
                         <span className="mt-0.5 block truncate text-xs font-normal text-gray-500">
                           {headlines[version.id]}

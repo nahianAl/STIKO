@@ -19,7 +19,7 @@ Settled with the user on 2026-09-22. Do not relitigate.
 
 1. **The rename covers the whole app, not just the panel**, so a reviewer never sees both words.
 2. **Owner, coordinator and uploader can rename.** A rename destroys nothing and can be undone, so it follows `canTransform` (uploaders included), not `canDeleteContent`, which cuts uploaders off once a submission is published. Commenters and viewers see the name but can't change it.
-3. **The rail card leads with the name.** The newest card keeps its gradient badge and adds a small **CURRENT** tag on its date line. It no longer replaces the name with the word "Current".
+3. **The rail card leads with the name.** The newest card keeps its gradient badge and bold title. It no longer replaces the name with the word "Current". *(Revised 2026-09-23 at the user's request: the small CURRENT tag that first shipped on the date line was removed.)*
 4. **The badge prefix changes from V to S** (`V5` → `S5`) everywhere a compact number appears.
 5. **An empty name means "use the default".** The default is computed at render time and never written to the row.
 6. **No name field in the submit drawer.** Names are edited only in the expanded view.
