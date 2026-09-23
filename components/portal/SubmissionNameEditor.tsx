@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useToast } from '@/components/ui/Toast';
 import {
   SUBMISSION_NAME_MAX,
@@ -35,6 +35,22 @@ export default function SubmissionNameEditor({
   // and the input then unmounts, which can fire blur and save a second time;
   // Escape cancels and unmounts, and that blur must not save at all.
   const settled = useRef(false);
+  const renameButtonRef = useRef<HTMLButtonElement>(null);
+  // Tracks `editing` from the previous render so the focus-return effect only
+  // fires on a true→false transition (save, cancel or a failed save), never
+  // on first mount, when `editing` starts false and there is nothing to
+  // return focus from.
+  const wasEditing = useRef(false);
+
+  // Keyboard users who opened the editor land on <body> once it unmounts,
+  // outside the dialog, unless focus is put back on the control that opened
+  // it.
+  useEffect(() => {
+    if (wasEditing.current && !editing) {
+      renameButtonRef.current?.focus();
+    }
+    wasEditing.current = editing;
+  }, [editing]);
 
   const start = () => {
     settled.current = false;
@@ -92,28 +108,39 @@ export default function SubmissionNameEditor({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         onKeyDown={(e) => {
+          // Mid-composition Enter/Escape commits or cancels an IME candidate,
+          // not this field: let it through untouched.
+          if (e.nativeEvent.isComposing) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             save();
           } else if (e.key === 'Escape') {
-            // stopPropagation is what keeps the drawer open. Gating the
-            // drawer's closeOnEscape on `editing` would not: this handler runs
-            // at React's root, before the drawer's listener on document, and
-            // React flushes this state update and the effect that re-registers
-            // that listener in between. The drawer would already be listening
-            // with closeOnEscape back on when the event reached it.
+            // App Router mounts React's root listener on `document` itself
+            // (see next/dist/client/app-index.js), the same node the
+            // Drawer's keydown listener uses, and React's was registered
+            // first, at hydration — so this event reaches the Drawer's
+            // listener too, not just window. stopPropagation only stops
+            // propagation to nodes further up (it still blocks the window
+            // listener that would otherwise re-arm a measure gesture once
+            // this input unmounts); stopImmediatePropagation is what stops
+            // the Drawer's same-node listener from closing the drawer.
             e.preventDefault();
             e.stopPropagation();
+            e.nativeEvent.stopImmediatePropagation();
+            // A save in flight must finish; Escape must not abandon it or
+            // let the input disappear out from under the pending request.
+            if (saving) return;
             cancel();
           }
         }}
         // readOnly, not disabled: a disabled input drops focus, and Escape
         // pressed mid-save would then reach the drawer and close it.
         readOnly={saving}
+        aria-busy={saving}
         maxLength={SUBMISSION_NAME_MAX}
         placeholder={submissionTitle({ versionNumber: version.versionNumber })}
         aria-label="Submission name"
-        className={`-mx-2 -my-[3px] w-[calc(100%+16px)] rounded-[8px] border border-stiko-divider bg-white px-2 py-[2px] text-[17px] font-extrabold text-stiko-ink placeholder:text-stiko-faint ${FOCUS} ${saving ? 'opacity-60' : ''}`}
+        className={`-ml-2 -my-[3px] w-[calc(100%+8px)] rounded-[8px] border border-stiko-divider bg-white px-2 py-[2px] text-[17px] font-extrabold text-stiko-ink placeholder:text-stiko-faint ${FOCUS} ${saving ? 'opacity-60' : ''}`}
       />
     );
   }
@@ -125,6 +152,7 @@ export default function SubmissionNameEditor({
       </h2>
       {version.canRename && (
         <button
+          ref={renameButtonRef}
           type="button"
           onClick={start}
           aria-label="Rename submission"
