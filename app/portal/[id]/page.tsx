@@ -2566,6 +2566,11 @@ export default function PortalPage() {
           onDeleteFile={openFileDelete}
           onDownloadFile={downloadFile}
           onDeleteVersion={openVersionDelete}
+          onRenamed={(versionId, name) =>
+            setVersions((prev) =>
+              prev.map((v) => (v.id === versionId ? { ...v, name } : v))
+            )
+          }
         />
       </div>
 
