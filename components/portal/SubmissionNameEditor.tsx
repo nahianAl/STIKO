@@ -41,12 +41,24 @@ export default function SubmissionNameEditor({
   // on first mount, when `editing` starts false and there is nothing to
   // return focus from.
   const wasEditing = useRef(false);
+  // True only when Enter or Escape ended the edit, i.e. focus was still in
+  // the input and has nowhere else to go. Blur-to-save means the user
+  // deliberately moved focus elsewhere (e.g. into the comment composer), and
+  // must never have it yanked back once the save resolves.
+  const refocus = useRef(false);
 
   // Keyboard users who opened the editor land on <body> once it unmounts,
   // outside the dialog, unless focus is put back on the control that opened
-  // it.
+  // it — but only when nothing else has claimed focus since. The
+  // activeElement check covers Enter followed by a click elsewhere while the
+  // PATCH is still in flight.
   useEffect(() => {
-    if (wasEditing.current && !editing) {
+    if (
+      wasEditing.current &&
+      !editing &&
+      refocus.current &&
+      (document.activeElement === null || document.activeElement === document.body)
+    ) {
       renameButtonRef.current?.focus();
     }
     wasEditing.current = editing;
@@ -54,6 +66,7 @@ export default function SubmissionNameEditor({
 
   const start = () => {
     settled.current = false;
+    refocus.current = false;
     setDraft(version.name ?? '');
     setEditing(true);
   };
@@ -106,13 +119,28 @@ export default function SubmissionNameEditor({
         autoFocus
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
+        onBlur={() => {
+          // A window/app switch blurs the input too; that is not the user
+          // asking to save a half-typed name, so leave the edit open.
+          if (!document.hasFocus()) return;
+          save();
+        }}
         onKeyDown={(e) => {
-          // Mid-composition Enter/Escape commits or cancels an IME candidate,
-          // not this field: let it through untouched.
-          if (e.nativeEvent.isComposing) return;
+          if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
+            // Still mid-IME-composition: let Enter/Escape reach the IME so it
+            // can confirm or cancel its candidate, but stop Escape here so it
+            // can't also close the drawer. keyCode 229 covers Safari, which
+            // fires the candidate-confirming Enter after compositionend with
+            // isComposing already false.
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }
+            return;
+          }
           if (e.key === 'Enter') {
             e.preventDefault();
+            refocus.current = true;
             save();
           } else if (e.key === 'Escape') {
             // App Router mounts React's root listener on `document` itself
@@ -127,6 +155,7 @@ export default function SubmissionNameEditor({
             e.preventDefault();
             e.stopPropagation();
             e.nativeEvent.stopImmediatePropagation();
+            refocus.current = true;
             // A save in flight must finish; Escape must not abandon it or
             // let the input disappear out from under the pending request.
             if (saving) return;
