@@ -116,13 +116,13 @@ The versions cursor in `app/api/portals/[id]/activity/route.ts` is currently `GR
 - **Title:** `submissionTitle(version)`. When `version.canRename` is true, a pencil button sits beside it (aria-label "Rename submission").
 - **Editing:**
   - Clicking the pencil swaps the title for a text input pre-filled with the **current name**, or empty when unnamed. The placeholder is `Submission N`, and `maxLength` is `SUBMISSION_NAME_MAX`.
-  - **Enter** or **blur** saves. **Escape** cancels and restores the title.
+  - **Enter** or **blur** saves. **Escape** cancels and restores the title. Switching to another window or tab doesn't count as blur (`document.hasFocus()` guard), so the edit stays open.
   - Saving an unchanged value sends nothing.
   - Clearing the field and saving stores NULL, so the title goes back to "Submission N". That is the defaults-are-editable rule: the default can be erased, and whatever the user types replaces it.
 - **Escape must not close the drawer while editing.** The input's Escape handler calls `e.stopPropagation()` **and** `e.nativeEvent.stopImmediatePropagation()`. `closeOnEscape={!confirmOpen}` stays as it is.
   - **Why both.** Next 14's App Router hydrates React onto `document` itself (`next/dist/client/app-index.js`, `const appElement = document`). That puts React's key listener on the same node as the drawer's, and React's is registered first, at hydration.
-  - `stopPropagation` cannot stop a listener on the same node; `stopImmediatePropagation` stops the drawer's.
-  - `stopPropagation` is still needed, because it stops `window` listeners such as the page's measure-tool Escape.
+  - `stopPropagation` cannot stop a listener on the same node. `stopImmediatePropagation` stops the drawer's listener and everything above `document`, including `window`.
+  - React's `e.stopPropagation()` is kept as well; it also stops `onKeyDown` handlers on React ancestors.
   - Corrected 2026-09-23 during the Task 3 review: the first version of this spec assumed a React root below `document`, and its mechanism would have let the drawer close.
 - **Save:**
   - Nothing optimistic. The input stays and shows a busy state until the PATCH returns.
