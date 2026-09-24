@@ -314,8 +314,9 @@ import { NextResponse } from 'next/server';
 import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 
 // There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed
-// /api/invite was protected — which is exactly the bug above, written down and
-// believed. Everything not matched below requires auth; that is the rule.
+// /api/invite was protected — exactly the invite bug documented in
+// lib/routeAccess.ts, written down and believed. Everything not matched
+// below requires auth; that is the rule.
 //
 // The public-path rules themselves live in lib/routeAccess.ts, with their
 // history, so they can be tested.
@@ -1676,8 +1677,9 @@ import { authProvider } from '@/lib/authProvider';
 import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 
 // There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed
-// /api/invite was protected — which is exactly the bug above, written down and
-// believed. Everything not matched below requires auth; that is the rule.
+// /api/invite was protected — exactly the invite bug documented in
+// lib/routeAccess.ts, written down and believed. Everything not matched
+// below requires auth; that is the rule.
 //
 // The public-path rules themselves live in lib/routeAccess.ts, with their
 // history, so they can be tested and both providers share them.

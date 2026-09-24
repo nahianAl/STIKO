@@ -1,75 +1,20 @@
 import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
-
-const PUBLIC_PATHS = [
-  '/login',
-  '/signup',
-  '/invite',
-  // The invite PAGE was public but the route it reads was not, so a logged-out
-  // visitor's fetch was redirected to /login, came back as HTML, failed to
-  // parse, and every invite rendered as "nothing here". Being invited is by
-  // definition something you do before you have an account.
-  //
-  // Safe to open: the token is an unguessable UUID and is the only credential
-  // the GET accepts, and the POST that actually joins you to the package calls
-  // auth() itself and 401s without a session.
-  //
-  // The trailing slash is load-bearing. These are prefix matches, and
-  // '/api/invites' — the pending-invite roster and the revoke endpoint —
-  // startsWith('/api/invite'). Without it, opening the token route also opens
-  // package management to anyone.
-  '/api/invite/',
-  '/api/auth',
-  '/api/conversions/webhook',
-  '/api/files',
-  // PREFIX MATCH — this also exempts /api/comments/attachments, which mints
-  // presigned R2 write URLs. That subroute had no auth() call of its own for a
-  // long time precisely because this line silently covered it. Anything added
-  // under /api/comments/ inherits this exemption and must call auth() itself and
-  // return a JSON 401, never rely on middleware.
-  '/api/comments',
-  // Every handler under here — GET/POST /api/versions, and the [id], publish,
-  // changelog-draft and summary routes — calls auth() itself and returns a
-  // JSON 401. Without this exemption, an expired session made DELETE
-  // /api/versions/[id] 307 to /login; fetch follows redirects, so the client
-  // received a 200 HTML page, `res.ok` was true, and the toast claimed the
-  // version was deleted when nothing had happened.
-  '/api/versions',
-];
+import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 
 // There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed
-// /api/invite was protected — which is exactly the bug above, written down and
-// believed. Everything not matched below requires auth; that is the rule.
+// /api/invite was protected — exactly the invite bug documented in
+// lib/routeAccess.ts, written down and believed. Everything not matched
+// below requires auth; that is the rule.
+//
+// The public-path rules themselves live in lib/routeAccess.ts, with their
+// history, so they can be tested.
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
-  const isAuthenticated = !!req.auth;
 
-  // Vercel Cron carries no session. This route authenticates itself with
-  // CRON_SECRET and refuses to run without it, so session auth here would only
-  // block the scheduler. Matched exactly, not by prefix: PUBLIC_PATHS uses
-  // startsWith, and a '/api/cron' entry there would also exempt any future
-  // '/api/cron-something' nobody remembered to check.
-  if (pathname === '/api/cron/purge-trash') {
-    return NextResponse.next();
-  }
-
-  // Allow public paths through
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-    return NextResponse.next();
-  }
-
-  // /portal/[id] is public (viewer access) — no auth needed
-  // /portal/[id]/submit requires auth (checked in the route handler itself)
-  if (pathname.startsWith('/portal')) {
-    return NextResponse.next();
-  }
-
-  // Everything else requires auth
-  if (!isAuthenticated) {
-    const loginUrl = new URL('/login', req.nextUrl.origin);
-    loginUrl.searchParams.set('callbackUrl', pathname);
-    return NextResponse.redirect(loginUrl);
+  if (routeDecision(pathname, !!req.auth) === 'login') {
+    return NextResponse.redirect(new URL(loginRedirectPath(pathname), req.nextUrl.origin));
   }
 
   return NextResponse.next();
