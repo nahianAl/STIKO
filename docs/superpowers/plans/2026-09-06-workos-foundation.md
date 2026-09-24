@@ -35,8 +35,9 @@ Confirmed decision: apex and `www` to Wix, app to Vercel, DNS zone stays at Name
 1. Vercel → Stiko project → Settings → Domains → add `app.stiko.design`. Vercel gives you a CNAME target.
 2. Namecheap → Advanced DNS → add `CNAME  app  →  <the target Vercel gave you>`.
 3. Wait for `app.stiko.design` to serve the app, then in Vercel set `NEXTAUTH_URL=https://app.stiko.design` for Production and redeploy. Outbound email links come from this and nothing else (`lib/appUrl.ts`).
-4. Only then point apex and `www` at Wix, using the A/CNAME records Wix gives you. **Decline Wix's offer to take over the nameservers** — keeping the zone at Namecheap is what keeps `app.` and your `MX` records out of a website builder's dashboard.
-5. Ask your growth lead to add 301 redirects on the Wix side for `/invite/*`, `/portal/*` and `/reset-password/*` → the same path on `app.stiko.design`, and to keep them for about a month. Invitations expire in 14 days and reset tokens in 1 hour, so the exposure is self-limiting.
+4. **Add `https://app.stiko.design` to the R2 bucket's CORS allow-list** — Cloudflare → R2 → `stiko-uploads` → Settings → CORS Policy. The browser uploads to and loads models from R2 directly over presigned URLs, so R2 sees the app's origin and rejects any host not on this list. Miss this and every upload and every 3D model load fails on the new domain with a CORS preflight error while the rest of the app looks fine. The app's own R2 token is object-scoped and cannot change this — it must be done in the dashboard.
+5. Only then point apex and `www` at Wix, using the A/CNAME records Wix gives you. **Decline Wix's offer to take over the nameservers** — keeping the zone at Namecheap is what keeps `app.` and your `MX` records out of a website builder's dashboard.
+6. Ask your growth lead to add 301 redirects on the Wix side for `/invite/*`, `/portal/*` and `/reset-password/*` → the same path on `app.stiko.design`, and to keep them for about a month. Invitations expire in 14 days and reset tokens in 1 hour, so the exposure is self-limiting.
 
 **Rollback:** point the apex back at Vercel. It is a DNS change.
 
@@ -137,13 +138,21 @@ In `lib/schema.sql`, in the `users` table definition, add the column after `pass
 Then, immediately after the closing `);` of the `users` table, add:
 
 ```sql
+-- The column above is only created on a FRESH database. scripts/migrate.mjs
+-- applies this file before any migration, so on an existing database the
+-- CREATE TABLE above is a no-op and the indexes below would fail with
+-- 42703 (column does not exist) — taking the whole migration run down before
+-- 010 ever applies. Same mirror-the-migration pattern as
+-- ai_summaries_enabled further down this file.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS workos_user_id TEXT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS users_workos_user_id_key
   ON users (workos_user_id) WHERE workos_user_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
   ON users (lower(email));
 ```
 
-A fresh database must end up identical to a migrated one, or local development diverges from production in exactly the way that hides bugs.
+A fresh database must end up identical to a migrated one, or local development diverges from production in exactly the way that hides bugs. The `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` is what makes that true on an existing database too: `scripts/migrate.mjs` applies this file before any migration file, so on production the `CREATE TABLE IF NOT EXISTS users` above is a no-op and `workos_user_id` would never be added without it — and the indexes right after it would fail with `42703` before migration 010 ever runs.
 
 - [ ] **Step 3: Confirm the index can build, before applying anything**
 
@@ -153,7 +162,15 @@ Run this against production first. It is read-only:
 npm run migrate -- --dry
 ```
 
-That lists what would run without touching anything. Then check for case duplicates — if this returns any rows, **stop** and merge those accounts before continuing:
+**Note what `--dry` does and does not tell you.** It skips the `schema_migrations` lookup, so it prints *every* migration as "would run", not just the outstanding ones. To see what is actually pending, query directly:
+
+```sql
+SELECT name FROM schema_migrations ORDER BY name;
+```
+
+Verified 2026-09-06: `001` through `009` are applied, `010` is the only outstanding one, and `users.workos_user_id` does not yet exist.
+
+Then check for case duplicates — if this returns any rows, **stop** and merge those accounts before continuing:
 
 ```sql
 SELECT lower(email) AS addr, count(*), array_agg(email) AS variants
@@ -166,7 +183,7 @@ FROM users GROUP BY 1 HAVING count(*) > 1;
 npm run migrate
 ```
 
-Expected: `lib/migrations/010-workos-auth.sql — 4 statement(s)` followed by four ✓ lines.
+Expected: `lib/migrations/010-workos-auth.sql — 3 statement(s)` followed by three ✓ lines. (One `ALTER TABLE`, two `CREATE UNIQUE INDEX` — the runner splits on `;` after stripping `--` comments.)
 
 - [ ] **Step 5: Verify it landed**
 
@@ -503,6 +520,9 @@ async function main() {
     const email = u.email.toLowerCase();
     const { firstName, lastName } = splitName(u.name);
 
+    let workosUserId = null;
+    let createdNow = false;
+
     try {
       const workosUser = await workos.userManagement.createUser({
         email,
@@ -516,10 +536,8 @@ async function main() {
           ? { passwordHash: u.password_hash, passwordHashType: 'bcrypt' }
           : {}),
       });
-
-      await sql`UPDATE users SET workos_user_id = ${workosUser.id} WHERE id = ${u.id}`;
-      created++;
-      console.log(`  ✓ created ${email}`);
+      workosUserId = workosUser.id;
+      createdNow = true;
     } catch (err) {
       // A re-run after a partial failure, or an address someone already claimed
       // in WorkOS directly. Adopt it rather than failing the whole run: the
@@ -539,14 +557,38 @@ async function main() {
         existing = null;
       }
 
-      if (existing) {
-        await sql`UPDATE users SET workos_user_id = ${existing.id} WHERE id = ${u.id}`;
+      // Adopt ONLY an exact address match. The email filter's semantics are not
+      // a contract: if it ever prefix-matches, gets renamed, or is ignored, the
+      // first result could be a different person — and since Plan 2 resolves
+      // sign-in by workos_user_id, linking the wrong one is account takeover.
+      if (existing && existing.email?.toLowerCase() === email) {
+        workosUserId = existing.id;
+      } else {
+        const message = err?.message ?? String(err);
+        failures.push({ email, message });
+        console.log(`  ✗ ${email} — ${message}`);
+        continue;
+      }
+    }
+
+    // The write-back is its own step. A WorkOS user exists by this point either
+    // way, so a failure here is "created but not linked" — not a creation
+    // failure — and the operator needs the id to finish it by hand. Keeping it
+    // inside the catch above would also run this UPDATE twice on a re-entry,
+    // the second time outside any try, killing the run before the summary.
+    try {
+      await sql`UPDATE users SET workos_user_id = ${workosUserId} WHERE id = ${u.id}`;
+      if (createdNow) {
+        created++;
+        console.log(`  ✓ created ${email}`);
+      } else {
         adopted++;
         console.log(`  ✓ adopted existing ${email}`);
-      } else {
-        failures.push({ email, message: err.message });
-        console.log(`  ✗ ${email} — ${err.message}`);
       }
+    } catch (err) {
+      const message = `WorkOS user ${workosUserId} exists but the local link was not written: ${err?.message ?? String(err)}`;
+      failures.push({ email, message });
+      console.log(`  ✗ ${email} — ${message}`);
     }
   }
 
@@ -562,7 +604,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`\nImport failed: ${err.message}`);
+  console.error(`\nImport failed: ${err?.message ?? String(err)}`);
   process.exit(1);
 });
 ```
