@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveLocalUser } from '../../lib/workosIdentity.ts';
+import { resolveLocalUser, splitName } from '../../lib/workosIdentity.ts';
 
 test('an already-linked account is used as-is', () => {
   const result = resolveLocalUser({
@@ -65,4 +65,18 @@ test('a match by WorkOS id wins even when no row matches the email', () => {
   });
 
   assert.deepEqual(result, { action: 'use', userId: 'user_local_6' });
+});
+
+test('a name splits into first and the rest', () => {
+  assert.deepEqual(splitName('Dana Whitfield'), { firstName: 'Dana', lastName: 'Whitfield' });
+  assert.deepEqual(splitName('  Mary Ann  de la Cruz '), { firstName: 'Mary', lastName: 'Ann de la Cruz' });
+});
+
+test('a single name has no last name', () => {
+  assert.deepEqual(splitName('Cher'), { firstName: 'Cher', lastName: undefined });
+});
+
+test('no name is no name', () => {
+  assert.deepEqual(splitName('   '), { firstName: undefined, lastName: undefined });
+  assert.deepEqual(splitName(null), { firstName: undefined, lastName: undefined });
 });

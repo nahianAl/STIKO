@@ -32,3 +32,28 @@ export function canRedeemInvite(opts: {
 
   return invited === signedIn ? { ok: true } : { ok: false, reason: 'wrong_account' };
 }
+
+/**
+ * Does this invitation prove its holder reads `email`?
+ *
+ * The design spec exempts invited reviewers from email verification: arriving
+ * through a link sent to an address already proves control of it. That holds
+ * only for a live, addressed invitation whose address matches. A share link is
+ * forwarded and posted by design, so it proves nothing about any inbox.
+ */
+export function inviteVouchesForEmail(opts: {
+  invite: {
+    email: string | null;
+    multiUse: boolean;
+    expiresAt: string | Date;
+    revokedAt: string | Date | null;
+  } | null;
+  email: string;
+  now: Date;
+}): boolean {
+  const { invite } = opts;
+  if (!invite || invite.multiUse || !invite.email) return false;
+  if (invite.revokedAt) return false;
+  if (new Date(invite.expiresAt).getTime() <= opts.now.getTime()) return false;
+  return invite.email.trim().toLowerCase() === opts.email.trim().toLowerCase();
+}

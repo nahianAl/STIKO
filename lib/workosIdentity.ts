@@ -47,3 +47,21 @@ export function resolveLocalUser(lookups: {
 
   return { action: 'link', userId: lookups.byEmail.id };
 }
+
+/**
+ * WorkOS stores first and last names; Stiko stores one name. The first word is
+ * the first name and the rest is the last, which is wrong for some cultures
+ * but only affects what WorkOS's dashboard shows. Stiko itself keeps reading
+ * users.name.
+ */
+export function splitName(name: string | null | undefined): {
+  firstName?: string;
+  lastName?: string;
+} {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: undefined, lastName: undefined };
+  return {
+    firstName: parts[0],
+    lastName: parts.length > 1 ? parts.slice(1).join(' ') : undefined,
+  };
+}
