@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { signIn, useSession, signOut } from 'next-auth/react';
+import { useAuthActions, useAuthSession } from '@/lib/authClient';
+import { authErrorMessage } from '@/lib/authMessages';
+import EmailCodeForm from '@/components/auth/EmailCodeForm';
 import { LogoMark, Wordmark } from '@/components/ui/Shell';
 import Button from '@/components/ui/Button';
 import {
@@ -51,7 +53,8 @@ const ROLE_LABEL: Record<string, string> = {
 export default function InvitePage() {
   const { token } = useParams<{ token: string }>();
   const router = useRouter();
-  const { status, data: session } = useSession();
+  const { status, data: session } = useAuthSession();
+  const { signOutTo } = useAuthActions();
 
   const [invite, setInvite] = useState<InviteInfo | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -173,7 +176,7 @@ export default function InvitePage() {
             <button
               // Preserve the token across the sign-out, so switching to the
               // right account does not lose the invitation.
-              onClick={() => signOut({ callbackUrl: `/invite/${token}` })}
+              onClick={() => void signOutTo(`/invite/${token}`)}
               className="font-bold text-stiko-primary hover:text-stiko-primary-hover"
             >
               Switch
@@ -264,6 +267,9 @@ function InviteAuth({
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { signInWithPassword, signUp } = useAuthActions();
+  // Set when WorkOS asks for the emailed code: the address it went to.
+  const [codeFor, setCodeFor] = useState<string | null>(null);
 
   // An email invite names its recipient and the field is read-only — the whole
   // point is that the account matches who was invited. A share link names
@@ -276,37 +282,33 @@ function InviteAuth({
     setError(null);
     setLoading(true);
 
-    if (tab === 'create') {
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error ?? 'Could not create your account');
-        setLoading(false);
-        return;
-      }
-    }
+    // The token rides along so the server can see this is an addressed
+    // invitation to this exact address, and skip the emailed code.
+    const result =
+      tab === 'create'
+        ? await signUp({ name, email, password, inviteToken: invite.token })
+        : await signInWithPassword(email, password);
 
-    const result = await signIn('credentials', {
-      email,
-      password,
-      redirect: false,
-    });
-
-    if (result?.error) {
-      setError(
-        tab === 'signin'
-          ? 'Invalid password'
-          : 'Account created, but sign-in failed. Try the Sign in tab.'
-      );
-      setLoading(false);
+    if (result.ok) {
+      onAccepted();
       return;
     }
 
-    onAccepted();
+    setLoading(false);
+
+    // A share link proves nothing about the visitor's inbox, so an account
+    // made through one confirms its address first — here, inside the
+    // invitation, so acceptance still cannot be dropped by a redirect.
+    if (result.error === 'email_verification_required') {
+      setCodeFor(result.email ?? email);
+      return;
+    }
+
+    setError(
+      tab === 'signin' && result.error === 'invalid_credentials'
+        ? 'Invalid password'
+        : authErrorMessage(result)
+    );
   };
 
   const firstFile = invite.files[0]?.filename;
@@ -357,6 +359,17 @@ function InviteAuth({
 
         {/* Right — auth */}
         <div className="flex flex-col px-8 py-[34px]">
+          {codeFor ? (
+            <div className="flex flex-col gap-4">
+              <h2 className="text-[16px] font-extrabold text-stiko-ink">Confirm your email</h2>
+              <EmailCodeForm
+                email={codeFor}
+                onVerified={onAccepted}
+                submitLabel="Verify & start reviewing"
+              />
+            </div>
+          ) : (
+          <>
           <div className="flex rounded-[11px] bg-stiko-app p-1">
             {(['create', 'signin'] as const).map((t) => (
               <button
@@ -454,6 +467,8 @@ function InviteAuth({
                 : `This is a shared link — anyone with it can join as ${invite.role}. It expires in 14 days.`}
             </p>
           </form>
+          </>
+          )}
         </div>
       </div>
     </div>
