@@ -1,7 +1,9 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { useAuthActions } from '@/lib/authClient';
+import { authErrorMessage } from '@/lib/authMessages';
+import { safeCallbackUrl } from '@/lib/callbackUrl';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import AuthShell, { PasswordStrength } from '@/components/auth/AuthShell';
@@ -15,7 +17,8 @@ function SignupForm() {
   // invited user who created an account landed on an empty dashboard with no
   // way back. /login already did this correctly; this mirrors it.
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') ?? '/';
+  const callbackUrl = safeCallbackUrl(searchParams.get('callbackUrl'));
+  const { signUp } = useAuthActions();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -28,21 +31,25 @@ function SignupForm() {
     setError(null);
     setLoading(true);
 
-    const res = await fetch('/api/auth/signup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password }),
-    });
+    const result = await signUp({ name, email, password });
 
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error ?? 'Sign up failed');
-      setLoading(false);
+    if (result.ok) {
+      router.push(callbackUrl);
       return;
     }
 
-    await signIn('credentials', { email, password, redirect: false });
-    router.push(callbackUrl);
+    setLoading(false);
+
+    // Self-serve sign-ups confirm their address before using Stiko (design
+    // spec, "Email verification"). WorkOS only.
+    if (result.error === 'email_verification_required') {
+      router.push(
+        `/verify-email?${new URLSearchParams({ email: result.email ?? email, callbackUrl }).toString()}`
+      );
+      return;
+    }
+
+    setError(authErrorMessage(result));
   };
 
   return (

@@ -1,7 +1,9 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { useAuthActions } from '@/lib/authClient';
+import { authErrorMessage } from '@/lib/authMessages';
+import { safeCallbackUrl } from '@/lib/callbackUrl';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import AuthShell from '@/components/auth/AuthShell';
@@ -11,7 +13,10 @@ import { ErrorBanner, Field, Input } from '@/components/ui/Primitives';
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') ?? '/';
+  // Validated: this lands in router.push right after sign-in, and an unchecked
+  // value sends a freshly signed-in person wherever the link's author chose.
+  const callbackUrl = safeCallbackUrl(searchParams.get('callbackUrl'));
+  const { signInWithPassword } = useAuthActions();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,20 +28,24 @@ function LoginForm() {
     setError(null);
     setLoading(true);
 
-    const result = await signIn('credentials', {
-      email,
-      password,
-      redirect: false,
-    });
+    const result = await signInWithPassword(email, password);
 
-    setLoading(false);
-
-    if (result?.error) {
-      setError('Invalid email or password');
+    if (result.ok) {
+      router.push(callbackUrl);
       return;
     }
 
-    router.push(callbackUrl);
+    setLoading(false);
+
+    // An account that has never confirmed its address (WorkOS only).
+    if (result.error === 'email_verification_required') {
+      router.push(
+        `/verify-email?${new URLSearchParams({ email: result.email ?? email, callbackUrl }).toString()}`
+      );
+      return;
+    }
+
+    setError(authErrorMessage(result));
   };
 
   return (
