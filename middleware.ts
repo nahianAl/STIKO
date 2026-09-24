@@ -1,4 +1,4 @@
-import { auth } from '@/lib/auth';
+import { auth } from '@/lib/nextauth';
 import { NextResponse } from 'next/server';
 import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 
