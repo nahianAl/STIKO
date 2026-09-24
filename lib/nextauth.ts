@@ -29,8 +29,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const { email, password } = credentials as { email: string; password: string };
         if (!email || !password) return null;
 
+        // Case-insensitive, like sign-up and forgot-password. The exact match
+        // here meant a reset for Dana@Co.com "succeeded" while signing in as
+        // dana@co.com still failed. Safe since migration 010: the
+        // lower(email) unique index guarantees this matches at most one row.
         const rows = await sql`
-          SELECT id, name, email, password_hash FROM users WHERE email = ${email}
+          SELECT id, name, email, password_hash FROM users
+          WHERE lower(email) = lower(${email.trim()})
         `;
         const user = rows[0];
         if (!user) return null;
