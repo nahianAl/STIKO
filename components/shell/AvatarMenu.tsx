@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { signOut, useSession } from 'next-auth/react';
+import { useAuthActions, useAuthSession } from '@/lib/authClient';
 import Popover from '@/components/ui/Popover';
 import { Avatar } from '@/components/ui/Primitives';
 import UsageMeters, { type UsagePayload } from './UsageMeters';
@@ -11,7 +11,8 @@ import UsageMeters, { type UsagePayload } from './UsageMeters';
  * The account menu (gap #9 — there was no sign-out anywhere in the product).
  */
 export default function AvatarMenu() {
-  const { data: session } = useSession();
+  const { data: session } = useAuthSession();
+  const { signOutTo } = useAuthActions();
   const [open, setOpen] = useState(false);
 
   const [usage, setUsage] = useState<UsagePayload | null>(null);
@@ -104,7 +105,7 @@ export default function AvatarMenu() {
 
         <div className="border-t border-stiko-border p-2">
           <button
-            onClick={() => signOut({ callbackUrl: '/login' })}
+            onClick={() => void signOutTo('/login')}
             className="block w-full rounded-[10px] px-3 py-[9px] text-left text-[13px] font-semibold text-stiko-secondary transition hover:bg-stiko-app hover:text-stiko-ink"
           >
             Sign out

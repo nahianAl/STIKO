@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useSession } from 'next-auth/react';
+import { useAuthSession } from '@/lib/authClient';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
 import { messageForStatus } from '@/lib/submitErrors';
@@ -485,8 +485,8 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
-  const { data: session } = useSession();
-  const currentUserId = (session?.user as { id?: string } | undefined)?.id ?? null;
+  const { data: session } = useAuthSession();
+  const currentUserId = session?.user.id ?? null;
 
   // Which file the panel has already shown comments for. The spinner belongs to
   // opening a file, not to refreshing one that is already on screen: a
