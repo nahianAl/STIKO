@@ -4,7 +4,7 @@
 
 **Goal:** Let Stiko sign people in through WorkOS instead of NextAuth, behind an `AUTH_PROVIDER` switch that starts on `nextauth`, so the change can be deployed with no visible effect and flipped (or flipped back) with one environment variable and a redeploy.
 
-**Architecture:** Phase 3 of `docs/superpowers/specs/2026-09-05-workos-auth-migration-design.md`, **email and password only**. Google sign-in is deferred until Stiko has a privacy-policy page (Google will not publish the OAuth app without one). Stiko keeps its own sign-in, sign-up and invite forms. Their server routes call the WorkOS User Management API directly (`authenticateWithPassword`, `createUser`, `authenticateWithEmailVerification`, `createPasswordReset`, `resetPassword`). `@workos-inc/authkit-nextjs` is used **only** for the session layer: `saveSession` after a successful authentication, `authkit()` + `handleAuthkitHeaders()` in middleware for verification and refresh, and `withAuth()` to read the session. The local `users` row stays the identity of record. `auth()` keeps its name and gains a stable return shape, so none of the 60 `await auth()` call sites change.
+**Architecture:** Phase 3 of `docs/superpowers/specs/2026-09-05-workos-auth-migration-design.md`, **email and password only**. Google sign-in is deferred until Stiko has a privacy-policy page (Google will not publish the OAuth app without one). Stiko keeps its own sign-in, sign-up and invite forms. Their server routes call the WorkOS User Management API directly (`authenticateWithPassword`, `createUser`, `authenticateWithEmailVerification`, `createPasswordReset`, `resetPassword`). `@workos-inc/authkit-nextjs` is used **only** for the session layer: `saveSession` after a successful authentication, `authkit()` + `handleAuthkitProxy()` in middleware for verification and refresh, and `withAuth()` to read the session. The local `users` row stays the identity of record. `auth()` keeps its name and gains a stable return shape, so none of the 60 `await auth()` call sites change.
 
 **Tech Stack:** Next.js 14.2.35 App Router, TypeScript, Neon Postgres (`sql` tagged template), NextAuth v5 beta (kept as the rollback path), `@workos-inc/authkit-nextjs` 4.3.2, `@workos-inc/node` ^10.14.0, Node's built-in test runner.
 
@@ -1694,7 +1694,7 @@ const nextAuthMiddleware = nextAuth((req) => {
 
 async function workosMiddleware(request: NextRequest) {
   // Lazily imported: a NextAuth deploy never loads WorkOS or needs its env.
-  const { authkit, handleAuthkitHeaders } = await import('@workos-inc/authkit-nextjs');
+  const { authkit, handleAuthkitProxy } = await import('@workos-inc/authkit-nextjs');
 
   // authkit() runs on EVERY matched request, public or not. It verifies and
   // refreshes the session and hands it to route handlers through request
@@ -1705,15 +1705,15 @@ async function workosMiddleware(request: NextRequest) {
   if (routeDecision(request.nextUrl.pathname, !!session.user) === 'login') {
     // Stiko's own /login — never authkit's authorizationUrl, which is WorkOS's
     // hosted login page.
-    return handleAuthkitHeaders(request, headers, {
+    return handleAuthkitProxy(request, headers, {
       redirect: loginRedirectPath(request.nextUrl.pathname),
     });
   }
 
-  // handleAuthkitHeaders, not NextResponse.next(): it forwards the session to
+  // handleAuthkitProxy, not NextResponse.next(): it forwards the session to
   // handlers, sends refreshed cookies to the browser, and strips any
   // x-workos-* headers a client tried to inject.
-  return handleAuthkitHeaders(request, headers);
+  return handleAuthkitProxy(request, headers);
 }
 
 export default function middleware(request: NextRequest, event: NextFetchEvent) {
@@ -1756,7 +1756,7 @@ AUTH_PROVIDER=nextauth
 ```bash
 npm test
 npx tsc --noEmit -p .
-AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db npm run build
+AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db R2_ACCESS_KEY_ID=x R2_SECRET_ACCESS_KEY=x R2_BUCKET_NAME=x R2_ENDPOINT_URL=https://example.r2.cloudflarestorage.com npm run build
 ```
 
 Expected: `fail 0`; `tsc` exits 0; the build ends with `✓ Compiled successfully` and a route table, and no WorkOS env vars are set. If the build complains about a WorkOS variable, a module is importing authkit-nextjs eagerly. Find it and make it lazy.
@@ -2254,7 +2254,7 @@ and the import `import { authProvider } from '@/lib/authProvider';`.
 ```bash
 npx tsc --noEmit -p .
 npm test
-AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db npm run build
+AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db R2_ACCESS_KEY_ID=x R2_SECRET_ACCESS_KEY=x R2_BUCKET_NAME=x R2_ENDPOINT_URL=https://example.r2.cloudflarestorage.com npm run build
 ```
 
 Expected: `tsc` exits 0; `fail 0`; the build succeeds and lists the six `/api/auth/workos/*` routes as `ƒ` (dynamic).
@@ -2773,7 +2773,7 @@ lib/authClient.tsx
 ```bash
 npx tsc --noEmit -p .
 npm test
-AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db npm run build
+AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db R2_ACCESS_KEY_ID=x R2_SECRET_ACCESS_KEY=x R2_BUCKET_NAME=x R2_ENDPOINT_URL=https://example.r2.cloudflarestorage.com npm run build
 ```
 
 Expected: `tsc` exits 0; `fail 0`; build succeeds.
@@ -3085,7 +3085,7 @@ Replace the block from `// "Save and sign in"` to the end of `submit` (the `sign
 ```bash
 npx tsc --noEmit -p .
 npm test
-AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db npm run build
+AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db R2_ACCESS_KEY_ID=x R2_SECRET_ACCESS_KEY=x R2_BUCKET_NAME=x R2_ENDPOINT_URL=https://example.r2.cloudflarestorage.com npm run build
 ```
 
 Expected: `tsc` exits 0; `fail 0` (including `copyTerms`, which scans the new copy); the build lists `/verify-email`.
@@ -3224,7 +3224,7 @@ Expected: only `lib/authClient.tsx`.
 ```bash
 npx tsc --noEmit -p .
 npm test
-AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db npm run build
+AUTH_SECRET=build-check NEXTAUTH_SECRET=build-check DATABASE_URL=postgresql://build:check@localhost/db R2_ACCESS_KEY_ID=x R2_SECRET_ACCESS_KEY=x R2_BUCKET_NAME=x R2_ENDPOINT_URL=https://example.r2.cloudflarestorage.com npm run build
 ```
 
 Expected: `tsc` exits 0; `fail 0`; build succeeds.

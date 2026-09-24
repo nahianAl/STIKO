@@ -1,5 +1,6 @@
-import { auth } from '@/lib/nextauth';
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextFetchEvent, type NextRequest } from 'next/server';
+import { auth as nextAuth } from '@/lib/nextauth';
+import { authProvider } from '@/lib/authProvider';
 import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 
 // There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed
@@ -8,17 +9,49 @@ import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 // below requires auth; that is the rule.
 //
 // The public-path rules themselves live in lib/routeAccess.ts, with their
-// history, so they can be tested.
+// history, so they can be tested and both providers share them.
 
-export default auth((req) => {
+const nextAuthMiddleware = nextAuth((req) => {
   const { pathname } = req.nextUrl;
-
   if (routeDecision(pathname, !!req.auth) === 'login') {
     return NextResponse.redirect(new URL(loginRedirectPath(pathname), req.nextUrl.origin));
   }
-
   return NextResponse.next();
 });
+
+async function workosMiddleware(request: NextRequest) {
+  // Lazily imported: a NextAuth deploy never loads WorkOS or needs its env.
+  const { authkit, handleAuthkitProxy } = await import('@workos-inc/authkit-nextjs');
+
+  // authkit() runs on EVERY matched request, public or not. It verifies and
+  // refreshes the session and hands it to route handlers through request
+  // headers; withAuth() in a handler only works if this ran. The WorkOS
+  // sign-in routes live under the public /api/auth prefix and still need it.
+  const { session, headers } = await authkit(request);
+
+  if (routeDecision(request.nextUrl.pathname, !!session.user) === 'login') {
+    // Stiko's own /login — never authkit's authorizationUrl, which is WorkOS's
+    // hosted login page.
+    return handleAuthkitProxy(request, headers, {
+      redirect: loginRedirectPath(request.nextUrl.pathname),
+    });
+  }
+
+  // handleAuthkitProxy, not NextResponse.next(): it forwards the session to
+  // handlers, sends refreshed cookies to the browser, and strips any
+  // x-workos-* headers a client tried to inject.
+  return handleAuthkitProxy(request, headers);
+}
+
+export default function middleware(request: NextRequest, event: NextFetchEvent) {
+  if (authProvider() === 'workos') return workosMiddleware(request);
+  // NextAuth's wrapper is typed for its own request shape; at runtime it is a
+  // standard (request, event) middleware.
+  return (nextAuthMiddleware as unknown as (req: NextRequest, ev: NextFetchEvent) => Promise<Response | undefined>)(
+    request,
+    event
+  );
+}
 
 export const config = {
   // occt-import-js.wasm: static asset fetched by the STEP tessellation worker
