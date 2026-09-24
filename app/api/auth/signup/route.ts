@@ -2,8 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { hashPassword } from '@/lib/password';
+import { authProvider } from '@/lib/authProvider';
 
 export async function POST(request: NextRequest) {
+  // Under WorkOS, accounts are created by /api/auth/workos/sign-up. A local
+  // row made here would have no WorkOS user, could never sign in, and would
+  // block its address's real owner from signing up.
+  if (authProvider() === 'workos') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
   const { name, email: rawEmail, password } = await request.json();
 
   if (!rawEmail || !password || !name) {
