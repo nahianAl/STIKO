@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { sendEmail, passwordResetEmail } from '@/lib/email';
 import { appBaseUrlOrNull } from '@/lib/appUrl';
+import { authProvider } from '@/lib/authProvider';
+import { createWorkosPasswordReset } from '@/lib/workosFlow';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
@@ -12,9 +14,10 @@ export async function POST(request: NextRequest) {
   if (typeof email !== 'string' || !email.trim()) {
     return NextResponse.json({ error: 'Email is required' }, { status: 400 });
   }
+  const address = email.trim().toLowerCase();
 
   const rows = await sql`
-    SELECT id FROM users WHERE lower(email) = lower(${email.trim()}) LIMIT 1
+    SELECT id FROM users WHERE lower(email) = ${address} LIMIT 1
   `;
 
   // 3c: always report the sent state, even for an unregistered address — never
@@ -35,19 +38,31 @@ export async function POST(request: NextRequest) {
         '[forgot-password] NEXTAUTH_URL is not configured — reset email not sent.'
       );
     } else {
-      const token = uuidv4();
-      await sql`
-        INSERT INTO password_reset_tokens (id, token, user_id, expires_at)
-        VALUES (
-          ${uuidv4()}, ${token}, ${rows[0].id},
-          ${new Date(Date.now() + ONE_HOUR_MS).toISOString()}
-        )
-      `;
+      // Under WorkOS the password lives there, so WorkOS must issue the token
+      // its resetPassword call will accept. It is still recorded locally so the
+      // reset page can check it and show whose account it is.
+      const issued =
+        authProvider() === 'workos'
+          ? await createWorkosPasswordReset(address)
+          : { token: uuidv4(), expiresAt: new Date(Date.now() + ONE_HOUR_MS) };
 
-      await sendEmail({
-        to: email.trim(),
-        ...passwordResetEmail({ link: `${base}/reset-password/${token}` }),
-      });
+      if (issued) {
+        await sql`
+          INSERT INTO password_reset_tokens (id, token, user_id, expires_at)
+          VALUES (${uuidv4()}, ${issued.token}, ${rows[0].id}, ${issued.expiresAt.toISOString()})
+        `;
+
+        const result = await sendEmail({
+          to: address,
+          ...passwordResetEmail({ link: `${base}/reset-password/${issued.token}` }),
+        });
+        // Logged, never returned: the response must stay the same for
+        // registered and unregistered addresses. Before this line the result
+        // was discarded, which is how broken resets went unnoticed.
+        if (!result.delivered) {
+          console.error(`[forgot-password] reset email not delivered: ${result.reason}`);
+        }
+      }
     }
   }
 
