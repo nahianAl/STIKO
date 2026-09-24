@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { signIn } from 'next-auth/react';
+import { useAuthActions } from '@/lib/authClient';
+import { safeCallbackUrl } from '@/lib/callbackUrl';
 import Link from 'next/link';
 import AuthShell, { PasswordStrength } from '@/components/auth/AuthShell';
 import Button from '@/components/ui/Button';
@@ -14,7 +15,8 @@ function ResetForm() {
   // 3d: preserve and follow callbackUrl through the reset, so a pending invite
   // survives a password recovery.
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') ?? '/';
+  const callbackUrl = safeCallbackUrl(searchParams.get('callbackUrl'));
+  const { signInWithPassword } = useAuthActions();
 
   const [email, setEmail] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
@@ -57,13 +59,13 @@ function ResetForm() {
     }
 
     // "Save and sign in" — signs you in and returns you wherever you were
-    // headed, including a pending invite.
-    await signIn('credentials', {
-      email: data.email,
-      password,
-      redirect: false,
-    });
-    router.push(callbackUrl);
+    // headed, including a pending invite. If signing in fails anyway, the
+    // password is still saved; send them to sign in by hand rather than to a
+    // page that will bounce them.
+    const signedIn = await signInWithPassword(data.email, password);
+    router.push(
+      signedIn.ok ? callbackUrl : `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    );
   };
 
   if (tokenError) {

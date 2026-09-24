@@ -25,7 +25,7 @@ import {
   type HomeFilter,
 } from '@/lib/home';
 import type { PackageCard, ProjectSummary } from '@/lib/queries';
-import { useSession } from 'next-auth/react';
+import { useAuthSession } from '@/lib/authClient';
 
 /**
  * Owner home. Two states: first run, and the project cards.
@@ -37,7 +37,7 @@ import { useSession } from 'next-auth/react';
  */
 export default function Home() {
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session } = useAuthSession();
 
   const [packages, setPackages] = useState<PackageCard[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);

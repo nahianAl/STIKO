@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canRedeemInvite } from '../../lib/inviteBinding.ts';
+import { canRedeemInvite, inviteVouchesForEmail } from '../../lib/inviteBinding.ts';
 
 test('the addressed recipient can redeem their own invitation', () => {
   const result = canRedeemInvite({
@@ -61,4 +61,33 @@ test('an addressed invitation with no recorded address stays redeemable', () => 
     canRedeemInvite({ inviteEmail: null, multiUse: false, signedInEmail: 'dana@consultant.com' }),
     { ok: true }
   );
+});
+
+const NOW = new Date('2026-09-24T12:00:00Z');
+const addressed = (over = {}) => ({
+  email: 'Dana@Co.com', multiUse: false,
+  expiresAt: '2026-10-01T00:00:00Z', revokedAt: null, ...over,
+});
+
+// Arriving through a link emailed to an address proves you read that inbox,
+// so asking for a second emailed code would be friction with nothing bought.
+test('an addressed invitation vouches for its own address', () => {
+  assert.equal(inviteVouchesForEmail({ invite: addressed(), email: ' dana@co.com', now: NOW }), true);
+});
+
+// A share link is posted in chats and forwarded; holding it proves nothing
+// about any inbox.
+test('a share link vouches for nobody', () => {
+  assert.equal(inviteVouchesForEmail({ invite: addressed({ multiUse: true }), email: 'dana@co.com', now: NOW }), false);
+  assert.equal(inviteVouchesForEmail({ invite: addressed({ email: null }), email: 'dana@co.com', now: NOW }), false);
+});
+
+test('a different address is not vouched for', () => {
+  assert.equal(inviteVouchesForEmail({ invite: addressed(), email: 'someone@else.com', now: NOW }), false);
+});
+
+test('a dead invitation vouches for nobody', () => {
+  assert.equal(inviteVouchesForEmail({ invite: addressed({ expiresAt: '2026-09-01T00:00:00Z' }), email: 'dana@co.com', now: NOW }), false);
+  assert.equal(inviteVouchesForEmail({ invite: addressed({ revokedAt: '2026-09-20T00:00:00Z' }), email: 'dana@co.com', now: NOW }), false);
+  assert.equal(inviteVouchesForEmail({ invite: null, email: 'dana@co.com', now: NOW }), false);
 });

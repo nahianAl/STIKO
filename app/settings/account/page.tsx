@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSession } from 'next-auth/react';
+import { useAuthSession } from '@/lib/authClient';
 import {
   SettingsShell,
   SettingsCard,
@@ -29,7 +29,7 @@ const RAIL = [
 
 /** 3j — Account · Profile. */
 export default function AccountSettings() {
-  const { data: session, update } = useSession();
+  const { data: session, update } = useAuthSession();
   const { toast } = useToast();
 
   const [name, setName] = useState('');

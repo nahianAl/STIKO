@@ -3,6 +3,7 @@ import "./globals.css";
 import Providers from "./providers";
 import { manrope } from "@/lib/fonts";
 import { ToastProvider } from "@/components/ui/Toast";
+import { authProvider } from "@/lib/authProvider";
 
 export const metadata: Metadata = {
   title: "Stiko",
@@ -18,7 +19,7 @@ export default function RootLayout({
     // Manrope is the product typeface everywhere now, not just the review view.
     <html lang="en" className={manrope.variable}>
       <body className="antialiased min-h-screen font-manrope">
-        <Providers>
+        <Providers provider={authProvider()}>
           <ToastProvider>{children}</ToastProvider>
         </Providers>
       </body>

@@ -174,6 +174,21 @@ export function passwordResetEmail(opts: {
   };
 }
 
+export function verificationCodeEmail(opts: {
+  code: string;
+}): Omit<EmailMessage, 'to'> {
+  return {
+    subject: 'Your Stiko sign-in code',
+    body: [
+      `Your code is: ${opts.code}`,
+      ``,
+      `Enter it on the Stiko page that asked for it. It expires in a few minutes.`,
+      ``,
+      `If you didn't just sign up or sign in to Stiko, you can ignore this email.`,
+    ].join('\n'),
+  };
+}
+
 export function mentionEmail(opts: {
   actorName: string;
   fileName: string;
