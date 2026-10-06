@@ -21,6 +21,7 @@
 - **UI copy:** "Package" and "Submission", never "Portal" or "Version".
 - **Escape inside a modal or drawer:** React is hydrated onto `document`, so `e.stopPropagation()` does not stop a `document.addEventListener('keydown')` handler. Use `e.nativeEvent.stopImmediatePropagation()`.
 - **Checks after every task:** `npx tsc --noEmit`, `npm run lint`, `npm test`. All three must be clean before committing.
+- **Do not change `tsconfig.json`, `package.json`, lint config or any other project configuration.** `tsconfig.json` sets no `target`, so `tsc` rejects the regex `u` flag and `\p{...}` escapes; write the code so it does not need them.
 
 ## File Structure
 
@@ -310,7 +311,14 @@ export type MentionSegment =
 /** A query longer than this is prose that happens to follow an `@`, not a name. */
 export const MAX_MENTION_QUERY = 30;
 
-const WORD_CHAR = /[\p{L}\p{N}_]/u;
+/**
+ * A letter, digit or underscore. Written without a Unicode-property regex
+ * (`\p{L}`), which this project's compile target does not accept: a character
+ * with distinct upper and lower case is a letter in any cased script.
+ */
+function isWordChar(ch: string): boolean {
+  return /[0-9_]/.test(ch) || ch.toLowerCase() !== ch.toUpperCase();
+}
 
 /** What a person is called in a mention: their name, or failing that their email's local part. */
 export function mentionLabel(name: string | null | undefined, email: string): string {
@@ -328,7 +336,7 @@ function mentionAt(content: string, at: number, label: string): boolean {
   if (at > 0 && !/\s/.test(content[at - 1])) return false;
   if (!content.startsWith(label, at + 1)) return false;
   const after = content[at + 1 + label.length];
-  return after === undefined || !WORD_CHAR.test(after);
+  return after === undefined || !isWordChar(after);
 }
 
 export function hasMention(content: string, label: string): boolean {
