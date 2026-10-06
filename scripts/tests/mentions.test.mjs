@@ -30,6 +30,23 @@ test('hasMention finds a whole @label and nothing shorter or glued on', () => {
   assert.equal(hasMention('@ nobody', ''), false);
 });
 
+// What may follow a name. Anything that could be more of a name is not a
+// boundary; whitespace and punctuation are.
+test('a mention ends at whitespace or punctuation, in any script', () => {
+  // More name: accents, digits, underscores, and scripts with no letter case.
+  assert.equal(hasMention('@Janée', 'Jane'), false);
+  assert.equal(hasMention('@Jane2', 'Jane'), false);
+  assert.equal(hasMention('@Jane_2', 'Jane'), false);
+  assert.equal(hasMention('@李明', '李'), false);
+  // Punctuation ends it — including the curly apostrophe phones and Macs type.
+  assert.equal(hasMention("@Jane's idea", 'Jane'), true);
+  assert.equal(hasMention("@Jane's idea", 'Jane'), true);
+  assert.equal(hasMention('@Jane…', 'Jane'), true);
+  assert.equal(hasMention('@李，你好', '李'), true);
+  assert.equal(hasMention('(@Jane)', 'Jane'), false);
+  assert.equal(hasMention('see @Jane)', 'Jane'), true);
+});
+
 test('activeMentionQuery opens on an @ at the start or after whitespace', () => {
   assert.deepEqual(activeMentionQuery('@', 1), { start: 0, query: '' });
   assert.deepEqual(activeMentionQuery('hi @ja', 6), { start: 3, query: 'ja' });
