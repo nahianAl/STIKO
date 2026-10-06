@@ -23,7 +23,7 @@ means remembering and retyping their address.
 | Question | Decision |
 |---|---|
 | Who can mention | Anyone who can comment on the file |
-| Who can be mentioned | Only people who can open that file: the package's participants plus the project's owner and coordinators, minus anyone whose version scope excludes the file's submission, minus the author |
+| Who can be mentioned | Only people who can open that file: the package's participants plus the project's owner and coordinators, minus anyone whose version scope excludes the file's submission, minus the author. On a draft (unpublished) submission that means the owner, coordinators and uploaders only |
 | People elsewhere in the project | Not mentionable. A package is a permission boundary |
 | `@everyone` | Not included |
 | How a mention is stored | The comment text stays plain (`@Jane Doe`); a new `mentions` column records who |
@@ -80,12 +80,18 @@ The migration is still the real mechanism; this only bounds the damage.
 package and version, then returns the union of:
 
 - the project owner (`projects.owner_id`),
-- coordinators (`project_members`),
-- `participants` on the package where `all_versions = TRUE`, or
-  `role = 'uploader'`, or a `participant_versions` row names the file's version.
+- coordinators (`project_members` with `role = 'coordinator'`, the only member
+  role `getPackageAccess` admits),
+- `participants` on the package who are uploaders, and
+- commenters and viewers, but only when the file's submission is **published**
+  and their scope covers it (`all_versions = TRUE`, or a `participant_versions`
+  row names it).
 
-That third rule is the same predicate the publish route uses to choose
-recipients, and it matches `canSeeVersion`. Each entry is
+The published condition matters: a draft is visible only to whoever can upload
+(`app/api/versions/route.ts`), so a reviewer mentioned on a draft's file would
+be emailed its file name and comment text without being shown the draft. The
+publish route's recipient query has no such condition only because it runs at
+the moment of publication and never meets a draft; mentions do. Each entry is
 `{ userId, label, company, role }`. `label` is the user's trimmed `name`,
 falling back to the part of their email before the `@` when they have none.
 

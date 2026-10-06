@@ -23,6 +23,14 @@
 - **Checks after every task:** `npx tsc --noEmit`, `npm run lint`, `npm test`. All three must be clean before committing.
 - **Do not change `tsconfig.json`, `package.json`, lint config or any other project configuration.** `tsconfig.json` sets no `target`, so `tsc` rejects the regex `u` flag and `\p{...}` escapes; write the code so it does not need them.
 
+## Corrections made during execution
+
+The code blocks below are the plan as first written. Review during execution changed the following; the committed code and the spec are authoritative where they differ.
+
+- **Task 1:** the name-boundary rule is `NAME_BOUNDARY` / `continuesName` (already reflected below). `lib/mentions.ts` also gained two pure, tested helpers used by `lib/mentionNotify.ts`: `mentionChannels(recipient, defaults)` (mute, preference and pause rules) and `mentionExcerpt(content, max = 140)` (trims by character, never inside an emoji).
+- **Task 2:** in `lib/mentionable.ts`, coordinators are `project_members` rows with `role = 'coordinator'` only, and commenters and viewers are mentionable only when the file's submission is published (the participants branch joins `versions` and requires `published_at IS NOT NULL` for anyone who is not an uploader). A draft is visible only to whoever can upload, and a mention must never email someone a draft they are not shown.
+- **Task 3:** in `lib/mentionNotify.ts`, the recipient lookup, the notification insert and the email each have their own `try`, so one channel failing does not cost the other; a missing base URL is logged once.
+
 ## File Structure
 
 | File | Responsibility |
