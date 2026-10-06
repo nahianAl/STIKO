@@ -121,6 +121,9 @@ test('a mention ends at whitespace or punctuation, in any script', () => {
   assert.equal(hasMention('@Jane2', 'Jane'), false);
   assert.equal(hasMention('@Jane_2', 'Jane'), false);
   assert.equal(hasMention('@李明', '李'), false);
+  // Halfwidth katakana and fullwidth letters are name characters, not punctuation.
+  assert.equal(hasMention('@ｶﾅ', 'ｶ'), false);
+  assert.equal(hasMention('@ＡＢ', 'Ａ'), false);
   // Punctuation ends it — including the curly apostrophe phones and Macs type.
   assert.equal(hasMention("@Jane's idea", 'Jane'), true);
   assert.equal(hasMention('@Jane’s idea', 'Jane'), true);
