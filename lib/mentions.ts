@@ -173,6 +173,32 @@ export function newlyMentioned(before: Mention[], after: Mention[]): string[] {
   return after.filter((m) => !had.has(m.userId)).map((m) => m.userId);
 }
 
+/**
+ * Which channels may tell one person they were mentioned.
+ *
+ * A muted package means neither, whatever their preferences say. Otherwise
+ * each channel follows its own preference, where null means they never set
+ * one and the default applies. A paused inbox skips the email only.
+ */
+export function mentionChannels(
+  recipient: { muted: boolean; paused: boolean; inApp: boolean | null; email: boolean | null },
+  defaults: { inApp: boolean; email: boolean }
+): { inApp: boolean; email: boolean } {
+  if (recipient.muted) return { inApp: false, email: false };
+  const inApp = recipient.inApp ?? defaults.inApp;
+  const wantsEmail = recipient.email ?? defaults.email;
+  return { inApp, email: wantsEmail && !recipient.paused };
+}
+
+/**
+ * The start of a comment, for a notification. Counted in characters, not
+ * UTF-16 units, so the cut never lands inside an emoji.
+ */
+export function mentionExcerpt(content: string, max = 140): string {
+  const chars = Array.from(content);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : content;
+}
+
 /** Read the `mentions` column, which the driver may hand back as JSON text. */
 export function parseMentions(raw: unknown): Mention[] {
   let value = raw;

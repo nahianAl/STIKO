@@ -6,10 +6,13 @@ import { mentionLabel, type MentionablePerson } from '@/lib/mentions';
  * Everyone who can open this file: the project owner, its coordinators, and
  * the package's participants whose scope covers the file's submission.
  *
- * The participant rule is the same predicate the publish route uses to pick
- * its recipients, and it matches canSeeVersion: unscoped, or an uploader (never
- * scoped), or explicitly given this one. A mention can therefore never reach
- * someone who would get a 404 from its link.
+ * Uploaders always. Commenters and viewers only when the submission is
+ * published AND their scope covers it, because a draft is visible only to
+ * whoever can upload (see app/api/versions/route.ts) and a mention emails
+ * the file name and the comment text, which cannot be recalled. Project
+ * members only when they are the owner or a coordinator, matching
+ * getPackageAccess. A mention can therefore never reach someone who would
+ * get a 404 from its link.
  *
  * Includes the caller. Whoever asks decides whether to drop themselves.
  */
@@ -28,18 +31,22 @@ export async function mentionableUsers(fileId: string): Promise<MentionablePerso
     FROM portals po
     JOIN project_members pm ON pm.project_id = po.project_id
     JOIN users u ON u.id = pm.user_id
-    WHERE po.id = ${location.portalId}
-    UNION ALL
-    SELECT u.id, u.name, u.email, u.company, pa.role, 2
+X, 2
     FROM participants pa
     JOIN users u ON u.id = pa.user_id
+    JOIN versions v ON v.id = ${location.versionId}
     WHERE pa.portal_id = ${location.portalId}
       AND (
-        pa.all_versions = TRUE
-        OR pa.role = 'uploader'
-        OR EXISTS (
-          SELECT 1 FROM participant_versions pv
-          WHERE pv.participant_id = pa.id AND pv.version_id = ${location.versionId}
+        pa.role = 'uploader'
+        OR (
+          v.published_at IS NOT NULL
+          AND (
+            pa.all_versions = TRUE
+            OR EXISTS (
+              SELECT 1 FROM participant_versions pv
+              WHERE pv.participant_id = pa.id AND pv.version_id = ${location.versionId}
+            )
+          )
         )
       )
     ORDER BY sort_order, name NULLS LAST

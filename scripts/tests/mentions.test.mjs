@@ -10,6 +10,8 @@ import {
   newlyMentioned,
   parseMentions,
   splitMentions,
+  mentionChannels,
+  mentionExcerpt,
 } from '../../lib/mentions.ts';
 
 test('a label is the tidied name, or the email local part when there is none', () => {
@@ -175,4 +177,57 @@ test('splitMentions handles repeats, near-misses and no mentions at all', () => 
   assert.deepEqual(splitMentions('@Samantha', sam), [{ type: 'text', text: '@Samantha' }]);
   assert.deepEqual(splitMentions('plain @words', []), [{ type: 'text', text: 'plain @words' }]);
   assert.deepEqual(splitMentions('', sam), []);
+});
+
+const DEFAULTS = { inApp: true, email: true };
+
+// The rules guarding the one channel that cannot be recalled.
+test('mentionChannels: a muted package silences both channels, whatever the prefs say', () => {
+  assert.deepEqual(
+    mentionChannels({ muted: true, paused: false, inApp: true, email: true }, DEFAULTS),
+    { inApp: false, email: false }
+  );
+});
+
+test('mentionChannels: no saved preference means the default', () => {
+  assert.deepEqual(
+    mentionChannels({ muted: false, paused: false, inApp: null, email: null }, DEFAULTS),
+    { inApp: true, email: true }
+  );
+  assert.deepEqual(
+    mentionChannels({ muted: false, paused: false, inApp: null, email: null }, { inApp: true, email: false }),
+    { inApp: true, email: false }
+  );
+});
+
+test('mentionChannels: each channel follows its own preference', () => {
+  assert.deepEqual(
+    mentionChannels({ muted: false, paused: false, inApp: false, email: true }, DEFAULTS),
+    { inApp: false, email: true }
+  );
+  assert.deepEqual(
+    mentionChannels({ muted: false, paused: false, inApp: true, email: false }, DEFAULTS),
+    { inApp: true, email: false }
+  );
+});
+
+test('mentionChannels: a paused inbox skips the email only', () => {
+  assert.deepEqual(
+    mentionChannels({ muted: false, paused: true, inApp: null, email: null }, DEFAULTS),
+    { inApp: true, email: false }
+  );
+});
+
+test('mentionExcerpt keeps short text whole and trims long text to 140 characters', () => {
+  assert.equal(mentionExcerpt('short'), 'short');
+  assert.equal(mentionExcerpt('a'.repeat(140)), 'a'.repeat(140));
+  assert.equal(mentionExcerpt('a'.repeat(141)), 'a'.repeat(139) + '…');
+});
+
+// Cutting by UTF-16 unit can leave half an emoji behind, which a database or
+// a mail API may refuse — and then nobody mentioned in that comment is told.
+test('mentionExcerpt never cuts an emoji in half', () => {
+  const grin = '\u{1F600}';
+  const long = 'a'.repeat(138) + grin + grin + grin;
+  assert.equal(mentionExcerpt(long), 'a'.repeat(138) + grin + '…');
 });

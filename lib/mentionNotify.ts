@@ -5,8 +5,7 @@ import { sendEmail, mentionEmail } from '@/lib/email';
 import { appBaseUrlOrNull } from '@/lib/appUrl';
 import { NOTIFICATION_EVENTS } from '@/lib/notificationEvents';
 import { portalDeepLinkPath } from '@/lib/portalDeepLink';
-
-const EXCERPT_LENGTH = 140;
+import { mentionChannels, mentionExcerpt } from '@/lib/mentions';
 
 /**
  * Tell people they were mentioned.
@@ -53,10 +52,7 @@ export async function notifyMentions(opts: {
       fileId: opts.fileId,
       commentId: opts.commentId,
     });
-    const excerpt =
-      opts.content.length > EXCERPT_LENGTH
-        ? `${opts.content.slice(0, EXCERPT_LENGTH - 1)}…`
-        : opts.content;
+    const excerpt = mentionExcerpt(opts.content);
     const title = `${opts.actorName} mentioned you on ${fileName}`;
 
     const defaults = NOTIFICATION_EVENTS.find((e) => e.key === 'mention');
@@ -64,8 +60,14 @@ export async function notifyMentions(opts: {
     const defaultEmail = defaults?.email ?? true;
     // Configured host only — never the request's. See lib/appUrl.ts.
     const base = appBaseUrlOrNull();
+    if (!base) {
+      // Said once, not per recipient. Without it mention email would stop
+      // silently the day the base URL setting is renamed or removed.
+      console.error('[mentions] no base URL configured; mention emails are skipped');
+    }
 
     for (const userId of recipientIds) {
+      let row;
       try {
         const rows = await sql`
           SELECT u.email,
@@ -81,13 +83,25 @@ export async function notifyMentions(opts: {
             ON np.user_id = u.id AND np.event = 'mention'
           WHERE u.id = ${userId}
         `;
-        const r = rows[0];
-        if (!r || r.muted) continue;
+        row = rows[0];
+      } catch (err) {
+        console.error('[mentions] could not look up', userId, err);
+        continue;
+      }
+      if (!row) continue;
 
-        const inApp = r.inApp == null ? defaultInApp : Boolean(r.inApp);
-        const wantsEmail = r.wantsEmail == null ? defaultEmail : Boolean(r.wantsEmail);
+      const channels = mentionChannels(
+        {
+          muted: Boolean(row.muted),
+          paused: Boolean(row.paused),
+          inApp: row.inApp == null ? null : Boolean(row.inApp),
+          email: row.wantsEmail == null ? null : Boolean(row.wantsEmail),
+        },
+        { inApp: defaultInApp, email: defaultEmail }
+      );
 
-        if (inApp) {
+      if (channels.inApp) {
+        try {
           await sql`
             INSERT INTO notifications
               (id, user_id, type, portal_id, actor_id, title, excerpt, href)
@@ -96,11 +110,15 @@ export async function notifyMentions(opts: {
               ${opts.actorId}, ${title}, ${excerpt}, ${path}
             )
           `;
+        } catch (err) {
+          console.error('[mentions] could not record notification for', userId, err);
         }
+      }
 
-        if (wantsEmail && !r.paused && base) {
+      if (channels.email && base) {
+        try {
           await sendEmail({
-            to: r.email as string,
+            to: row.email as string,
             ...mentionEmail({
               actorName: opts.actorName,
               fileName,
@@ -109,9 +127,9 @@ export async function notifyMentions(opts: {
               link: `${base}${path}`,
             }),
           });
+        } catch (err) {
+          console.error('[mentions] could not email', userId, err);
         }
-      } catch (err) {
-        console.error('[mentions] could not notify', userId, err);
       }
     }
   } catch (err) {
