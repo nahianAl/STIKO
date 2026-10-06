@@ -33,6 +33,7 @@ import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlo
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { BRIEF_MIN_COMMENTS } from '@/lib/brief';
 import { preserveIfUnchanged } from '@/lib/portalActivity';
+import { parsePortalDeepLink, type PortalDeepLink } from '@/lib/portalDeepLink';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -297,6 +298,11 @@ export default function PortalPage() {
 
   // Comment linking state
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  // A notification link: ?submission=&file=&comment=. `undefined` means not
+  // read yet; `null` means there is none, or it has been used. It is read from
+  // window.location rather than useSearchParams because it is wanted exactly
+  // once, inside a callback that only ever runs in the browser.
+  const deepLinkRef = useRef<PortalDeepLink | null | undefined>(undefined);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
   // The roster has two consumers that do not share a fetch. `participants`
@@ -1062,9 +1068,18 @@ export default function PortalPage() {
       }
       const data: Version[] = await res.json();
       setVersions(data);
+      if (deepLinkRef.current === undefined) {
+        deepLinkRef.current = parsePortalDeepLink(window.location.search);
+      }
+      // A link to something this person cannot see, or that is gone, is
+      // dropped whole and the page opens as it always has. Never half-honoured.
+      if (deepLinkRef.current && !data.some((v) => v.id === deepLinkRef.current?.versionId)) {
+        deepLinkRef.current = null;
+      }
+      const linkedVersionId = deepLinkRef.current?.versionId ?? null;
       if (data.length > 0) {
         setSelectedVersionId((current) =>
-          current && data.some((v) => v.id === current) ? current : data[0].id
+          linkedVersionId ?? (current && data.some((v) => v.id === current) ? current : data[0].id)
         );
       }
     } catch (err) {
@@ -1177,6 +1192,14 @@ export default function PortalPage() {
     async (versionId: string, options?: { background?: boolean }) => {
       const background = options?.background === true;
       if (!background) setFilesLoading(true);
+      // Taken before the request, whatever its outcome. A link left pending
+      // after a failed fetch would make every later poll of loadVersions drag
+      // the user back to this version.
+      const link =
+        deepLinkRef.current && deepLinkRef.current.versionId === versionId
+          ? deepLinkRef.current
+          : null;
+      if (link) deepLinkRef.current = null;
       try {
         const res = await fetch(`/api/files?versionId=${versionId}`);
         // The version this request was FOR may no longer be the one on screen — a poll has no
@@ -1211,9 +1234,17 @@ export default function PortalPage() {
           // A version change should land on the first file, but a delete that
           // leaves the current selection intact must not throw the viewer back
           // to file 1.
+          const linkedFileId =
+            link && data.some((f) => f.id === link.fileId) ? link.fileId : null;
           setSelectedFileId((current) =>
-            current && data.some((f) => f.id === current) ? current : data[0].id
+            linkedFileId ?? (current && data.some((f) => f.id === current) ? current : data[0].id)
           );
+          // CommentsPanel owns the scroll and the outline, and retries once this
+          // file's comments have loaded — never scrollIntoView from here.
+          if (linkedFileId && link?.commentId) {
+            setActiveCommentId(link.commentId);
+            setCommentsCollapsed(false);
+          }
         } else {
           setSelectedFileId(null);
         }
