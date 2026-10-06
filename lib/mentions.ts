@@ -32,7 +32,14 @@ export type MentionSegment =
 /** A query longer than this is prose that happens to follow an `@`, not a name. */
 export const MAX_MENTION_QUERY = 30;
 
-const WORD_CHAR = /[\p{L}\p{N}_]/u;
+/**
+ * A letter, digit or underscore. Written without a Unicode-property regex
+ * (`\p{L}`), which this project's compile target does not accept: a character
+ * with distinct upper and lower case is a letter in any cased script.
+ */
+function isWordChar(ch: string): boolean {
+  return /[0-9_]/.test(ch) || ch.toLowerCase() !== ch.toUpperCase();
+}
 
 /** What a person is called in a mention: their name, or failing that their email's local part. */
 export function mentionLabel(name: string | null | undefined, email: string): string {
@@ -50,7 +57,7 @@ function mentionAt(content: string, at: number, label: string): boolean {
   if (at > 0 && !/\s/.test(content[at - 1])) return false;
   if (!content.startsWith(label, at + 1)) return false;
   const after = content[at + 1 + label.length];
-  return after === undefined || !WORD_CHAR.test(after);
+  return after === undefined || !isWordChar(after);
 }
 
 export function hasMention(content: string, label: string): boolean {
