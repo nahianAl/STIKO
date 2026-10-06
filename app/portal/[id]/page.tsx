@@ -1011,7 +1011,8 @@ export default function PortalPage() {
   }, [portalId]);
 
   // Opening a package is reading its mentions — see PATCH /api/notifications.
-  // Fire and forget: a signed-out visitor gets a 401, which is fine.
+  // Fire and forget: a signed-out visitor's request is turned away, which is
+  // fine — there is nothing of theirs to mark.
   useEffect(() => {
     fetch('/api/notifications', {
       method: 'PATCH',

@@ -106,8 +106,10 @@ the response.
 `mentions: string[]` of user ids. The server never trusts it:
 
 1. Load `mentionableUsers(fileId)`.
-2. Keep an id only if it is in that list **and** `@<label>` still occurs in the
-   content, using the server's label, never a client-supplied name.
+2. Keep an id only if it is in that list **and** an `@` in the content is
+   attributed to its label, using the server's label, never a client-supplied
+   name. Each `@` goes to the longest label that fits it, as the renderer reads
+   it.
 3. Deduplicate and store as `[{ userId, name: label }]`.
 
 On `PUT`, a missing `mentions` field means "re-check the stored ones against the
@@ -142,7 +144,9 @@ Recipients on `POST` are everyone stored in `mentions`. On `PUT` they are the
 ids in the new list that were not in the old one.
 
 **Clearing the badge.** The dashboard's mention badge counts unread `mention`
-rows per package. Opening a package marks that person's mentions on it read
+rows per package. Opening a package marks that person's mentions on it read, all of them at
+once: it is per package, not per file or per comment, and the rows stay listed
+in the Activity rail afterwards
 (`PATCH /api/notifications` with `{ portalId }`, fired once by the package
 page). Before this, `read_at` was only ever set by clicking the exact row in
 the dashboard's Activity rail, so someone who arrived by the package card or
