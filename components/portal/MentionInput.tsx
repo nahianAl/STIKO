@@ -73,6 +73,16 @@ export default function MentionInput({
     if (activeStart === null && closedAt !== null) setClosedAt(null);
   }, [activeStart, closedAt]);
 
+  // An input mounted with autoFocus is focused during mount. Do not depend on
+  // that first focus reaching onFocus.
+  useEffect(() => {
+    const el = ref.current;
+    if (el && document.activeElement === el) {
+      setFocused(true);
+      setCaret(el.selectionStart ?? el.value.length);
+    }
+  }, [ref]);
+
   useLayoutEffect(() => {
     if (pendingCaret.current === null) return;
     ref.current?.setSelectionRange(pendingCaret.current, pendingCaret.current);
@@ -96,6 +106,13 @@ export default function MentionInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // An input method uses Enter (and arrows) to choose and commit its own
+    // candidates. Leave those keys alone until the composition has ended.
+    // keyCode 229 is how Safari reports a key that belongs to a composition.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      onKeyDown?.(e);
+      return;
+    }
     if (open && active) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -134,6 +151,7 @@ export default function MentionInput({
         autoFocus={autoFocus}
         placeholder={placeholder}
         className={className}
+        autoComplete="off"
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
