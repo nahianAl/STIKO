@@ -29,7 +29,14 @@ The code blocks below are the plan as first written. Review during execution cha
 
 - **Task 1:** the name-boundary rule is `NAME_BOUNDARY` / `continuesName` (already reflected below). `lib/mentions.ts` also gained two pure, tested helpers used by `lib/mentionNotify.ts`: `mentionChannels(recipient, defaults)` (mute, preference and pause rules) and `mentionExcerpt(content, max = 140)` (trims by character, never inside an emoji).
 - **Task 2:** in `lib/mentionable.ts`, coordinators are `project_members` rows with `role = 'coordinator'` only, and commenters and viewers are mentionable only when the file's submission is published (the participants branch joins `versions` and requires `published_at IS NOT NULL` for anyone who is not an uploader). A draft is visible only to whoever can upload, and a mention must never email someone a draft they are not shown.
-- **Task 3:** in `lib/mentionNotify.ts`, the recipient lookup, the notification insert and the email each have their own `try`, so one channel failing does not cost the other; a missing base URL is logged once.
+- **Task 3:** in `lib/mentionNotify.ts`, the recipient lookup, the notification insert and the email each have their own `try`, so one channel failing does not cost the other; a missing base URL is logged once. In both comment routes the `mentionableUsers` lookup is wrapped: if it throws, the comment is saved with no new mentions.
+- **Tasks 4 and 8:** both inputs ignore keys that belong to an input-method composition (`isComposing` / keyCode 229); `MentionInput` sets `focused` on mount when it was auto-focused and has `autoComplete="off"`; `InviteeInput` has an `aria-label`.
+- **Final review (commit 8692df7):**
+  - `reconcileMentions` gives each `@` to the longest label that fits it.
+  - Opening a package marks its mentions read: `PATCH /api/notifications` accepts `{ portalId }`, fired once by the package page.
+  - A mention inside a reply is highlighted (`CommentItem` passes `isActive` to replies).
+  - `/api/people/suggest` no longer suggests the owner or coordinators of a project the caller is only a guest on, and answers `Cache-Control: no-store`.
+- **Verification by execution:** the new SQL and the comment, suggest and notification route handlers were run against a real Postgres engine (PGlite loaded with `lib/schema.sql`) from a throwaway harness outside the repo. It is not part of the repo and not a substitute for the checks in Task 9.
 
 ## File Structure
 
@@ -2715,7 +2722,7 @@ Production is the only environment and this sandbox cannot read `.env.local`, so
 - [ ] **Step 1: Confirm the branch is clean and complete**
 
 Run: `git status --short && git log --oneline main..HEAD`
-Expected: only the four untracked handoff directories; ten commits (the spec, the plan, and one for each of Tasks 1 to 8).
+Expected: only the four untracked handoff directories, and the branch's commits: the spec, the plan and its corrections, each task, and the review fixes (about two dozen).
 
 Run: `npx tsc --noEmit && npm run lint && npm test && npm run build`
 Expected: clean.
@@ -2740,6 +2747,8 @@ Expected: `016-comment-mentions.sql` applied, 1 statement. The column is additiv
 
 Run `npm run dev` and open the app signed in as an account that owns a package with at least two other participants, one of them a commenter scoped to a single submission.
 
+This runs against the production database. **Mention only accounts you control.** A mention of a real collaborator leaves them a permanent "mentioned you" notification: deleting the test comment does not remove it, and there is no way to delete a notification. If outbound email has been fixed by then, they would also get an email, and its link would point at whatever `NEXTAUTH_URL` or `APP_URL` is set in `.env.local`.
+
 Mentions:
 1. In the composer type `@`. A list opens above the box with the other people on the package and not you. Type two letters: it filters.
 2. Arrow down, Enter. The name is inserted with a trailing space and the comment is **not** sent. Enter again sends it.
@@ -2748,11 +2757,15 @@ Mentions:
 5. Open a file in a submission the scoped commenter cannot see and type `@`. They are not in the list.
 6. Reply to a comment and edit a comment: the list opens below the box in both and works the same way.
 7. Edit a comment that mentions one person, add a second, save. Only the second person gets a new notification.
-8. As the mentioned person, open the dashboard: the package shows the mention badge. Click the notification: the package opens on that file with that comment outlined and scrolled into view.
+8. As the mentioned person, open the dashboard: the package shows the mention badge. Click the notification: the package opens on that file with that comment outlined and scrolled into view. Go back to the dashboard: the badge is gone.
+8a. Get mentioned again, then open the package from its card instead of the notification, and go back: the badge is gone that way too.
+8b. Mention someone inside a reply, and open that notification: the reply itself is outlined, not just its thread.
+8c. Pick one person from the list, delete the name, pick a different person whose name starts the same way (if two such people exist): only the second is notified.
 9. Mute the package as the mentioned person, get mentioned again: no notification.
 
 Invite autocomplete:
 10. Open Share package. The field reads "Name or email". Type two letters of the name of someone you share another package with: they appear with their email and company.
+10a. Signed in as someone who is only a guest (commenter) on another person's package and owns a project of their own: in their own Share package window, typing the other project's owner's name suggests nobody, while typing a fellow participant's name from that package does.
 11. Click them: the field holds their email, the list closes and does not reopen, and Send is enabled. The field is still editable.
 12. Type `%%`: no results. Type a name of someone already on this package: not suggested.
 13. Type a brand-new address in full and send it: the invitation goes out exactly as before.
@@ -2790,6 +2803,10 @@ git checkout main && git merge --no-ff feature/mentions-and-invite-autocomplete 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" && git push
 ```
 
-**Rollback:** `git revert -m 1 <merge commit>` and push. The `mentions` column and any `mention` notifications already written are harmless to the previous code.
+After the push, on the live site: open a thread, then post, edit and delete a comment that has an attachment, and confirm all three work. Check the host's function logs for lines starting `[mentions]`. Confirm `NEXTAUTH_URL` or `APP_URL` is set in production: without one, mention emails are skipped (and logged), and `NEXTAUTH_URL` is likely to disappear when NextAuth is removed.
+
+**Rollback:** `git revert -m 1 <merge commit>` and push. The `mentions` column and any `mention` notifications already written are harmless to the previous code, though a mention badge written before the revert can then only be cleared from its row in the Activity rail.
+
+**If the code is ever deployed before migration 016:** run the migration; do not revert. The comment routes add the column themselves on first use when the database role may alter tables. If it may not, comments still load and post (without attachments, video timestamps or mentions) but editing a comment fails until the migration is applied.
 
 **Known limitation to state in the report:** outbound email is currently rejected by Resend (missing DKIM record), so mention emails will not arrive until that is fixed. In-app notifications and the dashboard badge do not depend on it.

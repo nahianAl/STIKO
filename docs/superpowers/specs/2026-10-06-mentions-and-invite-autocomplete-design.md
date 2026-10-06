@@ -29,7 +29,7 @@ means remembering and retyping their address.
 | How a mention is stored | The comment text stays plain (`@Jane Doe`); a new `mentions` column records who |
 | Mention on edit | Notifies only people newly added by that edit |
 | Where a mention link lands | The package, on that file, with the comment highlighted |
-| Who invite autocomplete suggests | Only people the inviter can already see on some package they can open |
+| Who invite autocomplete suggests | Everyone on a package the inviter can open, plus the owner and coordinators of projects the inviter is themselves an owner or coordinator of. Never the owner or coordinators of a project the inviter is only a guest on |
 | Inviting a brand-new email | Still works exactly as today |
 | Pending (unaccepted) invitees | Not suggested; they have no profile |
 
@@ -141,6 +141,16 @@ request's host. Building and parsing the link both live in
 Recipients on `POST` are everyone stored in `mentions`. On `PUT` they are the
 ids in the new list that were not in the old one.
 
+**Clearing the badge.** The dashboard's mention badge counts unread `mention`
+rows per package. Opening a package marks that person's mentions on it read
+(`PATCH /api/notifications` with `{ portalId }`, fired once by the package
+page). Before this, `read_at` was only ever set by clicking the exact row in
+the dashboard's Activity rail, so someone who arrived by the package card or
+the email link kept a badge for a mention they had already read. Mentions only:
+the other notification types on a package are things to act on, not things that
+opening it settles. A mention that arrives while the package is already open
+stays unread until the next time it is opened.
+
 The comment is already saved when notifying starts. A failure to notify is
 logged and swallowed; it must never turn a saved comment into an error response.
 
@@ -155,7 +165,9 @@ after versions have loaded, of `submission`, `file` and `comment`:
 
 - select that version if it is in the caller's list, then that file,
 - set `activeCommentId`, which `CommentsPanel` already scrolls to and
-  highlights, and un-collapse the comments panel.
+  highlights, and un-collapse the comments panel. Replies are highlighted too
+  (`CommentItem` passes `isActive` down to its replies); before this only
+  top-level comments were.
 
 Anything missing, malformed or out of the caller's scope is ignored and the page
 opens as it does now. Read from `window.location.search` inside the effect
@@ -173,6 +185,9 @@ it):
 - `insertMention(text, start, caret, label)` → new text and caret, replacing
   `@query` with `@<label>` and a trailing space.
 - `reconcileMentions(content, ids, allowed, stored?)` → the server rule above.
+  Each `@` in the text is given to the longest label that fits it, the same
+  way the renderer reads it, so `@Sam Lee` never also counts as a mention of
+  someone called Sam who was picked first and then replaced.
   `stored` is what the comment already held: on an edit, an earlier mention is
   kept while its text is still there, even if that person has since left the
   package.
@@ -210,7 +225,8 @@ The composer's text lives in the portal page (`composerText`), so the page gains
 
 `components/portal/MentionText.tsx` renders a comment body from
 `splitMentions`: plain text as now, each mention as an inline pill
-(`bg-stiko-tint text-stiko-primary`, rounded, medium weight). A mention of the
+(`bg-stiko-primary/10 text-stiko-primary`, rounded, semibold; `stiko-tint` is
+almost the comment card's own background and would not read as a pill). A mention of the
 signed-in user gets the stronger treatment (solid primary, white text). It
 replaces the bare `{comment.content}` in `CommentsPanel`.
 
@@ -236,11 +252,22 @@ A comment with an empty `mentions` list renders exactly as today, so a typed
 
 ### Who can be suggested
 
-A "connection" is anyone who stands beside the caller on a package the caller
-can open. For every id in `visiblePackageIds(callerId)`, take that package's
-`participants`, plus the owner and coordinators of its project. This is the same
-shape as the mentionable list in Part 1, without the version filter, and it
-contains nobody the caller could not already encounter in the product.
+A "connection" is someone whose name and email the caller can already see in
+Stiko. For every id in `visiblePackageIds(callerId)`:
+
+- that package's `participants`, always: any participant already sees the
+  roster, emails included;
+- the owner and coordinators of its project, but only when the caller is
+  themselves the owner or a member of that project.
+
+The second condition was narrowed during the final review. A guest on one
+package sees the owner's name there but not their email, and never sees the
+coordinators at all, while this endpoint returns emails. Without the condition,
+an outside reviewer who creates a free project of their own (which lets them
+call the endpoint) could collect the inviting firm's owner and coordinator
+addresses two letters at a time. An address cannot be un-disclosed, and
+widening this later is easy. The cost: a guest cannot autocomplete the person
+who invited them.
 
 Removed from that set: the caller, everyone already a participant on the target
 package, and the target project's owner and coordinators, who have access
@@ -259,6 +286,7 @@ already.
   `ILIKE`; the escaping is a pure helper in `lib/peopleSuggest.ts` with its own
   test.
 - Up to 8 rows ordered by name: `{ name, email, company }`. No user ids.
+- `Cache-Control: no-store`, since the response carries addresses.
 
 The set is computed in one query per request. Nothing is cached, so a person
 removed from a shared package stops being suggested immediately.
