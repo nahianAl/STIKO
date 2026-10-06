@@ -45,7 +45,7 @@ export const MAX_MENTION_QUERY = 30;
  * punctuation and the fullwidth forms.
  */
 const NAME_BOUNDARY =
-  /[\s!-\/:-@\[-^`{-~¡-¿ -⁯　-〿＀-￯]/;
+  /[\s!-\/:-@\[-^`{-~\u00A0-\u00BF\u2000-\u206F\u3000-\u303F\uFF00-\uFF0F\uFF1A-\uFF20]/;
 
 function continuesName(ch: string): boolean {
   return !NAME_BOUNDARY.test(ch);
