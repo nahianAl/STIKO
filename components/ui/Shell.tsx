@@ -15,24 +15,24 @@ export function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** The Stiko mark: a rotated white sticky note on the primary gradient. */
+/**
+ * The Stiko mark: two leaves, blue over orange, on no background. `size` is
+ * its height; the mark is taller than it is wide (47.5 : 86), so the width
+ * follows from it. Decorative wherever it appears — the wordmark or the page
+ * title beside it already says "Stiko".
+ */
 export function LogoMark({ size = 26 }: { size?: number }) {
-  const inner = Math.round(size * 0.42);
   return (
-    <span
-      className="inline-flex shrink-0 items-center justify-center bg-gradient-to-br from-[#8094F5] to-[#5B60FF]"
-      style={{ width: size, height: size, borderRadius: size <= 30 ? 8 : 13 }}
+    <svg
+      viewBox="26.25 7 47.5 86"
+      width={(size * 47.5) / 86}
+      height={size}
+      className="shrink-0"
+      aria-hidden="true"
     >
-      <span
-        className="block bg-white"
-        style={{
-          width: inner,
-          height: inner,
-          borderRadius: 3,
-          transform: 'rotate(-10deg)',
-        }}
-      />
-    </span>
+      <path d="M71 8 H50 A21 21 0 0 0 50 50 C77.3 50 73.52 19.55 71 8 Z" fill="#5680E6" />
+      <path d="M29 92 H50 A21 21 0 0 0 50 50 C22.7 50 26.48 80.45 29 92 Z" fill="#EF6C22" />
+    </svg>
   );
 }
 
