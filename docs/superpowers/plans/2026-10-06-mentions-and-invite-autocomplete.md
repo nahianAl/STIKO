@@ -113,6 +113,23 @@ test('hasMention finds a whole @label and nothing shorter or glued on', () => {
   assert.equal(hasMention('@ nobody', ''), false);
 });
 
+// What may follow a name. Anything that could be more of a name is not a
+// boundary; whitespace and punctuation are.
+test('a mention ends at whitespace or punctuation, in any script', () => {
+  // More name: accents, digits, underscores, and scripts with no letter case.
+  assert.equal(hasMention('@Janée', 'Jane'), false);
+  assert.equal(hasMention('@Jane2', 'Jane'), false);
+  assert.equal(hasMention('@Jane_2', 'Jane'), false);
+  assert.equal(hasMention('@李明', '李'), false);
+  // Punctuation ends it — including the curly apostrophe phones and Macs type.
+  assert.equal(hasMention("@Jane's idea", 'Jane'), true);
+  assert.equal(hasMention('@Jane’s idea', 'Jane'), true);
+  assert.equal(hasMention('@Jane…', 'Jane'), true);
+  assert.equal(hasMention('@李，你好', '李'), true);
+  assert.equal(hasMention('(@Jane)', 'Jane'), false);
+  assert.equal(hasMention('see @Jane)', 'Jane'), true);
+});
+
 test('activeMentionQuery opens on an @ at the start or after whitespace', () => {
   assert.deepEqual(activeMentionQuery('@', 1), { start: 0, query: '' });
   assert.deepEqual(activeMentionQuery('hi @ja', 6), { start: 3, query: 'ja' });
@@ -312,12 +329,22 @@ export type MentionSegment =
 export const MAX_MENTION_QUERY = 30;
 
 /**
- * A letter, digit or underscore. Written without a Unicode-property regex
- * (`\p{L}`), which this project's compile target does not accept: a character
- * with distinct upper and lower case is a letter in any cased script.
+ * Whether a character could be more of a name. Everything could, except
+ * whitespace and punctuation: `@Jane,` and `@Jane’s` end the name, while
+ * `@Janet`, `@Jane_2` and `@李明` (for someone called `李`) do not.
+ *
+ * Written as "not a boundary" rather than "is a letter" on purpose. A letter
+ * test needs a Unicode-property regex (`\p{L}`), which this project's compile
+ * target does not accept, and a test based on letter case misses every script
+ * that has none. The ranges are ASCII punctuation except `_`, Latin-1
+ * punctuation, General Punctuation (curly quotes, dashes, the ellipsis), CJK
+ * punctuation and the fullwidth forms.
  */
-function isWordChar(ch: string): boolean {
-  return /[0-9_]/.test(ch) || ch.toLowerCase() !== ch.toUpperCase();
+const NAME_BOUNDARY =
+  /[\s!-\/:-@\[-^`{-~ -¿ -⁯　-〿＀-／：-＠]/;
+
+function continuesName(ch: string): boolean {
+  return !NAME_BOUNDARY.test(ch);
 }
 
 /** What a person is called in a mention: their name, or failing that their email's local part. */
@@ -336,7 +363,7 @@ function mentionAt(content: string, at: number, label: string): boolean {
   if (at > 0 && !/\s/.test(content[at - 1])) return false;
   if (!content.startsWith(label, at + 1)) return false;
   const after = content[at + 1 + label.length];
-  return after === undefined || !isWordChar(after);
+  return after === undefined || !continuesName(after);
 }
 
 export function hasMention(content: string, label: string): boolean {
