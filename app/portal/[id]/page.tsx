@@ -22,6 +22,7 @@ import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import { messageForStatus } from '@/lib/submitErrors';
+import { useMentionable } from '@/lib/useMentionable';
 import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 import type { Comment, FileRecord, Version } from '@/lib/types';
 import PartsPanel from '@/components/viewers/PartsPanel';
@@ -307,6 +308,12 @@ export default function PortalPage() {
 
   // Top-level composer draft (single source of truth)
   const [composerText, setComposerText] = useState('');
+  // Ids picked in the composer's @ list. Lives beside the text because the two
+  // are sent, and cleared, together.
+  const [composerMentions, setComposerMentions] = useState<string[]>([]);
+  // One list per open file, shared by the composer and every reply and edit
+  // box in the panel. A viewer cannot comment, so nothing is fetched for one.
+  const mentionable = useMentionable(canComment ? selectedFileId : null, participantsRefreshKey);
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
   const [submittingComposer, setSubmittingComposer] = useState(false);
   // A failed post keeps the user's text, attachments and pin; this says why.
@@ -1711,6 +1718,7 @@ export default function PortalPage() {
     setActiveTool('pointer');
     setContentTransform(null);
     setComposerText('');
+    setComposerMentions([]);
     setComposerFiles([]);
     setPendingTag(null);
     setTagging(false);
@@ -1901,6 +1909,7 @@ export default function PortalPage() {
           pageNumber: pendingTag?.pageNumber ?? null,
           timestamp: pendingTag?.timestamp ?? null,
           attachments,
+          mentions: composerMentions,
         }),
       });
       // fetch only rejects on a NETWORK failure, so without this an expired session
@@ -1911,6 +1920,7 @@ export default function PortalPage() {
       if (!res.ok) throw new Error(messageForStatus(res.status));
 
       setComposerText('');
+      setComposerMentions([]);
       setComposerFiles([]);
       setPendingTag(null);
       setTagging(false);
@@ -2525,6 +2535,7 @@ export default function PortalPage() {
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
           onViewImage={setViewportImage}
           onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
+          mentionable={mentionable}
           composer={
             <>
               {composerError && (
@@ -2535,6 +2546,9 @@ export default function PortalPage() {
             <CommentComposer
               text={composerText}
               onTextChange={setComposerText}
+              people={mentionable}
+              mentionIds={composerMentions}
+              onMentionIdsChange={setComposerMentions}
               pendingFiles={composerFiles}
               onFilesChange={setComposerFiles}
               onAnnotateFile={annotating ? undefined : handleAnnotateAttachment}
