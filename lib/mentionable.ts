@@ -31,7 +31,10 @@ export async function mentionableUsers(fileId: string): Promise<MentionablePerso
     FROM portals po
     JOIN project_members pm ON pm.project_id = po.project_id
     JOIN users u ON u.id = pm.user_id
-X, 2
+    WHERE po.id = ${location.portalId}
+      AND pm.role = 'coordinator'
+    UNION ALL
+    SELECT u.id, u.name, u.email, u.company, pa.role, 2
     FROM participants pa
     JOIN users u ON u.id = pa.user_id
     JOIN versions v ON v.id = ${location.versionId}

@@ -50,11 +50,18 @@ export async function PUT(
   const allowed = new Map<string, string>();
   const addsSomeone = requested.some((id) => !stored.some((m) => m.userId === id));
   if (addsSomeone) {
-    const access = await getFileAccess(editorId, fileId);
-    if (access?.canComment) {
-      for (const p of await mentionableUsers(fileId)) {
-        if (p.userId !== editorId) allowed.set(p.userId, p.label);
+    try {
+      const access = await getFileAccess(editorId, fileId);
+      if (access?.canComment) {
+        for (const p of await mentionableUsers(fileId)) {
+          if (p.userId !== editorId) allowed.set(p.userId, p.label);
+        }
       }
+    } catch (err) {
+      // Same rule as on create: the edit is saved, with nobody new admitted.
+      // Mentions the comment already held are kept by reconcileMentions.
+      console.error('[mentions] could not resolve mentions; saving the edit without new ones', err);
+      allowed.clear();
     }
   }
   const nextMentions = reconcileMentions(trimmed, requested, allowed, stored);

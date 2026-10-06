@@ -154,11 +154,18 @@ export async function POST(request: NextRequest) {
   const authorId = session.user.id;
   let storedMentions: Mention[] = [];
   if (Array.isArray(mentions) && mentions.length > 0 && typeof content === 'string') {
-    const allowed = new Map<string, string>();
-    for (const p of await mentionableUsers(fileId)) {
-      if (p.userId !== authorId) allowed.set(p.userId, p.label);
+    try {
+      const allowed = new Map<string, string>();
+      for (const p of await mentionableUsers(fileId)) {
+        if (p.userId !== authorId) allowed.set(p.userId, p.label);
+      }
+      storedMentions = reconcileMentions(content, mentions, allowed);
+    } catch (err) {
+      // A fault in the lookup costs the mention, never the comment: the words
+      // are saved with nobody recorded as mentioned and nobody notified.
+      console.error('[mentions] could not resolve mentions; saving without them', err);
+      storedMentions = [];
     }
-    storedMentions = reconcileMentions(content, mentions, allowed);
   }
 
   await ensureCommentColumns();
