@@ -5,19 +5,7 @@ import { auth } from '@/lib/auth';
 import { getCommentAssetPresignedUrl } from '@/lib/s3';
 import { getFileAccess } from '@/lib/access';
 import { isAllowedCommentKey } from '@/lib/storageKeys';
-
-// Ensure new columns exist (runs once per cold start)
-let migrationAttempted = false;
-async function ensureCommentColumns() {
-  if (migrationAttempted) return;
-  migrationAttempted = true;
-  try {
-    await sql`ALTER TABLE comments ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'`;
-    await sql`ALTER TABLE comments ADD COLUMN IF NOT EXISTS timestamp DOUBLE PRECISION DEFAULT NULL`;
-  } catch {
-    // columns may already exist or insufficient permissions — either way, proceed
-  }
-}
+import { ensureCommentColumns } from '@/lib/commentColumns';
 
 export async function GET(request: NextRequest) {
   const session = await auth();

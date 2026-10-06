@@ -1,5 +1,6 @@
 import type { ObjectTransform } from '@/lib/objectTransform';
 import type { LengthUnit } from './measure/units.ts';
+import type { Mention } from './mentions.ts';
 
 export interface Project {
   id: string;
@@ -116,6 +117,8 @@ export interface Comment {
   createdAt: string;
   snapshotUrl?: string | null;
   attachments?: CommentAttachment[];
+  /** Who the comment mentions. Absent on rows fetched before migration 016. */
+  mentions?: Mention[];
 }
 
 // Legacy per-object markup persistence, matching the CHECK constraint on the `markups` table

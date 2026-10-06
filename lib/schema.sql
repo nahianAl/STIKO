@@ -189,7 +189,10 @@ CREATE TABLE IF NOT EXISTS comments (
   -- Set by PUT /api/comments/[id]. Read by the portal's change feed, which
   -- cannot otherwise see an edit: an edit leaves created_at untouched and the
   -- row count unchanged. See lib/migrations/013-comment-edits.sql.
-  edited_at TIMESTAMPTZ DEFAULT NULL
+  edited_at TIMESTAMPTZ DEFAULT NULL,
+  -- Who the comment mentions: [{ "userId", "name" }]. The text stays plain.
+  -- See lib/migrations/016-comment-mentions.sql.
+  mentions JSONB NOT NULL DEFAULT '[]'
 );
 
 -- Legacy per-object markup persistence. Nothing reads or writes this table today — markup is
