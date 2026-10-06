@@ -6,6 +6,9 @@ import { getCommentAssetPresignedUrl } from '@/lib/s3';
 import { getFileAccess } from '@/lib/access';
 import { isAllowedCommentKey } from '@/lib/storageKeys';
 import { ensureCommentColumns } from '@/lib/commentColumns';
+import { mentionableUsers } from '@/lib/mentionable';
+import { notifyMentions } from '@/lib/mentionNotify';
+import { parseMentions, reconcileMentions, type Mention } from '@/lib/mentions';
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -37,7 +40,7 @@ export async function GET(request: NextRequest) {
              world_x AS "worldX", world_y AS "worldY", world_z AS "worldZ",
              snapshot_url AS "snapshotUrl", attachments,
              page_number AS "pageNumber", timestamp,
-             author, created_at AS "createdAt"
+             author, created_at AS "createdAt", mentions
       FROM comments WHERE file_id = ${fileId}
       ORDER BY created_at ASC
     `;
@@ -66,6 +69,9 @@ export async function GET(request: NextRequest) {
   // every poll and re-render the pins for nothing.
   const resolved = await Promise.all(
     rows.map(async (row) => {
+      // Always an array on the wire, including for the fallback query above,
+      // which does not select the column at all.
+      row = { ...row, mentions: parseMentions(row.mentions) };
       // Resolve snapshot URL
       if (row.snapshotUrl && !row.snapshotUrl.startsWith('http') && !row.snapshotUrl.startsWith('data:')) {
         try {
@@ -103,7 +109,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { fileId, content, xPosition, yPosition, worldX, worldY, worldZ, parentCommentId, snapshotUrl, pageNumber, timestamp, attachments } =
+  const { fileId, content, xPosition, yPosition, worldX, worldY, worldZ, parentCommentId, snapshotUrl, pageNumber, timestamp, attachments, mentions } =
     await request.json();
 
   if (!fileId) {
@@ -143,6 +149,18 @@ export async function POST(request: NextRequest) {
   const resolvedAuthor = session.user.name || session.user.email || 'Someone';
   const attachmentsJson = JSON.stringify(attachments ?? []);
 
+  // The ids are a claim, not a fact. Each survives only if the server's own
+  // list says that person can open this file AND their @label is in the text.
+  const authorId = session.user.id;
+  let storedMentions: Mention[] = [];
+  if (Array.isArray(mentions) && mentions.length > 0 && typeof content === 'string') {
+    const allowed = new Map<string, string>();
+    for (const p of await mentionableUsers(fileId)) {
+      if (p.userId !== authorId) allowed.set(p.userId, p.label);
+    }
+    storedMentions = reconcileMentions(content, mentions, allowed);
+  }
+
   await ensureCommentColumns();
 
   const id = uuidv4();
@@ -151,11 +169,12 @@ export async function POST(request: NextRequest) {
     rows = await sql`
       INSERT INTO comments (id, file_id, user_id, parent_comment_id, content,
                             x_position, y_position, world_x, world_y, world_z,
-                            snapshot_url, attachments, page_number, timestamp, author)
+                            snapshot_url, attachments, page_number, timestamp, author, mentions)
       VALUES (${id}, ${fileId}, ${session?.user?.id ?? null}, ${parentCommentId ?? null},
               ${content}, ${xPosition ?? null}, ${yPosition ?? null},
               ${worldX ?? null}, ${worldY ?? null}, ${worldZ ?? null},
-              ${snapshotUrl ?? null}, ${attachmentsJson}::jsonb, ${pageNumber ?? null}, ${timestamp ?? null}, ${resolvedAuthor})
+              ${snapshotUrl ?? null}, ${attachmentsJson}::jsonb, ${pageNumber ?? null}, ${timestamp ?? null}, ${resolvedAuthor},
+              ${JSON.stringify(storedMentions)}::jsonb)
       RETURNING id, file_id AS "fileId", user_id AS "userId",
                 parent_comment_id AS "parentCommentId", content,
                 x_position AS "xPosition", y_position AS "yPosition",
@@ -165,6 +184,9 @@ export async function POST(request: NextRequest) {
                 author, created_at AS "createdAt"
     `;
   } catch {
+    // The fallback row has no mentions column to write to, so nobody is
+    // recorded as mentioned and nobody may be notified.
+    storedMentions = [];
     // Fallback without attachments column
     rows = await sql`
       INSERT INTO comments (id, file_id, user_id, parent_comment_id, content,
@@ -183,5 +205,18 @@ export async function POST(request: NextRequest) {
                 author, created_at AS "createdAt"
     `;
   }
-  return NextResponse.json(rows[0], { status: 201 });
+  // Awaited, not fired and forgotten: on a serverless host, work still running
+  // after the response is sent is killed. It never throws.
+  if (storedMentions.length > 0) {
+    await notifyMentions({
+      actorId: authorId,
+      actorName: resolvedAuthor,
+      recipientIds: storedMentions.map((m) => m.userId),
+      fileId,
+      commentId: id,
+      content: String(content ?? ''),
+    });
+  }
+
+  return NextResponse.json({ ...rows[0], mentions: storedMentions }, { status: 201 });
 }
