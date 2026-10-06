@@ -78,6 +78,10 @@ export default function InviteeInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // An input method uses Enter (and arrows) to choose and commit its own
+    // candidates. Leave those keys alone until the composition has ended.
+    // keyCode 229 is how Safari reports a key that belongs to a composition.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (!open) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -110,6 +114,7 @@ export default function InviteeInput({
         onBlur={() => setFocused(false)}
         onKeyDown={handleKeyDown}
         placeholder="Name or email"
+        aria-label="Name or email"
         className={className}
         role="combobox"
         aria-autocomplete="list"
