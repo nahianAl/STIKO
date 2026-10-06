@@ -86,7 +86,7 @@ package and version, then returns the union of:
 
 That third rule is the same predicate the publish route uses to choose
 recipients, and it matches `canSeeVersion`. Each entry is
-`{ userId, label, company, image, role }`. `label` is the user's trimmed `name`,
+`{ userId, label, company, role }`. `label` is the user's trimmed `name`,
 falling back to the part of their email before the `@` when they have none.
 
 `GET /api/mentionable?fileId=` returns that list without the caller.
@@ -125,8 +125,12 @@ commentId, content })`. For each recipient:
 
 The notification's `title` is `<actor> mentioned you on <filename>`, `excerpt`
 is the first 140 characters of the comment, and `href` is
-`/portal/<portalId>?version=<versionId>&file=<fileId>&comment=<commentId>`. The
-email link is the same path on `appBaseUrl()`, never the request's host.
+`/portal/<portalId>?submission=<versionId>&file=<fileId>&comment=<commentId>`.
+The parameter is `submission`, not `version`: it is the word people see, and
+`scripts/tests/copyTerms.test.mjs` fails on a string literal that says
+"version". The email link is the same path on `appBaseUrl()`, never the
+request's host. Building and parsing the link both live in
+`lib/portalDeepLink.ts` so the two ends cannot drift.
 
 Recipients on `POST` are everyone stored in `mentions`. On `PUT` they are the
 ids in the new list that were not in the old one.
@@ -141,7 +145,7 @@ notifications and the dashboard badge are unaffected.
 ### Opening a mention
 
 The portal page does not read query parameters today. It gains a one-time read,
-after versions have loaded, of `version`, `file` and `comment`:
+after versions have loaded, of `submission`, `file` and `comment`:
 
 - select that version if it is in the caller's list, then that file,
 - set `activeCommentId`, which `CommentsPanel` already scrolls to and
@@ -162,8 +166,13 @@ it):
   the caret and may contain spaces, since names do; it ends at 30 characters.
 - `insertMention(text, start, caret, label)` → new text and caret, replacing
   `@query` with `@<label>` and a trailing space.
-- `reconcileMentions(content, ids, allowed)` → the server rule above.
+- `reconcileMentions(content, ids, allowed, stored?)` → the server rule above.
+  `stored` is what the comment already held: on an edit, an earlier mention is
+  kept while its text is still there, even if that person has since left the
+  package.
 - `newlyMentioned(before, after)` → ids to notify on edit.
+- `filterMentionable(people, query)` → who the list shows for a query.
+- `parseMentions(raw)` → the stored column, tolerant of JSON text and garbage.
 - `splitMentions(content, mentions)` → text and mention segments for rendering,
   matching longer labels first so `@Jane Doe` is not cut short by `@Jane`.
 
@@ -174,8 +183,10 @@ and the people list, and passes through `placeholder`, `className`, `inputRef`
 and `onKeyDown`.
 
 - When `activeMentionQuery` is non-null and at least one person matches (prefix
-  of any word in the label, case-insensitive), a list opens above the input:
-  initials or photo, label, company.
+  of any word in the label, case-insensitive), a list opens: initials, label,
+  company. It opens above the composer and below a reply or edit box, which
+  sit inside the scrolling thread where a list above could be clipped.
+  (Initials only: nothing in the app reads `users.image` today.)
 - Up/Down move, Enter or Tab or a click picks, Escape closes. While the list is
   open these keys are consumed, so Enter picks a person and does not send the
   comment.
@@ -241,7 +252,7 @@ already.
   name, case-insensitive. `%`, `_` and `\` in `q` are escaped before it reaches
   `ILIKE`; the escaping is a pure helper in `lib/peopleSuggest.ts` with its own
   test.
-- Up to 8 rows ordered by name: `{ name, email, company, image }`. No user ids.
+- Up to 8 rows ordered by name: `{ name, email, company }`. No user ids.
 
 The set is computed in one query per request. Nothing is cached, so a person
 removed from a shared package stops being suggested immediately.
@@ -254,8 +265,9 @@ removed from a shared package stops being suggested immediately.
 - A text input (`inputMode="email"`, `autoComplete="off"`) with the placeholder
   "Name or email". After 2 characters it asks the endpoint, debounced 200 ms,
   aborting any request it has outrun.
-- Results drop down under the field: initials or photo, name, email, company.
-  Same keyboard model and ARIA roles as `MentionInput`.
+- Results drop down under the field: initials, name, email, company. Same
+  keyboard model and ARIA roles as `MentionInput`, except that Tab does not
+  pick (the modal traps focus with Tab).
 - Picking a row writes that person's email into the field. The field stays
   editable afterwards; a suggestion is a default, not a lock.
 - No results, or a failed request: no dropdown, and the field is a plain email
