@@ -22,6 +22,7 @@ import DrawingTools from '@/components/markup/DrawingTools';
 import MarkupOverlay from '@/components/markup/MarkupOverlay';
 import AnnotationBanner from '@/components/markup/AnnotationBanner';
 import { messageForStatus } from '@/lib/submitErrors';
+import { useMentionable } from '@/lib/useMentionable';
 import { submissionBadge, submissionTitle } from '@/lib/submissionName';
 import type { Comment, FileRecord, Version } from '@/lib/types';
 import PartsPanel from '@/components/viewers/PartsPanel';
@@ -32,6 +33,7 @@ import { emptySlots, setPlaneFlipped, togglePlane, type PlaneId, type SectionSlo
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { BRIEF_MIN_COMMENTS } from '@/lib/brief';
 import { preserveIfUnchanged } from '@/lib/portalActivity';
+import { parsePortalDeepLink, type PortalDeepLink } from '@/lib/portalDeepLink';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -296,6 +298,11 @@ export default function PortalPage() {
 
   // Comment linking state
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  // A notification link: ?submission=&file=&comment=. `undefined` means not
+  // read yet; `null` means there is none, or it has been used. It is read from
+  // window.location rather than useSearchParams because it is wanted exactly
+  // once, inside a callback that only ever runs in the browser.
+  const deepLinkRef = useRef<PortalDeepLink | null | undefined>(undefined);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
   // The roster has two consumers that do not share a fetch. `participants`
@@ -307,6 +314,12 @@ export default function PortalPage() {
 
   // Top-level composer draft (single source of truth)
   const [composerText, setComposerText] = useState('');
+  // Ids picked in the composer's @ list. Lives beside the text because the two
+  // are sent, and cleared, together.
+  const [composerMentions, setComposerMentions] = useState<string[]>([]);
+  // One list per open file, shared by the composer and every reply and edit
+  // box in the panel. A viewer cannot comment, so nothing is fetched for one.
+  const mentionable = useMentionable(canComment ? selectedFileId : null, participantsRefreshKey);
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
   const [submittingComposer, setSubmittingComposer] = useState(false);
   // A failed post keeps the user's text, attachments and pin; this says why.
@@ -997,6 +1010,17 @@ export default function PortalPage() {
     fetchPortal();
   }, [portalId]);
 
+  // Opening a package is reading its mentions — see PATCH /api/notifications.
+  // Fire and forget: a signed-out visitor's request is turned away, which is
+  // fine — there is nothing of theirs to mark.
+  useEffect(() => {
+    fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portalId }),
+    }).catch(() => {});
+  }, [portalId]);
+
   // Extracted from an effect into a callback so the change feed can re-run it,
   // the same shape as loadVersions.
   const fetchParticipants = useCallback(async () => {
@@ -1055,9 +1079,18 @@ export default function PortalPage() {
       }
       const data: Version[] = await res.json();
       setVersions(data);
+      if (deepLinkRef.current === undefined) {
+        deepLinkRef.current = parsePortalDeepLink(window.location.search);
+      }
+      // A link to something this person cannot see, or that is gone, is
+      // dropped whole and the page opens as it always has. Never half-honoured.
+      if (deepLinkRef.current && !data.some((v) => v.id === deepLinkRef.current?.versionId)) {
+        deepLinkRef.current = null;
+      }
+      const linkedVersionId = deepLinkRef.current?.versionId ?? null;
       if (data.length > 0) {
         setSelectedVersionId((current) =>
-          current && data.some((v) => v.id === current) ? current : data[0].id
+          linkedVersionId ?? (current && data.some((v) => v.id === current) ? current : data[0].id)
         );
       }
     } catch (err) {
@@ -1170,6 +1203,14 @@ export default function PortalPage() {
     async (versionId: string, options?: { background?: boolean }) => {
       const background = options?.background === true;
       if (!background) setFilesLoading(true);
+      // Taken before the request, whatever its outcome. A link left pending
+      // after a failed fetch would make every later poll of loadVersions drag
+      // the user back to this version.
+      const link =
+        deepLinkRef.current && deepLinkRef.current.versionId === versionId
+          ? deepLinkRef.current
+          : null;
+      if (link) deepLinkRef.current = null;
       try {
         const res = await fetch(`/api/files?versionId=${versionId}`);
         // The version this request was FOR may no longer be the one on screen — a poll has no
@@ -1204,9 +1245,17 @@ export default function PortalPage() {
           // A version change should land on the first file, but a delete that
           // leaves the current selection intact must not throw the viewer back
           // to file 1.
+          const linkedFileId =
+            link && data.some((f) => f.id === link.fileId) ? link.fileId : null;
           setSelectedFileId((current) =>
-            current && data.some((f) => f.id === current) ? current : data[0].id
+            linkedFileId ?? (current && data.some((f) => f.id === current) ? current : data[0].id)
           );
+          // CommentsPanel owns the scroll and the outline, and retries once this
+          // file's comments have loaded — never scrollIntoView from here.
+          if (linkedFileId && link?.commentId) {
+            setActiveCommentId(link.commentId);
+            setCommentsCollapsed(false);
+          }
         } else {
           setSelectedFileId(null);
         }
@@ -1711,6 +1760,7 @@ export default function PortalPage() {
     setActiveTool('pointer');
     setContentTransform(null);
     setComposerText('');
+    setComposerMentions([]);
     setComposerFiles([]);
     setPendingTag(null);
     setTagging(false);
@@ -1901,6 +1951,7 @@ export default function PortalPage() {
           pageNumber: pendingTag?.pageNumber ?? null,
           timestamp: pendingTag?.timestamp ?? null,
           attachments,
+          mentions: composerMentions,
         }),
       });
       // fetch only rejects on a NETWORK failure, so without this an expired session
@@ -1911,6 +1962,7 @@ export default function PortalPage() {
       if (!res.ok) throw new Error(messageForStatus(res.status));
 
       setComposerText('');
+      setComposerMentions([]);
       setComposerFiles([]);
       setPendingTag(null);
       setTagging(false);
@@ -2525,6 +2577,7 @@ export default function PortalPage() {
           onToggleCollapse={() => setCommentsCollapsed((c) => !c)}
           onViewImage={setViewportImage}
           onCommentsChanged={() => setCommentsRefreshKey((k) => k + 1)}
+          mentionable={mentionable}
           composer={
             <>
               {composerError && (
@@ -2535,6 +2588,9 @@ export default function PortalPage() {
             <CommentComposer
               text={composerText}
               onTextChange={setComposerText}
+              people={mentionable}
+              mentionIds={composerMentions}
+              onMentionIdsChange={setComposerMentions}
               pendingFiles={composerFiles}
               onFilesChange={setComposerFiles}
               onAnnotateFile={annotating ? undefined : handleAnnotateAttachment}

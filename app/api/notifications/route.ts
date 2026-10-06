@@ -27,14 +27,14 @@ export async function GET() {
   return NextResponse.json(rows);
 }
 
-/** PATCH — mark one read, or all of them. */
+/** PATCH — mark one read, a package's mentions, or all of them. */
 export async function PATCH(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { id, all } = await request.json();
+  const { id, all, portalId } = await request.json();
 
   if (all) {
     await sql`
@@ -44,8 +44,24 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // Opening a package is reading its mentions. Without this the dashboard's
+  // mention badge could only be cleared from the Activity rail's own row, so
+  // someone who arrived by the package card or the email link kept a badge
+  // for a mention they had already read. Mentions only: the other types on a
+  // package are things to act on, not things opening it settles.
+  if (typeof portalId === 'string' && portalId) {
+    await sql`
+      UPDATE notifications SET read_at = NOW()
+      WHERE user_id = ${session.user.id}
+        AND portal_id = ${portalId}
+        AND type = 'mention'
+        AND read_at IS NULL
+    `;
+    return NextResponse.json({ ok: true });
+  }
+
   if (!id) {
-    return NextResponse.json({ error: 'id or all required' }, { status: 400 });
+    return NextResponse.json({ error: 'id, portalId or all required' }, { status: 400 });
   }
 
   // Scoped to the session user so one person cannot mark another's read.

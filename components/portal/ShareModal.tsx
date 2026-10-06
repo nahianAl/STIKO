@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/ui/Modal';
 import { submissionBadge, submissionTitle } from '@/lib/submissionName';
+import InviteeInput from '@/components/portal/InviteeInput';
+import { looksLikeEmail } from '@/lib/peopleSuggest';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 const ROLES: Role[] = ['viewer', 'commenter', 'uploader'];
@@ -92,7 +94,9 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
 
   const handleInvite = async () => {
     const recipient = email.trim();
-    if (!recipient || busy) return;
+    // The field now accepts a name to search by, so a non-empty value is no
+    // longer proof of an address.
+    if (!looksLikeEmail(recipient) || busy) return;
     setBusy('invite'); setError(null);
     try {
       const result = await createInvite(recipient, inviteRole, inviteCanDownload, allVersions, scopeIds);
@@ -155,17 +159,16 @@ export default function ShareModal({ isOpen, onClose, portalId }: { isOpen: bool
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-stiko-faint mb-2">Invite someone</p>
           <div className="flex items-center gap-2">
-            <input
-              type="email"
+            <InviteeInput
+              portalId={portalId}
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@email.com"
-              className="flex-1 rounded-lg border border-stiko-border bg-white px-3 py-1.5 text-[12.5px] text-stiko-ink focus:border-stiko-primary focus:ring-1 focus:ring-stiko-primary outline-none"
+              onChange={setEmail}
+              className="w-full rounded-lg border border-stiko-border bg-white px-3 py-1.5 text-[12.5px] text-stiko-ink focus:border-stiko-primary focus:ring-1 focus:ring-stiko-primary outline-none"
             />
             <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)} className={selectCls}>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
-            <button onClick={handleInvite} disabled={!email.trim() || busy === 'invite' || inviteScopeEmpty} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
+            <button onClick={handleInvite} disabled={!looksLikeEmail(email) || busy === 'invite' || inviteScopeEmpty} className="text-white font-bold text-[12.5px] px-4 py-1.5 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: GRADIENT }}>
               {busy === 'invite' ? '…' : 'Send'}
             </button>
           </div>

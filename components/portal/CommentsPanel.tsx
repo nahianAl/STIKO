@@ -10,6 +10,9 @@ import { paletteForComment } from '@/lib/commentColors';
 import { getInitials } from '@/lib/initials';
 import { formatFileSize } from '@/lib/versionDetail';
 import { preserveIfUnchanged } from '@/lib/portalActivity';
+import MentionInput from '@/components/portal/MentionInput';
+import MentionText from '@/components/portal/MentionText';
+import type { MentionablePerson } from '@/lib/mentions';
 
 interface CommentsPanelProps {
   fileId: string | null;
@@ -21,6 +24,8 @@ interface CommentsPanelProps {
   composer?: React.ReactNode;
   onViewImage?: (url: string) => void;
   onCommentsChanged?: () => void;
+  /** Who can be @mentioned on the open file. Fetched once by the page and shared. */
+  mentionable?: MentionablePerson[];
 }
 
 function timeAgo(dateStr: string): string {
@@ -91,6 +96,7 @@ interface CommentFormProps {
   onCancel?: () => void;
   placeholder?: string;
   autoFocus?: boolean;
+  people: MentionablePerson[];
 }
 
 function CommentForm({
@@ -102,8 +108,10 @@ function CommentForm({
   onCancel,
   placeholder = 'Add a comment...',
   autoFocus = false,
+  people,
 }: CommentFormProps) {
   const [text, setText] = useState('');
+  const [mentionIds, setMentionIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -141,6 +149,7 @@ function CommentForm({
           author: authorName.trim() || 'Anonymous',
           parentCommentId: parentCommentId ?? null,
           attachments,
+          mentions: mentionIds,
         }),
       });
       // fetch only rejects on a NETWORK failure, so without this an expired
@@ -152,6 +161,7 @@ function CommentForm({
       if (!res.ok) throw new Error(messageForStatus(res.status));
 
       setText('');
+      setMentionIds([]);
       setPendingFiles([]);
       onSubmitted();
     } catch (err) {
@@ -224,13 +234,17 @@ function CommentForm({
 
       {/* Input row */}
       <div className="flex items-center gap-1.5">
-        <input
-          ref={textInputRef}
-          type="text"
+        <MentionInput
+          inputRef={textInputRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={setText}
+          mentionIds={mentionIds}
+          onMentionIdsChange={setMentionIds}
+          people={people}
+          placement="below"
           placeholder={placeholder}
-          className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400 focus:bg-white outline-none transition-colors"
+          wrapperClassName="flex-1 min-w-0"
+          className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400 focus:bg-white outline-none transition-colors"
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
             if (e.key === 'Escape' && onCancel) onCancel();
@@ -305,6 +319,7 @@ function CommentItem({
   replies,
   depth,
   isActive,
+  activeCommentId,
   onClick,
   fileId,
   authorName,
@@ -314,11 +329,13 @@ function CommentItem({
   tagNumber,
   currentUserId,
   onChanged,
+  people,
 }: {
   comment: Comment;
   replies: Comment[];
   depth: number;
   isActive?: boolean;
+  activeCommentId?: string | null;
   onClick?: (comment: Comment) => void;
   fileId: string;
   authorName: string;
@@ -328,10 +345,13 @@ function CommentItem({
   tagNumber?: number;
   currentUserId: string | null;
   onChanged?: () => void;
+  people: MentionablePerson[];
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(comment.content);
+  const storedMentionIds = (comment.mentions ?? []).map((m) => m.userId);
+  const [editMentionIds, setEditMentionIds] = useState<string[]>(storedMentionIds);
   const [busy, setBusy] = useState(false);
   const canModify = !!comment.userId && comment.userId === currentUserId;
   const pal = paletteForComment(comment);
@@ -345,7 +365,7 @@ function CommentItem({
       const res = await fetch(`/api/comments/${comment.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editText.trim() }),
+        body: JSON.stringify({ content: editText.trim(), mentions: editMentionIds }),
       });
       if (res.ok) { setIsEditing(false); onRefresh(); onChanged?.(); }
     } finally { setBusy(false); }
@@ -384,21 +404,26 @@ function CommentItem({
         {/* Body */}
         {isEditing ? (
           <div className="flex flex-col gap-1.5" onClick={(e) => e.stopPropagation()}>
-            <input
-              type="text"
+            <MentionInput
               value={editText}
+              onChange={setEditText}
+              mentionIds={editMentionIds}
+              onMentionIdsChange={setEditMentionIds}
+              people={people}
+              placement="below"
               autoFocus
-              onChange={(e) => setEditText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') setIsEditing(false); }}
               className="w-full rounded-lg border border-stiko-border bg-white px-2.5 py-1.5 text-[12.5px] text-stiko-ink focus:border-stiko-primary focus:ring-1 focus:ring-stiko-primary outline-none"
             />
             <div className="flex items-center gap-2">
               <button onClick={saveEdit} disabled={busy || !editText.trim()} className="text-[11px] font-bold text-white px-3 py-1 rounded-lg disabled:opacity-40 transition-[filter] hover:brightness-[0.97]" style={{ background: 'linear-gradient(135deg, #8094F5, #5B60FF)' }}>Save</button>
-              <button onClick={() => { setIsEditing(false); setEditText(comment.content); }} className="text-[11px] font-semibold text-stiko-muted hover:text-stiko-secondary">Cancel</button>
+              <button onClick={() => { setIsEditing(false); setEditText(comment.content); setEditMentionIds(storedMentionIds); }} className="text-[11px] font-semibold text-stiko-muted hover:text-stiko-secondary">Cancel</button>
             </div>
           </div>
         ) : (
-          <p className="text-[12.5px] leading-[1.5] text-[#4A4F63]">{comment.content}</p>
+          <p className="text-[12.5px] leading-[1.5] text-[#4A4F63]">
+            <MentionText content={comment.content} mentions={comment.mentions} currentUserId={currentUserId} />
+          </p>
         )}
 
         {/* Snapshot thumbnail */}
@@ -432,7 +457,7 @@ function CommentItem({
           </button>
           {canModify && !isEditing && (
             <>
-              <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); setEditText(comment.content); }} className="text-[11px] font-semibold text-stiko-muted hover:text-stiko-secondary transition-colors">Edit</button>
+              <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); setEditText(comment.content); setEditMentionIds(storedMentionIds); }} className="text-[11px] font-semibold text-stiko-muted hover:text-stiko-secondary transition-colors">Edit</button>
               <button onClick={(e) => { e.stopPropagation(); deleteComment(); }} className="text-[11px] font-semibold text-stiko-muted hover:text-[#B23A52] transition-colors">Delete</button>
             </>
           )}
@@ -451,6 +476,7 @@ function CommentItem({
             onCancel={() => setShowReplyForm(false)}
             placeholder={`Reply to ${comment.author}...`}
             autoFocus
+            people={people}
           />
         </div>
       )}
@@ -464,6 +490,8 @@ function CommentItem({
               comment={reply}
               replies={[]}
               depth={depth + 1}
+              isActive={activeCommentId === reply.id}
+              activeCommentId={activeCommentId}
               fileId={fileId}
               authorName={authorName}
               onAuthorChange={onAuthorChange}
@@ -471,6 +499,7 @@ function CommentItem({
               onViewImage={onViewImage}
               currentUserId={currentUserId}
               onChanged={onChanged}
+              people={people}
             />
           ))}
         </div>
@@ -481,7 +510,7 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged, mentionable }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
@@ -660,6 +689,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
               replies={repliesByParent[comment.id] ?? []}
               depth={0}
               isActive={activeCommentId === comment.id}
+              activeCommentId={activeCommentId}
               onClick={onCommentClick}
               fileId={fileId}
               authorName={authorName}
@@ -669,6 +699,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
               tagNumber={tagNumbers.get(comment.id)}
               currentUserId={currentUserId}
               onChanged={onCommentsChanged}
+              people={mentionable ?? []}
             />
           ))
         )}

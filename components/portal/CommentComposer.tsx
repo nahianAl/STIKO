@@ -1,10 +1,16 @@
 'use client';
 
 import React, { useRef, useMemo, useEffect } from 'react';
+import MentionInput from '@/components/portal/MentionInput';
+import type { MentionablePerson } from '@/lib/mentions';
 
 interface CommentComposerProps {
   text: string;
   onTextChange: (t: string) => void;
+  /** Who can be @mentioned on the open file, and who has been picked so far. */
+  people: MentionablePerson[];
+  mentionIds: string[];
+  onMentionIdsChange: (ids: string[]) => void;
   pendingFiles: File[];
   onFilesChange: (files: File[]) => void;
   /** Open an attached image for markup. Absent = thumbnails are inert. */
@@ -18,7 +24,8 @@ interface CommentComposerProps {
 }
 
 export default function CommentComposer({
-  text, onTextChange, pendingFiles, onFilesChange, onAnnotateFile,
+  text, onTextChange, people, mentionIds, onMentionIdsChange,
+  pendingFiles, onFilesChange, onAnnotateFile,
   tagging, hasTag, onClearTag, onSubmit, submitting, inputRef,
 }: CommentComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -103,11 +110,14 @@ export default function CommentComposer({
       )}
 
       {/* Seamless text input — same surface as the box, no border/white fill */}
-      <input
-        ref={inputRef}
-        type="text"
+      <MentionInput
+        inputRef={inputRef}
         value={text}
-        onChange={(e) => onTextChange(e.target.value)}
+        onChange={onTextChange}
+        mentionIds={mentionIds}
+        onMentionIdsChange={onMentionIdsChange}
+        people={people}
+        placement="above"
         placeholder="Add a comment…"
         className="w-full bg-transparent border-0 p-0 text-[12.5px] text-stiko-ink placeholder:text-stiko-faint outline-none"
         onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSend) onSubmit(); } }}
