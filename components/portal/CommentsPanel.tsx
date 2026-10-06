@@ -319,6 +319,7 @@ function CommentItem({
   replies,
   depth,
   isActive,
+  activeCommentId,
   onClick,
   fileId,
   authorName,
@@ -334,6 +335,7 @@ function CommentItem({
   replies: Comment[];
   depth: number;
   isActive?: boolean;
+  activeCommentId?: string | null;
   onClick?: (comment: Comment) => void;
   fileId: string;
   authorName: string;
@@ -488,6 +490,8 @@ function CommentItem({
               comment={reply}
               replies={[]}
               depth={depth + 1}
+              isActive={activeCommentId === reply.id}
+              activeCommentId={activeCommentId}
               fileId={fileId}
               authorName={authorName}
               onAuthorChange={onAuthorChange}
@@ -685,6 +689,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
               replies={repliesByParent[comment.id] ?? []}
               depth={0}
               isActive={activeCommentId === comment.id}
+              activeCommentId={activeCommentId}
               onClick={onCommentClick}
               fileId={fileId}
               authorName={authorName}

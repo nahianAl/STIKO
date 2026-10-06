@@ -45,7 +45,7 @@ test('a mention ends at whitespace or punctuation, in any script', () => {
   assert.equal(hasMention('@ＡＢ', 'Ａ'), false);
   // Punctuation ends it — including the curly apostrophe phones and Macs type.
   assert.equal(hasMention("@Jane's idea", 'Jane'), true);
-  assert.equal(hasMention("@Jane's idea", 'Jane'), true);
+  assert.equal(hasMention('@Jane\u2019s idea', 'Jane'), true);
   assert.equal(hasMention('@Jane…', 'Jane'), true);
   assert.equal(hasMention('@李，你好', '李'), true);
   assert.equal(hasMention('(@Jane)', 'Jane'), false);
@@ -130,6 +130,33 @@ test('reconcileMentions prefers the current label over a stored one when both ar
   const stored = [{ userId: 'u1', name: 'Jane' }];
   assert.deepEqual(reconcileMentions('@Jane Doe', ['u1'], allowed, stored), [
     { userId: 'u1', name: 'Jane Doe' },
+  ]);
+});
+
+// "Sam" was picked, then "Sam Lee" instead. The text names one person, so one
+// person is stored and told — the same reading the renderer gives it.
+test('reconcileMentions gives each @ to the longest label that fits it', () => {
+  const people = new Map([
+    ['sam', 'Sam'],
+    ['samlee', 'Sam Lee'],
+  ]);
+  assert.deepEqual(reconcileMentions('hi @Sam Lee', ['sam', 'samlee'], people), [
+    { userId: 'samlee', name: 'Sam Lee' },
+  ]);
+  assert.deepEqual(reconcileMentions('hi @Sam and @Sam Lee', ['sam', 'samlee'], people), [
+    { userId: 'sam', name: 'Sam' },
+    { userId: 'samlee', name: 'Sam Lee' },
+  ]);
+});
+
+test('reconcileMentions keeps two picked people who share a label', () => {
+  const twins = new Map([
+    ['a', 'Jane Doe'],
+    ['b', 'Jane Doe'],
+  ]);
+  assert.deepEqual(reconcileMentions('@Jane Doe', ['a', 'b'], twins), [
+    { userId: 'a', name: 'Jane Doe' },
+    { userId: 'b', name: 'Jane Doe' },
   ]);
 });
 

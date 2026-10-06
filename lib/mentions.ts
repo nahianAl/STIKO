@@ -138,7 +138,8 @@ export function insertMention(
  *
  * `ids` comes from the client and is never trusted: an id survives only if the
  * server's own list (`allowed`, userId -> label) contains it AND `@label` is
- * still in the text. `stored` is what the comment already held, for an edit: a
+ * still in the text, each `@` counting only for the longest label that fits it
+ * (so `@Sam Lee` is not also a mention of a "Sam"). `stored` is what the comment already held, for an edit: a
  * mention made earlier is kept while its text is still there, even if that
  * person can no longer open the file, so an unrelated edit does not strip it.
  */
@@ -149,18 +150,39 @@ export function reconcileMentions(
   stored: Mention[] = []
 ): Mention[] {
   const storedById = new Map(stored.map((m) => [m.userId, m]));
+  const requested: string[] = [];
   const seen = new Set<string>();
-  const out: Mention[] = [];
   for (const id of ids) {
     if (typeof id !== 'string' || seen.has(id)) continue;
     seen.add(id);
+    requested.push(id);
+  }
+
+  // Every label a requested person could be written as. Each `@` in the text
+  // is then given to the LONGEST label that fits it, exactly as the renderer
+  // does — so `@Sam Lee` belongs to Sam Lee and never also to someone called
+  // Sam who was picked first and then replaced.
+  const candidates: Mention[] = [];
+  for (const id of requested) {
     const label = allowed.get(id);
-    if (label && hasMention(content, label)) {
+    if (label) candidates.push({ userId: id, name: label });
+    const kept = storedById.get(id);
+    if (kept && kept.name !== label) candidates.push({ userId: id, name: kept.name });
+  }
+  const written = new Set<string>();
+  for (const segment of splitMentions(content, candidates)) {
+    if (segment.type === 'mention') written.add(segment.text.slice(1));
+  }
+
+  const out: Mention[] = [];
+  for (const id of requested) {
+    const label = allowed.get(id);
+    if (label && written.has(label)) {
       out.push({ userId: id, name: label });
       continue;
     }
     const kept = storedById.get(id);
-    if (kept && hasMention(content, kept.name)) {
+    if (kept && written.has(kept.name)) {
       out.push({ userId: kept.userId, name: kept.name });
     }
   }

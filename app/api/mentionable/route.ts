@@ -6,10 +6,13 @@ import { mentionableUsers } from '@/lib/mentionable';
 /**
  * Who the caller may @mention on this file.
  *
- * Built on the server because only the server knows each person's scope: the
- * roster endpoint deliberately withholds it, and filtering in the browser
- * would mean shipping it. Emails are not returned; the picker shows a name and
- * a company.
+ * Built on the server because only the server knows each person's scope, and
+ * filtering in the browser would mean shipping every scope to it. The list
+ * necessarily shows who can open THIS file — the product decision is that only
+ * people who can open it can be mentioned — so a scoped commenter who compares
+ * it with the roster can tell which reviewers cannot open this submission. It
+ * reveals that and nothing more: no emails, no scopes, nobody outside the
+ * file. The picker shows a name and a company.
  */
 export async function GET(request: NextRequest) {
   const session = await auth();

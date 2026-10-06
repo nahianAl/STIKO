@@ -1010,6 +1010,16 @@ export default function PortalPage() {
     fetchPortal();
   }, [portalId]);
 
+  // Opening a package is reading its mentions — see PATCH /api/notifications.
+  // Fire and forget: a signed-out visitor gets a 401, which is fine.
+  useEffect(() => {
+    fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portalId }),
+    }).catch(() => {});
+  }, [portalId]);
+
   // Extracted from an effect into a callback so the change feed can re-run it,
   // the same shape as loadVersions.
   const fetchParticipants = useCallback(async () => {
