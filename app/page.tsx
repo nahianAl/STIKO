@@ -259,7 +259,7 @@ export default function Home() {
         <Column width={900}>
           <EmptyState
             size="lg"
-            heading={`Welcome to Stiko${firstName ? `, ${firstName}` : ''}`}
+            heading={`Welcome to stiko${firstName ? `, ${firstName}` : ''}`}
             description="Drop a set of drawings, invite the people who need to see them, and every comment lands as a note pinned exactly where it belongs."
             actionLabel="Send your first drawings for review"
             onAction={newPackage}

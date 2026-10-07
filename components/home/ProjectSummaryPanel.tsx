@@ -217,7 +217,7 @@ export default function ProjectSummaryPanel({
               <p className="text-[12.5px] leading-[1.55] text-stiko-secondary">
                 {data && !data.configured
                   ? 'Summaries aren’t configured for this deployment.'
-                  : 'No summary yet. Stiko can read this project’s comments and submissions and write one.'}
+                  : 'No summary yet. stiko can read this project’s comments and submissions and write one.'}
               </p>
               {(!data || data.configured) && (
                 <button

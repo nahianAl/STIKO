@@ -50,7 +50,7 @@ export function authErrorMessage(result: AuthFailureResult): string {
     case 'rate_limited':
       return 'Too many attempts. Wait a minute and try again.';
     case 'unsupported':
-      return `This account needs a sign-in step Stiko doesn’t support yet. ${HELP}`;
+      return `This account needs a sign-in step stiko doesn’t support yet. ${HELP}`;
     case 'invalid_request':
       return result.message ?? 'Fill in every field and try again.';
     case 'unknown':

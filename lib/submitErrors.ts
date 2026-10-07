@@ -26,12 +26,12 @@ export function messageForStatus(status: number): string {
       return 'Too many requests just now. Wait a moment and send again.';
     default:
       if (status >= 500) {
-        return 'Stiko could not save this just now. Your text has been kept — try again.';
+        return 'stiko could not save this just now. Your text has been kept — try again.';
       }
       if (status >= 400) {
-        return 'Stiko could not accept this comment. Your text has been kept.';
+        return 'stiko could not accept this comment. Your text has been kept.';
       }
       // status 0 / no response: the request never reached the server.
-      return 'Could not reach Stiko. Check your connection — your text has been kept.';
+      return 'Could not reach stiko. Check your connection — your text has been kept.';
   }
 }

@@ -821,7 +821,7 @@ export default function ProjectPanel({
                   disabled={aiSaving}
                   onChange={(e) => saveAi(e.target.checked)}
                 />
-                Let Stiko summarise this project
+                Let stiko summarise this project
               </label>
               {aiError && (
                 <p className="mt-1 text-[11px] text-note-red-text">{aiError}</p>

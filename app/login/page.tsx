@@ -54,7 +54,7 @@ function LoginForm() {
       subtitle="Sign in to pick up your reviews."
       below={
         <>
-          New to Stiko?{' '}
+          New to stiko?{' '}
           <Link
             href={`/signup?callbackUrl=${encodeURIComponent(callbackUrl)}`}
             className="font-bold"

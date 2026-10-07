@@ -6,7 +6,7 @@ import { ToastProvider } from "@/components/ui/Toast";
 import { authProvider } from "@/lib/authProvider";
 
 export const metadata: Metadata = {
-  title: "Stiko",
+  title: "stiko",
   description: "Review and approval for construction and design teams",
 };
 
