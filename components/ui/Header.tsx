@@ -19,7 +19,7 @@ export default function Header({ breadcrumbs, rightContent }: HeaderProps) {
       <div className="h-full px-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link href="/" className="text-xl font-bold tracking-tight hover:text-gray-200 transition-colors">
-            Stiko
+            stiko
           </Link>
           {breadcrumbs && breadcrumbs.length > 0 && (
             <>

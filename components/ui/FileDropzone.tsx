@@ -281,7 +281,7 @@ export default function FileDropzone({
                   : `${rejected.length} files can't be added`}
               </p>
               <p className="mt-[3px] leading-[1.5]">
-                Stiko can&apos;t open{' '}
+                stiko can&apos;t open{' '}
                 {rejected.length === 1 ? "this format" : "these formats"} yet.
                 Everything else was added.
               </p>

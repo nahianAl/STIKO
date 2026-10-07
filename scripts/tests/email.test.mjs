@@ -111,7 +111,7 @@ test('sendEmail reports undelivered rather than throwing when the sender is miss
 
 test('the verification email carries the code and says what it is for', () => {
   const mail = verificationCodeEmail({ code: '482913' });
-  assert.equal(mail.subject, 'Your Stiko sign-in code');
+  assert.equal(mail.subject, 'Your stiko sign-in code');
   assert.match(mail.body, /482913/);
   assert.match(mail.body, /ignore/);
 });

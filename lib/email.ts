@@ -46,7 +46,7 @@ export function emailFrom(): string {
   const from = process.env.EMAIL_FROM;
   if (!from || !from.trim()) {
     throw new Error(
-      'EMAIL_FROM must be configured before Stiko can send email, ' +
+      'EMAIL_FROM must be configured before stiko can send email, ' +
         'and must be on the Resend-verified domain (stiko.design).'
     );
   }
@@ -164,7 +164,7 @@ export function passwordResetEmail(opts: {
   link: string;
 }): Omit<EmailMessage, 'to'> {
   return {
-    subject: 'Reset your Stiko password',
+    subject: 'Reset your stiko password',
     body: [
       `Use this link to set a new password:`,
       opts.link,
@@ -178,13 +178,13 @@ export function verificationCodeEmail(opts: {
   code: string;
 }): Omit<EmailMessage, 'to'> {
   return {
-    subject: 'Your Stiko sign-in code',
+    subject: 'Your stiko sign-in code',
     body: [
       `Your code is: ${opts.code}`,
       ``,
-      `Enter it on the Stiko page that asked for it. It expires in a few minutes.`,
+      `Enter it on the stiko page that asked for it. It expires in a few minutes.`,
       ``,
-      `If you didn't just sign up or sign in to Stiko, you can ignore this email.`,
+      `If you didn't just sign up or sign in to stiko, you can ignore this email.`,
     ].join('\n'),
   };
 }

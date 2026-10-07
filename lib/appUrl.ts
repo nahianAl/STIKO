@@ -15,7 +15,7 @@ export function appBaseUrl(): string {
   const base = process.env.NEXTAUTH_URL ?? process.env.APP_URL;
   if (!base) {
     throw new Error(
-      'NEXTAUTH_URL (or APP_URL) must be configured before Stiko can put links in email.'
+      'NEXTAUTH_URL (or APP_URL) must be configured before stiko can put links in email.'
     );
   }
   return base.replace(/\/+$/, '');

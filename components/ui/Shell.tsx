@@ -39,7 +39,7 @@ export function LogoMark({ size = 26 }: { size?: number }) {
 export function Wordmark() {
   return (
     <span className="text-[18px] font-extrabold tracking-title text-stiko-ink">
-      Stiko
+      stiko
     </span>
   );
 }
