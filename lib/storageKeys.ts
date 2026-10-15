@@ -51,7 +51,11 @@ const OCCT_FORMAT_BY_EXTENSION: Readonly<Record<string, OcctFormat>> = {
  * Callers that hold a URL must pass its pathname, never the full URL with a query string.
  */
 export function occtFormatOf(filename: string): OcctFormat | null {
-  return OCCT_FORMAT_BY_EXTENSION[extensionOf(filename)] ?? null;
+  const ext = extensionOf(filename);
+  // Own keys only: a filename like "x.constructor" must not resolve through Object.prototype.
+  return Object.prototype.hasOwnProperty.call(OCCT_FORMAT_BY_EXTENSION, ext)
+    ? OCCT_FORMAT_BY_EXTENSION[ext]
+    : null;
 }
 
 export function isTessellatableFilename(filename: string): boolean {

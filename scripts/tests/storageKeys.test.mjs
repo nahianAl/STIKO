@@ -100,6 +100,8 @@ test('occtFormatOf maps each OCCT extension to its reader and everything else to
   assert.equal(occtFormatOf('noext'), null);
   // URL pathnames reach this from STEPLoader; only the last segment counts.
   assert.equal(occtFormatOf('/uploads/p.1/x/abc.igs'), 'iges');
+  assert.equal(occtFormatOf('a.constructor'), null);
+  assert.equal(occtFormatOf('a.__proto__'), null);
 });
 
 test('a .stp original yields a .optimized.glb variant', () => {
