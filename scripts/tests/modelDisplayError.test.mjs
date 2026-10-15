@@ -5,6 +5,7 @@ import {
   ModelDisplayError,
   hasDrawableGeometry,
   EMPTY_RHINO_MESSAGE,
+  UNREADABLE_3MF_MESSAGE,
 } from '../../lib/model/modelDisplayError.ts';
 
 const geometry = () => new THREE.BufferGeometry();
@@ -35,4 +36,11 @@ test('ModelDisplayError is an Error that carries a message written for people', 
   assert.ok(err instanceof Error);
   assert.equal(err.userMessage, EMPTY_RHINO_MESSAGE);
   assert.match(EMPTY_RHINO_MESSAGE, /Save Small/);
+});
+
+test('an unreadable 3MF tells people what to export instead', () => {
+  assert.match(UNREADABLE_3MF_MESSAGE, /STL/);
+  assert.match(UNREADABLE_3MF_MESSAGE, /3MF/);
+  const err = new ModelDisplayError(UNREADABLE_3MF_MESSAGE);
+  assert.equal(err.userMessage, UNREADABLE_3MF_MESSAGE);
 });

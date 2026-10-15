@@ -13,7 +13,8 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { Rhino3dmLoader } from 'three/examples/jsm/loaders/3DMLoader.js';
-import { ModelDisplayError, EMPTY_RHINO_MESSAGE, hasDrawableGeometry } from '@/lib/model/modelDisplayError';
+import { ModelDisplayError, EMPTY_RHINO_MESSAGE, UNREADABLE_3MF_MESSAGE, hasDrawableGeometry } from '@/lib/model/modelDisplayError';
+import { isZUpExtension, Z_UP_TO_Y_UP_X_ROTATION } from '@/lib/model/upAxis';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
@@ -233,6 +234,21 @@ function getExtFromUrl(url: string): string {
   }
 }
 
+/**
+ * ThreeMFLoader.load routes parse exceptions to onError, so rethrowing a ModelDisplayError here
+ * is what puts a specific message in ModelErrorBoundary instead of the generic one.
+ */
+class ReadableThreeMFLoader extends ThreeMFLoader {
+  parse(data: ArrayBuffer) {
+    try {
+      return super.parse(data);
+    } catch (error) {
+      console.warn('3MF could not be parsed.', error);
+      throw new ModelDisplayError(UNREADABLE_3MF_MESSAGE);
+    }
+  }
+}
+
 function getLoaderForExt(ext: string) {
   switch (ext) {
     case '.obj': return OBJLoader;
@@ -241,7 +257,7 @@ function getLoaderForExt(ext: string) {
     case '.ply': return PLYLoader;
     case '.dae': return ColladaLoader;
     case '.fbx': return FBXLoader;
-    case '.3mf': return ThreeMFLoader;
+    case '.3mf': return ReadableThreeMFLoader;
     case '.3dm': return Rhino3dmLoader;
     // Every OCCT format goes through STEPLoader, which picks the reader from the URL.
     case '.step':
@@ -328,9 +344,11 @@ function Model({
   // would bake pitch black.
   useMemo(() => {
     if (!root) return;
+    // 3MF and Rhino are Z-up; stand them upright first. See lib/model/upAxis.ts.
+    if (isZUpExtension(ext)) root.rotation.x = Z_UP_TO_Y_UP_X_ROTATION;
     repairExporterDefaults(root);
     makeDoubleSided(root);
-  }, [root]);
+  }, [root, ext]);
 
   // Whether the file's own import pipeline genuinely declared parts (a `stikoPart` marker
   // somewhere in the tree), as opposed to `buildPartTree`'s unmarked fallback, which treats the

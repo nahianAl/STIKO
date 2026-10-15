@@ -22,6 +22,14 @@ export class ModelDisplayError extends Error {
 export const EMPTY_RHINO_MESSAGE =
   'This Rhino file has no display meshes. Open it in Rhino, turn off Save Small, and save again.';
 
+/**
+ * three's ThreeMFLoader does not support the 3MF Production Extension (multi-file
+ * `<component p:path=...>`), which slicer project files from Bambu Studio, OrcaSlicer and
+ * PrusaSlicer use. Parsing one throws an unhelpful TypeError, so say what to export instead.
+ */
+export const UNREADABLE_3MF_MESSAGE =
+  "This 3MF couldn't be read. Slicer project files (Bambu Studio, OrcaSlicer, PrusaSlicer) often can't be — export the plate as STL or a plain 3MF, then upload.";
+
 /** True when anything in the tree would put pixels on screen: a mesh, a line or points. */
 export function hasDrawableGeometry(root: THREE.Object3D): boolean {
   let found = false;
