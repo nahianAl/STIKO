@@ -104,6 +104,16 @@ export default function FileDropzone({
         (f) => f.file.name
       );
       setRejected(refused.map((f) => f.file.name));
+      if (refused.length > 0) {
+        // Demand data for formats stiko can't open: extensions only, never names. Nothing
+        // waits on this and a failure changes nothing for the person uploading.
+        fetch('/api/uploads/rejected', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ extensions: refused.map((f) => extensionOf(f.file.name)) }),
+          keepalive: true,
+        }).catch(() => {});
+      }
       if (accepted.length > 0) onFilesChange([...files, ...accepted]);
     },
     [files, onFilesChange]
