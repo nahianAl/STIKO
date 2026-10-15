@@ -127,5 +127,7 @@ export const NATIVE_CAD_ADVICE: Readonly<Record<string, FormatAdvice>> = {
 
 /** The export advice for a refused file, or null when there is none to give. */
 export function adviceFor(filename: string): FormatAdvice | null {
-  return NATIVE_CAD_ADVICE[extensionOf(filename)] ?? null;
+  const ext = extensionOf(filename);
+  // Own keys only: a filename like "x.constructor" must not resolve through Object.prototype.
+  return Object.prototype.hasOwnProperty.call(NATIVE_CAD_ADVICE, ext) ? NATIVE_CAD_ADVICE[ext] : null;
 }

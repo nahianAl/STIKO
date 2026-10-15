@@ -160,6 +160,10 @@ test('supported, unknown and extensionless files get no advice', () => {
   assert.equal(adviceFor('model.fbx'), null);
   assert.equal(adviceFor('notes.txt'), null);
   assert.equal(adviceFor('README'), null);
+  // Inherited Object.prototype keys must not resolve as advice.
+  assert.equal(adviceFor('a.constructor'), null);
+  assert.equal(adviceFor('a.__proto__'), null);
+  assert.equal(adviceFor('a.tostring'), null);
 });
 
 test('no advised extension is a supported upload', () => {
