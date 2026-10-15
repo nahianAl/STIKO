@@ -44,6 +44,9 @@ declare module 'occt-import-js' {
 
   interface OcctImportJs {
     ReadStepFile: (buffer: Uint8Array, params: OcctImportParams | null) => OcctResult;
+    ReadIgesFile: (buffer: Uint8Array, params: OcctImportParams | null) => OcctResult;
+    /** linearUnit has no effect for BREP: the format carries no unit, per the README. */
+    ReadBrepFile: (buffer: Uint8Array, params: OcctImportParams | null) => OcctResult;
   }
 
   interface OcctModuleOptions {

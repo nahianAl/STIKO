@@ -26,12 +26,33 @@ export function isOptimizableFilename(filename: string): boolean {
 }
 
 /**
- * STEP is tessellated by OCCT, not by the gltf-transform chain, so it is a SEPARATE
- * predicate from isOptimizableFilename rather than another member of that set. Both
- * produce the same `.optimized.glb` variant key, because both produce the object the
- * viewer should load instead of the original.
+ * Formats OCCT tessellates: STEP, IGES and BREP. A SEPARATE predicate from
+ * isOptimizableFilename rather than more members of that set, because they go through OCCT,
+ * not the gltf-transform chain. All of them produce the same `.optimized.glb` variant key,
+ * because all produce the object the viewer should load instead of the original.
  */
-export const TESSELLATABLE_EXTENSIONS: ReadonlySet<string> = new Set(['stp', 'step']);
+export const TESSELLATABLE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'stp', 'step', 'igs', 'iges', 'brep',
+]);
+
+/** Which OCCT reader a tessellatable file needs. */
+export type OcctFormat = 'step' | 'iges' | 'brep';
+
+const OCCT_FORMAT_BY_EXTENSION: Readonly<Record<string, OcctFormat>> = {
+  stp: 'step',
+  step: 'step',
+  igs: 'iges',
+  iges: 'iges',
+  brep: 'brep',
+};
+
+/**
+ * The OCCT reader for a filename or URL pathname, or null when OCCT does not read it.
+ * Callers that hold a URL must pass its pathname, never the full URL with a query string.
+ */
+export function occtFormatOf(filename: string): OcctFormat | null {
+  return OCCT_FORMAT_BY_EXTENSION[extensionOf(filename)] ?? null;
+}
 
 export function isTessellatableFilename(filename: string): boolean {
   return TESSELLATABLE_EXTENSIONS.has(extensionOf(filename));

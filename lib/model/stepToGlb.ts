@@ -1,10 +1,11 @@
 import { Document, Node, Primitive, WebIO } from '@gltf-transform/core';
 import type { OcctImportParams, OcctNode, OcctResult } from 'occt-import-js';
 import { PART_MARKER } from './partTree.ts';
+import type { OcctFormat } from '../storageKeys.ts';
 import { extractWireframe, type WireframeResult } from './stepWireframe.ts';
 
 /**
- * STEP → GLB, and the only module in the codebase that knows OpenCascade exists.
+ * STEP, IGES and BREP → GLB, and the only module in the codebase that knows OpenCascade exists.
  *
  * No DOM, no worker API, no React: it takes bytes and returns bytes, so it runs in a Web
  * Worker in the browser and directly under `node --test`.
@@ -69,9 +70,26 @@ function initOcct(locateFile?: (path: string) => string): Promise<OcctImportJs> 
 
 export async function stepToGlb(
   bytes: Uint8Array,
-  options: { locateFile?: (path: string) => string } = {}
+  options: { locateFile?: (path: string) => string; format?: OcctFormat } = {}
 ): Promise<Uint8Array> {
   const occt = await initOcct(options.locateFile);
+  const format = options.format ?? 'step';
+
+  if (format !== 'step') {
+    // IGES and BREP share STEP's tessellation settings and GLB building, but not its
+    // wireframe fallback below: that parses STEP text, and has nothing to say about these.
+    const result =
+      format === 'iges'
+        ? occt.ReadIgesFile(bytes, STEP_TESSELLATION)
+        : occt.ReadBrepFile(bytes, STEP_TESSELLATION);
+    if (result.success && result.meshes.length) return buildGlbDocument(result);
+    const label = format === 'iges' ? 'IGES' : 'BREP';
+    throw new Error(
+      result.success
+        ? `${label} file contained no displayable geometry`
+        : `${label} file could not be read`
+    );
+  }
 
   const result = occt.ReadStepFile(bytes, STEP_TESSELLATION);
   if (result.success && result.meshes.length) {
