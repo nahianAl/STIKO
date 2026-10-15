@@ -236,9 +236,8 @@ function getExtFromUrl(url: string): string {
 
 /**
  * Resolves an unparseable 3MF as an empty tree instead of throwing. react-three-fiber's useLoader
- * re-wraps every loader error in a plain `Error('Could not load <url>: ...')`
- * (node_modules/@react-three/fiber/dist/events-776716bd.esm.js:1687, in loadingFn), so a
- * ModelDisplayError thrown from here would reach ModelErrorBoundary as a generic Error and show
+ * re-wraps every loader error in a plain `Error('Could not load <url>: ...')` (v8's useLoader,
+ * via `loadingFn`), so a ModelDisplayError thrown from here would reach ModelErrorBoundary as a generic Error and show
  * the generic text. Resolving empty lets Model's render raise the specific message through
  * emptyModelMessage, the path a ModelDisplayError reliably survives.
  */

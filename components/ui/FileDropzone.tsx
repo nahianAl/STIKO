@@ -302,7 +302,7 @@ export default function FileDropzone({
                   return (
                     <li
                       key={`${name}-${i}`}
-                      className={advice ? 'font-medium' : 'truncate font-medium'}
+                      className={advice ? 'font-medium [overflow-wrap:anywhere]' : 'truncate font-medium'}
                     >
                       {name}
                       {advice ? (

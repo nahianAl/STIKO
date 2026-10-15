@@ -97,7 +97,7 @@ test('a worker that cannot be constructed resolves null', async () => {
 });
 
 test('runStepConvert takes ownership of bytes: it is detached even on a failure path', async () => {
-  // The transfer list on postMessage(bytes, [bytes]) detaches the caller's ArrayBuffer
+  // The transfer list on postMessage({ bytes, format }, [bytes]) detaches the caller's ArrayBuffer
   // *synchronously at call time* — before the worker ever replies. This test pins that this
   // holds even when the call ends in `null` ("use the original file"): the original `bytes`
   // is unusable by then, so "use the original file" must mean re-reading the source, not
