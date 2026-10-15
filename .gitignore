@@ -5,6 +5,7 @@
 
 # WASM binaries (copied by postinstall script)
 /public/occt-import-js.wasm
+/public/rhino3dm/
 /.pnp
 .pnp.js
 .yarn/install-state.gz

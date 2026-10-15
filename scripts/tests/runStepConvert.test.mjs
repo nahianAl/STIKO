@@ -97,7 +97,7 @@ test('a worker that cannot be constructed resolves null', async () => {
 });
 
 test('runStepConvert takes ownership of bytes: it is detached even on a failure path', async () => {
-  // The transfer list on postMessage(bytes, [bytes]) detaches the caller's ArrayBuffer
+  // The transfer list on postMessage({ bytes, format }, [bytes]) detaches the caller's ArrayBuffer
   // *synchronously at call time* — before the worker ever replies. This test pins that this
   // holds even when the call ends in `null` ("use the original file"): the original `bytes`
   // is unusable by then, so "use the original file" must mean re-reading the source, not
@@ -157,4 +157,38 @@ test('a late reply after a timeout cannot resolve twice', async () => {
   assert.equal(terminateCount, 1, 'the timeout path must terminate the worker exactly once');
   captured();
   assert.equal(terminateCount, 1, 'a late reply after the timeout must not terminate again');
+});
+
+test('the worker is told which OCCT reader to use, and the bytes travel with it', async () => {
+  let posted;
+  const worker = {
+    postMessage(message, transfer) {
+      posted = { message, transfer };
+      queueMicrotask(() => worker.onmessage({ data: { ok: true, buffer: new ArrayBuffer(1) } }));
+    },
+    terminate() {},
+    onmessage: null,
+    onerror: null,
+  };
+  const bytes = new ArrayBuffer(8);
+  await runStepConvert(bytes, { createWorker: () => worker, format: 'iges' });
+
+  assert.equal(posted.message.format, 'iges');
+  assert.equal(posted.message.bytes, bytes);
+  assert.deepEqual(posted.transfer, [bytes], 'the bytes must be transferred, not copied');
+});
+
+test('the format defaults to STEP', async () => {
+  let posted;
+  const worker = {
+    postMessage(message) {
+      posted = message;
+      queueMicrotask(() => worker.onmessage({ data: { ok: true, buffer: new ArrayBuffer(1) } }));
+    },
+    terminate() {},
+    onmessage: null,
+    onerror: null,
+  };
+  await runStepConvert(new ArrayBuffer(8), { createWorker: () => worker });
+  assert.equal(posted.format, 'step');
 });

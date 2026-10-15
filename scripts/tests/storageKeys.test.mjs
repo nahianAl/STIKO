@@ -4,6 +4,7 @@ import {
   optimizedVariantKey,
   isOptimizableFilename,
   isTessellatableFilename,
+  occtFormatOf,
   producesViewerVariant,
   TESSELLATABLE_EXTENSIONS,
   uploadStorageKey,
@@ -74,19 +75,33 @@ test('STEP files are tessellatable but not optimizable', () => {
 });
 
 test('producesViewerVariant covers both families and nothing else', () => {
-  for (const name of ['m.glb', 'm.stp', 'm.step', 'M.GLB', 'M.STP']) {
+  for (const name of ['m.glb', 'm.stp', 'm.step', 'M.GLB', 'M.STP', 'm.igs', 'm.iges', 'm.brep']) {
     assert.equal(producesViewerVariant(name), true, name);
   }
   // .gltf is excluded for the reason documented on OPTIMIZABLE_EXTENSIONS; the rest have
-  // no converter at all. An accidental `true` here presigns a variant URL that is never
-  // used, which is harmless, but it also puts the file into the 'optimizing' UI state.
-  for (const name of ['m.gltf', 'm.obj', 'm.stl', 'm.pdf', 'm.png', 'noext', '.stp']) {
+  // no converter at all. The upload route only presigns variants for GLB (the 2026-09-03 kill
+  // switch), so an OCCT format reaching `true` here still never enters the 'optimizing' state.
+  for (const name of ['m.gltf', 'm.obj', 'm.stl', 'm.pdf', 'm.png', 'm.fbx', 'm.3dm', 'noext', '.stp']) {
     assert.equal(producesViewerVariant(name), false, name);
   }
 });
 
-test('the tessellatable set is exactly stp and step', () => {
-  assert.deepEqual([...TESSELLATABLE_EXTENSIONS].sort(), ['step', 'stp']);
+test('the tessellatable set is the OCCT family: STEP, IGES and BREP', () => {
+  assert.deepEqual([...TESSELLATABLE_EXTENSIONS].sort(), ['brep', 'iges', 'igs', 'step', 'stp']);
+});
+
+test('occtFormatOf maps each OCCT extension to its reader and everything else to null', () => {
+  assert.equal(occtFormatOf('a.stp'), 'step');
+  assert.equal(occtFormatOf('a.STEP'), 'step');
+  assert.equal(occtFormatOf('a.igs'), 'iges');
+  assert.equal(occtFormatOf('a.IGES'), 'iges');
+  assert.equal(occtFormatOf('a.brep'), 'brep');
+  assert.equal(occtFormatOf('a.glb'), null);
+  assert.equal(occtFormatOf('noext'), null);
+  // URL pathnames reach this from STEPLoader; only the last segment counts.
+  assert.equal(occtFormatOf('/uploads/p.1/x/abc.igs'), 'iges');
+  assert.equal(occtFormatOf('a.constructor'), null);
+  assert.equal(occtFormatOf('a.__proto__'), null);
 });
 
 test('a .stp original yields a .optimized.glb variant', () => {

@@ -10,6 +10,7 @@ import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotatio
 import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 import type { LengthUnit } from '@/lib/measure/units';
+import { MODEL_FORMATS } from '@/lib/fileFormats';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
@@ -124,7 +125,7 @@ interface ViewerContainerProps {
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
 const PDF_EXTENSIONS = ['.pdf'];
-const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.3ds', '.ply', '.dae', '.step', '.stp'];
+const MODEL_EXTENSIONS = MODEL_FORMATS.map((ext) => `.${ext}`);
 
 function getExtension(filename: string): string {
   const idx = filename.lastIndexOf('.');

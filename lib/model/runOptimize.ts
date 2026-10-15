@@ -2,6 +2,7 @@ import type { OptimizeResult } from './optimizeGlb';
 import {
   isOptimizableFilename,
   isTessellatableFilename,
+  occtFormatOf,
   producesViewerVariant,
 } from '../storageKeys.ts';
 import { runStepConvert } from './runStepConvert.ts';
@@ -95,15 +96,16 @@ export function prepareViewerVariant(file: File): Promise<VariantResult | null> 
 }
 
 async function prepareViewerVariantNow(file: File): Promise<VariantResult | null> {
-  if (isTessellatableFilename(file.name)) {
+  const occtFormat = occtFormatOf(file.name);
+  if (occtFormat) {
     const bytes = await file.arrayBuffer();
-    const glb = await runStepConvert(bytes);
+    const glb = await runStepConvert(bytes, { format: occtFormat });
     if (!glb) return null;
     return {
       buffer: glb,
       summary:
         `Tessellated ${file.name}: ` +
-        `${Math.round(file.size / 1024)}KB STEP → ${Math.round(glb.byteLength / 1024)}KB GLB`,
+        `${Math.round(file.size / 1024)}KB ${occtFormat.toUpperCase()} → ${Math.round(glb.byteLength / 1024)}KB GLB`,
     };
   }
 

@@ -51,7 +51,7 @@ import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
 import { distance } from '@/lib/measure/geometry';
 import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
-import { extensionOf } from '@/lib/fileFormats';
+import { extensionOf, MODEL_FORMATS } from '@/lib/fileFormats';
 
 interface Project {
   id: string;
@@ -73,8 +73,6 @@ interface Participant {
   role: string;
   createdAt: string;
 }
-
-const MODEL_3D_EXTENSIONS = ['.glb', '.gltf', '.step', '.stp', '.obj', '.stl', '.3ds', '.ply', '.dae'];
 
 const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'ellipse', 'cloud', 'text'];
 
@@ -670,7 +668,7 @@ export default function PortalPage() {
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
     const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
-    return MODEL_3D_EXTENSIONS.includes(`.${ext}`);
+    return MODEL_FORMATS.includes(ext);
   }, [selectedFile]);
 
   const isPDFFile = useMemo(() => {

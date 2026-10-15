@@ -395,3 +395,10 @@ CREATE INDEX IF NOT EXISTS files_version_idx ON files(version_id);
 -- The portal change feed re-filters versions by portal_id every six seconds per
 -- open tab; without this it seq-scans. Added in 013-comment-edits.sql.
 CREATE INDEX IF NOT EXISTS versions_portal_idx ON versions(portal_id);
+
+-- Refused uploads by extension. Added in 017-rejected-uploads.sql.
+CREATE TABLE IF NOT EXISTS rejected_uploads (
+  extension TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  last_seen TIMESTAMPTZ NOT NULL
+);

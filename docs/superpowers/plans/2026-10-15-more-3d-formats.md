@@ -1390,12 +1390,23 @@ Production is the only environment. Each step is a paste block.
    ```bash
    cd /Users/user/Desktop/STIKO-main && DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.local | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" node -e 'const {neon}=require("@neondatabase/serverless");neon(process.env.DATABASE_URL)`SELECT name FROM schema_migrations ORDER BY name`.then(r=>console.log(r.map(x=>x.name).join("\n")))' 2>&1 | sed -E 's#postgres(ql)?://[^ ]*#<redacted-url>#g'
    ```
-   If `017-rejected-uploads.sql` is not listed, run this from the same folder, then re-run the
-   check and confirm it is listed:
+   If `017-rejected-uploads.sql` is not listed, first do a dry run. `npm run migrate` applies
+   EVERY outstanding migration, not only 017. Confirm the outstanding set is only 017, or
+   016 + 017 if the mentions migration was never applied. Note that `--dry` lists all
+   migrations, so compare its output against the applied list from the first command.
+   ```bash
+   DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.local | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" npm run migrate -- --dry 2>&1 | sed -E 's#postgres(ql)?://[^ ]*#<redacted-url>#g'
+   ```
+   Then apply it, re-run the check, and confirm 017 is listed:
    ```bash
    DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.local | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" npm run migrate 2>&1 | sed -E 's#postgres(ql)?://[^ ]*#<redacted-url>#g'
    ```
 2. **Merge and deploy:** `git checkout main && git merge --no-ff feature/more-3d-formats && git push`
-3. **Check production:** open one FBX, one Rhino and one IGES file in a package.
+3. **Check production:** in a package, upload and open:
+   - one FBX, one Rhino, one IGES and one 3MF file
+   - one existing STEP file, as a regression check on the real R2 path, which the browser
+     harness never exercised
+   
+   Also look at the drop-zone hint in the compact "new submission" drawer.
 
 **Rollback:** `git revert -m 1 <merge commit> && git push`. The `rejected_uploads` table can stay; nothing else reads it.

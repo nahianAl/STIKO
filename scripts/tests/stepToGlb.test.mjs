@@ -382,3 +382,30 @@ test('a root node owning many meshes with no children becomes an assembly part w
     meshes.map((m) => m.name).sort()
   );
 });
+
+const IGES_CUBE = 'node_modules/occt-import-js/test/testfiles/cube-10x10mm/Cube 10x10.igs';
+const BREP_ASSEMBLY = 'node_modules/occt-import-js/test/testfiles/cax-if-brep/as1_pe_203.brep';
+
+test('an IGES file converts to a readable GLB with geometry', async () => {
+  const glb = await stepToGlb(new Uint8Array(readFileSync(IGES_CUBE)), { locateFile, format: 'iges' });
+  const doc = await new WebIO().readBinary(glb);
+  assert.ok(doc.getRoot().listMeshes().length >= 1, 'expected at least one mesh');
+});
+
+test('a BREP file converts to a readable GLB with every solid', async () => {
+  const glb = await stepToGlb(new Uint8Array(readFileSync(BREP_ASSEMBLY)), { locateFile, format: 'brep' });
+  const doc = await new WebIO().readBinary(glb);
+  // Measured during the 2026-10-15 spike: OCCT reads 18 meshes from this assembly.
+  assert.ok(doc.getRoot().listMeshes().length >= 18, 'expected the assembly\'s solids');
+});
+
+test('an unreadable IGES file rejects instead of trying the STEP wireframe fallback', async () => {
+  // The wireframe fallback parses STEP text. Feeding it IGES bytes would at best find
+  // nothing and at worst invent geometry from coincidental tokens, so non-STEP formats
+  // fail plainly.
+  const junk = new TextEncoder().encode('not an iges file at all');
+  await assert.rejects(
+    () => stepToGlb(junk, { locateFile, format: 'iges' }),
+    /IGES file could not be read/
+  );
+});

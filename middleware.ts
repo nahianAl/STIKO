@@ -67,9 +67,13 @@ export const config = {
   // rather than load-bearing right now — but it is also what keeps this correct if
   // unauthenticated package viewing ships, per ARCHITECTURE.md.
   //
+  // rhino3dm/: the same category for Rhino files. three's 3DMLoader fetches rhino3dm.js and
+  // rhino3dm.wasm from here (ModelViewerInner sets its library path), copied from three's own
+  // bundled copy by the postinstall script. Without the exemption both 307 to /login.
+  //
   // icon.svg and apple-icon.png: the same category again, and these two ARE
   // load-bearing. Every page links them, including /login and /invite, where
   // nobody is signed in yet. Without the exemption they 307 to /login and the
   // browser is handed the login page's HTML where it asked for an icon.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|uploads|occt-import-js.wasm).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|uploads|occt-import-js.wasm|rhino3dm/).*)'],
 };

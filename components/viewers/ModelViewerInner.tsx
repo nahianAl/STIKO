@@ -10,6 +10,11 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
+import { Rhino3dmLoader } from 'three/examples/jsm/loaders/3DMLoader.js';
+import { ModelDisplayError, emptyModelMessage } from '@/lib/model/modelDisplayError';
+import { isZUpExtension, Z_UP_TO_Y_UP_X_ROTATION } from '@/lib/model/upAxis';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
@@ -229,6 +234,24 @@ function getExtFromUrl(url: string): string {
   }
 }
 
+/**
+ * Resolves an unparseable 3MF as an empty tree instead of throwing. react-three-fiber's useLoader
+ * re-wraps every loader error in a plain `Error('Could not load <url>: ...')` (v8's useLoader,
+ * via `loadingFn`), so a ModelDisplayError thrown from here would reach ModelErrorBoundary as a generic Error and show
+ * the generic text. Resolving empty lets Model's render raise the specific message through
+ * emptyModelMessage, the path a ModelDisplayError reliably survives.
+ */
+class ReadableThreeMFLoader extends ThreeMFLoader {
+  parse(data: ArrayBuffer) {
+    try {
+      return super.parse(data);
+    } catch (error) {
+      console.warn('3MF could not be parsed; showing the unreadable-3MF message.', error);
+      return new THREE.Group();
+    }
+  }
+}
+
 function getLoaderForExt(ext: string) {
   switch (ext) {
     case '.obj': return OBJLoader;
@@ -236,10 +259,26 @@ function getLoaderForExt(ext: string) {
     case '.3ds': return TDSLoader;
     case '.ply': return PLYLoader;
     case '.dae': return ColladaLoader;
+    case '.fbx': return FBXLoader;
+    case '.3mf': return ReadableThreeMFLoader;
+    case '.3dm': return Rhino3dmLoader;
+    // Every OCCT format goes through STEPLoader, which picks the reader from the URL.
     case '.step':
-    case '.stp': return STEPLoader;
+    case '.stp':
+    case '.igs':
+    case '.iges':
+    case '.brep': return STEPLoader;
     default: return GLTFLoader;
   }
+}
+
+/**
+ * rhino3dm is fetched at runtime, not bundled. 3DMLoader's default library path is empty,
+ * so it must be pointed at the copy the postinstall script places in public/rhino3dm/
+ * (exempted from auth in middleware.ts). Every other loader needs no configuration.
+ */
+function configureLoader(loader: THREE.Loader) {
+  if (loader instanceof Rhino3dmLoader) loader.setLibraryPath('/rhino3dm/');
 }
 
 function Model({
@@ -263,7 +302,7 @@ function Model({
   const ext = getExtFromUrl(url);
   const LoaderClass = getLoaderForExt(ext);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data = useLoader(LoaderClass as any, url);
+  const data = useLoader(LoaderClass as any, url, configureLoader as any);
 
   // Register with the bounded cache the moment the parse resolves. useLoader keeps
   // this tree alive forever on its own — no lifespan, and nothing in this repo used
@@ -291,7 +330,15 @@ function Model({
     return data instanceof THREE.Object3D ? data : ((data as GLTF | Collada)?.scene ?? null);
   }, [data]);
 
-  // Materials that ship inside the file (OBJ / 3DS / DAE / STEP / glTF) are single-sided
+  // A Rhino file saved without render meshes parses fine and yields an empty tree, and an
+  // unparseable 3MF resolves to one too (ReadableThreeMFLoader). Say why, rather than framing
+  // an empty scene. Throwing here is what reaches ModelErrorBoundary, which shows the message
+  // and releases the viewport indicator; an error thrown inside a loader never does, because
+  // useLoader re-wraps it in a plain Error.
+  const emptyMessage = root ? emptyModelMessage(ext, root) : null;
+  if (emptyMessage) throw new ModelDisplayError(emptyMessage);
+
+  // Materials that ship inside the file (OBJ / 3DS / DAE / FBX / 3MF / 3DM / STEP / glTF) are single-sided
   // by default, which hides the far inner wall of thin or perforated parts when you look
   // through an opening. STL and PLY use the shared materials above, already double-sided.
   //
@@ -301,9 +348,11 @@ function Model({
   // would bake pitch black.
   useMemo(() => {
     if (!root) return;
+    // 3MF and Rhino are Z-up; stand them upright first. See lib/model/upAxis.ts.
+    if (isZUpExtension(ext)) root.rotation.x = Z_UP_TO_Y_UP_X_ROTATION;
     repairExporterDefaults(root);
     makeDoubleSided(root);
-  }, [root]);
+  }, [root, ext]);
 
   // Whether the file's own import pipeline genuinely declared parts (a `stikoPart` marker
   // somewhere in the tree), as opposed to `buildPartTree`'s unmarked fallback, which treats the

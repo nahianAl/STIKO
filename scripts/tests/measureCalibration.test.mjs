@@ -12,6 +12,12 @@ test('STEP files are millimetres, because that is what OCCT emits', () => {
   assert.equal(assumedMmPerUnit('BRACKET.STP'), 1);
 });
 
+test('IGES assumes millimetres like STEP; BREP, FBX, 3MF and Rhino have no assumed unit', () => {
+  assert.equal(assumedMmPerUnit('part.igs'), 1);
+  assert.equal(assumedMmPerUnit('part.IGES'), 1);
+  for (const name of ['a.brep', 'a.fbx', 'a.3mf', 'a.3dm']) assert.equal(assumedMmPerUnit(name), null, name);
+});
+
 test('glTF files are metres, per the glTF specification', () => {
   assert.equal(assumedMmPerUnit('tower.glb'), 1000);
   assert.equal(assumedMmPerUnit('tower.gltf'), 1000);

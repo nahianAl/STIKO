@@ -12,12 +12,19 @@
 const IMAGE = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
 const VIDEO = ['mp4', 'webm', 'mov', 'avi', 'mkv'];
 const DOCUMENT = ['pdf'];
-const MODEL = ['glb', 'gltf', 'obj', 'stl', '3ds', 'ply', 'dae', 'step', 'stp'];
+const MODEL = [
+  'glb', 'gltf', 'obj', 'stl', '3ds', 'ply', 'dae', 'step', 'stp',
+  'fbx', '3mf', '3dm', 'igs', 'iges', 'brep',
+];
 
-// No viewer branch and no conversion job — createStepToGlbJob is STEP-only.
-// Whitelisted deliberately so the import pipeline work lands without a format
-// gate to unpick first. Until then these upload and download normally and the
-// viewport shows its unsupported-type message.
+/**
+ * The formats the 3D viewer opens, undotted. ViewerContainer and the portal page derive
+ * their checks from this rather than keeping their own copies — there used to be three.
+ */
+export const MODEL_FORMATS: readonly string[] = MODEL;
+
+// DWG and DXF: accepted, no viewer yet. That work is in progress separately; they upload and
+// download normally and the viewport shows its unsupported-type message.
 const CAD = ['dwg', 'dxf'];
 
 export const SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
@@ -69,3 +76,58 @@ export function partitionBySupport<T>(
 export const ACCEPT_ATTRIBUTE = Array.from(SUPPORTED_EXTENSIONS)
   .map((ext) => `.${ext}`)
   .join(',');
+
+export interface FormatAdvice {
+  /** The application the file came from, as a reader would name it. */
+  app: string;
+  /** One sentence telling them what to export instead. */
+  advice: string;
+}
+
+const EXPORT_STEP = 'Export STEP, then upload.';
+const EXPORT_STEP_FROM_TOOL = 'Export STEP from your CAD tool, then upload.';
+const EXPORT_FBX_OR_GLB = 'Export FBX or GLB, then upload.';
+const EXPORT_GLB = 'Export GLB, then upload.';
+
+/**
+ * Native formats nothing free can read. A file with one of these extensions is refused
+ * like any other unsupported file, but the refusal says what to do instead of just "no".
+ * Disjoint from SUPPORTED_EXTENSIONS by test.
+ */
+export const NATIVE_CAD_ADVICE: Readonly<Record<string, FormatAdvice>> = {
+  sldprt: { app: 'SolidWorks', advice: 'Save As STEP, then upload.' },
+  sldasm: { app: 'SolidWorks', advice: 'Save As STEP, then upload.' },
+  ipt: { app: 'Inventor', advice: EXPORT_STEP },
+  iam: { app: 'Inventor', advice: EXPORT_STEP },
+  f3d: { app: 'Fusion', advice: EXPORT_STEP },
+  catpart: { app: 'CATIA', advice: EXPORT_STEP },
+  catproduct: { app: 'CATIA', advice: EXPORT_STEP },
+  prt: { app: 'NX / Creo / Solid Edge', advice: EXPORT_STEP },
+  asm: { app: 'NX / Creo / Solid Edge', advice: EXPORT_STEP },
+  par: { app: 'Solid Edge', advice: EXPORT_STEP },
+  psm: { app: 'Solid Edge', advice: EXPORT_STEP },
+  x_t: { app: 'Parasolid', advice: EXPORT_STEP_FROM_TOOL },
+  x_b: { app: 'Parasolid', advice: EXPORT_STEP_FROM_TOOL },
+  jt: { app: 'JT', advice: EXPORT_STEP_FROM_TOOL },
+  rvt: { app: 'Revit', advice: 'Export FBX from a 3D view, then upload.' },
+  skp: { app: 'SketchUp', advice: 'Export FBX or OBJ, then upload.' },
+  pln: { app: 'ArchiCAD', advice: 'Export OBJ, then upload.' },
+  vwx: { app: 'Vectorworks', advice: 'Export FBX or OBJ, then upload.' },
+  ifc: { app: 'IFC', advice: "IFC isn't supported yet. Export FBX or OBJ from your BIM tool." },
+  c4d: { app: 'Cinema 4D', advice: EXPORT_FBX_OR_GLB },
+  ma: { app: 'Maya', advice: EXPORT_FBX_OR_GLB },
+  mb: { app: 'Maya', advice: EXPORT_FBX_OR_GLB },
+  blend: { app: 'Blender', advice: EXPORT_GLB },
+  max: { app: '3ds Max', advice: 'Export FBX, then upload.' },
+  usdz: { app: 'USD', advice: EXPORT_GLB },
+  usd: { app: 'USD', advice: EXPORT_GLB },
+  usda: { app: 'USD', advice: EXPORT_GLB },
+  usdc: { app: 'USD', advice: EXPORT_GLB },
+};
+
+/** The export advice for a refused file, or null when there is none to give. */
+export function adviceFor(filename: string): FormatAdvice | null {
+  const ext = extensionOf(filename);
+  // Own keys only: a filename like "x.constructor" must not resolve through Object.prototype.
+  return Object.prototype.hasOwnProperty.call(NATIVE_CAD_ADVICE, ext) ? NATIVE_CAD_ADVICE[ext] : null;
+}

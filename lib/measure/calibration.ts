@@ -27,17 +27,20 @@ export interface Scale {
  * What one world unit means for a 3D format that has a unit convention, in millimetres.
  *
  * Read from the ORIGINAL upload's filename, never from the file the viewer actually loaded. A
- * STEP upload is viewed as a converted GLB, but stepToGlb emits OCCT's millimetres — so a .step
- * file is 1 mm per unit even though the bytes on screen are a .glb. Keying off the loaded file
- * would apply the glTF metre convention and read every STEP model 1000x too large.
+ * STEP or IGES upload is viewed as a converted GLB, but stepToGlb emits OCCT's millimetres — so a
+ * .step or .igs file is 1 mm per unit even though the bytes on screen are a .glb. Keying off the
+ * loaded file would apply the glTF metre convention and read every STEP model 1000x too large.
  *
  * Null means "no convention exists": measuring is blocked until someone calibrates. That covers
- * OBJ/STL/PLY/3DS/DAE, and also every 2D format — an image or a PDF is calibrated or nothing.
+ * OBJ/STL/PLY/3DS/DAE, BREP (no unit at all), FBX/3MF/3DM (no unit Stiko can rely on), and also
+ * every 2D format — an image or a PDF is calibrated or nothing.
  */
 export function assumedMmPerUnit(filename: string): number | null {
   switch (extensionOf(filename)) {
     case 'step':
     case 'stp':
+    case 'igs':
+    case 'iges':
       return 1;
     case 'glb':
     case 'gltf':
