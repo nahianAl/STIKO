@@ -1,6 +1,7 @@
 'use client';
 
 import { Component, type ReactNode } from 'react';
+import { ModelDisplayError } from '@/lib/model/modelDisplayError';
 
 /**
  * The viewer had no error boundary. A throw from useLoader inside <Suspense> had nothing to
@@ -21,13 +22,17 @@ interface Props {
 
 interface State {
   failed: boolean;
+  message: string | null;
 }
 
 export default class ModelErrorBoundary extends Component<Props, State> {
-  state: State = { failed: false };
+  state: State = { failed: false, message: null };
 
-  static getDerivedStateFromError(): State {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown): State {
+    return {
+      failed: true,
+      message: error instanceof ModelDisplayError ? error.userMessage : null,
+    };
   }
 
   componentDidCatch(error: unknown) {
@@ -45,7 +50,8 @@ export default class ModelErrorBoundary extends Component<Props, State> {
             This 3D file could not be displayed.
           </p>
           <p className="mt-1 text-sm text-gray-500">
-            It may be too complex for the browser to prepare, or the file may not have uploaded correctly.
+            {this.state.message ??
+              'It may be too complex for the browser to prepare, or the file may not have uploaded correctly.'}
           </p>
         </div>
       </div>
