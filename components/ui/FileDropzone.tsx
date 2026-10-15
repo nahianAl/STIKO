@@ -4,6 +4,7 @@ import React, { useRef, useState, useCallback } from 'react';
 import { FileChip } from './Primitives';
 import {
   ACCEPT_ATTRIBUTE,
+  adviceFor,
   extensionOf,
   partitionBySupport,
 } from '@/lib/fileFormats';
@@ -85,7 +86,7 @@ export default function FileDropzone({
   files,
   onFilesChange,
   title = 'Drop drawings, models or PDFs',
-  hint = 'Folders keep their structure · PDF, DWG, DXF, GLB, STEP, OBJ, STL, images, video',
+  hint = 'Folders keep their structure · PDF, DWG, DXF, GLB, STEP, IGES, FBX, 3MF, Rhino, OBJ, STL, images, video',
   compact = false,
 }: FileDropzoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -286,14 +287,26 @@ export default function FileDropzone({
                 Everything else was added.
               </p>
               <ul className="mt-[6px] flex flex-col gap-[2px]">
-                {rejected.slice(0, 5).map((name, i) => (
-                  <li key={`${name}-${i}`} className="truncate font-medium">
-                    {name}
-                    <span className="ml-1 opacity-70">
-                      ({extensionOf(name) ? `.${extensionOf(name)}` : "no extension"})
-                    </span>
-                  </li>
-                ))}
+                {rejected.slice(0, 5).map((name, i) => {
+                  const advice = adviceFor(name);
+                  return (
+                    <li
+                      key={`${name}-${i}`}
+                      className={advice ? 'font-medium' : 'truncate font-medium'}
+                    >
+                      {name}
+                      {advice ? (
+                        <span className="ml-1 font-normal">
+                          — {advice.app}. {advice.advice}
+                        </span>
+                      ) : (
+                        <span className="ml-1 opacity-70">
+                          ({extensionOf(name) ? `.${extensionOf(name)}` : "no extension"})
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
                 {rejected.length > 5 && (
                   <li className="opacity-70">+{rejected.length - 5} more</li>
                 )}
