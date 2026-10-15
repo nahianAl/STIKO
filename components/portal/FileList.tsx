@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { MODEL_FORMATS } from '@/lib/fileFormats';
 
 interface FileRecord {
   id: string;
@@ -32,7 +33,7 @@ function getFileIcon(fileType: string, filename: string): string {
   if (fileType === 'application/pdf' || ext === 'pdf') {
     return 'pdf';
   }
-  if (['glb', 'gltf', 'step', 'stp'].includes(ext)) {
+  if (MODEL_FORMATS.includes(ext)) {
     return '3d';
   }
   return 'file';
