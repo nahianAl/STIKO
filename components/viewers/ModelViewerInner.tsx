@@ -13,7 +13,7 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { Rhino3dmLoader } from 'three/examples/jsm/loaders/3DMLoader.js';
-import { ModelDisplayError, EMPTY_RHINO_MESSAGE, UNREADABLE_3MF_MESSAGE, hasDrawableGeometry } from '@/lib/model/modelDisplayError';
+import { ModelDisplayError, emptyModelMessage } from '@/lib/model/modelDisplayError';
 import { isZUpExtension, Z_UP_TO_Y_UP_X_ROTATION } from '@/lib/model/upAxis';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
@@ -235,16 +235,20 @@ function getExtFromUrl(url: string): string {
 }
 
 /**
- * ThreeMFLoader.load routes parse exceptions to onError, so rethrowing a ModelDisplayError here
- * is what puts a specific message in ModelErrorBoundary instead of the generic one.
+ * Resolves an unparseable 3MF as an empty tree instead of throwing. react-three-fiber's useLoader
+ * re-wraps every loader error in a plain `Error('Could not load <url>: ...')`
+ * (node_modules/@react-three/fiber/dist/events-776716bd.esm.js:1687, in loadingFn), so a
+ * ModelDisplayError thrown from here would reach ModelErrorBoundary as a generic Error and show
+ * the generic text. Resolving empty lets Model's render raise the specific message through
+ * emptyModelMessage, the path a ModelDisplayError reliably survives.
  */
 class ReadableThreeMFLoader extends ThreeMFLoader {
   parse(data: ArrayBuffer) {
     try {
       return super.parse(data);
     } catch (error) {
-      console.warn('3MF could not be parsed.', error);
-      throw new ModelDisplayError(UNREADABLE_3MF_MESSAGE);
+      console.warn('3MF could not be parsed; showing the unreadable-3MF message.', error);
+      return new THREE.Group();
     }
   }
 }
@@ -327,12 +331,13 @@ function Model({
     return data instanceof THREE.Object3D ? data : ((data as GLTF | Collada)?.scene ?? null);
   }, [data]);
 
-  // A Rhino file saved without render meshes parses fine and yields an empty tree. Say so,
-  // rather than framing an empty scene. Throwing here is what reaches ModelErrorBoundary,
-  // which shows the message and releases the viewport indicator.
-  if (ext === '.3dm' && root && !hasDrawableGeometry(root)) {
-    throw new ModelDisplayError(EMPTY_RHINO_MESSAGE);
-  }
+  // A Rhino file saved without render meshes parses fine and yields an empty tree, and an
+  // unparseable 3MF resolves to one too (ReadableThreeMFLoader). Say why, rather than framing
+  // an empty scene. Throwing here is what reaches ModelErrorBoundary, which shows the message
+  // and releases the viewport indicator; an error thrown inside a loader never does, because
+  // useLoader re-wraps it in a plain Error.
+  const emptyMessage = root ? emptyModelMessage(ext, root) : null;
+  if (emptyMessage) throw new ModelDisplayError(emptyMessage);
 
   // Materials that ship inside the file (OBJ / 3DS / DAE / FBX / 3MF / 3DM / STEP / glTF) are single-sided
   // by default, which hides the far inner wall of thin or perforated parts when you look

@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {
   ModelDisplayError,
   hasDrawableGeometry,
+  emptyModelMessage,
   EMPTY_RHINO_MESSAGE,
   UNREADABLE_3MF_MESSAGE,
 } from '../../lib/model/modelDisplayError.ts';
@@ -43,4 +44,17 @@ test('an unreadable 3MF tells people what to export instead', () => {
   assert.match(UNREADABLE_3MF_MESSAGE, /3MF/);
   const err = new ModelDisplayError(UNREADABLE_3MF_MESSAGE);
   assert.equal(err.userMessage, UNREADABLE_3MF_MESSAGE);
+});
+
+test('an empty tree gets the message for its format, and only for formats that have one', () => {
+  assert.equal(emptyModelMessage('.3dm', new THREE.Group()), EMPTY_RHINO_MESSAGE);
+  assert.equal(emptyModelMessage('.3mf', new THREE.Group()), UNREADABLE_3MF_MESSAGE);
+  assert.equal(emptyModelMessage('.glb', new THREE.Group()), null);
+});
+
+test('a tree with something to draw needs no explanation, whatever the format', () => {
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(geometry()));
+  assert.equal(emptyModelMessage('.3mf', root), null);
+  assert.equal(emptyModelMessage('.3dm', root), null);
 });

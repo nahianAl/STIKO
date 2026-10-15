@@ -39,3 +39,16 @@ export function hasDrawableGeometry(root: THREE.Object3D): boolean {
   });
   return found;
 }
+
+/**
+ * The person-facing message for a model that loaded but has nothing to draw, by dotted
+ * extension, or null when an empty result needs no special explanation. Thrown from the
+ * viewer's render — the one place a ModelDisplayError reliably reaches ModelErrorBoundary,
+ * because react-three-fiber's useLoader re-wraps loader errors in a plain Error.
+ */
+export function emptyModelMessage(dottedExt: string, root: THREE.Object3D): string | null {
+  if (hasDrawableGeometry(root)) return null;
+  if (dottedExt === '.3dm') return EMPTY_RHINO_MESSAGE;
+  if (dottedExt === '.3mf') return UNREADABLE_3MF_MESSAGE;
+  return null;
+}
