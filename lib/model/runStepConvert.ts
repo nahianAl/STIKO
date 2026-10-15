@@ -11,6 +11,8 @@
  * decide for itself whether it needs serialization; it will not get it for free from here.
  */
 
+import type { OcctFormat } from '../storageKeys.ts';
+
 /**
  * Structural worker type rather than the DOM `Worker`. The timeout behaviour below is the
  * regression test for a bug that froze tabs indefinitely, and it can only be asserted
@@ -40,8 +42,8 @@ function defaultWorker(): ConvertWorker {
 }
 
 /**
- * TAKES OWNERSHIP of `bytes`. The buffer is handed to the worker via `postMessage(bytes,
- * [bytes])`, which detaches it *synchronously*, at the moment of the call — not when the
+ * TAKES OWNERSHIP of `bytes`. The buffer is handed to the worker via `postMessage({ bytes,
+ * format }, [bytes])`, which detaches it *synchronously*, at the moment of the call — not when the
  * worker replies. By the time this function returns (or its promise settles, on any path),
  * `bytes` is neutered: `byteLength === 0` and its contents are gone.
  *
@@ -56,7 +58,7 @@ function defaultWorker(): ConvertWorker {
  */
 export function runStepConvert(
   bytes: ArrayBuffer,
-  options: { createWorker?: () => ConvertWorker; timeoutMs?: number } = {}
+  options: { format?: OcctFormat; createWorker?: () => ConvertWorker; timeoutMs?: number } = {}
 ): Promise<ArrayBuffer | null> {
   const timeoutMs = options.timeoutMs ?? STEP_CONVERT_TIMEOUT_MS;
 
@@ -105,7 +107,7 @@ export function runStepConvert(
     };
 
     try {
-      worker.postMessage(bytes, [bytes]);
+      worker.postMessage({ bytes, format: options.format ?? 'step' }, [bytes]);
     } catch (error) {
       console.warn('STEP conversion could not be started.', error);
       finish(null);

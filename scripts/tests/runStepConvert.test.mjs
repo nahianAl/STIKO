@@ -158,3 +158,37 @@ test('a late reply after a timeout cannot resolve twice', async () => {
   captured();
   assert.equal(terminateCount, 1, 'a late reply after the timeout must not terminate again');
 });
+
+test('the worker is told which OCCT reader to use, and the bytes travel with it', async () => {
+  let posted;
+  const worker = {
+    postMessage(message, transfer) {
+      posted = { message, transfer };
+      queueMicrotask(() => worker.onmessage({ data: { ok: true, buffer: new ArrayBuffer(1) } }));
+    },
+    terminate() {},
+    onmessage: null,
+    onerror: null,
+  };
+  const bytes = new ArrayBuffer(8);
+  await runStepConvert(bytes, { createWorker: () => worker, format: 'iges' });
+
+  assert.equal(posted.message.format, 'iges');
+  assert.equal(posted.message.bytes, bytes);
+  assert.deepEqual(posted.transfer, [bytes], 'the bytes must be transferred, not copied');
+});
+
+test('the format defaults to STEP', async () => {
+  let posted;
+  const worker = {
+    postMessage(message) {
+      posted = message;
+      queueMicrotask(() => worker.onmessage({ data: { ok: true, buffer: new ArrayBuffer(1) } }));
+    },
+    terminate() {},
+    onmessage: null,
+    onerror: null,
+  };
+  await runStepConvert(new ArrayBuffer(8), { createWorker: () => worker });
+  assert.equal(posted.format, 'step');
+});

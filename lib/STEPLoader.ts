@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { runStepConvert, STEP_VIEWER_TIMEOUT_MS } from './model/runStepConvert';
+import { occtFormatOf } from './storageKeys';
 
 /**
- * Loads a STEP file by tessellating it to GLB in a worker, then parsing that GLB.
+ * Loads a STEP, IGES or BREP file by tessellating it to GLB in a worker, then parsing that GLB.
  *
  * It used to call occt.ReadStepFile directly, synchronously, on the main thread, with null
  * params. That combination froze the tab for the entire tessellation — which on a heavy
@@ -34,7 +35,11 @@ export class STEPLoader extends THREE.Loader {
     }
     const bytes = await response.arrayBuffer();
 
-    const glb = await runStepConvert(bytes, { timeoutMs: STEP_VIEWER_TIMEOUT_MS });
+    // The presigned URL's pathname still ends in the original extension (uploadStorageKey
+    // keeps it), so it names the reader. STEP is the default for anything unrecognised, which
+    // is what this loader did before it knew other formats existed.
+    const format = occtFormatOf(new URL(url, 'http://local').pathname) ?? 'step';
+    const glb = await runStepConvert(bytes, { timeoutMs: STEP_VIEWER_TIMEOUT_MS, format });
     if (!glb) {
       // Throwing is what surfaces the message. ModelErrorBoundary catches it and releases
       // the viewport indicator; returning an empty Group would show a blank viewport with
