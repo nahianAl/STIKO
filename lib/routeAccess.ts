@@ -26,6 +26,12 @@ export const PUBLIC_PATHS = [
   '/api/invite/',
   '/api/auth',
   '/api/conversions/webhook',
+  // The Vercel Python function that converts DWG/DXF to PDF (api/convert_drawing.py). Only
+  // stiko's own server calls it, server-to-server, with no session cookie, so the middleware
+  // must let it through. It authenticates every request itself against CAD_CONVERTER_SECRET
+  // and refuses everything when that is unset. It reads and writes only the two presigned URLs
+  // it is handed.
+  '/api/convert_drawing',
   '/api/files',
   // PREFIX MATCH — this also exempts /api/comments/attachments, which mints
   // presigned R2 write URLs. That subroute had no auth() call of its own for a

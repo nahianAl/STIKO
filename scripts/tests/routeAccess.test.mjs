@@ -51,3 +51,7 @@ test('a signed-in visitor passes everywhere', () => {
 test('the login redirect carries the requested path', () => {
   assert.equal(loginRedirectPath('/settings/account'), '/login?callbackUrl=%2Fsettings%2Faccount');
 });
+
+test('the drawing converter function is reachable without a session; it checks a secret itself', () => {
+  assert.equal(routeDecision('/api/convert_drawing', false), 'pass');
+});

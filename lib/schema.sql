@@ -154,6 +154,8 @@ CREATE TABLE IF NOT EXISTS files (
   file_type TEXT NOT NULL,
   conversion_status TEXT DEFAULT NULL CHECK (conversion_status IN ('pending', 'processing', 'completed', 'failed')),
   converted_storage_key TEXT DEFAULT NULL,
+  -- conversion_job_id: for a DWG/DXF, the claim of a running drawing->PDF conversion,
+  -- 'drawing:<ISO time>' (lib/drawingConversion.ts). CloudConvert never set it.
   conversion_job_id TEXT DEFAULT NULL,
   folder_path TEXT DEFAULT NULL,
   uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
