@@ -96,7 +96,10 @@ Use `"$SCRATCH"/bin/pip` and `"$SCRATCH"/bin/python` below. Never create a venv 
 ```
 ezdxf==1.4.4
 pymupdf==1.28.2
+pillow==12.3.0
 ```
+
+(`ezdxf.addons.drawing` imports Pillow when it loads. Found during Task 1.)
 
 `scripts/pytests/requirements-dev.txt`:
 
