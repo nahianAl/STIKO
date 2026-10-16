@@ -52,6 +52,7 @@ import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration'
 import { distance } from '@/lib/measure/geometry';
 import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
 import { extensionOf, MODEL_FORMATS } from '@/lib/fileFormats';
+import { viewerKindFor } from '@/lib/drawingConversion';
 
 interface Project {
   id: string;
@@ -673,8 +674,8 @@ export default function PortalPage() {
 
   const isPDFFile = useMemo(() => {
     if (!selectedFile) return false;
-    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
-    return ext === 'pdf';
+    // A DWG/DXF with a converted PDF is shown, marked up and measured exactly as a PDF.
+    return viewerKindFor(selectedFile.filename, selectedFile.convertedStorageKey) === 'pdf';
   }, [selectedFile]);
 
   /**
@@ -935,6 +936,15 @@ export default function PortalPage() {
   const [contentTransform, setContentTransform] = useState<ContentTransform | null>(null);
   const handleTransformChange = useCallback((transform: ContentTransform) => {
     setContentTransform(transform);
+  }, []);
+
+  // A DWG/DXF's PDF now exists: record it on the file so the viewer swaps to PDFKonvaViewer.
+  const handleDrawingConverted = useCallback((fileId: string, convertedStorageKey: string) => {
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.id === fileId ? { ...f, convertedStorageKey, conversionStatus: 'completed' } : f
+      )
+    );
   }, []);
 
   // Persist the 3D object's move/rotate gizmo transform once a drag ends.
@@ -2236,6 +2246,7 @@ export default function PortalPage() {
             onObjectCreated={() => setActiveTool('pointer')}
             onSelectionChange={handleSelectionChange}
             onReady={handleViewerReady}
+            onDrawingConverted={handleDrawingConverted}
             partColors={partColors}
             hiddenParts={hiddenParts}
             highlightedPart={hoveredPart}

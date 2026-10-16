@@ -11,11 +11,13 @@ import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 import type { LengthUnit } from '@/lib/measure/units';
 import { MODEL_FORMATS } from '@/lib/fileFormats';
+import { viewerKindFor } from '@/lib/drawingConversion';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
 import dynamic from 'next/dynamic';
 
 const PDFKonvaViewer = dynamic(() => import('./PDFKonvaViewer'), { ssr: false });
+const DrawingPreparer = dynamic(() => import('./DrawingPreparer'), { ssr: false });
 import type { PDFKonvaViewerHandle } from './PDFKonvaViewer';
 import ModelViewer from './ModelViewer';
 import type { WorldPin, PinScreenPosition, ModelViewerHandle } from './ModelViewer';
@@ -117,6 +119,8 @@ interface ViewerContainerProps {
   onSelectionChange?: (selection: MarkupSelection | null) => void;
   /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
   onPageChange?: (page: number) => void;
+  /** DWG/DXF only: the drawing's PDF now exists; the parent records it on the file. */
+  onDrawingConverted?: (fileId: string, convertedStorageKey: string) => void;
 }
 
 // Exported: the portal page reuses this as the canonical, positive test for "is this file
@@ -124,7 +128,6 @@ interface ViewerContainerProps {
 // in app/portal/[id]/page.tsx. Do not fork a second copy of this list there.
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
-const PDF_EXTENSIONS = ['.pdf'];
 const MODEL_EXTENSIONS = MODEL_FORMATS.map((ext) => `.${ext}`);
 
 function getExtension(filename: string): string {
@@ -136,7 +139,7 @@ function getExtension(filename: string): string {
 export default function ViewerContainer({
   file, frozen, commentToolActive, onSceneClick, worldPins, onPinPositionsUpdate, onTransformChange,
   activeTool, tagging, annotating, color, strokeWidth, fileId, onCommentPlace, comments, activeCommentId, onCommentPinClick, pdfViewerRef, modelViewerRef, pendingCommentId, onObjectCreated, onSelectionChange, transform, transformMode, onTransformCommit, focalLength, sectionSlots, selectedPlane, onSelectPlane, onReady,
-  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange,
+  partColors, hiddenParts, highlightedPart, onPartsLoaded, onPartPick, onPageChange, onDrawingConverted,
   measureActive, onMeasurePoint, measurements, pendingMeasurement, measureHoverPoint,
   onMeasureHover, mmPerUnit, measureUnit,
   selectedMeasurementId, onSelectMeasurement, onEraseMeasurement, eraserActive,
@@ -152,11 +155,14 @@ export default function ViewerContainer({
   // client-optimized GLB leaves conversion_status NULL, because that column means "a
   // CloudConvert job reached this state" and nothing else.
   const viewerKey = file.convertedStorageKey ?? file.storageKey;
+  // A DWG/DXF is shown through its converted PDF; until that exists it is 'drawing'.
+  const kind = viewerKindFor(file.filename, file.convertedStorageKey);
 
   // Fetch presigned URL
   useEffect(() => {
     setUrl(null);
     setError(false);
+    if (kind === 'drawing') return;
 
     fetch(`/api/files/url?key=${encodeURIComponent(viewerKey)}`)
       .then(res => {
@@ -165,7 +171,7 @@ export default function ViewerContainer({
       })
       .then(data => setUrl(data.url))
       .catch(() => setError(true));
-  }, [viewerKey]);
+  }, [viewerKey, kind]);
 
   // Two dead ends that no viewer will ever report on: we could not get a URL,
   // or nothing here can open this format. Both are finished states, so release
@@ -174,11 +180,22 @@ export default function ViewerContainer({
   const isViewable =
     IMAGE_EXTENSIONS.includes(ext) ||
     VIDEO_EXTENSIONS.includes(ext) ||
-    PDF_EXTENSIONS.includes(ext) ||
+    kind !== 'other' ||
     MODEL_EXTENSIONS.includes(ext);
   useEffect(() => {
     if (error || !isViewable) onReady?.();
   }, [error, isViewable, onReady]);
+
+  if (kind === 'drawing') {
+    return (
+      <DrawingPreparer
+        key={file.id}
+        fileId={file.id}
+        onConverted={(convertedKey) => onDrawingConverted?.(file.id, convertedKey)}
+        onReady={onReady}
+      />
+    );
+  }
 
   if (error) {
     return (
@@ -195,7 +212,7 @@ export default function ViewerContainer({
 
   if (IMAGE_EXTENSIONS.includes(ext)) return <ImageViewer url={url} onTransformChange={onTransformChange} onReady={onReady} />;
   if (VIDEO_EXTENSIONS.includes(ext)) return <VideoViewer url={url} frozen={frozen} onReady={onReady} />;
-  if (PDF_EXTENSIONS.includes(ext)) {
+  if (kind === 'pdf') {
     return (
       <PDFKonvaViewer
         handleRef={pdfViewerRef}
