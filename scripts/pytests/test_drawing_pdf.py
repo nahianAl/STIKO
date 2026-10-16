@@ -6,6 +6,7 @@ import ezdxf
 import pymupdf
 import pytest
 
+import drawing_pdf
 from drawing_pdf import DrawingError, convert, layouts_to_render, page_size_mm
 
 HERE = os.path.dirname(__file__)
@@ -41,12 +42,47 @@ def test_empty_layout_tabs_are_skipped_and_model_space_is_the_fallback(tmp_path)
 
 
 def test_page_size_follows_the_layout_paper(tmp_path):
-    doc = ezdxf.readfile(two_sheet_dxf(str(tmp_path / 'sheets.dxf')))
-    width, height = page_size_mm(doc.layouts.get('A-101'))
-    assert (round(width), round(height)) == (420, 297)
-    pdf, _ = convert(str(tmp_path / 'sheets.dxf'), DWG2DXF)
+    # A4 portrait, deliberately not the A3-landscape default, so a regression to the default fails.
+    doc = ezdxf.new(setup=True)
+    sheet = doc.layouts.new('A4 portrait')
+    sheet.page_setup(size=(210, 297), margins=(10, 10, 10, 10), units='mm')
+    sheet.add_line((20, 20), (190, 277))
+    doc.saveas(tmp_path / 'a4.dxf')
+    reread = ezdxf.readfile(tmp_path / 'a4.dxf')
+    width, height = page_size_mm(reread.layouts.get('A4 portrait'))
+    assert (round(width), round(height)) == (210, 297)
+    pdf, _ = convert(str(tmp_path / 'a4.dxf'), DWG2DXF)
     rect = pymupdf.open(stream=pdf, filetype='pdf')[0].rect
-    assert (round(rect.width / 72 * 25.4), round(rect.height / 72 * 25.4)) == (420, 297)
+    assert (round(rect.width / 72 * 25.4), round(rect.height / 72 * 25.4)) == (210, 297)
+
+
+def test_a_rotated_plot_swaps_the_page_dimensions(tmp_path):
+    # 297 x 210 paper plotted rotated 90 degrees is a 210 x 297 page.
+    doc = ezdxf.new(setup=True)
+    sheet = doc.layouts.new('Rotated')
+    sheet.page_setup(size=(297, 210), margins=(10, 10, 10, 10), units='mm')
+    sheet.dxf_layout.dxf.plot_rotation = 1
+    sheet.add_line((20, 20), (190, 277))
+    doc.saveas(tmp_path / 'rotated.dxf')
+    reread = ezdxf.readfile(tmp_path / 'rotated.dxf')
+    width, height = page_size_mm(reread.layouts.get('Rotated'))
+    assert (round(width), round(height)) == (210, 297)
+    pdf, _ = convert(str(tmp_path / 'rotated.dxf'), DWG2DXF)
+    rect = pymupdf.open(stream=pdf, filetype='pdf')[0].rect
+    assert (round(rect.width / 72 * 25.4), round(rect.height / 72 * 25.4)) == (210, 297)
+
+
+def test_sheets_come_back_in_tab_order_not_creation_order(tmp_path):
+    doc = ezdxf.new(setup=True)
+    for name in ('A', 'B'):  # created A then B ...
+        sheet = doc.layouts.new(name)
+        sheet.page_setup(size=(420, 297), margins=(10, 10, 10, 10), units='mm')
+        sheet.add_line((20, 20), (400, 20))
+    doc.layouts.get('A').dxf_layout.dxf.taborder = 5
+    doc.layouts.get('B').dxf_layout.dxf.taborder = 1  # ... but B's tab is to the left of A's
+    doc.saveas(tmp_path / 'taborder.dxf')
+    reread = ezdxf.readfile(tmp_path / 'taborder.dxf')
+    assert [lay.name for lay in layouts_to_render(reread)] == ['B', 'A']
 
 
 def test_lines_are_black_on_white(tmp_path):
@@ -54,6 +90,7 @@ def test_lines_are_black_on_white(tmp_path):
     pix = pymupdf.open(stream=pdf, filetype='pdf')[0].get_pixmap(dpi=150)
     samples = pix.samples
     pixels = [tuple(samples[i:i + 3]) for i in range(0, len(samples), pix.n)]
+    assert min(pixels[0]) >= 250, 'the page background (top-left pixel) should be white'
     drawn = [p for p in pixels if max(p) < 240]
     assert drawn, 'expected the red-on-screen line to be drawn'
     # Nothing coloured: every pixel is a grey, white or black.
@@ -82,11 +119,45 @@ def test_a_sheet_that_draws_nothing_falls_back_to_model_space(tmp_path):
     sheet.page_setup(size=(420, 297), margins=(10, 10, 10, 10), units='mm')
     sheet.add_viewport(center=(210, 148), size=(300, 200), view_center_point=(1e7, 1e7), view_height=10)
     doc.saveas(tmp_path / 'emptyview.dxf')
-    _, pages = convert(str(tmp_path / 'emptyview.dxf'), DWG2DXF)
+    pdf, pages = convert(str(tmp_path / 'emptyview.dxf'), DWG2DXF)
     assert pages == 1
+    assert pymupdf.open(stream=pdf, filetype='pdf')[0].get_drawings(), 'the page should hold the model-space line'
 
 
 def test_an_empty_drawing_is_a_drawing_error(tmp_path):
     ezdxf.new().saveas(tmp_path / 'empty.dxf')
     with pytest.raises(DrawingError):
         convert(str(tmp_path / 'empty.dxf'), DWG2DXF)
+
+
+def test_a_garbage_dxf_is_a_drawing_error(tmp_path):
+    bad = tmp_path / 'bad.dxf'
+    bad.write_bytes(b'not a dxf')
+    with pytest.raises(DrawingError):
+        convert(str(bad), DWG2DXF)
+
+
+def test_a_sheet_that_fails_to_render_is_skipped(tmp_path, monkeypatch):
+    path = two_sheet_dxf(str(tmp_path / 'sheets.dxf'))
+    real = drawing_pdf.render_layout
+
+    def fail_first_sheet(doc, lay):
+        if lay.name == 'A-101':
+            raise RuntimeError('boom')
+        return real(doc, lay)
+
+    monkeypatch.setattr(drawing_pdf, 'render_layout', fail_first_sheet)
+    pdf, pages = convert(path, DWG2DXF)
+    assert pages == 1
+    assert pymupdf.open(stream=pdf, filetype='pdf').page_count == 1
+
+
+def test_every_sheet_failing_is_a_drawing_error(tmp_path, monkeypatch):
+    path = two_sheet_dxf(str(tmp_path / 'sheets.dxf'))
+
+    def always_fail(doc, lay):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(drawing_pdf, 'render_layout', always_fail)
+    with pytest.raises(DrawingError, match='boom'):
+        convert(path, DWG2DXF)

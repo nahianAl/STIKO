@@ -37,12 +37,16 @@ class DrawingError(Exception):
 
 
 def dwg_to_dxf(dwg_path: str, out_dir: str, dwg2dxf: str) -> str:
-    """Convert a DWG file to DXF with LibreDWG's dwg2dxf. Returns the DXF path."""
+    """Convert a DWG file to DXF with LibreDWG's dwg2dxf. Returns the DXF path.
+
+    Raises DrawingError on a timeout or when no DXF comes out. A missing or unrunnable
+    binary raises OSError instead, left uncaught on purpose: that is a server fault, not a bad drawing.
+    """
     dxf_path = os.path.join(out_dir, 'drawing.dxf')
     try:
         result = subprocess.run(
             [dwg2dxf, '-y', '-o', dxf_path, dwg_path],
-            capture_output=True, text=True, timeout=DWG2DXF_TIMEOUT_S,
+            capture_output=True, text=True, errors='replace', timeout=DWG2DXF_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as err:
         raise DrawingError(f'dwg2dxf timed out after {DWG2DXF_TIMEOUT_S}s') from err
@@ -66,8 +70,13 @@ def has_content(lay: Layout) -> bool:
 
 
 def layouts_to_render(doc) -> list[Layout]:
-    """Paper-space layouts with content, in tab order; else model space alone."""
-    sheets = [lay for lay in doc.layouts if not lay.is_modelspace and has_content(lay)]
+    """Paper-space layouts with content, in tab order; else model space alone.
+
+    Iterating doc.layouts is dictionary (creation) order, not the order of the tabs in CAD,
+    so the names come from names_in_taborder().
+    """
+    in_tab_order = (doc.layouts.get(name) for name in doc.layouts.names_in_taborder())
+    sheets = [lay for lay in in_tab_order if not lay.is_modelspace and has_content(lay)]
     return sheets or [doc.modelspace()]
 
 
@@ -108,20 +117,36 @@ def render_layout(doc, lay: Layout) -> bytes | None:
 def render_pdf(doc) -> tuple[bytes, int]:
     """Render the drawing into one PDF. Returns (pdf bytes, page count).
 
-    Sheets that draw nothing are skipped; if no sheet draws anything, model space is used.
+    Sheets that draw nothing, or that raise while rendering, are skipped so one bad sheet
+    cannot sink the rest. If no sheet renders, model space is tried. Raises DrawingError when
+    nothing renders at all, naming the last error if a sheet failed.
     """
-    rendered = [data for lay in layouts_to_render(doc) if (data := render_layout(doc, lay))]
-    if not rendered and not layouts_to_render(doc)[0].is_modelspace:
-        model = render_layout(doc, doc.modelspace())
+    errors: list[str] = []
+
+    def render_or_skip(lay: Layout) -> bytes | None:
+        try:
+            return render_layout(doc, lay)
+        except Exception as err:  # ezdxf and PyMuPDF raise many unrelated types on odd sheets
+            errors.append(f'{lay.name}: {type(err).__name__}: {err}')
+            return None
+
+    sheets = layouts_to_render(doc)
+    rendered = [data for lay in sheets if (data := render_or_skip(lay))]
+    if not rendered and not sheets[0].is_modelspace:
+        model = render_or_skip(doc.modelspace())
         rendered = [model] if model else []
     if not rendered:
-        raise DrawingError('the drawing has nothing to show')
-    merged = pymupdf.open()
-    for data in rendered:
-        with pymupdf.open(stream=data, filetype='pdf') as single:
-            merged.insert_pdf(single)
-    out = merged.tobytes()
-    merged.close()
+        raise DrawingError(f'could not render the drawing; last error: {errors[-1]}' if errors
+                           else 'the drawing has nothing to show')
+    try:
+        merged = pymupdf.open()
+        for data in rendered:
+            with pymupdf.open(stream=data, filetype='pdf') as single:
+                merged.insert_pdf(single)
+        out = merged.tobytes(garbage=3, deflate=True)
+        merged.close()
+    except Exception as err:
+        raise DrawingError(f'could not assemble the PDF: {err}') from err
     return out, len(rendered)
 
 
