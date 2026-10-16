@@ -31,27 +31,30 @@ Running cost stays at $0 and drawings never leave Stiko's own Vercel and R2.
 A Vercel Python serverless function at `/api/convert_drawing`, living in the repo root `api/`
 folder beside the Next.js app. Next's `app/api` routes are unaffected.
 
-- **Input:** `POST` with JSON `{ "sourceKey": str, "targetKey": str }` and header
-  `X-Converter-Secret`.
+- **Input:** `POST` with JSON `{ "sourceUrl": str, "targetUrl": str, "filename": str }` and
+  header `X-Converter-Secret`. The two URLs are presigned by the Next route, one GET and one
+  PUT. The function holds no storage credentials and needs no boto3. (Changed from the first
+  draft, which used `sourceKey`/`targetKey` and the `R2_*` credentials.)
 - **Auth:** a constant-time comparison of that header with env var `CAD_CONVERTER_SECRET`; any
   mismatch returns 401. There is no user session here. Only Stiko's Next server calls it.
 - **Steps:**
-  1. Download `sourceKey` from R2 (boto3, S3 API, the existing `R2_*` env vars) into `/tmp`.
-     Reject anything over 50 MB.
+  1. Download `sourceUrl` into `/tmp`. Reject anything over 50 MB.
   2. For `.dwg`, run the bundled `api/_bin/dwg2dxf -y -o out.dxf in.dwg` with a 30 s timeout.
   3. Load with `ezdxf.recover.readfile`.
   4. **Pages:** every paper-space layout that has content, in tab order. A layout counts if it
-     has any entity other than its own overall viewport. If none qualifies, use model space.
+     has any entity other than its own overall viewport. A sheet that still renders nothing
+     is skipped. Autodesk's civil sample has a sheet whose only viewport renders empty after
+     DWG → DXF. If no sheet renders, use model space.
   5. **Page size:** the layout's plot paper size in mm when the file defines a positive one;
      otherwise A3 landscape (420 × 297 mm). Margins 10 mm. Content is fitted to the page.
   6. **Render settings:** `Configuration(background_policy=WHITE, color_policy=BLACK,
      min_hatch_line_distance=0.5, hatching_timeout=10)`.
-  7. Merge the pages into one PDF and upload it to `targetKey` with
+  7. Merge the pages into one PDF and PUT it to `targetUrl` with
      `Content-Type: application/pdf`.
 - **Output:** `200 { "pages": n }`, or `422 { "error": "<reason>" }` for an unreadable or empty
   drawing.
 - **Packaging:**
-  - `requirements.txt` pins `ezdxf`, `pymupdf` and `boto3`.
+  - `requirements.txt` pins `ezdxf` and `pymupdf`.
   - `vercel.json` sets the function's `maxDuration: 60`, `memory: 1769` and
     `includeFiles: "api/_bin/**"`.
 - **Code layout:** the rendering logic lives in `api/_lib/drawing_pdf.py` as pure functions
@@ -150,7 +153,7 @@ redirected to `/login`.
 ## Testing
 
 **Python (pytest)** in a scratch virtualenv. It is not part of `npm test`, and the command is
-documented in `api/_lib/README.md`. Tests cover `drawing_pdf.py`:
+documented in `scripts/pytests/README.md`. Tests cover `drawing_pdf.py`:
 - a DXF built in-test with ezdxf, with two layouts carrying content, gives 2 pages
 - a model-only DXF gives 1 page
 - page size follows the layout paper size
