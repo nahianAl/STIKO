@@ -1,0 +1,36 @@
+# Builds LibreDWG's dwg2dxf as a fully static x86_64 Linux binary for the Vercel Python
+# function in api/convert_drawing.py (Vercel runs Amazon Linux; static avoids glibc skew).
+# To rebuild: push this file to branch ci/build-dwg2dxf, then download the artifact.
+name: Build dwg2dxf
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ci/build-dwg2dxf']
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Fetch and verify LibreDWG 0.14
+        run: |
+          curl -fsSL https://ftpmirror.gnu.org/libredwg/libredwg-0.14.tar.gz -o libredwg.tar.gz
+          echo "cb6ee0b078c6d9e0f09d66f1feac33ba6342df88ae544e9f9335fab475218351  libredwg.tar.gz" | sha256sum -c
+          tar xzf libredwg.tar.gz
+      - name: Build static
+        working-directory: libredwg-0.14
+        run: |
+          ./configure --disable-shared --enable-static --disable-bindings --disable-python
+          make -j"$(nproc)" LDFLAGS="-all-static"
+          strip programs/dwg2dxf
+          file programs/dwg2dxf
+          (ldd programs/dwg2dxf 2>&1 || true) | tee ldd.txt
+          grep -q "not a dynamic executable" ldd.txt
+          ./programs/dwg2dxf --version
+      - name: Smoke test on a real DWG
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/LibreDWG/libredwg/master/test/test-data/example_2018.dwg -o t.dwg
+          ./libredwg-0.14/programs/dwg2dxf -y -o t.dxf t.dwg
+          test -s t.dxf && head -c 200 t.dxf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dwg2dxf
+          path: libredwg-0.14/programs/dwg2dxf
