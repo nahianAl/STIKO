@@ -1,0 +1,8 @@
+dwg2dxf — GNU LibreDWG 0.14, built statically for x86_64 Linux by
+.github/workflows/build-dwg2dxf.yml.
+Licence: GPL-3.0-or-later. Corresponding source:
+  https://ftpmirror.gnu.org/libredwg/libredwg-0.14.tar.gz
+  sha256 cb6ee0b078c6d9e0f09d66f1feac33ba6342df88ae544e9f9335fab475218351
+Built unmodified with: ./configure --disable-shared --enable-static --disable-bindings
+--disable-python && make LDFLAGS="-all-static"
+It runs only inside stiko's server-side conversion function (api/convert_drawing.py).

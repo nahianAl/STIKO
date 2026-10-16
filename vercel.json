@@ -4,5 +4,13 @@
       "path": "/api/cron/purge-trash",
       "schedule": "0 4 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/convert_drawing.py": {
+      "maxDuration": 60,
+      "memory": 1769,
+      "includeFiles": "api/{_lib,_bin}/**",
+      "excludeFiles": "{node_modules,.next,scripts,docs,public,app,components,lib,design_handoff_brief_section,design_handoff_dashboard_redesign,design_handoff_portal_view,stiko_handoff,logo}/**"
+    }
+  }
 }
