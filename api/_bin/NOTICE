@@ -1,8 +1,18 @@
-dwg2dxf — GNU LibreDWG 0.14, built statically for x86_64 Linux by
-.github/workflows/build-dwg2dxf.yml.
-Licence: GPL-3.0-or-later. Corresponding source:
+dwg2dxf — GNU LibreDWG 0.14, built statically for x86_64 Linux.
+Licence: GPL-3.0-or-later. Licence text: https://www.gnu.org/licenses/gpl-3.0.html
+Corresponding source:
   https://ftpmirror.gnu.org/libredwg/libredwg-0.14.tar.gz
   sha256 cb6ee0b078c6d9e0f09d66f1feac33ba6342df88ae544e9f9335fab475218351
-Built unmodified with: ./configure --disable-shared --enable-static --disable-bindings
---disable-python && make LDFLAGS="-all-static"
+Built unmodified on GitHub Actions ubuntu-22.04 by .github/workflows/build-dwg2dxf.yml:
+  ./configure --disable-shared --enable-static --disable-bindings --disable-python
+  make -j"$(nproc)" LDFLAGS="-all-static"
+  strip programs/dwg2dxf
+Build run that produced this binary: https://github.com/nahianAl/STIKO/actions/runs/38856780411
+(rebuilt bit-for-bit identical by https://github.com/nahianAl/STIKO/actions/runs/38858534995)
+sha256 of this binary (api/_bin/dwg2dxf):
+  5668af0d3448aa8f01e55292c1c3caf9847190baf5c2dfd2312e9ec6cb389a8b
+The static link also includes the GNU C Library 2.35 as shipped by Ubuntu 22.04
+(LGPL-2.1-or-later; https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). Source:
+  https://ftp.gnu.org/gnu/glibc/glibc-2.35.tar.xz
+  Ubuntu's patched package: https://launchpad.net/ubuntu/+source/glibc (jammy, 2.35-0ubuntu3.x)
 It runs only inside stiko's server-side conversion function (api/convert_drawing.py).

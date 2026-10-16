@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
   push:
     branches: ['ci/build-dwg2dxf']
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -27,8 +29,7 @@ jobs:
           ./programs/dwg2dxf --version
       - name: Smoke test on a real DWG
         run: |
-          curl -fsSL https://raw.githubusercontent.com/LibreDWG/libredwg/master/test/test-data/example_2018.dwg -o t.dwg
-          ./libredwg-0.14/programs/dwg2dxf -y -o t.dxf t.dwg
+          ./libredwg-0.14/programs/dwg2dxf -y -o t.dxf libredwg-0.14/test/test-data/example_2018.dwg
           test -s t.dxf && head -c 200 t.dxf
       - uses: actions/upload-artifact@v4
         with:
