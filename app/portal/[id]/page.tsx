@@ -678,6 +678,10 @@ export default function PortalPage() {
     return viewerKindFor(selectedFile.filename, selectedFile.convertedStorageKey) === 'pdf';
   }, [selectedFile]);
 
+  // A DWG/DXF whose PDF does not exist yet (converting, or failed). It has no surface to mark up.
+  const selectedIsPendingDrawing =
+    !!selectedFile && viewerKindFor(selectedFile.filename, selectedFile.convertedStorageKey) === 'drawing';
+
   /**
    * Positive, not exclusion: is the selected file one of the extensions the image viewer opens.
    * `measuresOnCanvas` and `measureAvailable` below used to be spelled as "not 3D, not PDF, not
@@ -2367,7 +2371,9 @@ export default function PortalPage() {
                       ? 'Loading package…'
                       : filesLoading
                         ? 'Loading files…'
-                        : 'Opening file…'
+                        : selectedIsPendingDrawing
+                          ? 'Preparing drawing…'
+                          : 'Opening file…'
                   }
                 />
               </div>
@@ -2375,7 +2381,8 @@ export default function PortalPage() {
 
             {/* Markup tools float over the top of the viewport rather than taking a row above
                 it. Hidden while an attachment is open there — there is nothing to mark up. */}
-            {!viewportBusy && !viewportImage && (
+            {/* Not for a drawing with no PDF yet (markup would mis-anchor once it converts); an attachment session keeps its tools. */}
+            {!viewportBusy && !viewportImage && (!selectedIsPendingDrawing || annotatingFile !== null) && (
               <DrawingTools
                 activeTool={activeTool}
                 onToolChange={setActiveTool}
@@ -2427,7 +2434,8 @@ export default function PortalPage() {
                 onCancel={() => { setMeasureError(null); setActiveTool('pointer'); }}
               />
             )}
-            {selectedFileId && !isPDFFile && !annotating && (
+            {/* Same reason as DrawingTools above: no pins or tagging before the PDF exists. */}
+            {selectedFileId && !isPDFFile && !selectedIsPendingDrawing && !annotating && (
               <MarkupOverlay
                 fileId={selectedFileId}
                 tagging={tagging}

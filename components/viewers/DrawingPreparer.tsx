@@ -33,6 +33,19 @@ export default function DrawingPreparer({ fileId, onConverted, onReady }: Props)
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = Date.now();
 
+    // The outcome is final: stop polling and ignore any answer still in flight, so a late POST
+    // or poll response can never call onConverted/onReady a second time.
+    const finish = () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+
+    const fail = () => {
+      finish();
+      setFailed(true);
+      onReady?.();
+    };
+
     const settle = (body: StatusBody | null): boolean => {
       const step = nextPollStep(
         body?.conversionStatus ?? null,
@@ -40,12 +53,12 @@ export default function DrawingPreparer({ fileId, onConverted, onReady }: Props)
         Date.now() - started
       );
       if (step === 'done' && body?.convertedStorageKey) {
+        finish();
         onConverted(body.convertedStorageKey);
         return true;
       }
       if (step === 'failed') {
-        setFailed(true);
-        onReady?.();
+        fail();
         return true;
       }
       return false;
@@ -55,7 +68,11 @@ export default function DrawingPreparer({ fileId, onConverted, onReady }: Props)
       if (cancelled) return;
       try {
         const res = await fetch(`/api/files/${fileId}/conversion-status`);
-        if (!cancelled && settle(res.ok ? ((await res.json()) as StatusBody) : null)) return;
+        const body = res.ok ? ((await res.json()) as StatusBody) : null;
+        // The fetch and the body read are both awaits: the file may have changed (or the other
+        // path settled) meanwhile, and a stale answer must not release the indicator.
+        if (cancelled) return;
+        if (settle(body)) return;
       } catch {
         if (!cancelled && settle(null)) return;
       }
@@ -65,12 +82,17 @@ export default function DrawingPreparer({ fileId, onConverted, onReady }: Props)
     // The POST may take the whole conversion (up to a minute) to answer, so polling starts
     // alongside it rather than after it. Its own answer is used too, when it arrives first.
     fetch(`/api/files/${fileId}/convert-drawing`, { method: 'POST' })
-      .then((res) => (res.ok ? (res.json() as Promise<StatusBody>) : null))
-      .then((body) => {
-        if (!cancelled && body && settle(body)) {
-          cancelled = true;
-          if (timer) clearTimeout(timer);
+      .then(async (res) => {
+        if (cancelled) return;
+        // 503 means nothing is converting: the converter is not configured, or it failed
+        // transiently and the claim was released. Polling could only wait out the full limit.
+        if (res.status === 503) {
+          fail();
+          return;
         }
+        if (!res.ok) return;
+        const body = (await res.json()) as StatusBody;
+        if (!cancelled) settle(body);
       })
       .catch(() => {});
     timer = setTimeout(poll, DRAWING_POLL_INTERVAL_MS);
