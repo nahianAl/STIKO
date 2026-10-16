@@ -6,6 +6,7 @@ import {
   drawingClaimId,
   mayClaim,
   nextPollStep,
+  converterOutcome,
   DRAWING_CLAIM_STALE_MS,
   DRAWING_POLL_LIMIT_MS,
 } from '../../lib/drawingConversion.ts';
@@ -51,4 +52,20 @@ test('polling stops on a finished PDF, on failure, or at the time limit', () => 
   assert.equal(nextPollStep('processing', null, DRAWING_POLL_LIMIT_MS), 'failed');
   // 'completed' without a key is not a usable PDF.
   assert.equal(nextPollStep('completed', null, 1000), 'wait');
+});
+
+// 'failed' is never retried, so only a verdict on the drawing itself may set it. Anything that
+// could be fixed by configuration or a retry releases the claim instead.
+test('only a too-large or unreadable drawing fails for good; a 200 completes', () => {
+  assert.equal(converterOutcome(200), 'completed');
+  assert.equal(converterOutcome(413), 'failed');
+  assert.equal(converterOutcome(422), 'failed');
+});
+
+test('configuration, storage and server errors, and no response at all, are retried', () => {
+  for (const status of [400, 401, 404, 500, 502, 503]) {
+    assert.equal(converterOutcome(status), 'retry', String(status));
+  }
+  // null: no HTTP response (network error, timeout, a throw before the call).
+  assert.equal(converterOutcome(null), 'retry');
 });

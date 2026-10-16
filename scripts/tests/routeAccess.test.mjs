@@ -55,3 +55,11 @@ test('the login redirect carries the requested path', () => {
 test('the drawing converter function is reachable without a session; it checks a secret itself', () => {
   assert.equal(routeDecision('/api/convert_drawing', false), 'pass');
 });
+
+// Matched exactly, like the cron route: a prefix entry would also exempt a future
+// '/api/convert_drawing-x' nobody remembered to check.
+test('the drawing converter function is exempt by exact match only', () => {
+  assert.equal(routeDecision('/api/convert_drawing/x', false), 'login');
+  assert.equal(routeDecision('/api/convert_drawingx', false), 'login');
+  assert.equal(routeDecision('/api/convert_drawing-x', false), 'login');
+});

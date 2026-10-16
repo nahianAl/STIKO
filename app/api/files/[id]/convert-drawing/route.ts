@@ -5,6 +5,7 @@ import { getFileAccess } from '@/lib/access';
 import { getUploadPresignedUrl, getViewerPresignedUrl } from '@/lib/s3';
 import { drawingPdfKey } from '@/lib/storageKeys';
 import {
+  converterOutcome,
   drawingClaimId,
   isDrawingFilename,
   mayClaim,
@@ -31,6 +32,16 @@ type Row = {
  * Called fire-and-forget by the uploader right after an upload, and by the viewer when it
  * opens a drawing that has no PDF yet. /api/files is a public middleware prefix, so this
  * checks the session and the caller's access to the file itself.
+ *
+ * 'failed' is never retried, so it is reserved for a verdict on the drawing itself. After a
+ * claim there are three outcomes (see converterOutcome):
+ *  - completed: the converter answered 200; the row becomes 'completed' with the PDF's key.
+ *  - failed: the converter answered 413 (too large) or 422 (unreadable or empty); the row
+ *    becomes 'failed'.
+ *  - retry: anything else (400, 401, 404, 500, 502, other statuses, a network error, a timeout,
+ *    a presign failure). These are configuration or transient problems, so the claim is
+ *    released (status and job id back to NULL) and the route answers 503; a later open retries.
+ * With CAD_CONVERTER_SECRET unset the route answers 503 before claiming anything.
  */
 export async function POST(
   request: NextRequest,
@@ -61,6 +72,17 @@ export async function POST(
     });
   if (file.convertedStorageKey) return current();
 
+  // Not configured is not the drawing's fault: refuse before claiming so the row stays as it
+  // was (a deploy that precedes setting the variable, or a local dev server, fails no files).
+  const converterSecret = process.env.CAD_CONVERTER_SECRET;
+  if (!converterSecret) {
+    console.error('Drawing conversion is not configured: CAD_CONVERTER_SECRET is unset');
+    return NextResponse.json(
+      { conversionStatus: file.conversionStatus, convertedStorageKey: null },
+      { status: 503 }
+    );
+  }
+
   const now = new Date();
   if (!mayClaim(file.conversionStatus, file.conversionJobId, now)) return current();
 
@@ -81,17 +103,22 @@ export async function POST(
   }
 
   const targetKey = drawingPdfKey(file.storageKey);
-  let failure: string | null = null;
+  // null = no HTTP response (network error, timeout, or a throw before the call completed).
+  let converterStatus: number | null = null;
+  let reason = '';
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'X-Converter-Secret': process.env.CAD_CONVERTER_SECRET ?? '',
+      'X-Converter-Secret': converterSecret,
     };
     // Vercel deployment protection blocks a server-to-server call to a protected preview URL
     // unless this bypass secret is sent; it is set automatically when the feature is enabled.
     if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
       headers['x-vercel-protection-bypass'] = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
     }
+    // The target origin comes from request.url deliberately, so a preview calls its own
+    // function; on Vercel the Host must match a project domain. lib/appUrl.ts forbids
+    // request-derived origins in general (email links); this is the stated exception.
     const res = await fetch(new URL('/api/convert_drawing', request.url), {
       method: 'POST',
       headers,
@@ -102,18 +129,33 @@ export async function POST(
         filename: file.filename,
       }),
     });
-    if (!res.ok) failure = `converter answered ${res.status}: ${(await res.text()).slice(0, 300)}`;
+    converterStatus = res.status;
+    if (res.status !== 200) {
+      const body = await res.text().catch(() => '');
+      reason = `converter answered ${res.status}: ${body.slice(0, 300)}`;
+    }
   } catch (err) {
-    failure = err instanceof Error ? err.message : String(err);
+    reason = err instanceof Error ? err.message : String(err);
   }
 
-  if (failure) {
-    console.error(`Drawing conversion failed for file ${params.id}: ${failure}`);
+  const outcome = converterOutcome(converterStatus);
+
+  if (outcome === 'failed') {
+    console.error(`Drawing conversion failed for file ${params.id}: ${reason}`);
     await sql`
       UPDATE files SET conversion_status = 'failed'
       WHERE id = ${params.id} AND conversion_job_id = ${claimId}
     `;
     return NextResponse.json({ conversionStatus: 'failed', convertedStorageKey: null });
+  }
+
+  if (outcome === 'retry') {
+    console.error(`Drawing conversion not completed for file ${params.id}, will retry: ${reason}`);
+    await sql`
+      UPDATE files SET conversion_status = NULL, conversion_job_id = NULL
+      WHERE id = ${params.id} AND conversion_job_id = ${claimId}
+    `;
+    return NextResponse.json({ conversionStatus: null, convertedStorageKey: null }, { status: 503 });
   }
 
   await sql`

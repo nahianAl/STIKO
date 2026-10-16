@@ -69,3 +69,18 @@ export function nextPollStep(
   if (elapsedMs >= DRAWING_POLL_LIMIT_MS) return 'failed';
   return 'wait';
 }
+
+export type ConverterOutcome = 'completed' | 'failed' | 'retry';
+
+/**
+ * What a converter reply means for the file. Only a verdict on the drawing itself ('failed'
+ * is never retried) may set 'failed': 413 too large, 422 unreadable or empty. Everything else
+ * (400, 401, 404, 500, 502, any other status, no HTTP response at all) is a configuration or
+ * transient problem that a later open may well get past, so the claim is released instead.
+ * null means no HTTP response: a network error, a timeout, or a throw before the call.
+ */
+export function converterOutcome(status: number | null): ConverterOutcome {
+  if (status === 200) return 'completed';
+  if (status === 413 || status === 422) return 'failed';
+  return 'retry';
+}

@@ -26,12 +26,6 @@ export const PUBLIC_PATHS = [
   '/api/invite/',
   '/api/auth',
   '/api/conversions/webhook',
-  // The Vercel Python function that converts DWG/DXF to PDF (api/convert_drawing.py). Only
-  // stiko's own server calls it, server-to-server, with no session cookie, so the middleware
-  // must let it through. It authenticates every request itself against CAD_CONVERTER_SECRET
-  // and refuses everything when that is unset. It reads and writes only the two presigned URLs
-  // it is handed.
-  '/api/convert_drawing',
   '/api/files',
   // PREFIX MATCH — this also exempts /api/comments/attachments, which mints
   // presigned R2 write URLs. That subroute had no auth() call of its own for a
@@ -65,6 +59,16 @@ export function routeDecision(pathname: string, isAuthenticated: boolean): Route
   // startsWith, and a '/api/cron' entry there would also exempt any future
   // '/api/cron-something' nobody remembered to check.
   if (pathname === '/api/cron/purge-trash') return 'pass';
+
+  // The Vercel Python function that converts DWG/DXF to PDF (api/convert_drawing.py). Only
+  // stiko's own server calls it, server-to-server, with no session cookie, so the middleware
+  // must let it through. It authenticates every request itself against CAD_CONVERTER_SECRET
+  // and refuses everything when that is unset. It reads and writes only the two presigned URLs
+  // it is handed. Matched exactly, for the same reason as the cron route: a prefix entry would
+  // also exempt a future '/api/convert_drawing-x' nobody remembered to check. Exact is enough
+  // because the caller (the convert-drawing route) always requests this bare path, and
+  // pathname never includes a query string; the app sets no trailingSlash.
+  if (pathname === '/api/convert_drawing') return 'pass';
 
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return 'pass';
 
