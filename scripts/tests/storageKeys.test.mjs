@@ -9,6 +9,7 @@ import {
   TESSELLATABLE_EXTENSIONS,
   uploadStorageKey,
   isAllowedCommentKey,
+  drawingPdfKey,
 } from '../../lib/storageKeys.ts';
 
 test('the variant key replaces the extension of the last segment', () => {
@@ -157,4 +158,10 @@ test('a comment may NOT name an upload key', () => {
 test('a comment may not name an arbitrary key', () => {
   assert.equal(isAllowedCommentKey('anything/else'), false);
   assert.equal(isAllowedCommentKey(''), false);
+});
+
+test('a drawing PDF sits beside its original with a .drawing.pdf suffix', () => {
+  assert.equal(drawingPdfKey('uploads/p/po/v/abc-123.dwg'), 'uploads/p/po/v/abc-123.drawing.pdf');
+  assert.equal(drawingPdfKey('uploads/p/po/v/abc-123.DXF'), 'uploads/p/po/v/abc-123.drawing.pdf');
+  assert.equal(drawingPdfKey('uploads/p.1/po/v/abc-123'), 'uploads/p.1/po/v/abc-123.drawing.pdf');
 });
