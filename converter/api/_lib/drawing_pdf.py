@@ -4,11 +4,21 @@
 One PDF page per paper-space layout that has content, in tab order, at the layout's plot
 paper size; model space only when no layout has content. Black lines on white, like a
 plotted sheet.
+
+Also a CLI, which is how the HTTP handler (../convert_drawing.py) uses it, in a child process
+with a bare environment and resource limits, so parsing an untrusted drawing never happens in
+the process that holds the converter secret:
+
+    python drawing_pdf.py <source.dwg|.dxf> <out.pdf> <dwg2dxf>
+
+Exit 0: the PDF was written and its page count printed to stdout. Exit 2: the drawing is
+unreadable or empty (a verdict); the reason is on stderr. Any other exit: a server fault.
 """
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 
 import pymupdf
@@ -40,17 +50,23 @@ class DrawingError(Exception):
 def dwg_to_dxf(dwg_path: str, out_dir: str, dwg2dxf: str) -> str:
     """Convert a DWG file to DXF with LibreDWG's dwg2dxf. Returns the DXF path.
 
-    Raises DrawingError on a timeout or when no DXF comes out. A missing or unrunnable
-    binary raises OSError instead, left uncaught on purpose: that is a server fault, not a bad drawing.
+    Raises DrawingError on a timeout, when dwg2dxf is killed by a signal (a crash, or a resource
+    limit), or when no DXF comes out. A missing or unrunnable binary raises OSError instead, left
+    uncaught on purpose: that is a server fault, not a bad drawing. dwg2dxf needs no environment
+    beyond a PATH, so it gets nothing else.
     """
     dxf_path = os.path.join(out_dir, 'drawing.dxf')
     try:
         result = subprocess.run(
             [dwg2dxf, '-y', '-o', dxf_path, dwg_path],
             capture_output=True, text=True, errors='replace', timeout=DWG2DXF_TIMEOUT_S,
+            env={'PATH': '/usr/bin:/bin'},
         )
     except subprocess.TimeoutExpired as err:
         raise DrawingError(f'dwg2dxf timed out after {DWG2DXF_TIMEOUT_S}s') from err
+    # A crash can leave a truncated DXF behind, so a signal is never success.
+    if result.returncode < 0:
+        raise DrawingError(f'dwg2dxf killed by signal {-result.returncode}: {result.stderr[-300:]}')
     # dwg2dxf exits non-zero on recoverable warnings too; the output file is the real signal.
     if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) == 0:
         raise DrawingError(f'dwg2dxf produced no DXF: {result.stderr[-300:]}')
@@ -129,6 +145,7 @@ def render_pdf(doc) -> tuple[bytes, int]:
             return render_layout(doc, lay)
         except Exception as err:  # ezdxf and PyMuPDF raise many unrelated types on odd sheets
             errors.append(f'{lay.name}: {type(err).__name__}: {err}')
+            print(f'skipped sheet {lay.name}: {type(err).__name__}: {str(err)[:200]}', file=sys.stderr)
             return None
 
     sheets = layouts_to_render(doc)
@@ -162,3 +179,29 @@ def convert(source_path: str, dwg2dxf: str) -> tuple[bytes, int]:
         except Exception as err:  # ezdxf raises several unrelated types for a bad file
             raise DrawingError(f'not a readable DXF: {err}') from err
         return render_pdf(doc)
+
+
+def main(argv: list[str]) -> int:
+    """The CLI described in the module docstring. Returns the exit status."""
+    if len(argv) != 4:
+        print('usage: drawing_pdf.py <source.dwg|.dxf> <out.pdf> <dwg2dxf>', file=sys.stderr)
+        return 64
+    source, out, dwg2dxf = argv[1:]
+    try:
+        pdf, pages = convert(source, dwg2dxf)
+    except DrawingError as err:
+        print(str(err)[:1000], file=sys.stderr)
+        return 2
+    except MemoryError:
+        # Hit RLIMIT_AS: this drawing needs more memory than a conversion may have, and will
+        # next time too. A verdict, like a timeout.
+        print('out of memory while converting', file=sys.stderr)
+        return 2
+    with open(out, 'wb') as f:
+        f.write(pdf)
+    print(pages)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

@@ -1,6 +1,8 @@
 """Converter core tests. How to run: scripts/pytests/README.md."""
 import os
 import shutil
+import subprocess
+import sys
 
 import ezdxf
 import pymupdf
@@ -152,6 +154,22 @@ def test_a_sheet_that_fails_to_render_is_skipped(tmp_path, monkeypatch):
     assert pymupdf.open(stream=pdf, filetype='pdf').page_count == 1
 
 
+def test_a_skipped_sheet_is_logged_to_stderr(tmp_path, monkeypatch, capsys):
+    path = two_sheet_dxf(str(tmp_path / 'sheets.dxf'))
+    real = drawing_pdf.render_layout
+
+    def fail_first_sheet(doc, lay):
+        if lay.name == 'A-101':
+            raise RuntimeError('boom')
+        return real(doc, lay)
+
+    monkeypatch.setattr(drawing_pdf, 'render_layout', fail_first_sheet)
+    convert(path, DWG2DXF)
+    err = capsys.readouterr().err
+    assert 'skipped sheet A-101: RuntimeError: boom' in err
+    assert 'A-102' not in err
+
+
 def test_every_sheet_failing_is_a_drawing_error(tmp_path, monkeypatch):
     path = two_sheet_dxf(str(tmp_path / 'sheets.dxf'))
 
@@ -161,3 +179,73 @@ def test_every_sheet_failing_is_a_drawing_error(tmp_path, monkeypatch):
     monkeypatch.setattr(drawing_pdf, 'render_layout', always_fail)
     with pytest.raises(DrawingError, match='boom'):
         convert(path, DWG2DXF)
+
+
+# --- dwg2dxf runs with a bare environment, and a signal is never success. ---
+
+
+def test_dwg2dxf_gets_only_a_path_in_its_environment(tmp_path, monkeypatch):
+    seen = {}
+    real_run = subprocess.run
+
+    def spy(args, **kwargs):
+        seen.update(kwargs)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setenv('CAD_CONVERTER_SECRET', 'sekret')
+    monkeypatch.setattr(drawing_pdf.subprocess, 'run', spy)
+    drawing_pdf.dwg_to_dxf(DWG_FIXTURE, str(tmp_path), DWG2DXF)
+    assert seen['env'] == {'PATH': '/usr/bin:/bin'}
+
+
+def test_dwg2dxf_killed_by_a_signal_is_a_drawing_error_even_if_a_dxf_was_written(tmp_path):
+    # A crash part-way through can leave a truncated DXF behind: the exit status decides.
+    good_dxf = two_sheet_dxf(str(tmp_path / 'good.dxf'))
+    fake = tmp_path / 'dwg2dxf'
+    fake.write_text(f'#!/bin/sh\ncp "{good_dxf}" "$3"\nkill -9 $$\n')  # args: -y -o <dxf> <dwg>
+    fake.chmod(0o755)
+    out = tmp_path / 'out'
+    out.mkdir()
+    with pytest.raises(DrawingError, match='signal'):
+        drawing_pdf.dwg_to_dxf(DWG_FIXTURE, str(out), str(fake))
+    assert (out / 'drawing.dxf').exists()  # the DXF was there; it was still refused
+
+
+# --- The CLI the HTTP handler runs in a child process. ---
+
+SCRIPT = drawing_pdf.__file__
+
+
+def run_cli(*args):
+    return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, timeout=120)
+
+
+def test_the_cli_writes_the_pdf_and_prints_the_page_count(tmp_path):
+    source = two_sheet_dxf(str(tmp_path / 'sheets.dxf'))
+    out = tmp_path / 'out.pdf'
+    result = run_cli(source, str(out), DWG2DXF)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '2'
+    assert pymupdf.open(str(out)).page_count == 2
+
+
+def test_the_cli_exits_2_with_the_message_on_a_bad_drawing(tmp_path):
+    bad = tmp_path / 'bad.dxf'
+    bad.write_bytes(b'not a dxf')
+    out = tmp_path / 'out.pdf'
+    result = run_cli(str(bad), str(out), DWG2DXF)
+    assert result.returncode == 2
+    assert 'not a readable DXF' in result.stderr
+    assert result.stdout == '' and not out.exists()
+
+
+def test_the_cli_exits_neither_0_nor_2_on_a_server_fault(tmp_path):
+    out = tmp_path / 'out.pdf'
+    result = run_cli(DWG_FIXTURE, str(out), str(tmp_path / 'no-such-dwg2dxf'))
+    assert result.returncode not in (0, 2)
+    assert 'FileNotFoundError' in result.stderr
+
+
+def test_the_cli_refuses_the_wrong_number_of_arguments():
+    result = run_cli('only-one')
+    assert result.returncode not in (0, 2)
