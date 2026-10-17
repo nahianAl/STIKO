@@ -23,8 +23,9 @@ const MODEL = [
  */
 export const MODEL_FORMATS: readonly string[] = MODEL;
 
-// DWG and DXF: accepted, no viewer yet. That work is in progress separately; they upload and
-// download normally and the viewport shows its unsupported-type message.
+// DWG and DXF: shown through a PDF. The converter (converter/, its own Vercel project) turns
+// each drawing into a PDF once, on upload or on first view, and the PDF viewer shows that
+// (lib/drawingConversion.ts). Downloads are always the original file.
 const CAD = ['dwg', 'dxf'];
 
 export const SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([

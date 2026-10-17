@@ -119,8 +119,11 @@ interface ViewerContainerProps {
   onSelectionChange?: (selection: MarkupSelection | null) => void;
   /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
   onPageChange?: (page: number) => void;
-  /** DWG/DXF only: the drawing's PDF now exists; the parent records it on the file. */
-  onDrawingConverted?: (fileId: string, convertedStorageKey: string) => void;
+  /**
+   * DWG/DXF only: the drawing's PDF now exists; the parent records it on the file. Required:
+   * without it the viewer would keep showing "Preparing drawing…" over a PDF that exists.
+   */
+  onDrawingConverted: (fileId: string, convertedStorageKey: string) => void;
 }
 
 // Exported: the portal page reuses this as the canonical, positive test for "is this file
@@ -191,7 +194,7 @@ export default function ViewerContainer({
       <DrawingPreparer
         key={file.id}
         fileId={file.id}
-        onConverted={(convertedKey) => onDrawingConverted?.(file.id, convertedKey)}
+        onConverted={(convertedKey) => onDrawingConverted(file.id, convertedKey)}
         onReady={onReady}
       />
     );
