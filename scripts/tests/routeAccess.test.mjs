@@ -52,14 +52,8 @@ test('the login redirect carries the requested path', () => {
   assert.equal(loginRedirectPath('/settings/account'), '/login?callbackUrl=%2Fsettings%2Faccount');
 });
 
-test('the drawing converter function is reachable without a session; it checks a secret itself', () => {
-  assert.equal(routeDecision('/api/convert_drawing', false), 'pass');
-});
-
-// Matched exactly, like the cron route: a prefix entry would also exempt a future
-// '/api/convert_drawing-x' nobody remembered to check.
-test('the drawing converter function is exempt by exact match only', () => {
-  assert.equal(routeDecision('/api/convert_drawing/x', false), 'login');
-  assert.equal(routeDecision('/api/convert_drawingx', false), 'login');
-  assert.equal(routeDecision('/api/convert_drawing-x', false), 'login');
+// The DWG/DXF converter is its own Vercel project (converter/), called server-to-server at
+// CAD_CONVERTER_URL. The main app serves nothing at this path, so it gets no exemption.
+test('the old drawing converter path has no exemption', () => {
+  assert.equal(routeDecision('/api/convert_drawing', false), 'login');
 });
