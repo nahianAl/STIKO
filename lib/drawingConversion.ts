@@ -25,8 +25,11 @@ export function viewerKindFor(filename: string, convertedStorageKey: string | nu
 }
 
 /**
- * files.conversion_job_id holds the claim while a drawing converts. The column predates this
- * feature (CloudConvert never set it); a drawing claim is 'drawing:<ISO time>'.
+ * files.conversion_job_id holds the claim while a drawing converts; a drawing claim is
+ * 'drawing:<ISO time>'. The column predates this feature: CloudConvert's STEP->GLB jobs set it
+ * to their job id (55c6d3a), and app/api/conversions/webhook still looks files up by it. That
+ * trigger is gone (c225360), but older STEP rows may still hold a CloudConvert id. Those are
+ * never drawings, and a CloudConvert id never starts with 'drawing:', so the two cannot collide.
  */
 export const DRAWING_CLAIM_PREFIX = 'drawing:';
 
@@ -73,14 +76,40 @@ export function nextPollStep(
 export type ConverterOutcome = 'completed' | 'failed' | 'retry';
 
 /**
- * What a converter reply means for the file. Only a verdict on the drawing itself ('failed'
- * is never retried) may set 'failed': 413 too large, 422 unreadable or empty. Everything else
- * (400, 401, 404, 500, 502, any other status, no HTTP response at all) is a configuration or
- * transient problem that a later open may well get past, so the claim is released instead.
- * null means no HTTP response: a network error, a timeout, or a throw before the call.
+ * What a converter reply means for the file.
+ *
+ * 'completed' needs a 200 whose JSON body reports at least one page: a 200 from anything that
+ * is not the converter (a login page, a misconfigured URL) must never mark a PDF as ready.
+ * Only a verdict on the drawing itself ('failed' is never retried) may set 'failed': 413 too
+ * large, 422 unreadable, empty, too slow or too big to convert. Everything else (a 200 without
+ * pages, a redirect, 400, 401, 404, 500, 502, any other status, no HTTP response at all) is a
+ * configuration or transient problem that a later open may well get past.
+ *
+ * status null means no HTTP response: a network error, a timeout, or a throw before the call.
+ * pages is the `pages` field of the reply's JSON body, or undefined when there is none.
  */
-export function converterOutcome(status: number | null): ConverterOutcome {
-  if (status === 200) return 'completed';
+export function converterOutcome(status: number | null, pages: unknown): ConverterOutcome {
+  if (status === 200) return typeof pages === 'number' && pages > 0 ? 'completed' : 'retry';
   if (status === 413 || status === 422) return 'failed';
   return 'retry';
+}
+
+/**
+ * CAD_CONVERTER_URL as a URL, or null when it is unusable. The converter is its own Vercel
+ * project and every call carries the converter secret, so the URL must be https; plain http is
+ * allowed only for a converter on this machine (localhost or 127.0.0.1).
+ */
+export function converterEndpoint(value: string | undefined): URL | null {
+  if (!value) return null;
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol === 'https:') return url;
+  if (url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+    return url;
+  }
+  return null;
 }

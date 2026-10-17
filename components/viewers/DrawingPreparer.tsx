@@ -84,8 +84,9 @@ export default function DrawingPreparer({ fileId, onConverted, onReady }: Props)
     fetch(`/api/files/${fileId}/convert-drawing`, { method: 'POST' })
       .then(async (res) => {
         if (cancelled) return;
-        // 503 means nothing is converting: the converter is not configured, or it failed
-        // transiently and the claim was released. Polling could only wait out the full limit.
+        // 503 means this request will not record a PDF: the converter is not configured, it
+        // failed transiently and the claim was released, or it did not answer in time (the
+        // claim is then kept until it goes stale). Polling could only wait out the full limit.
         if (res.status === 503) {
           fail();
           return;
