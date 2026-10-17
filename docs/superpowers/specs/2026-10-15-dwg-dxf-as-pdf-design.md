@@ -53,9 +53,13 @@ Root Directory is `converter/`. The stiko project does not serve it.
 - **Steps:**
   0. **Isolation:** steps 2–6 run in a child process: `python _lib/drawing_pdf.py <source>
      <out.pdf> <dwg2dxf>`. The child's environment is only `PYTHONPATH`, `PATH=/usr/bin:/bin`,
-     `HOME`/`XDG_CACHE_HOME` (a scratch directory) and `LANG=C.UTF-8`. It never gets the
-     secret. Its limits are `RLIMIT_CPU` 50 s and `RLIMIT_AS` 2 GiB (Linux), with a 45 s
-     wall-clock timeout.
+     `HOME`/`XDG_CACHE_HOME` (a scratch directory), `LANG=C.UTF-8`, single-thread and
+     `MALLOC_ARENA_MAX=2` caps, and the two limit values. It never gets the secret. Its limits
+     are `RLIMIT_CPU` 50 s and `RLIMIT_AS` 2 GiB (Linux), which it applies to itself before
+     importing ezdxf or PyMuPDF. It runs in its own session, whose process group is killed after
+     every run. Its wall-clock timeout is what is left of one 50 s budget for the whole request
+     (download + convert + upload), never under 5 s. Both URLs must be on an allowed storage host
+     (`CONVERTER_ALLOWED_HOST_SUFFIXES`, default `.r2.cloudflarestorage.com`).
      - Exit 0 prints the page count.
      - Exit 2, a timeout, or death by a signal is a verdict on the drawing, so the reply is 422.
      - Any other exit is a server fault, so the reply is 500.
@@ -181,7 +185,7 @@ exemption. (The first version exempted it, back when the converter lived in this
 
 | Case | Result |
 |---|---|
-| Unreadable DWG, `dwg2dxf` timeout, empty drawing, or a conversion over 45 s or killed by a resource limit | `422` → `'failed'` → download message |
+| Unreadable DWG, `dwg2dxf` timeout, empty drawing, or a conversion over its time budget or killed by a resource limit | `422` → `'failed'` → download message |
 | Next route's 55 s timeout fires | claim kept `'processing'`; reclaimed after 3 minutes; 503 |
 | Any other status, a redirect, a 200 without pages, or a network error | claim released; 503; a later open retries |
 | A run killed mid-way leaves `'processing'` | the next viewer reclaims it after 3 minutes |

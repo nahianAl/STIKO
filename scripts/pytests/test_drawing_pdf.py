@@ -1,5 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Converter core tests. How to run: scripts/pytests/README.md."""
+import json
 import os
+import resource
 import shutil
 import subprocess
 import sys
@@ -249,3 +252,73 @@ def test_the_cli_exits_neither_0_nor_2_on_a_server_fault(tmp_path):
 def test_the_cli_refuses_the_wrong_number_of_arguments():
     result = run_cli('only-one')
     assert result.returncode not in (0, 2)
+
+
+# --- The child limits itself, before it imports anything heavy. ---
+
+#: Runs drawing_pdf.py as __main__ (wrong argument count, so it exits 64 right after the limits are
+#: set) with resource.setrlimit spied on, and reports each call and what was already imported.
+LIMITS_PROBE = """
+import json, resource, runpy, sys
+calls = []
+real = resource.setrlimit
+
+def spy(which, limits):
+    calls.append({'which': which, 'limits': list(limits),
+                  'ezdxf_imported': 'ezdxf' in sys.modules, 'pymupdf_imported': 'pymupdf' in sys.modules,
+                  'numpy_imported': 'numpy' in sys.modules})
+    real(which, limits)
+
+resource.setrlimit = spy
+script = sys.argv[1]
+sys.argv = ['drawing_pdf.py']
+try:
+    runpy.run_path(script, run_name='__main__')
+except SystemExit as exit:
+    code = exit.code
+print(json.dumps({'calls': calls, 'exit': code, 'cpu': list(resource.getrlimit(resource.RLIMIT_CPU)),
+                  'as': list(resource.getrlimit(resource.RLIMIT_AS))}))
+"""
+
+
+def run_limits_probe(extra_env):
+    env = {k: v for k, v in os.environ.items() if not k.startswith('CONVERTER_RLIMIT_')}
+    env.update(extra_env)
+    result = subprocess.run([sys.executable, '-c', LIMITS_PROBE, SCRIPT], capture_output=True, text=True, env=env, timeout=120)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_the_cli_applies_the_limits_from_its_environment_before_importing_ezdxf_or_pymupdf():
+    one_gib = 1024 ** 3
+    seen = run_limits_probe({'CONVERTER_RLIMIT_CPU_S': '30', 'CONVERTER_RLIMIT_AS_BYTES': str(one_gib)})
+    assert seen['exit'] == 64  # it ran as __main__, all the way to the argument check
+    by_limit = {call['which']: call['limits'] for call in seen['calls']}
+    assert by_limit[resource.RLIMIT_CPU] == [30, 30]
+    assert seen['cpu'][0] == 30
+    if sys.platform.startswith('linux'):  # macOS refuses to lower RLIMIT_AS; production is Linux
+        assert by_limit[resource.RLIMIT_AS] == [one_gib, one_gib]
+        assert seen['as'][0] == one_gib
+    else:
+        assert resource.RLIMIT_AS not in by_limit
+    for call in seen['calls']:
+        assert not (call['ezdxf_imported'] or call['pymupdf_imported'] or call['numpy_imported']), call
+
+
+def test_the_cli_sets_no_limits_when_the_parent_gave_none():
+    # Running it by hand is for development; the handler always sets both variables.
+    seen = run_limits_probe({})
+    assert seen['exit'] == 64 and seen['calls'] == []
+
+
+def test_importing_the_module_never_changes_the_limits_of_the_importing_process():
+    # Only the __main__ path limits itself; a test (or any importer) must not throttle its own process.
+    result = subprocess.run(
+        [sys.executable, '-c',
+         'import resource, sys; sys.path.insert(0, sys.argv[1]); before = resource.getrlimit(resource.RLIMIT_CPU);'
+         'import drawing_pdf; assert resource.getrlimit(resource.RLIMIT_CPU) == before',
+         os.path.dirname(SCRIPT)],
+        capture_output=True, text=True, timeout=120,
+        env={**os.environ, 'CONVERTER_RLIMIT_CPU_S': '1', 'CONVERTER_RLIMIT_AS_BYTES': '1000'},
+    )
+    assert result.returncode == 0, result.stderr

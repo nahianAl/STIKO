@@ -13,19 +13,52 @@ the process that holds the converter secret:
 
 Exit 0: the PDF was written and its page count printed to stdout. Exit 2: the drawing is
 unreadable or empty (a verdict); the reason is on stderr. Any other exit: a server fault.
+
+As a CLI it limits itself first thing, from env CONVERTER_RLIMIT_CPU_S and
+CONVERTER_RLIMIT_AS_BYTES (set by the handler): see _apply_limits. dwg2dxf, started from here,
+inherits the limits. Importing the module changes nothing.
 """
 from __future__ import annotations
 
 import os
+import resource
 import subprocess
 import sys
 import tempfile
 
-import pymupdf
-from ezdxf import recover
-from ezdxf.addons.drawing import Frontend, RenderContext, config, layout
-from ezdxf.addons.drawing import pymupdf as pymupdf_backend
-from ezdxf.layouts import Layout
+
+def _lower_limit(which: int, value: int) -> None:
+    _soft, hard = resource.getrlimit(which)
+    if hard != resource.RLIM_INFINITY:
+        value = min(value, hard)
+    resource.setrlimit(which, (value, value))
+
+
+def _apply_limits() -> None:
+    """Lower this process's own RLIMIT_CPU and RLIMIT_AS to what the parent asked for in its env.
+
+    Unset means unlimited (running the CLI by hand). RLIMIT_AS is Linux only (production): macOS
+    refuses to lower it (EINVAL), which would make every local run fail. A bad value raises, so the
+    child dies with a traceback (exit 1, a server fault) rather than run unlimited.
+    """
+    cpu_s = os.environ.get('CONVERTER_RLIMIT_CPU_S')
+    if cpu_s:
+        _lower_limit(resource.RLIMIT_CPU, int(cpu_s))
+    address_space = os.environ.get('CONVERTER_RLIMIT_AS_BYTES')
+    if address_space and sys.platform.startswith('linux'):
+        _lower_limit(resource.RLIMIT_AS, int(address_space))
+
+
+if __name__ == '__main__':
+    # Before ezdxf, PyMuPDF and numpy are imported, so the limits cover everything they allocate
+    # (and their import-time thread pools and arenas). That is why the imports below follow this.
+    _apply_limits()
+
+import pymupdf  # noqa: E402
+from ezdxf import recover  # noqa: E402
+from ezdxf.addons.drawing import Frontend, RenderContext, config, layout  # noqa: E402
+from ezdxf.addons.drawing import pymupdf as pymupdf_backend  # noqa: E402
+from ezdxf.layouts import Layout  # noqa: E402
 
 #: A3 landscape, used when a layout defines no paper size and for model space.
 DEFAULT_PAGE_MM = (420.0, 297.0)

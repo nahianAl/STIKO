@@ -35,7 +35,7 @@ These decisions were made by the user and are binding. They supersede the task b
   - `drawing_pdf.py` has a CLI. The handler runs it as a child process with:
     - a minimal environment: `PYTHONPATH`, `PATH`, `HOME`/`XDG_CACHE_HOME`, `LANG`, and `LD_LIBRARY_PATH` only when the runtime sets it;
     - `RLIMIT_CPU` 50 s and `RLIMIT_AS` 2 GiB (Linux only);
-    - a 45 s timeout.
+    - a timeout from one 50 s budget for the whole request (the child gets what is left, at least 5 s), and its own session, killed after every run.
   - Exit 2, a timeout, or a signal is a 422 verdict. Any other non-zero exit is a 500.
   - `dwg2dxf` gets only `PATH`. A signal is a failure even if a DXF exists.
   - `requirements.txt` is fully pinned, transitive dependencies included.
@@ -58,7 +58,7 @@ These decisions were made by the user and are binding. They supersede the task b
 - **Limits:**
   - source drawing ≤ 50 MB
   - `dwg2dxf` timeout 30 s
-  - the conversion child process: 45 s wall clock, `RLIMIT_CPU` 50 s, `RLIMIT_AS` 2 GiB (Linux)
+  - the whole request (download + convert + upload): a 50 s budget; the conversion child gets what is left (at least 5 s), with `RLIMIT_CPU` 50 s and `RLIMIT_AS` 2 GiB (Linux)
   - function `maxDuration` 60 s
   - the Next route's call to it times out at 55 s
 - **Converted PDF key:** `<directory>/<stem>.drawing.pdf`, always derived server-side, never from the client.
