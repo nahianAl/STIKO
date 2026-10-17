@@ -1,4 +1,4 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'api', '_lib'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'converter', 'api', '_lib'))

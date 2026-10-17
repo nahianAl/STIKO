@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Vercel Python function: POST /api/convert_drawing
 
 Converts one DWG/DXF to PDF. Called only by Stiko's own Next route

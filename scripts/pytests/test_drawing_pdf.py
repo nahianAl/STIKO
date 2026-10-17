@@ -10,7 +10,7 @@ import drawing_pdf
 from drawing_pdf import DrawingError, convert, layouts_to_render, page_size_mm
 
 HERE = os.path.dirname(__file__)
-DWG2DXF = os.environ.get('DWG2DXF') or shutil.which('dwg2dxf') or os.path.join(HERE, '..', '..', 'api', '_bin', 'dwg2dxf')
+DWG2DXF = os.environ.get('DWG2DXF') or shutil.which('dwg2dxf') or os.path.join(HERE, '..', '..', 'converter', 'api', '_bin', 'dwg2dxf')
 DWG_FIXTURE = os.path.join(HERE, 'fixtures', 'example_2018.dwg')
 
 

@@ -1,4 +1,4 @@
-# Verifies the committed static api/_bin/dwg2dxf on Amazon Linux 2023 (Vercel's Python runtime)
+# Verifies the committed static converter/api/_bin/dwg2dxf on Amazon Linux 2023 (Vercel's Python runtime)
 # against an ubuntu-22.04 runner (where it was built, so glibc's gconv modules match).
 # A statically linked glibc dlopens non-builtin charset modules from its compiled-in gconv path,
 # which does not exist on Amazon Linux, so this runs codepage-era DWGs (R13-R2007, incl. ones with
@@ -18,8 +18,8 @@ env:
     set -u
     T=libredwg-0.14/test/test-data
     mkdir -p out
-    test -x api/_bin/dwg2dxf
-    api/_bin/dwg2dxf --version
+    test -x converter/api/_bin/dwg2dxf
+    converter/api/_bin/dwg2dxf --version
     fail=0
     n_files=0
     for f in $T/example_r13.dwg $T/example_r14.dwg $T/example_2000.dwg $T/example_2004.dwg \
@@ -28,7 +28,7 @@ env:
       n_files=$((n_files + 1))
       name=$(echo "${f#$T/}" | tr / _); name=${name%.dwg}
       rc=0
-      timeout 60 api/_bin/dwg2dxf -y -o "out/$name.dxf" "$f" 2> "out/$name.err" || rc=$?
+      timeout 60 converter/api/_bin/dwg2dxf -y -o "out/$name.dxf" "$f" 2> "out/$name.err" || rc=$?
       echo "$rc" > "out/$name.rc"
       size=$(stat -c %s "out/$name.dxf" 2>/dev/null || echo 0)
       echo "$name rc=$rc dxf_bytes=$size"
@@ -46,7 +46,7 @@ env:
       n_as=$((n_as + 1))
       name=as2007_$(echo "${f#$T/}" | tr / _); name=${name%.dwg}
       rc=0
-      timeout 60 api/_bin/dwg2dxf -y --as r2007 -o "out/$name.dxf" "$f" 2> "out/$name.err" || rc=$?
+      timeout 60 converter/api/_bin/dwg2dxf -y --as r2007 -o "out/$name.dxf" "$f" 2> "out/$name.err" || rc=$?
       echo "$rc" > "out/$name.rc"
       size=$(stat -c %s "out/$name.dxf" 2>/dev/null || echo 0)
       echo "$name rc=$rc dxf_bytes=$size"
@@ -67,7 +67,7 @@ env:
     for args in "$T/example_2000.dwg" "$T/2000/TS1.dwg" "$T/2007/ATMOS-DC22S.dwg" \
                 "--as r2007 $T/2000/TS1.dwg" "--as r2007 $T/example_2004.dwg"; do
       echo "== $args"
-      strace -f -e trace=open,openat,stat,newfstatat -o trace.txt api/_bin/dwg2dxf -y -o trace.dxf $args 2>/dev/null || true
+      strace -f -e trace=open,openat,stat,newfstatat -o trace.txt converter/api/_bin/dwg2dxf -y -o trace.dxf $args 2>/dev/null || true
       echo "traced $(wc -l < trace.txt) file syscalls; input opened: $(grep -c '\.dwg"' trace.txt)"
       grep -iE 'gconv|iconv|locale' trace.txt || echo "(no gconv/locale file access)"
     done
@@ -86,8 +86,8 @@ jobs:
           cat /etc/os-release | head -3
           (ldd --version 2>&1 || true) | head -1
           ls -d /usr/lib/x86_64-linux-gnu/gconv /usr/lib64/gconv 2>&1 || true
-          ls -l api/_bin/dwg2dxf
-          sha256sum api/_bin/dwg2dxf
+          ls -l converter/api/_bin/dwg2dxf
+          sha256sum converter/api/_bin/dwg2dxf
       - name: gconv access trace (informational)
         run: bash -c "$TRACE_SCRIPT"
       - name: Convert
@@ -110,7 +110,7 @@ jobs:
           cat /etc/os-release | head -3
           ldd --version | head -1
           ls -d /usr/lib/x86_64-linux-gnu/gconv /usr/lib64/gconv 2>&1 || true
-          sha256sum api/_bin/dwg2dxf
+          sha256sum converter/api/_bin/dwg2dxf
       - name: gconv access trace (informational)
         run: bash -c "$TRACE_SCRIPT"
       - name: Convert

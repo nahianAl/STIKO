@@ -1,6 +1,7 @@
 example_2018.dwg — from GNU LibreDWG's test data (test/test-data/example_2018.dwg),
 https://github.com/LibreDWG/libredwg, fetched from the ref noted below. Licensed GPL-3.0-or-later
-as part of LibreDWG. Used only as a test input; it is not part of the deployed application.
+as part of LibreDWG; full licence text: COPYING, beside this file. Used only as a test input;
+it is not part of the deployed application.
 Ref: 0.14
 Source: https://raw.githubusercontent.com/LibreDWG/libredwg/0.14/test/test-data/example_2018.dwg
 SHA-256: 7bc7721224003062b237845842b7a976e46771c37eba6833b9ed3712e7a5a65a

@@ -15,7 +15,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 FIXTURE = os.path.join(os.path.dirname(__file__), 'fixtures', 'example_2018.dwg')
 SECRET = 'test-secret'
 
-spec = importlib.util.spec_from_file_location('convert_drawing', os.path.join(ROOT, 'api', 'convert_drawing.py'))
+spec = importlib.util.spec_from_file_location('convert_drawing', os.path.join(ROOT, 'converter', 'api', 'convert_drawing.py'))
 convert_drawing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(convert_drawing)
 

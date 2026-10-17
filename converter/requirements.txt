@@ -1,0 +1,10 @@
+# Fully pinned, transitive dependencies included, so a deploy installs exactly what was tested.
+# Direct: ezdxf, pymupdf, pillow (ezdxf's drawing add-on imports Pillow). The rest are ezdxf's.
+# Resolved in a fresh venv on 2026-10-17; each has a cp312 manylinux x86_64 wheel.
+ezdxf==1.4.4
+pymupdf==1.28.2
+pillow==12.3.0
+fonttools==4.67.0
+numpy==2.5.4
+pyparsing==3.3.3
+typing_extensions==4.16.0

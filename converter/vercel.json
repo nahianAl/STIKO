@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/convert_drawing.py": {
+      "maxDuration": 60,
+      "includeFiles": "api/{_lib,_bin}/**"
+    }
+  }
+}

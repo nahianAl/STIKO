@@ -1,6 +1,7 @@
-# Python tests (the DWG/DXF converter)
+# Python tests (the DWG/DXF converter in `converter/`)
 
-Not part of `npm test`. They need Python 3.12+ and LibreDWG's `dwg2dxf`.
+Not part of `npm test`. They need Python 3.12+ and LibreDWG's `dwg2dxf`. Keep the venv outside
+the repo.
 
 ```bash
 python3 -m venv /tmp/dwgenv
@@ -10,5 +11,5 @@ DWG2DXF=$(which dwg2dxf) /tmp/dwgenv/bin/python -m pytest -q -p no:cacheprovider
   -c scripts/pytests/pytest.ini scripts/pytests
 ```
 
-`DWG2DXF` overrides the bundled `api/_bin/dwg2dxf`, which is a Linux binary and does not run on
-macOS.
+`DWG2DXF` overrides the bundled `converter/api/_bin/dwg2dxf`, which is a Linux binary and does
+not run on macOS.

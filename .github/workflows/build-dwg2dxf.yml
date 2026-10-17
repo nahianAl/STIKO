@@ -1,5 +1,5 @@
 # Builds LibreDWG's dwg2dxf as a fully static x86_64 Linux binary for the Vercel Python
-# function in api/convert_drawing.py (Vercel runs Amazon Linux; static avoids glibc skew).
+# function in converter/api/convert_drawing.py (Vercel runs Amazon Linux; static avoids glibc skew).
 # To rebuild: push this file to branch ci/build-dwg2dxf, then download the artifact.
 name: Build dwg2dxf
 on:

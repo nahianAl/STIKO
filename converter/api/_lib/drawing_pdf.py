@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """DWG/DXF -> PDF for Stiko's viewer. Pure: bytes or paths in, PDF bytes out; no network.
 
 One PDF page per paper-space layout that has content, in tab order, at the layout's plot
