@@ -1,0 +1,9 @@
+{
+  "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- .",
+  "functions": {
+    "api/convert_drawing.py": {
+      "maxDuration": 60,
+      "includeFiles": "api/{_lib,_bin}/**"
+    }
+  }
+}
