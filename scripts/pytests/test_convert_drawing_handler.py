@@ -310,11 +310,12 @@ def test_the_bundled_binary_is_copied_atomically_and_made_executable(tmp_path, m
 CHILD_PID = 987_654  # never signalled for real: fake_child replaces os.killpg
 
 
-def fake_child(monkeypatch, returncode, stdout=b'', stderr=b''):
+def fake_child(monkeypatch, returncode, stdout=b'', stderr=b'', hangs=False):
     """Stands in for subprocess.Popen: the child 'ran' and exited with returncode.
 
-    Records how it was started, the timeouts it was waited on with, and which process groups
-    the handler killed (os.killpg is replaced, so no real group is ever signalled).
+    With hangs=True the child never finishes: the first wait times out, and the wait that reaps it
+    after the kill returns. Records how it was started, the timeouts it was waited on with, and
+    which process groups the handler killed (os.killpg is replaced, so no real group is ever signalled).
     """
     made = {'args': None, 'kwargs': None, 'timeouts': [], 'kills': []}
 
@@ -323,10 +324,13 @@ def fake_child(monkeypatch, returncode, stdout=b'', stderr=b''):
 
         def __init__(self, args, **kwargs):
             made['args'], made['kwargs'] = args, kwargs
+            self.args_for_error = args
             self.returncode = returncode
 
         def communicate(self, timeout=None):
             made['timeouts'].append(timeout)
+            if hangs and len(made['timeouts']) == 1:
+                raise subprocess.TimeoutExpired(self.args_for_error, timeout)
             return stdout, stderr
 
     monkeypatch.setattr(convert_drawing.subprocess, 'Popen', FakeProcess)
@@ -349,10 +353,60 @@ def fake_clock(monkeypatch, elapsed_during_download):
 
 
 def test_a_conversion_over_the_time_limit_is_a_422_verdict(servers, monkeypatch, capsys):
-    # A drawing that is always too slow will be too slow next time as well: a verdict, not a retry.
+    # A child that had a fair share of the budget and still ran out: the drawing is too slow, and
+    # it will be too slow next time as well. A verdict, not a retry.
+    store_url, fn_url = servers
+    made = fake_child(monkeypatch, 0, hangs=True)
+    fake_clock(monkeypatch, 0)  # nothing spent: the child gets the whole 50 s
+    FakeStore.source = b'anything'
+    status, body = call(fn_url, good_body(store_url))
+    assert status == 422 and body == {'error': 'unreadable or empty drawing'}
+    assert FakeStore.received == {}
+    assert made['timeouts'][0] == pytest.approx(50)
+    assert made['kills'] and all(kill == (CHILD_PID, signal.SIGKILL) for kill in made['kills'])
+    assert 'conversion exceeded 50 s' in capsys.readouterr().err
+
+
+def test_a_fair_share_is_30_s():
+    assert convert_drawing.FAIR_CHILD_TIMEOUT_S == 30
+
+
+@pytest.mark.parametrize('elapsed', [30.01, 44, 49, 60])
+def test_a_timeout_after_a_short_share_of_the_budget_is_a_500_so_a_later_open_retries(servers, monkeypatch, capsys, elapsed):
+    # A slow download ate the budget, so the child got under 30 s (5 s at the least). Its running out
+    # says nothing about the drawing: a 500 releases the claim, a 422 would fail a good drawing for good.
+    store_url, fn_url = servers
+    made = fake_child(monkeypatch, 0, hangs=True)
+    fake_clock(monkeypatch, elapsed)
+    FakeStore.source = b'anything'
+    status, body = call(fn_url, good_body(store_url))
+    assert status == 500 and body == {'error': 'conversion failed unexpectedly'}
+    assert FakeStore.received == {}
+    assert made['timeouts'][0] < convert_drawing.FAIR_CHILD_TIMEOUT_S
+    assert made['kills']  # the hung child is still killed, whichever way it is answered
+    err = capsys.readouterr().err
+    assert 'conversion timed out after' in err and 'short share' in err
+    assert 'drawing error' not in err
+
+
+@pytest.mark.parametrize('elapsed', [0, 10, 20])
+def test_a_timeout_with_at_least_30_s_is_a_422_verdict(servers, monkeypatch, capsys, elapsed):
+    store_url, fn_url = servers
+    made = fake_child(monkeypatch, 0, hangs=True)
+    fake_clock(monkeypatch, elapsed)  # 50, 40 and 30 s left
+    FakeStore.source = b'anything'
+    status, _ = call(fn_url, good_body(store_url))
+    assert status == 422
+    assert made['timeouts'][0] >= convert_drawing.FAIR_CHILD_TIMEOUT_S - 1e-6
+    assert 'drawing error: conversion exceeded' in capsys.readouterr().err
+
+
+def test_a_real_child_that_hangs_with_a_fair_share_is_a_422_verdict(servers, monkeypatch, capsys):
+    # The same verdict with a real process and a real timeout (the fair share lowered so the test is quick).
     store_url, fn_url = servers
     monkeypatch.setattr(convert_drawing, 'MIN_CHILD_TIMEOUT_S', 0.05)
-    fake_clock(monkeypatch, 60)  # the budget is spent, so the child gets only the minimum
+    monkeypatch.setattr(convert_drawing, 'FAIR_CHILD_TIMEOUT_S', 0.05)
+    fake_clock(monkeypatch, 60)
     FakeStore.source = open(FIXTURE, 'rb').read()
     status, body = call(fn_url, good_body(store_url))
     assert status == 422 and body == {'error': 'unreadable or empty drawing'}
@@ -594,6 +648,7 @@ def test_a_process_left_behind_by_a_successful_conversion_is_killed(servers, mon
 
 def test_a_timed_out_conversion_is_killed_with_everything_it_started(servers, monkeypatch, tmp_path):
     monkeypatch.setattr(convert_drawing, 'MIN_CHILD_TIMEOUT_S', 2)
+    monkeypatch.setattr(convert_drawing, 'FAIR_CHILD_TIMEOUT_S', 2)  # so the timeout is a verdict; the kill is the point
     fake_clock(monkeypatch, 60)
     status, probe_pid, grandchild_pid = run_leftover_probe(servers, monkeypatch, tmp_path, HANG)
     assert status == 422

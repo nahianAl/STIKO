@@ -39,9 +39,9 @@ Content-Type: application/json
 | 400 | `{"error": "..."}` | Bad body, a URL that is not http(s), a URL whose host is not on the allowlist (see Configuration), or a file that is not `.dwg`/`.dxf` |
 | 401 | `{"error": "unauthorized"}` | Wrong secret, or `CAD_CONVERTER_SECRET` unset (then everything is refused) |
 | 413 | `{"error": "over 50 MB"}` | The source is larger than 50 MB |
-| 422 | `{"error": "unreadable or empty drawing"}` | A verdict on the drawing: unreadable, empty, out of time (see Time budget), or killed by a resource limit |
+| 422 | `{"error": "unreadable or empty drawing"}` | A verdict on the drawing: unreadable, empty, out of time after a fair share of the budget (see Time budget), or killed by a resource limit |
 | 502 | `{"error": "storage transfer failed"}` | Downloading the source or uploading the PDF failed, ran past the time budget, or storage answered with a redirect (not followed) |
-| 500 | `{"error": "conversion failed unexpectedly"}` | A server fault, e.g. `dwg2dxf` cannot run |
+| 500 | `{"error": "conversion failed unexpectedly"}` | A server fault, e.g. `dwg2dxf` cannot run, or the conversion timed out after a short share of the budget (see Time budget) |
 
 Error bodies are fixed strings. Details go to the function log only, with presigned URLs scrubbed,
 because they can quote file content or carry URL signatures.
@@ -55,8 +55,11 @@ The whole request, download plus conversion plus upload, has one budget of **50 
 (`TOTAL_BUDGET_S`), so that it answers before stiko's route gives up at 55 s and before the
 function's `maxDuration` of 60 s.
 
-- The conversion child gets `max(5, 50 s - time spent so far)`. When it runs out, the reply is a
-  422 (the same drawing would be too slow next time).
+- The conversion child gets `max(5, 50 s - time spent so far)`. When it runs out, the reply
+  depends on how much it was given. With a fair share (`FAIR_CHILD_TIMEOUT_S`, 30 s or more) it is
+  a 422, because the same drawing would be too slow next time. With less (a slow download used up the
+  budget, so a good drawing may simply have been starved) it is a 500, so that stiko releases the
+  claim and a later open retries instead of failing the drawing for good. The log says which case it was.
 - Each storage transfer keeps its 20 s per-call timeout, capped by what is left of the budget
   (never under 2 s), and a download that runs past the budget is a 502.
 
@@ -85,7 +88,8 @@ process (`python drawing_pdf.py <source> <out.pdf> <dwg2dxf>`) with:
 | Child result | Reply |
 |---|---|
 | Exit 0, page count on stdout | 200 |
-| Exit 2 (bad drawing, or out of memory), timeout, or killed by a signal | 422 |
+| Exit 2 (bad drawing, or out of memory), timeout with 30 s or more, or killed by a signal | 422 |
+| Timeout with under 30 s (a short share of the budget) | 500 |
 | Anything else | 500 |
 
 ### Configuration
@@ -121,9 +125,13 @@ process (`python drawing_pdf.py <source> <out.pdf> <dwg2dxf>`) with:
 3. **Environment Variables:** `CAD_CONVERTER_SECRET` only. Use a long random value, for example
    from `openssl rand -hex 32`. The stiko app must have the same value. (Optionally
    `CONVERTER_ALLOWED_HOST_SUFFIXES`, see Configuration.)
-4. **Ignored Build Step:** already set in `vercel.json` (`git diff --quiet HEAD^ HEAD -- .`, run
-   inside the Root Directory), so a push that does not touch `converter/` does not build. The
-   first deploy of the project always builds.
+4. **Ignored Build Step:** already set in `vercel.json` (`git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- .`, run
+   inside the Root Directory), so a push that does not touch `converter/` does not build. It
+   compares the pushed head with the last deployed commit (`VERCEL_GIT_PREVIOUS_SHA`), so a push of
+   several commits builds when any of them touched `converter/`, not only the last. Without that
+   variable (the first deploy) it falls back to `HEAD^`; if git cannot resolve the commit, the
+   command fails and the build runs, which is the safe direction. The first deploy of the project
+   always builds.
 5. Deploy. The function URL is `https://<production domain>/api/convert_drawing`. The stiko app
    needs that full URL as `CAD_CONVERTER_URL`.
 6. **Deploy gate: check the 2 GiB cap on real drawings.** Before pointing stiko at the project,

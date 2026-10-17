@@ -63,6 +63,10 @@ MIN_TRANSFER_TIMEOUT_S = 2
 TOTAL_BUDGET_S = 50
 #: The child always gets at least this, however little of the budget is left.
 MIN_CHILD_TIMEOUT_S = 5
+#: A child that runs out of time is a verdict on the drawing (-> 422, permanently failed) only if it was
+#: given at least this much. A slow download can leave it far less, and a good drawing must not fail
+#: for good because storage was slow: below this, a timeout is a fault (-> 500) and a later open retries.
+FAIR_CHILD_TIMEOUT_S = 30
 #: After the child's group is killed, how long to wait for its pipes to close.
 REAP_TIMEOUT_S = 5
 #: Hosts the two URLs may point at (env CONVERTER_ALLOWED_HOST_SUFFIXES overrides, comma-separated).
@@ -81,7 +85,7 @@ class TooLarge(Exception):
 
 
 class DrawingVerdict(Exception):
-    """The child says the drawing is unreadable or empty, ran out of time, or was killed."""
+    """The child says the drawing is unreadable or empty, ran out of a fair share of time, or was killed."""
 
 
 class ConverterFault(Exception):
@@ -180,6 +184,8 @@ def run_converter(source: str, out: str, deadline: float) -> int:
 
     The child runs in its own session so that, when it finishes or times out, everything it
     started can be killed with it. Raises DrawingVerdict (-> 422) or ConverterFault (-> 500).
+    A timeout is a verdict only if the child had FAIR_CHILD_TIMEOUT_S or more; with less (a slow
+    download used up the budget) it is a fault, so that the caller retries on a later open.
     """
     timeout = child_timeout(deadline)
     proc = subprocess.Popen(
@@ -196,7 +202,12 @@ def run_converter(source: str, out: str, deadline: float) -> int:
                 proc.communicate(timeout=REAP_TIMEOUT_S)  # collect the dead child; its pipes are closed
             except subprocess.TimeoutExpired:
                 pass
-            raise DrawingVerdict(f'conversion exceeded {timeout:.3g} s') from err
+            if timeout >= FAIR_CHILD_TIMEOUT_S:
+                raise DrawingVerdict(f'conversion exceeded {timeout:.3g} s') from err
+            raise ConverterFault(
+                f'conversion timed out after {timeout:.3g} s, a short share of the budget '
+                f'(under {FAIR_CHILD_TIMEOUT_S} s), so not held against the drawing'
+            ) from err
     finally:
         kill_session(proc)  # also after a clean exit: a grandchild may still be running
     if proc.returncode == 0:
