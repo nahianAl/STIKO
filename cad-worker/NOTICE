@@ -1,0 +1,8 @@
+This software contains source code provided by NVIDIA Corporation.
+
+The Stiko CAD worker runs NVIDIA's Omniverse CAD Converter (usd-convert-cad, PyPI), which uses the
+Tech Soft 3D HOOPS Exchange SDK licensed by NVIDIA. It is governed by the NVIDIA Software License
+Agreement and the Product Specific Terms for NVIDIA AI Products:
+https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/
+https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/
+Third-party notices: https://github.com/NVIDIA-Omniverse/usd-convert-cad/blob/main/THIRD_PARTY_NOTICES.md
