@@ -220,6 +220,25 @@ export default function PortalPage() {
   const handleViewerReady = useCallback(() => setViewerReady(true), []);
   const [commentsCollapsed, setCommentsCollapsed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Opening the 3D parts panel collapses the submissions sidebar so the viewport gets the room,
+  // and closing it brings the sidebar back — but only if it was the panel that collapsed it. A
+  // sidebar the user had already collapsed themselves stays collapsed.
+  const [partsPanelOpen, setPartsPanelOpenState] = useState(false);
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
+  sidebarCollapsedRef.current = sidebarCollapsed;
+  const partsCollapsedSidebarRef = useRef(false);
+  const setPartsPanelOpen = useCallback((open: boolean) => {
+    setPartsPanelOpenState(open);
+    if (open) {
+      if (!sidebarCollapsedRef.current) {
+        partsCollapsedSidebarRef.current = true;
+        setSidebarCollapsed(true);
+      }
+    } else if (partsCollapsedSidebarRef.current) {
+      partsCollapsedSidebarRef.current = false;
+      setSidebarCollapsed(false);
+    }
+  }, []);
 
   // 2e: submitting a version is a drawer over this view, not a route change —
   // no navigation, no reload, no lost zoom or scroll.
@@ -324,6 +343,15 @@ export default function PortalPage() {
   // A failed post keeps the user's text, attachments and pin; this says why.
   const [composerError, setComposerError] = useState<string | null>(null);
   const [tagging, setTagging] = useState(false);
+  // The video's playhead when the current markup session froze it, and — once Done attaches
+  // that markup to the composer — the playhead the next comment is stamped with. A pin carries
+  // its own time in pendingTag; markup has no pin, so it needs this.
+  const markupSessionVideoTimeRef = useRef<number | null>(null);
+  const [markupTimestamp, setMarkupTimestamp] = useState<number | null>(null);
+  // Removing every attachment removes the markup, and with it the time it was made at.
+  useEffect(() => {
+    if (composerFiles.length === 0) setMarkupTimestamp(null);
+  }, [composerFiles.length]);
   const [pendingTag, setPendingTag] = useState<{
     xPosition?: number; yPosition?: number;
     worldX?: number; worldY?: number; worldZ?: number;
@@ -515,7 +543,10 @@ export default function PortalPage() {
     setParts(next);
     setAuthored(nextAuthored);
     setPartBaseColors(baseColors);
-  }, []);
+    // PartsPanel renders nothing for a model with no parts, so an open panel would be invisible
+    // and the sidebar it collapsed would have no way back.
+    if (next.length === 0) setPartsPanelOpen(false);
+  }, [setPartsPanelOpen]);
 
   // Re-picking the same part while the panel is already open and scrolled to it is a no-op by
   // design: PartsPanel's scroll effect keys on `revealPart`'s VALUE, so setting the same key
@@ -671,6 +702,11 @@ export default function PortalPage() {
     const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
     return MODEL_FORMATS.includes(ext);
   }, [selectedFile]);
+
+  // Same reason as handlePartsLoaded: off a 3D file the panel is not on screen to be closed.
+  useEffect(() => {
+    if (!is3DFile) setPartsPanelOpen(false);
+  }, [is3DFile, setPartsPanelOpen]);
 
   const isPDFFile = useMemo(() => {
     if (!selectedFile) return false;
@@ -1479,11 +1515,15 @@ export default function PortalPage() {
   const startAnnotationSession = useCallback(() => {
     if (annotating) return;
     setAnnotating(true);
+    // Reset per session, so a PDF or image session can never inherit an earlier video's time.
+    markupSessionVideoTimeRef.current = null;
     if (!isPDFFile) {
       const container = viewerAreaRef.current;
       // The 3D viewport composites the gizmo HUD into the same buffer the snapshot reads,
       // so ask it for a model-only frame first. No-op for image and video viewers.
       modelViewerRef.current?.renderCleanFrame();
+      const video = container?.querySelector('video') as HTMLVideoElement | null;
+      markupSessionVideoTimeRef.current = video ? video.currentTime : null;
       const snapshot = container ? captureViewerSnapshot(container) : null;
       setViewerSnapshot(snapshot?.dataUrl ?? null);
       setViewerImageSpace(snapshot?.imageSpace ?? null);
@@ -1775,6 +1815,7 @@ export default function PortalPage() {
     setComposerMentions([]);
     setComposerFiles([]);
     setPendingTag(null);
+    setMarkupTimestamp(null);
     setTagging(false);
     setTransformMode(null);
     setFocalLength(DEFAULT_FOCAL_LENGTH);
@@ -1961,7 +2002,8 @@ export default function PortalPage() {
           worldY: pendingTag?.worldY ?? null,
           worldZ: pendingTag?.worldZ ?? null,
           pageNumber: pendingTag?.pageNumber ?? null,
-          timestamp: pendingTag?.timestamp ?? null,
+          // A pin's own time wins: it is where the comment points. Otherwise the markup's.
+          timestamp: pendingTag?.timestamp ?? markupTimestamp ?? null,
           attachments,
           mentions: composerMentions,
         }),
@@ -1977,6 +2019,7 @@ export default function PortalPage() {
       setComposerMentions([]);
       setComposerFiles([]);
       setPendingTag(null);
+      setMarkupTimestamp(null);
       setTagging(false);
       setCommentsRefreshKey((k) => k + 1);
       await fetchComments();
@@ -2100,6 +2143,9 @@ export default function PortalPage() {
           if (dataUrl) {
             const file = await dataUrlToFile(dataUrl, `annotation-${Date.now()}.jpg`);
             setComposerFiles((prev) => [...prev, file]);
+            if (markupSessionVideoTimeRef.current !== null) {
+              setMarkupTimestamp(markupSessionVideoTimeRef.current);
+            }
           }
         }
       }
@@ -2140,6 +2186,18 @@ export default function PortalPage() {
       const video = viewerAreaRef.current?.querySelector('video') as HTMLVideoElement | null;
       if (video) video.currentTime = comment.timestamp;
     }
+  }, []);
+
+  // The time chip on a video comment: jump there and play. Unlike a click on the card, this is
+  // never a toggle — it always means "show me this moment".
+  const handleSeekTimestamp = useCallback((comment: Comment) => {
+    if (comment.timestamp == null) return;
+    setActiveCommentId(comment.id);
+    const video = viewerAreaRef.current?.querySelector('video') as HTMLVideoElement | null;
+    if (!video) return;
+    video.currentTime = comment.timestamp;
+    // play() rejects if the browser blocks it; the seek has still happened, so ignore that.
+    video.play().catch(() => {});
   }, []);
 
   const handleCommentClick = useCallback((comment: Comment) => {
@@ -2337,7 +2395,12 @@ export default function PortalPage() {
           selectedFileId={selectedFileId}
           onSelectFile={setSelectedFileId}
           collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+          onToggleCollapse={() => {
+            // Toggled by hand: the user owns the sidebar now, so closing the parts panel must
+            // not override that choice.
+            partsCollapsedSidebarRef.current = false;
+            setSidebarCollapsed((c) => !c);
+          }}
           onSubmitVersion={
             canUpload ? () => setVersionDrawerOpen(true) : undefined
           }
@@ -2391,7 +2454,13 @@ export default function PortalPage() {
                 strokeWidth={drawingStrokeWidth}
                 onStrokeWidthChange={handleStrokeWidthChange}
                 tagging={tagging}
-                onToggleTagging={() => setTagging((t) => !t)}
+                onToggleTagging={() => {
+                  // Arming the pin opens the comment panel: the comment it starts is written
+                  // there. Not during a markup session, where widening the panel would resize
+                  // the viewer under a snapshot already captured at the old size.
+                  if (!tagging && !annotating) setCommentsCollapsed(false);
+                  setTagging((t) => !t);
+                }}
                 onInsertImage={handleInsertImage}
                 offsetTop={isPDFFile ? 45 : 12}
                 selectionType={selectionType}
@@ -2461,7 +2530,6 @@ export default function PortalPage() {
                 as a panel appears. */}
             {selectedFileId && is3DFile && !annotating && !viewportImage && (
               <div className="absolute bottom-3 left-3 z-20 flex items-end gap-2">
-                <FocalLengthControl value={focalLength} onChange={setFocalLength} />
                 <PartsPanel
                   parts={parts}
                   hiddenParts={hiddenParts}
@@ -2470,10 +2538,13 @@ export default function PortalPage() {
                   canColor={canTransform}
                   revealKey={revealPart}
                   revealToken={revealToken}
+                  open={partsPanelOpen}
+                  onOpenChange={setPartsPanelOpen}
                   onToggleVisibility={togglePartVisibility}
                   onSetColor={setPartColor}
                   onHoverPart={setHoveredPart}
                 />
+                <FocalLengthControl value={focalLength} onChange={setFocalLength} />
               </div>
             )}
 
@@ -2588,6 +2659,7 @@ export default function PortalPage() {
         <CommentsPanel
           fileId={selectedFileId}
           onCommentClick={handleCommentClick}
+          onSeekTimestamp={handleSeekTimestamp}
           activeCommentId={activeCommentId}
           refreshKey={commentsRefreshKey}
           collapsed={commentsCollapsed}
