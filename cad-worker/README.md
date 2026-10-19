@@ -18,6 +18,7 @@ Modal workspace `hello-63953`, app `stiko-cad-worker`. Dashboard: https://modal.
 | 401 | missing or wrong `X-Worker-Secret` |
 | 400 | body is not JSON, a field is missing, or a URL is not allowed |
 | 422 | `filename` is not `.sldprt` |
+| 503 | spawn failed (transient — Stiko retries) |
 
 ## Deploy and smoke test
 
@@ -82,4 +83,24 @@ Run it in a venv with `cad-worker/requirements-dev.txt` installed (e.g. `/tmp/ca
 modal app logs stiko-cad-worker
 ```
 
-Grep for `cad-worker:`. The worker logs there when a callback is refused or fails, and when a transient failure is not reported to Stiko.
+Grep for `cad-worker:`. The worker logs there when a callback is refused or fails, when a transient failure is not reported to Stiko, and when the `start` endpoint could not spawn a job (`cad-worker: spawn failed`, which also answers 503).
+
+## Spend
+
+Set a Modal workspace spending limit of about $30 a month. It is the hard stop. The code cap in Stiko (`SLDPRT_MONTHLY_CAP`, default 300 conversions a month) is soft: it counts claims, can undercount slightly after a reclaim, and does not know what a conversion costs.
+
+## Rollback
+
+Roll back by setting `NEXT_PUBLIC_SLDPRT_CONVERSION=off` on the stiko Vercel project and redeploying. Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With the switch off, the new code still opens any `.sldprt` that has a converted GLB and only stops accepting new ones.
+
+The variable is read at build time and inlined into the browser bundle, so a redeploy is required. After a rollback, drop a `.sldprt` in the uploader and confirm the "Save As STEP" advice appears. That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
+
+## Reset a part wrongly marked failed
+
+If the worker environment itself broke (a bad image, a GPU initialisation failure), every file converted in that window is marked failed permanently, even though the files are fine. After fixing and redeploying the worker, reset one part with:
+
+```sql
+UPDATE files SET conversion_status = NULL, conversion_job_id = NULL WHERE id = '<file id>' AND converted_storage_key IS NULL;
+```
+
+Run it through the project's usual `DATABASE_URL` procedure, then reopen the file in Stiko; the viewer starts a fresh conversion.
