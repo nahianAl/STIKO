@@ -79,8 +79,10 @@ def _normals(prim, counts, indices, xf):
         per_fv = np.repeat(n, counts, axis=0)
     else:
         return None
+    if abs(np.linalg.det(xf[:3, :3])) < 1e-12:
+        return None
     # Normals transform by the inverse transpose of the upper 3x3 (row-vector convention).
-    out = per_fv @ np.linalg.inv(xf[:3, :3])
+    out = per_fv @ np.linalg.inv(xf[:3, :3]).T
     length = np.linalg.norm(out, axis=1, keepdims=True)
     length[length == 0] = 1
     return out / length
@@ -99,7 +101,12 @@ def _triangulate(counts):
 
 
 def convert(usd_path, glb_path):
-    stage = Usd.Stage.Open(usd_path)
+    try:
+        stage = Usd.Stage.Open(usd_path)
+    except Exception as e:
+        raise ConversionError(f'unreadable USD: {e}')
+    if stage is None:
+        raise ConversionError('unreadable USD')
     if UsdGeom.GetStageUpAxis(stage) != UsdGeom.Tokens.y:
         raise ConversionError('expected a Y-up stage (usd-convert-cad --up-axis y)')
     mm_per_unit = UsdGeom.GetStageMetersPerUnit(stage) * 1000.0
@@ -139,54 +146,57 @@ def convert(usd_path, glb_path):
             continue
         if UsdGeom.Imageable(prim).ComputeVisibility() == UsdGeom.Tokens.invisible:
             continue
-        mesh = UsdGeom.Mesh(prim)
-        points = mesh.GetPointsAttr().Get()
-        counts = mesh.GetFaceVertexCountsAttr().Get()
-        indices = mesh.GetFaceVertexIndicesAttr().Get()
-        if not points or not counts or not indices:
-            continue
-        points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-        counts = np.asarray(counts, dtype=np.int64)
-        indices = np.asarray(indices, dtype=np.int64)
-        xf = np.asarray(cache.GetLocalToWorldTransform(prim), dtype=np.float64)
-        world = (np.c_[points, np.ones(len(points))] @ xf)[:, :3] * mm_per_unit
-        normals = _normals(prim, counts, indices, xf)
-        colors = _face_colors(prim, len(counts))
+        try:
+            mesh = UsdGeom.Mesh(prim)
+            points = mesh.GetPointsAttr().Get()
+            counts = mesh.GetFaceVertexCountsAttr().Get()
+            indices = mesh.GetFaceVertexIndicesAttr().Get()
+            if not points or not counts or not indices:
+                continue
+            points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+            counts = np.asarray(counts, dtype=np.int64)
+            indices = np.asarray(indices, dtype=np.int64)
+            xf = np.asarray(cache.GetLocalToWorldTransform(prim), dtype=np.float64)
+            world = (np.c_[points, np.ones(len(points))] @ xf)[:, :3] * mm_per_unit
+            normals = _normals(prim, counts, indices, xf)
+            colors = _face_colors(prim, len(counts))
 
-        tri_fv, tri_face = _triangulate(counts)
-        if len(tri_fv) == 0:
-            continue
-        left_handed = mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.leftHanded
-        if np.linalg.det(xf[:3, :3]) < 0:
-            left_handed = not left_handed
-        if left_handed:
-            tri_fv = tri_fv[:, [0, 2, 1]]
+            tri_fv, tri_face = _triangulate(counts)
+            if len(tri_fv) == 0:
+                continue
+            left_handed = mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.leftHanded
+            if np.linalg.det(xf[:3, :3]) < 0:
+                left_handed = not left_handed
+            if left_handed:
+                tri_fv = tri_fv[:, [0, 2, 1]]
 
-        primitives = []
-        unique_rgb, group = np.unique(np.round(colors[tri_face], 4), axis=0, return_inverse=True)
-        group = group.reshape(-1)
-        for g, rgb in enumerate(unique_rgb):
-            fv = tri_fv[group == g].reshape(-1)
-            columns = [world[indices[fv]].astype(np.float32)]
-            if normals is not None:
-                columns.append(normals[fv].astype(np.float32))
-            uniq, inverse = np.unique(np.concatenate(columns, axis=1), axis=0, return_inverse=True)
-            inverse = inverse.reshape(-1)
-            attributes = {'POSITION': add_accessor(np.ascontiguousarray(uniq[:, :3]), 'VEC3', 5126, 34962, minmax=True)}
-            if normals is not None:
-                attributes['NORMAL'] = add_accessor(np.ascontiguousarray(uniq[:, 3:6]), 'VEC3', 5126, 34962)
-            wide = len(uniq) > 65535
-            idx = inverse.astype(np.uint32 if wide else np.uint16)
-            primitives.append({
-                'attributes': attributes,
-                'indices': add_accessor(idx, 'SCALAR', 5125 if wide else 5123, 34963),
-                'material': material_for(rgb),
-                'mode': 4,
-            })
-            total_tris += len(fv) // 3
-        body = f'Body {len(meshes) + 1}'
-        meshes.append({'name': body, 'primitives': primitives})
-        nodes.append({'name': body, 'mesh': len(meshes) - 1, 'extras': {PART_MARKER: True}})
+            primitives = []
+            unique_rgb, group = np.unique(np.round(colors[tri_face], 4), axis=0, return_inverse=True)
+            group = group.reshape(-1)
+            for g, rgb in enumerate(unique_rgb):
+                fv = tri_fv[group == g].reshape(-1)
+                columns = [world[indices[fv]].astype(np.float32)]
+                if normals is not None:
+                    columns.append(normals[fv].astype(np.float32))
+                uniq, inverse = np.unique(np.concatenate(columns, axis=1), axis=0, return_inverse=True)
+                inverse = inverse.reshape(-1)
+                attributes = {'POSITION': add_accessor(np.ascontiguousarray(uniq[:, :3]), 'VEC3', 5126, 34962, minmax=True)}
+                if normals is not None:
+                    attributes['NORMAL'] = add_accessor(np.ascontiguousarray(uniq[:, 3:6]), 'VEC3', 5126, 34962)
+                wide = len(uniq) > 65535
+                idx = inverse.astype(np.uint32 if wide else np.uint16)
+                primitives.append({
+                    'attributes': attributes,
+                    'indices': add_accessor(idx, 'SCALAR', 5125 if wide else 5123, 34963),
+                    'material': material_for(rgb),
+                    'mode': 4,
+                })
+                total_tris += len(fv) // 3
+            body = f'Body {len(meshes) + 1}'
+            meshes.append({'name': body, 'primitives': primitives})
+            nodes.append({'name': body, 'mesh': len(meshes) - 1, 'extras': {PART_MARKER: True}})
+        except IndexError:
+            raise ConversionError('malformed mesh')
 
     if not meshes:
         raise ConversionError('no visible mesh in the converted part')

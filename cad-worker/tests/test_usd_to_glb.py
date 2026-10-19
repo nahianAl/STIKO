@@ -18,13 +18,17 @@ CUBE_INDICES = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 2, 3, 7, 6, 1, 2, 6, 5, 0, 4
 
 
 def stage(tmp_path, *, mpu=0.001, up='Y', size=10.0, meshes=1, colors=None, uniform=None,
-          left=False, invisible=False, normals=True):
+          left=False, invisible=False, normals=True, rotate=None):
     path = str(tmp_path / 'in.usda')
     s = Usd.Stage.CreateNew(path)
     UsdGeom.SetStageMetersPerUnit(s, mpu)
     UsdGeom.SetStageUpAxis(s, UsdGeom.Tokens.y if up == 'Y' else UsdGeom.Tokens.z)
     for i in range(meshes):
         UsdGeom.Xform.Define(s, f'/Part/Body{i}')
+        if rotate is not None:
+            axis, deg = rotate
+            add = {'X': 'AddRotateXOp', 'Y': 'AddRotateYOp', 'Z': 'AddRotateZOp'}[axis]
+            getattr(UsdGeom.Xformable(s.GetPrimAtPath(f'/Part/Body{i}')), add)().Set(deg)
         m = UsdGeom.Mesh.Define(s, f'/Part/Body{i}/Mesh')
         m.CreatePointsAttr([Gf.Vec3f(*(c * size for c in p)) for p in CUBE_POINTS])
         m.CreateFaceVertexCountsAttr(CUBE_COUNTS)
@@ -175,3 +179,74 @@ def test_cli_exit_codes(tmp_path):
     bad_dir.mkdir()
     bad = subprocess.run([sys.executable, script, stage(bad_dir, invisible=True), str(bad_dir / 'o.glb')], capture_output=True, text=True)
     assert bad.returncode == 3 and 'no visible mesh' in bad.stderr
+
+
+def _accessor(gltf, binary, index):
+    acc = gltf['accessors'][index]
+    return acc, gltf['bufferViews'][acc['bufferView']]['byteOffset'] + acc.get('byteOffset', 0)
+
+
+def _vec3s(gltf, binary, index):
+    acc, off = _accessor(gltf, binary, index)
+    return [struct.unpack_from('<fff', binary, off + k * 12) for k in range(acc['count'])]
+
+
+def _indices(gltf, binary, index):
+    acc, off = _accessor(gltf, binary, index)
+    fmt, step = ('<I', 4) if acc['componentType'] == 5125 else ('<H', 2)
+    return [struct.unpack_from(fmt, binary, off + k * step)[0] for k in range(acc['count'])]
+
+
+def _triangles(gltf, binary):
+    """Yield (positions, normals) per triangle, each a list of three vertex tuples, in index order."""
+    for mesh in gltf['meshes']:
+        for p in mesh['primitives']:
+            pos = _vec3s(gltf, binary, p['attributes']['POSITION'])
+            nor = _vec3s(gltf, binary, p['attributes']['NORMAL'])
+            idx = _indices(gltf, binary, p['indices'])
+            for k in range(0, len(idx), 3):
+                yield [pos[i] for i in idx[k:k + 3]], [nor[i] for i in idx[k:k + 3]]
+
+
+@pytest.mark.parametrize('rotate', [('Z', 90), ('X', 90), ('Y', 45)])
+def test_normals_follow_a_rotated_part(tmp_path, rotate):
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(stage(tmp_path, rotate=rotate), out)
+    gltf, binary = read_glb(out)
+    checked = 0
+    for tri, nrm in _triangles(gltf, binary):
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri
+        ux, uy, uz = (bx - ax, by - ay, bz - az)
+        vx, vy, vz = (cx - ax, cy - ay, cz - az)
+        g = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+        n = [sum(v[i] for v in nrm) / 3 for i in range(3)]
+        assert g[0] * n[0] + g[1] * n[1] + g[2] * n[2] > 0
+        checked += 1
+    assert checked == 12
+
+
+def test_unreadable_usd_is_a_verdict(tmp_path):
+    script = os.path.join(os.path.dirname(HERE), 'usd_to_glb.py')
+    bad = tmp_path / 'bad.usdc'
+    bad.write_bytes(b'not usd')
+    r = subprocess.run([sys.executable, script, str(bad), str(tmp_path / 'o.glb')], capture_output=True, text=True)
+    assert r.returncode == 3 and 'unreadable USD' in r.stderr
+
+
+def test_out_of_range_face_index_is_malformed(tmp_path):
+    path = stage(tmp_path)
+    s = Usd.Stage.Open(path)
+    UsdGeom.Mesh.Get(s, '/Part/Body0/Mesh').GetFaceVertexIndicesAttr().Set(CUBE_INDICES[:-1] + [99])
+    s.GetRootLayer().Save()
+    with pytest.raises(usd_to_glb.ConversionError, match='malformed mesh'):
+        usd_to_glb.convert(path, str(tmp_path / 'o.glb'))
+
+
+def test_singular_transform_has_no_normals(tmp_path):
+    path = stage(tmp_path)
+    s = Usd.Stage.Open(path)
+    UsdGeom.Xformable(s.GetPrimAtPath('/Part/Body0')).AddScaleOp().Set(Gf.Vec3f(0, 0, 0))
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(path, out)
+    assert all('NORMAL' not in p['attributes'] for p in read_glb(out)[0]['meshes'][0]['primitives'])
