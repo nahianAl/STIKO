@@ -10,10 +10,11 @@ import type { MarkupSelection, ToolType } from '@/components/markup/useAnnotatio
 import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
 import type { LengthUnit } from '@/lib/measure/units';
-import { MODEL_FORMATS } from '@/lib/fileFormats';
 import { viewerKindFor } from '@/lib/drawingConversion';
+import { isPendingCad, opensAsModel } from '@/lib/cadConversion';
 import ImageViewer, { type ContentTransform } from './ImageViewer';
 import VideoViewer from './VideoViewer';
+import CadPreparer from './CadPreparer';
 import dynamic from 'next/dynamic';
 
 const PDFKonvaViewer = dynamic(() => import('./PDFKonvaViewer'), { ssr: false });
@@ -120,8 +121,8 @@ interface ViewerContainerProps {
   /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
   onPageChange?: (page: number) => void;
   /**
-   * DWG/DXF only: the drawing's PDF now exists; the parent records it on the file. Required:
-   * without it the viewer would keep showing "Preparing drawing…" over a PDF that exists.
+   * DWG/DXF and SolidWorks parts: the converted PDF or GLB now exists; the parent records it on
+   * the file. Required: without it the viewer would keep showing the preparing state.
    */
   onDrawingConverted: (fileId: string, convertedStorageKey: string) => void;
 }
@@ -131,7 +132,6 @@ interface ViewerContainerProps {
 // in app/portal/[id]/page.tsx. Do not fork a second copy of this list there.
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
-const MODEL_EXTENSIONS = MODEL_FORMATS.map((ext) => `.${ext}`);
 
 function getExtension(filename: string): string {
   const idx = filename.lastIndexOf('.');
@@ -160,12 +160,14 @@ export default function ViewerContainer({
   const viewerKey = file.convertedStorageKey ?? file.storageKey;
   // A DWG/DXF is shown through its converted PDF; until that exists it is 'drawing'.
   const kind = viewerKindFor(file.filename, file.convertedStorageKey);
+  // A .sldprt is shown through its GLB; until that exists it is a pending part.
+  const pendingCad = isPendingCad(file.filename, file.convertedStorageKey);
 
   // Fetch presigned URL
   useEffect(() => {
     setUrl(null);
     setError(false);
-    if (kind === 'drawing') return;
+    if (kind === 'drawing' || pendingCad) return;
 
     fetch(`/api/files/url?key=${encodeURIComponent(viewerKey)}`)
       .then(res => {
@@ -174,7 +176,7 @@ export default function ViewerContainer({
       })
       .then(data => setUrl(data.url))
       .catch(() => setError(true));
-  }, [viewerKey, kind]);
+  }, [viewerKey, kind, pendingCad]);
 
   // Two dead ends that no viewer will ever report on: we could not get a URL,
   // or nothing here can open this format. Both are finished states, so release
@@ -184,7 +186,8 @@ export default function ViewerContainer({
     IMAGE_EXTENSIONS.includes(ext) ||
     VIDEO_EXTENSIONS.includes(ext) ||
     kind !== 'other' ||
-    MODEL_EXTENSIONS.includes(ext);
+    opensAsModel(file.filename, file.convertedStorageKey) ||
+    pendingCad;
   useEffect(() => {
     if (error || !isViewable) onReady?.();
   }, [error, isViewable, onReady]);
@@ -192,6 +195,17 @@ export default function ViewerContainer({
   if (kind === 'drawing') {
     return (
       <DrawingPreparer
+        key={file.id}
+        fileId={file.id}
+        onConverted={(convertedKey) => onDrawingConverted(file.id, convertedKey)}
+        onReady={onReady}
+      />
+    );
+  }
+
+  if (pendingCad) {
+    return (
+      <CadPreparer
         key={file.id}
         fileId={file.id}
         onConverted={(convertedKey) => onDrawingConverted(file.id, convertedKey)}
@@ -248,7 +262,7 @@ export default function ViewerContainer({
       />
     );
   }
-  if (MODEL_EXTENSIONS.includes(ext)) {
+  if (opensAsModel(file.filename, file.convertedStorageKey)) {
     return (
       // key={viewerKey}: forces a remount on file switch instead of relying on
       // the `!url` gate above to unmount the failed boundary first — a future

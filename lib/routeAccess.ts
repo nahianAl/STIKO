@@ -26,6 +26,10 @@ export const PUBLIC_PATHS = [
   '/api/invite/',
   '/api/auth',
   '/api/conversions/webhook',
+  // The CAD worker's result (cad-worker/ on Modal). No session: the handler checks an HMAC
+  // token bound to the file and its current claim (lib/cadWorkerToken.ts).
+  // PREFIX MATCH: also exempts anything later added under this path; such a route must check its own credentials.
+  '/api/conversions/cad-callback',
   '/api/files',
   // PREFIX MATCH — this also exempts /api/comments/attachments, which mints
   // presigned R2 write URLs. That subroute had no auth() call of its own for a

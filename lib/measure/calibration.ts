@@ -41,6 +41,8 @@ export function assumedMmPerUnit(filename: string): number | null {
     case 'stp':
     case 'igs':
     case 'iges':
+    // The CAD worker writes SolidWorks parts in millimetres whatever unit they were drawn in.
+    case 'sldprt':
       return 1;
     case 'glb':
     case 'gltf':

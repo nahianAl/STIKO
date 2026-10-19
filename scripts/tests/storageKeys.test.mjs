@@ -10,6 +10,7 @@ import {
   uploadStorageKey,
   isAllowedCommentKey,
   drawingPdfKey,
+  cadGlbKey,
 } from '../../lib/storageKeys.ts';
 
 test('the variant key replaces the extension of the last segment', () => {
@@ -164,4 +165,9 @@ test('a drawing PDF sits beside its original with a .drawing.pdf suffix', () => 
   assert.equal(drawingPdfKey('uploads/p/po/v/abc-123.dwg'), 'uploads/p/po/v/abc-123.drawing.pdf');
   assert.equal(drawingPdfKey('uploads/p/po/v/abc-123.DXF'), 'uploads/p/po/v/abc-123.drawing.pdf');
   assert.equal(drawingPdfKey('uploads/p.1/po/v/abc-123'), 'uploads/p.1/po/v/abc-123.drawing.pdf');
+});
+
+test('a SolidWorks part\'s GLB sits beside it with the full original name', () => {
+  assert.equal(cadGlbKey('uploads/p/po/v/abc-123.sldprt'), 'uploads/p/po/v/abc-123.sldprt.glb');
+  assert.equal(cadGlbKey('uploads/p/po/v/abc-123.SLDPRT'), 'uploads/p/po/v/abc-123.SLDPRT.glb');
 });
