@@ -28,7 +28,7 @@ modal deploy cad-worker/app.py
 modal run cad-worker/app.py::smoke --samples DIR_OF_SLDPRT --out DIR_FOR_GLB
 ```
 
-`smoke` converts every `*.sldprt` in `DIR_OF_SLDPRT` through the deployed image and prints one line per file with the seconds taken, or the error. It uses no storage and no callback.
+`smoke` converts every `.sldprt` in `DIR_OF_SLDPRT` (any letter case) and prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
 
 ## The secret
 
@@ -48,6 +48,10 @@ modal secret create stiko-cad-worker --force \
 modal deploy cad-worker/app.py
 ```
 
+A secret passed on the command line lands in your shell history. Prefer `--from-dotenv PATH` with a `.env` file kept outside the repo, or read the value from a file with `CAD_WORKER_SECRET="$(cat PATH)"`.
+
+Only the `start` endpoint gets this secret. The GPU conversion job runs without any secrets, because it parses untrusted CAD files.
+
 Redeploy after changing the secret so running containers pick it up.
 
 ## Licence terms in use
@@ -57,7 +61,7 @@ The converter is governed by the NVIDIA Software License Agreement and the Produ
 - §1.1.2.1: the software is offered as a service on leased infrastructure (Modal).
 - §8.15: Omniverse runs only on NVIDIA platforms, so the conversion function is pinned to `gpu='T4'`. Never run it on a CPU-only host.
 - §1.7: the notice text is in `NOTICE`. NVIDIA may ask by email for monthly use reports; the Modal dashboard has the call counts.
-- §11.1.3: telemetry is disabled in the image (`OMNI_TELEMETRY_DISABLE=1`, `NV_TELEMETRY_DISABLE=1`).
+- §11.1.3: telemetry. The image sets three environment variables to `1`: `OMNI_TELEMETRY_DISABLE`, `NV_TELEMETRY_DISABLE` and `OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA`. NVIDIA documents `OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA` for Carbonite telemetry. We have not verified from inside the container that no telemetry is sent.
 
 Two questions are open with NVIDIA and should be answered in writing before relying on this in production:
 
@@ -67,10 +71,10 @@ Two questions are open with NVIDIA and should be answered in writing before rely
 ## Tests
 
 ```bash
-/tmp/cadworker-venv/bin/python -m pytest -q cad-worker/tests
+python -m pytest -q cad-worker/tests
 ```
 
-The venv needs `cad-worker/requirements-dev.txt`. The tests cover the job logic and the USD to GLB writer; they do not touch Modal.
+Run it in a venv with `cad-worker/requirements-dev.txt` installed (e.g. `/tmp/cadworker-venv`). The tests cover the job logic and the USD to GLB writer; they do not touch Modal.
 
 ## Logs
 
