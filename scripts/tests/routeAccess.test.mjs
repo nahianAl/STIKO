@@ -57,3 +57,8 @@ test('the login redirect carries the requested path', () => {
 test('the old drawing converter path has no exemption', () => {
   assert.equal(routeDecision('/api/convert_drawing', false), 'login');
 });
+
+test('the CAD worker callback is public; its handler checks the token itself', () => {
+  assert.equal(routeDecision('/api/conversions/cad-callback', false), 'pass');
+  assert.equal(routeDecision('/api/conversions/other', false), 'login');
+});
