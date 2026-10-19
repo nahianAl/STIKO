@@ -87,3 +87,42 @@ export function framingForRadius(
 
   return { distance, near, far, minDistance: r * MIN_DISTANCE_FACTOR, maxDistance };
 }
+
+/**
+ * How much of the empty gap between the camera and the scene's bounding sphere the near plane
+ * may claim. Not the whole gap: the transform gizmo is drawn at a constant SCREEN size, so its
+ * handles reach further toward the camera the further out you are, and the sphere is a
+ * conservative but not exact bound on everything else.
+ */
+const NEAR_GAP_FRACTION = 0.5;
+
+/**
+ * Clipping planes for the camera's CURRENT position, not the opening one.
+ *
+ * `framingForRadius` sizes near/far once, for the whole dolly range, which pins near at
+ * far / 1e5. Perspective depth precision falls off with the square of distance over near, so at
+ * full zoom-out (~40 radii away) a 24-bit depth buffer can only separate surfaces about a
+ * fifth of the model's radius apart: close faces, overlapping parts and the ground stack all
+ * lose the depth test frame by frame and flicker. Nothing lies closer to the camera than the
+ * surface of the scene's bounding sphere, so once the camera is outside it the near plane can
+ * move out into that empty gap, and the far/near ratio collapses from 1e5 to single digits.
+ *
+ * The opening values are floors, so wherever they were already right — at or inside the scene,
+ * and at the opening view — nothing changes. `far` also grows past its floor when the camera
+ * ends up further than `framingForRadius` planned for, which dolly-to-cursor can do because it
+ * moves the orbit target as well as the camera.
+ */
+export function clipPlanesForView(
+  distanceToSceneCenter: number,
+  sceneRadius: number,
+  baseNear: number,
+  baseFar: number,
+): { near: number; far: number } {
+  if (!Number.isFinite(distanceToSceneCenter) || !Number.isFinite(sceneRadius) || sceneRadius <= 0) {
+    return { near: baseNear, far: baseFar };
+  }
+  const gap = distanceToSceneCenter - sceneRadius;
+  const near = Math.max(baseNear, gap * NEAR_GAP_FRACTION);
+  const far = Math.max(baseFar, distanceToSceneCenter + sceneRadius);
+  return { near, far };
+}

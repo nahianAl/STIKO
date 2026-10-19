@@ -10,6 +10,7 @@ import { paletteForComment } from '@/lib/commentColors';
 import { getInitials } from '@/lib/initials';
 import { formatFileSize } from '@/lib/versionDetail';
 import { preserveIfUnchanged } from '@/lib/portalActivity';
+import { formatVideoTimestamp } from '@/lib/videoTimestamp';
 import MentionInput from '@/components/portal/MentionInput';
 import MentionText from '@/components/portal/MentionText';
 import type { MentionablePerson } from '@/lib/mentions';
@@ -17,6 +18,8 @@ import type { MentionablePerson } from '@/lib/mentions';
 interface CommentsPanelProps {
   fileId: string | null;
   onCommentClick?: (comment: Comment) => void;
+  /** A video comment's time chip was clicked: play the video from that moment. */
+  onSeekTimestamp?: (comment: Comment) => void;
   activeCommentId?: string | null;
   refreshKey?: number;
   collapsed?: boolean;
@@ -330,6 +333,7 @@ function CommentItem({
   currentUserId,
   onChanged,
   people,
+  onSeekTimestamp,
 }: {
   comment: Comment;
   replies: Comment[];
@@ -346,6 +350,7 @@ function CommentItem({
   currentUserId: string | null;
   onChanged?: () => void;
   people: MentionablePerson[];
+  onSeekTimestamp?: (comment: Comment) => void;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -397,6 +402,19 @@ function CommentItem({
             <span title={`Tag ${tagNumber}`} className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex-shrink-0" style={{ background: pal.swatch, color: pal.dark }}>
               {tagNumber}
             </span>
+          )}
+          {/* Only video comments carry a timestamp: a pin or markup made on a video records the
+              playhead it was made at. */}
+          {comment.timestamp != null && onSeekTimestamp && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onSeekTimestamp(comment); }}
+              title="Play from here"
+              className="inline-flex items-center gap-1 h-[18px] px-1.5 rounded-full bg-stiko-tint text-stiko-primary text-[10px] font-bold tabular-nums flex-shrink-0 hover:brightness-95 transition-[filter]"
+            >
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden><path d="M1.5 0.8v6.4L7 4z" /></svg>
+              {formatVideoTimestamp(comment.timestamp)}
+            </button>
           )}
           <span className="text-[10px] text-stiko-faint ml-auto flex-shrink-0">{timeAgo(comment.createdAt)}</span>
         </div>
@@ -510,7 +528,7 @@ function CommentItem({
 
 // ── Main panel ─────────────────────────────────────────────
 
-export default function CommentsPanel({ fileId, onCommentClick, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged, mentionable }: CommentsPanelProps) {
+export default function CommentsPanel({ fileId, onCommentClick, onSeekTimestamp, activeCommentId, refreshKey, collapsed, onToggleCollapse, composer, onViewImage, onCommentsChanged, mentionable }: CommentsPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorName, setAuthorName] = useState('Anonymous');
@@ -700,6 +718,7 @@ export default function CommentsPanel({ fileId, onCommentClick, activeCommentId,
               currentUserId={currentUserId}
               onChanged={onCommentsChanged}
               people={mentionable ?? []}
+              onSeekTimestamp={onSeekTimestamp}
             />
           ))
         )}

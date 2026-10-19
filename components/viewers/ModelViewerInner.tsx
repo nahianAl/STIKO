@@ -21,7 +21,8 @@ import { repairExporterDefaults } from '@/lib/model/repairMaterials';
 import { buildPartTree, cascadeToDescendants, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
 import { autoColors } from '@/lib/model/autoColor';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
-import { framingForRadius } from '@/lib/cameraFraming';
+import { clipPlanesForView, framingForRadius } from '@/lib/cameraFraming';
+import { sceneScaleForRadius } from '@/lib/sceneScale';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
 import { isPointerOverGizmo } from '@/lib/gizmoLayout';
 import { IDENTITY_TRANSFORM, isValidTransform, modelToWorld, worldToModel, type ObjectTransform } from '@/lib/objectTransform';
@@ -1315,6 +1316,72 @@ function ApplyFocalLength({ focalLength }: { focalLength: number }) {
   return null;
 }
 
+/** Headroom on the scene's bounding sphere — see TrackClipPlanes. */
+const SCENE_SPHERE_HEADROOM = 1.5;
+
+/**
+ * Moves the near/far planes with the camera every frame, so zooming far out does not flicker.
+ *
+ * FitCameraToModel's planes suit the opening view, but their near is fixed at far / 1e5, and
+ * at full zoom-out that leaves the depth buffer too coarse to separate nearby surfaces — see
+ * `clipPlanesForView`. This keeps FitCameraToModel's values as floors and only ever moves near
+ * out into empty space in front of the scene.
+ *
+ * The sphere has to hold everything drawn, not just the model: the ground disc (4 radii, and
+ * NOT under the placement transform) and the model wherever its saved placement has moved it.
+ * So it is the ground's circle widened to reach the placed model's own sphere, plus headroom
+ * for the screen-sized transform gizmo and the section-plane widgets.
+ *
+ * Runs at priority 0, after drei's CameraControls (priority -1) has moved the camera for this
+ * frame, so the planes are computed for the position about to be drawn.
+ */
+function TrackClipPlanes({
+  bounds,
+  transformRef,
+}: {
+  bounds: ModelBounds;
+  transformRef: React.RefObject<THREE.Object3D>;
+}) {
+  const scratch = useMemo(
+    () => ({ groundCenter: new THREE.Vector3(), modelCenter: new THREE.Vector3() }),
+    []
+  );
+
+  useFrame(({ camera, size }) => {
+    const cam = camera as THREE.PerspectiveCamera;
+    if (!cam.isPerspectiveCamera) return;
+    const { groundCenter, modelCenter } = scratch;
+
+    groundCenter.set(0, bounds.center.y - bounds.height / 2, 0);
+    // bounds.center was measured with the placement zeroed, so it is in transformRef's local
+    // frame; its world matrix carries it to wherever the model sits now.
+    modelCenter.copy(bounds.center);
+    if (transformRef.current) modelCenter.applyMatrix4(transformRef.current.matrixWorld);
+
+    const groundRadius = sceneScaleForRadius(bounds.radius).groundRadius;
+    const sceneRadius =
+      Math.max(groundRadius, groundCenter.distanceTo(modelCenter) + bounds.radius) *
+      SCENE_SPHERE_HEADROOM;
+
+    const base = framingForRadius(bounds.radius, cam.fov, size.width / size.height);
+    const { near, far } = clipPlanesForView(
+      cam.position.distanceTo(groundCenter),
+      sceneRadius,
+      base.near,
+      base.far,
+    );
+
+    // updateProjectionMatrix only on a real change: at rest this is a no-op every frame.
+    if (Math.abs(cam.near - near) > near * 1e-6 || Math.abs(cam.far - far) > far * 1e-6) {
+      cam.near = near;
+      cam.far = far;
+      cam.updateProjectionMatrix();
+    }
+  });
+
+  return null;
+}
+
 /**
  * Frames the camera on the measured model and sizes the clipping planes to it.
  *
@@ -1777,6 +1844,7 @@ export default function ModelViewerInner({
             onMeasured={handleMeasured}
           />
           {bounds && <FitCameraToModel bounds={bounds} />}
+          {bounds && <TrackClipPlanes bounds={bounds} transformRef={transformRef} />}
           {bounds && (
             <ViewerNavigation
               modelRef={modelRef}

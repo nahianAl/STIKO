@@ -8,7 +8,13 @@ import ColorPickerPopover from '@/components/markup/ColorPickerPopover';
  * The model's parts, as a pill that opens a list upward.
  *
  * Collapsed by default and built to match FocalLengthControl beside it: opens upward because
- * the row it sits in is anchored items-end, and closes on an outside pointerdown or Escape.
+ * the row it sits in is anchored items-end.
+ *
+ * Controlled: the page owns `open`, because opening this panel also collapses the submissions
+ * sidebar to give the viewport room, and closing it brings the sidebar back. For the same
+ * reason it does NOT close on an outside pointerdown, unlike FocalLengthControl: every orbit
+ * drag is an outside pointerdown, and each one would slide the sidebar back in and resize the
+ * viewer mid-gesture. It closes from its own button or Escape.
  *
  * The eye is available to everyone — hiding a part is a way of LOOKING at a model, session
  * only, exactly as a cross-section plane's pose is. The colour pill writes to the server and
@@ -46,6 +52,8 @@ export default function PartsPanel({
   canColor,
   revealKey,
   revealToken,
+  open,
+  onOpenChange,
   onToggleVisibility,
   onSetColor,
   onHoverPart,
@@ -68,17 +76,17 @@ export default function PartsPanel({
    * still doesn't force a redundant rescroll to a row already in view.
    */
   revealToken: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onToggleVisibility: (key: string) => void;
   onSetColor: (key: string, color: string | null) => void;
   /** `null` on mouse-out. Drives the viewport highlight. */
   onHoverPart: (key: string | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [picking, setPicking] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   // A different model loaded: `parts` is memoized upstream on the loaded model, so its identity
@@ -99,26 +107,19 @@ export default function PartsPanel({
     if (listRef.current) listRef.current.scrollTop = 0;
   }, [parts]);
 
-  // Same dismissal contract as FocalLengthControl, so the two pills behave identically.
+  // Escape only — see the component doc for why an outside click does not dismiss this one.
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       // Escape closes the picker first, then the panel — otherwise dismissing a colour choice
       // takes the whole list with it.
       if (picking) setPicking(null);
-      else setOpen(false);
+      else onOpenChange(false);
     };
-    document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, picking]);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, picking, onOpenChange]);
 
   const hidden = useMemo(() => new Set(hiddenParts), [hiddenParts]);
 
@@ -178,7 +179,7 @@ export default function PartsPanel({
   // becomes the index into the list.
   useEffect(() => {
     if (!revealKey) return;
-    setOpen(true);
+    onOpenChange(true);
     setQuery('');
     // Expand every ancestor, or the row is inside a collapsed branch and cannot be scrolled to.
     setCollapsed((prev) => {
@@ -188,10 +189,13 @@ export default function PartsPanel({
       return next;
     });
     // revealToken, not just revealKey: see this prop's own doc comment above. Re-running on a
-    // repeat key still calls setOpen(true)/expands ancestors, both idempotent when already
+    // repeat key still calls onOpenChange(true)/expands ancestors, both idempotent when already
     // true/expanded, so the only observable effect of a repeat pick while already open is
     // clearing the search box — an acceptable, arguably desirable side effect of a deliberate
     // "show me this part" action.
+    // onOpenChange is deliberately left out: it is a page callback, and a new identity must
+    // never re-run a reveal the user did not ask for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealKey, revealToken]);
 
   // Separate effect, and after the one above: the row only exists once its ancestors are
@@ -240,7 +244,7 @@ export default function PartsPanel({
   };
 
   return (
-    <div ref={rootRef} className="relative select-none">
+    <div className="relative select-none">
       {open && (
         <div className="mb-1.5 w-72 overflow-hidden rounded-panel bg-white shadow-stiko-sheet border border-stiko-border">
           {flatCount > MAX_VISIBLE_ROWS && (
@@ -336,7 +340,7 @@ export default function PartsPanel({
       )}
 
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onOpenChange(!open)}
         aria-expanded={open}
         className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs shadow-stiko-sheet border border-stiko-border"
       >

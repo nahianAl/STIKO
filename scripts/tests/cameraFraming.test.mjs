@@ -98,3 +98,47 @@ test('a degenerate model still gets a usable minDistance', () => {
     assert.ok(f.near < f.minDistance, `radius ${bad}: near ${f.near} would clip at min zoom-in`);
   }
 });
+
+// ---- clipPlanesForView: the zoom-out flicker ----
+import { clipPlanesForView } from '../../lib/cameraFraming.ts';
+
+// Perspective depth step at distance z for a 24-bit buffer, ~ z^2 / (near * 2^24).
+const depthStep = (z, near) => (z * z) / (near * 2 ** 24);
+
+test('clip planes: at the opening view the opening near/far stand', () => {
+  const r = 10;
+  const f = framingForRadius(r, 37.849, LANDSCAPE);
+  // Scene sphere 6r (ground stack + headroom) contains the camera at the opening distance.
+  const p = clipPlanesForView(f.distance, r * 6, f.near, f.far);
+  assert.equal(p.near, f.near);
+  assert.equal(p.far, f.far);
+});
+
+test('clip planes: fully zoomed out, depth precision is fine enough to stop z-fighting', () => {
+  const r = 10;
+  const f = framingForRadius(r, 37.849, LANDSCAPE);
+  const d = f.maxDistance;
+  // The flicker: with the opening near, the depth step at the model is a large share of r.
+  assert.ok(depthStep(d, f.near) > r * 0.05, 'precondition: the old planes really are coarse');
+  const p = clipPlanesForView(d, r * 6, f.near, f.far);
+  assert.ok(depthStep(d, p.near) < r * 1e-4, `step ${depthStep(d, p.near)} still coarse`);
+  // And nothing in the scene sphere is clipped.
+  assert.ok(p.near < d - r * 6, 'near must stay in front of the scene');
+  assert.ok(p.far >= d + r * 6, 'far must reach past the scene');
+});
+
+test('clip planes: far grows when the camera ends up past the planned maximum', () => {
+  const p = clipPlanesForView(1000, 10, 0.01, 500);
+  assert.ok(p.far >= 1010);
+});
+
+test('clip planes: inside the scene sphere near never drops below its floor', () => {
+  const p = clipPlanesForView(3, 10, 0.01, 500);
+  assert.equal(p.near, 0.01);
+  assert.equal(p.far, 500);
+});
+
+test('clip planes: degenerate input falls back to the opening planes', () => {
+  assert.deepEqual(clipPlanesForView(NaN, 10, 0.01, 500), { near: 0.01, far: 500 });
+  assert.deepEqual(clipPlanesForView(10, 0, 0.01, 500), { near: 0.01, far: 500 });
+});
