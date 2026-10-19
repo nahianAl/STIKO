@@ -16,6 +16,7 @@ import {
   packageCountLabel,
   matchesStatFocus,
   focusGroups,
+  activityForProject,
 } from '../../lib/home.ts';
 
 const pkg = (over = {}) => ({
@@ -354,4 +355,18 @@ test('focusing narrows packages, drops empty projects and recomputes totals', ()
 test('no focus leaves the groups untouched', () => {
   const groups = groupProjects([pkg()], [proj()]);
   assert.equal(focusGroups(groups, null), groups);
+});
+
+/* ------------------------------------------------------ project activity -- */
+
+test('activity narrows to the selected project, and to nothing unattached', () => {
+  const rows = [
+    { id: '1', projectId: 'A' },
+    { id: '2', projectId: 'B' },
+    { id: '3', projectId: null },
+    { id: '4', projectId: 'A' },
+  ];
+  assert.deepEqual(activityForProject(rows, 'A').map((r) => r.id), ['1', '4']);
+  assert.deepEqual(activityForProject(rows, 'Z'), []);
+  assert.equal(activityForProject(rows, null), rows);
 });

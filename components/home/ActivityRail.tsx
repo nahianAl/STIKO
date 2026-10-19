@@ -26,6 +26,7 @@ export default function ActivityRail({
   summary,
   focus,
   onFocusChange,
+  scope,
   onChanged,
   onCollapse,
 }: {
@@ -34,6 +35,8 @@ export default function ActivityRail({
   packages: PackageCard[];
   focus: StatFocus | null;
   onFocusChange: (focus: StatFocus | null) => void;
+  /** The selected project, when the feed is narrowed to it. */
+  scope: { projectId: string; name: string; loaded: boolean } | null;
   railOpen: boolean;
   summary: React.ReactNode;
   onChanged: () => void;
@@ -70,6 +73,7 @@ export default function ActivityRail({
           packages={packages}
           focus={focus}
           onFocusChange={onFocusChange}
+          scope={scope}
           onChanged={onChanged}
           onCollapse={onCollapse}
         />

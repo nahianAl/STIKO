@@ -341,6 +341,19 @@ function startOfLocalDay(ms: number): number {
  * Recency buckets for the feed. Generic over `{ createdAt }` so lib/ does not
  * have to import a type that lives in a component.
  */
+/**
+ * The rows that belong to one project, or every row when none is selected. Used for the instant
+ * first paint when a project is selected; the server's own project-scoped list replaces it once
+ * it arrives, since the dashboard's global list is capped and can miss a quiet project's rows.
+ */
+export function activityForProject<T extends { projectId: string | null }>(
+  rows: T[],
+  projectId: string | null
+): T[] {
+  if (projectId === null) return rows;
+  return rows.filter((r) => r.projectId === projectId);
+}
+
 export function groupActivity<T extends { createdAt: string }>(
   rows: T[],
   now: number = Date.now()

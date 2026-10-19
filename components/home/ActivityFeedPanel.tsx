@@ -27,6 +27,7 @@ export default function ActivityFeedPanel({
   packages,
   focus,
   onFocusChange,
+  scope,
   onChanged,
   onCollapse,
 }: {
@@ -39,6 +40,17 @@ export default function ActivityFeedPanel({
   /** The tile currently filtering the dashboard, if any. */
   focus: StatFocus | null;
   onFocusChange: (focus: StatFocus | null) => void;
+  /**
+   * Set while a project is selected: `notifications` is then that project's activity only, and
+   * Mark all read covers just those rows. The tiles stay dashboard-wide — they are filters for
+   * the grid, and a tile click clears the selection anyway.
+   */
+  scope: {
+    projectId: string;
+    name: string;
+    /** False while the rows are still the instant local slice, before the server's list lands. */
+    loaded: boolean;
+  } | null;
   onChanged: () => void;
   onCollapse: () => void;
 }) {
@@ -63,7 +75,7 @@ export default function ActivityFeedPanel({
     await fetch('/api/notifications', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ all: true }),
+      body: JSON.stringify(scope ? { all: true, projectId: scope.projectId } : { all: true }),
     }).catch(() => {});
     onChanged();
   };
@@ -73,8 +85,14 @@ export default function ActivityFeedPanel({
       <div className="flex shrink-0 items-center justify-between gap-[10px] border-b border-stiko-border px-4 py-[14px]">
         <div className="min-w-0">
           <h2 className="text-[15px] font-extrabold text-stiko-ink">Activity</h2>
-          <p className="mt-[2px] text-[11.5px] text-stiko-muted">
-            Everything, newest first
+          <p className="mt-[2px] truncate text-[11.5px] text-stiko-muted">
+            {scope ? (
+              <>
+                <span className="font-bold text-stiko-secondary">{scope.name}</span> only, newest first
+              </>
+            ) : (
+              'Everything, newest first'
+            )}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -124,6 +142,13 @@ export default function ActivityFeedPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[14px] pt-[6px]">
+        {/* Only once the server has answered: the local slice can be empty for a project whose
+            activity simply fell outside the global list's newest 50. */}
+        {scope?.loaded && groups.length === 0 && (
+          <p className="px-1 pt-6 text-center text-[12px] text-stiko-faint">
+            Nothing has happened on {scope.name} yet.
+          </p>
+        )}
         {groups.map((group) => (
           <div key={group.label} className="pt-[10px]">
             <div className="px-1 pb-[6px] text-[10px] font-bold uppercase tracking-label text-stiko-faint">

@@ -18,6 +18,7 @@ import AvatarMenu from '@/components/shell/AvatarMenu';
 import CommandPalette from '@/components/shell/CommandPalette';
 import { DISCLOSURE, type DisclosureState } from '@/lib/disclosure';
 import {
+  activityForProject,
   filterGroups,
   focusGroups,
   groupProjects,
@@ -47,6 +48,14 @@ export default function Home() {
   const [disclosure, setDisclosure] = useState<DisclosureState | null>(null);
   const [isGuestOnly, setIsGuestOnly] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  // The selected project's own activity, straight from the server — see activityForProject.
+  // Tagged with its project so a late response for a project no longer selected is ignored.
+  const [projectActivity, setProjectActivity] = useState<{
+    projectId: string;
+    rows: NotificationRow[];
+  } | null>(null);
+  // Bumped after anything marks activity read, so the project list refetches with the rest.
+  const [activityVersion, setActivityVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -169,6 +178,25 @@ export default function Home() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const reloadActivity = useCallback(() => {
+    load();
+    setActivityVersion((v) => v + 1);
+  }, [load]);
+
+  useEffect(() => {
+    if (selected === null) return;
+    let cancelled = false;
+    fetch(`/api/notifications?projectId=${encodeURIComponent(selected)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((rows: NotificationRow[] | null) => {
+        if (!cancelled && rows) setProjectActivity({ projectId: selected, rows });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, activityVersion]);
 
   // The first-run screen is also where you land after deleting your only
   // project, so the trash cannot simply be absent from it — that would strand
@@ -515,12 +543,27 @@ export default function Home() {
 
         {notifications.length > 0 && (
           <ActivityRail
-            notifications={notifications}
+            notifications={
+              selected === null
+                ? notifications
+                : projectActivity?.projectId === selected
+                  ? projectActivity.rows
+                  : activityForProject(notifications, selected)
+            }
+            scope={
+              selected === null
+                ? null
+                : {
+                    projectId: selected,
+                    name: groups.find((g) => g.project.id === selected)?.project.name ?? 'This project',
+                    loaded: projectActivity?.projectId === selected,
+                  }
+            }
             packages={filteredPackages}
             focus={activeFocus}
             onFocusChange={changeFocus}
             railOpen={railOpen}
-            onChanged={load}
+            onChanged={reloadActivity}
             onCollapse={toggleRail}
             summary={
               <ProjectSummaryPanel
