@@ -2,6 +2,11 @@
 
 **Date:** 2026-10-15
 **Status:** Approved in conversation; spec for review
+**Revised:** 2026-10-17 (final-review fix wave). The converter is its own Vercel project, built
+from `converter/` in this repo, and that folder is licensed AGPL-3.0-or-later. It parses each
+drawing in a child process with no secrets and with resource limits. The Next route calls it at
+`CAD_CONVERTER_URL`. Sections 1, 2, 3, 6, the failure table, testing and release below reflect
+this.
 
 ## Goal
 
@@ -17,19 +22,27 @@ Running cost stays at $0 and drawings never leave Stiko's own Vercel and R2.
     recognisable plots with title blocks, sections and tables.
   - **Measured:** about 2 s per sheet once hatch patterns are capped. Uncapped, one hatch
     expanded to about 3.5M line segments and took 9 minutes.
-- **Where it runs:** a Python function inside the existing Vercel project, so there is no new
-  account or bill. Rejected alternatives:
+- **Where it runs:** a Python function in a **second Vercel project** (`stiko-converter`) on the
+  same Vercel account, built from this repo with Root Directory `converter/`. There is no new
+  account or bill. It is separate from the stiko project because Vercel gives every function in a
+  project all of that project's env vars (the production DB owner password, R2 keys…), and
+  LibreDWG parses untrusted uploads. The converter project's only env var is
+  `CAD_CONVERTER_SECRET`. (The first version put it inside the stiko project.) Rejected
+  alternatives:
   - a Fly.io service (new account)
   - CloudConvert (third party, and its output is untested)
+- **Licence:** `converter/` is AGPL-3.0-or-later, because PyMuPDF is AGPL. The rest of the
+  repo is unchanged. The LibreDWG binary stays GPL-3.0-or-later, with its NOTICE and the full
+  licence text in COPYING.
 - **Look:** black lines on white, like a standard plotted sheet. Colour is out of scope.
 - **Budget:** $0. Conversions run inside the existing Vercel plan.
 
 ## Design
 
-### 1. The converter: `api/convert_drawing.py`
+### 1. The converter: `converter/api/convert_drawing.py`
 
-A Vercel Python serverless function at `/api/convert_drawing`, living in the repo root `api/`
-folder beside the Next.js app. Next's `app/api` routes are unaffected.
+A Vercel Python serverless function at `/api/convert_drawing` of its own Vercel project, whose
+Root Directory is `converter/`. The stiko project does not serve it.
 
 - **Input:** `POST` with JSON `{ "sourceUrl": str, "targetUrl": str, "filename": str }` and
   header `X-Converter-Secret`. The two URLs are presigned by the Next route, one GET and one
@@ -38,8 +51,22 @@ folder beside the Next.js app. Next's `app/api` routes are unaffected.
 - **Auth:** a constant-time comparison of that header with env var `CAD_CONVERTER_SECRET`; any
   mismatch returns 401. There is no user session here. Only Stiko's Next server calls it.
 - **Steps:**
+  0. **Isolation:** steps 2–6 run in a child process: `python _lib/drawing_pdf.py <source>
+     <out.pdf> <dwg2dxf>`. The child's environment is only `PYTHONPATH`, `PATH=/usr/bin:/bin`,
+     `HOME`/`XDG_CACHE_HOME` (a scratch directory), `LANG=C.UTF-8`, single-thread and
+     `MALLOC_ARENA_MAX=2` caps, and the two limit values. It never gets the secret. Its limits
+     are `RLIMIT_CPU` 50 s and `RLIMIT_AS` 2 GiB (Linux), which it applies to itself before
+     importing ezdxf or PyMuPDF. It runs in its own session, whose process group is killed after
+     every run. Its wall-clock timeout is what is left of one 50 s budget for the whole request
+     (download + convert + upload), never under 5 s. Both URLs must be on an allowed storage host
+     (`CONVERTER_ALLOWED_HOST_SUFFIXES`, default `.r2.cloudflarestorage.com`).
+     - Exit 0 prints the page count.
+     - Exit 2, a timeout, or death by a signal is a verdict on the drawing, so the reply is 422.
+     - Any other exit is a server fault, so the reply is 500.
   1. Download `sourceUrl` into `/tmp`. Reject anything over 50 MB.
-  2. For `.dwg`, run the bundled `api/_bin/dwg2dxf -y -o out.dxf in.dwg` with a 30 s timeout.
+  2. For `.dwg`, run the bundled `api/_bin/dwg2dxf -y -o out.dxf in.dwg` with a 30 s timeout and
+     only `PATH` in its environment. If it dies by a signal, the drawing fails even if it
+     wrote a DXF.
   3. Load with `ezdxf.recover.readfile`.
   4. **Pages:** every paper-space layout that has content, in tab order. A layout counts if it
      has any entity other than its own overall viewport. A sheet that still renders nothing
@@ -51,25 +78,26 @@ folder beside the Next.js app. Next's `app/api` routes are unaffected.
      min_hatch_line_distance=0.5, hatching_timeout=10)`.
   7. Merge the pages into one PDF and PUT it to `targetUrl` with
      `Content-Type: application/pdf`.
-- **Output:** `200 { "pages": n }`, or `422 { "error": "<reason>" }` for an unreadable or empty
-  drawing.
-- **Packaging:**
-  - `requirements.txt` pins `ezdxf` and `pymupdf`.
-  - `vercel.json` sets the function's `maxDuration: 60`, `memory: 1769` and
-    `includeFiles: "api/_bin/**"`.
-- **Code layout:** the rendering logic lives in `api/_lib/drawing_pdf.py` as pure functions
-  (bytes in, PDF bytes out), so it can be tested without R2 or HTTP. The handler file stays
-  thin.
+- **Output:** `200 { "pages": n }`; `422` for an unreadable, empty, too-slow or too-big drawing;
+  `400`, `401`, `413`, `502` or `500` otherwise. Error bodies are fixed strings.
+- **Packaging (all under `converter/`):**
+  - `requirements.txt` pins every package exactly, transitive dependencies included.
+  - `vercel.json` sets the function's `maxDuration: 60` and
+    `includeFiles: "api/{_lib,_bin}/**"`.
+  - `LICENSE` is AGPL-3.0, and each Python file carries an SPDX header.
+- **Code layout:** the rendering logic lives in `converter/api/_lib/drawing_pdf.py` as pure
+  functions plus a CLI entry point, so it can be tested without R2 or HTTP. The handler file
+  stays thin.
 
 ### 2. The DWG reader binary
 
-`api/_bin/dwg2dxf` is LibreDWG 0.14, built statically for Linux x86_64, because Vercel's Python
+`converter/api/_bin/dwg2dxf` is LibreDWG 0.14, built statically for Linux x86_64, because Vercel's Python
 runtime runs on Amazon Linux and a static binary avoids glibc mismatches.
 
 - A committed GitHub Actions workflow (`.github/workflows/build-dwg2dxf.yml`, manual trigger
   only) builds it.
-- The artifact is committed with `api/_bin/NOTICE` stating GPL-3.0, the LibreDWG version, and
-  the source URL.
+- The artifact is committed with `converter/api/_bin/NOTICE` stating GPL-3.0, the LibreDWG
+  version, and the source URL. The full GPL-3.0 text sits beside it in `COPYING`.
 - It runs server-side only and is never sent to browsers.
 
 ### 3. Triggering and status: `POST /api/files/[id]/convert-drawing`
@@ -87,12 +115,19 @@ returns a JSON 401.
       run).
   - If no row is claimed, return the current status (200) without starting a second run.
   - A `'failed'` file is not retried automatically. A new upload gets a new file id.
-  - `conversion_job_id` is otherwise unused (the CloudConvert webhook never sets it). Its new
-    meaning is documented in `lib/schema.sql` next to the column.
-- **Call:** `fetch(<origin of the incoming request>/api/convert_drawing)` with the secret.
-  - When `VERCEL_AUTOMATION_BYPASS_SECRET` is set, also send it as `x-vercel-protection-bypass`.
-    Vercel's deployment protection otherwise blocks a server-to-server call to a protected
-    preview URL.
+  - CloudConvert's old STEP→GLB trigger also set `conversion_job_id` (to its job id), and the
+    CloudConvert webhook still looks files up by it. A drawing claim always starts with
+    `drawing:`, so the two never collide. Both meanings are documented in `lib/schema.sql`
+    next to the column.
+- **Configuration:** both `CAD_CONVERTER_SECRET` and `CAD_CONVERTER_URL` must be set. The URL
+  is the converter project's production URL, for example
+  `https://stiko-converter.vercel.app/api/convert_drawing`. It must be https, or http only on
+  localhost. Otherwise the route answers 503 before claiming anything and logs what is
+  missing.
+- **Call:** `fetch(CAD_CONVERTER_URL, { redirect: 'manual' })` with the secret. A redirect is
+  never followed.
+  - No deployment-protection bypass is needed: the converter project's production domain is
+    public and secret-guarded.
   - The target key is `<directory>/<stem>.drawing.pdf`, derived by a new pure helper
     `drawingPdfKey(storageKey)` in `lib/storageKeys.ts`, never taken from the client.
   - The route sets `maxDuration = 60` and the fetch times out at 55 s.
@@ -101,8 +136,14 @@ returns a JSON 401.
   - Then delete the file's `file_calibrations` rows. This is the existing obligation for anything
     that assigns `converted_storage_key`, and it tolerates its own failure, as the webhook route
     does.
-- **Failure** (non-200, timeout, network): set `conversion_status = 'failed'` and log the
-  reason.
+- **Completed** only for a 200 whose JSON body has `pages` as a number > 0. A 200 without that
+  is treated as a transient error.
+- **Failed** (`'failed'`, never retried) only for 413 or 422, which are verdicts on the drawing.
+- **Transient** (any other status, a redirect, a network error, a presign throw): release the
+  claim (status and job id back to NULL), log the reason and answer 503.
+- **Timeout** (no answer within 55 s): keep the claim as `'processing'` and answer 503. The
+  next attempt waits until the claim is stale (3 minutes), so a slow drawing is not converted
+  again on every open.
 - **Response:** `{ conversionStatus, convertedStorageKey }`.
 
 `GET /api/files/[id]/conversion-status` gains the same `auth()` and view-access check. It
@@ -137,18 +178,19 @@ In `ViewerContainer`, a drawing is a file whose ORIGINAL filename ends in `.dwg`
 
 ### 6. Middleware
 
-Add `'/api/convert_drawing'` to `PUBLIC_PATHS` in `lib/routeAccess.ts`, with a comment that the
-endpoint authenticates by secret, not session. Without it, the server-to-server call is
-redirected to `/login`.
+No change. The stiko app no longer serves `/api/convert_drawing`, so it gets no middleware
+exemption. (The first version exempted it, back when the converter lived in this project.)
 
 ## Failure behaviour
 
 | Case | Result |
 |---|---|
-| Unreadable DWG, `dwg2dxf` timeout, or empty drawing | `422` → `'failed'` → download message |
-| Converter over time, or any network error | the Next route marks `'failed'` |
+| Unreadable DWG, `dwg2dxf` timeout, empty drawing, or a conversion over its time budget or killed by a resource limit | `422` → `'failed'` → download message |
+| Next route's 55 s timeout fires | claim kept `'processing'`; reclaimed after 3 minutes; 503 |
+| Any other status, a redirect, a 200 without pages, or a network error | claim released; 503; a later open retries |
 | A run killed mid-way leaves `'processing'` | the next viewer reclaims it after 3 minutes |
-| `CAD_CONVERTER_SECRET` unset | every call 401s → `'failed'`; uploads are never affected |
+| `CAD_CONVERTER_SECRET` or `CAD_CONVERTER_URL` unset in stiko | 503 before claiming; no file changes; uploads are never affected |
+| `CAD_CONVERTER_SECRET` unset in the converter project | every call 401s → claim released; 503 |
 
 ## Testing
 
@@ -166,19 +208,29 @@ documented in `scripts/pytests/README.md`. Tests cover `drawing_pdf.py`:
 - `viewerKindFor`
 - the claim-staleness rule, as a pure function `claimIsStale(jobId, now)`
 
-**Preview deployment, before merging:** push the branch so Vercel builds a preview, set
-`CAD_CONVERTER_SECRET` for Preview, upload an Autodesk sample DWG and a DXF there, and confirm
-both open as PDFs. Previews share the production database and R2, so use a throwaway package
-and delete it afterwards.
+The pytest suite also covers the handler end to end against a fake presigned-URL store. It
+checks the child process's exits, its timeout and signal handling, and that its environment
+holds nothing from the parent beyond the allowlist.
+
+**Preview deployment, before merging:**
+1. Create the `stiko-converter` Vercel project: Root Directory `converter`, Framework Preset
+   Other, env `CAD_CONVERTER_SECRET`.
+2. Temporarily set that project's Production Branch to `feature/dwg-dxf-as-pdf`.
+3. Give the stiko project `CAD_CONVERTER_SECRET` and `CAD_CONVERTER_URL` for Production and
+   Preview.
+4. Push the branch. Upload an Autodesk sample DWG and a DXF on the stiko preview, and confirm
+   both open as PDFs. Previews share the production database and R2, so use a throwaway package
+   and delete it afterwards.
 
 ## Release
 
-1. Set `CAD_CONVERTER_SECRET` for Production in Vercel.
+1. Confirm the stiko project has `CAD_CONVERTER_SECRET` and `CAD_CONVERTER_URL` for Production.
 2. Merge and push.
-3. Open an existing, previously unviewable DWG to confirm on-view conversion.
+3. Switch the converter project's Production Branch back to `main` and redeploy it from `main`.
+4. Open an existing, previously unviewable DWG to confirm on-view conversion.
 
 **Rollback:** revert the merge. Files already converted keep a harmless `.drawing.pdf` beside
-them.
+them. The converter project can stay; nothing calls it once the route is gone.
 
 No migration.
 

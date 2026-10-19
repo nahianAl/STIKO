@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { FileWithPath } from '@/components/ui/FileDropzone';
 import type { UploadItem } from '@/components/ui/UploadProgress';
 import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptimize';
+import { isDrawingFilename } from '@/lib/drawingConversion';
 import {
   MAX_UPLOAD_ATTEMPTS,
   REQUEST_TIMEOUT_MS,
@@ -248,6 +249,14 @@ export function useUpload() {
           }),
         });
         if (!completeRes.ok) throw new Error('Could not register the file');
+
+        // DWG/DXF: start the PDF conversion now so it is usually ready before anyone opens
+        // the file. Nothing waits on it; the viewer triggers it again if this is lost.
+        if (isDrawingFilename(entry.file.name)) {
+          fetch(`/api/files/${fileId}/convert-drawing`, { method: 'POST', keepalive: true }).catch(
+            () => {}
+          );
+        }
 
         patch(entry.path, { state: 'done', progress: 100 });
         return true;

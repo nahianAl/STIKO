@@ -51,3 +51,9 @@ test('a signed-in visitor passes everywhere', () => {
 test('the login redirect carries the requested path', () => {
   assert.equal(loginRedirectPath('/settings/account'), '/login?callbackUrl=%2Fsettings%2Faccount');
 });
+
+// The DWG/DXF converter is its own Vercel project (converter/), called server-to-server at
+// CAD_CONVERTER_URL. The main app serves nothing at this path, so it gets no exemption.
+test('the old drawing converter path has no exemption', () => {
+  assert.equal(routeDecision('/api/convert_drawing', false), 'login');
+});

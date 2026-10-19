@@ -1,0 +1,159 @@
+# Verifies the committed static converter/api/_bin/dwg2dxf on Amazon Linux 2023 (Vercel's Python runtime)
+# against an ubuntu-22.04 runner (where it was built, so glibc's gconv modules match).
+# A statically linked glibc dlopens non-builtin charset modules from its compiled-in gconv path,
+# which does not exist on Amazon Linux, so this runs codepage-era DWGs (R13-R2007, incl. ones with
+# CP1250/CP1252 text) through the binary in both places and fails on iconv/gconv errors, empty
+# output, or any difference in the DXFs.
+# To run: push to branch ci/verify-dwg2dxf (or dispatch manually).
+name: Verify dwg2dxf
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ci/verify-dwg2dxf']
+permissions:
+  contents: read
+env:
+  # Run from the repo root with the extracted LibreDWG test data at ./libredwg-0.14.
+  CONVERT_SCRIPT: |
+    set -u
+    T=libredwg-0.14/test/test-data
+    mkdir -p out
+    test -x converter/api/_bin/dwg2dxf
+    converter/api/_bin/dwg2dxf --version
+    fail=0
+    n_files=0
+    for f in $T/example_r13.dwg $T/example_r14.dwg $T/example_2000.dwg $T/example_2004.dwg \
+             $T/example_2007.dwg $T/r14/*.dwg $T/2000/*.dwg $T/2004/*.dwg $T/2007/*.dwg; do
+      test -f "$f" || { echo "MISSING $f"; fail=1; continue; }
+      n_files=$((n_files + 1))
+      name=$(echo "${f#$T/}" | tr / _); name=${name%.dwg}
+      rc=0
+      timeout 60 converter/api/_bin/dwg2dxf -y -o "out/$name.dxf" "$f" 2> "out/$name.err" || rc=$?
+      echo "$rc" > "out/$name.rc"
+      size=$(stat -c %s "out/$name.dxf" 2>/dev/null || echo 0)
+      echo "$name rc=$rc dxf_bytes=$size"
+      if grep -iE 'iconv|gconv' "out/$name.err"; then echo "FAIL $name: iconv/gconv on stderr"; fail=1; fi
+      if [ "$size" -eq 0 ]; then echo "FAIL $name: empty or missing DXF"; fail=1; fi
+      if [ "$rc" -ge 124 ]; then echo "FAIL $name: timeout or crash (rc=$rc)"; fail=1; fi
+    done
+    echo "converted $n_files files"
+    [ "$n_files" -ge 60 ] || { echo "FAIL: expected at least 60 DWGs, got $n_files"; fail=1; }
+    # Production writes each DXF in its source version, so pre-2007 text stays in its codepage and
+    # iconv is never called. --as r2007 forces every codepage string through iconv (CP1252 -> UTF-8),
+    # the exact path a missing gconv module would break, so it is checked the same way.
+    n_as=0
+    for f in $T/example_r13.dwg $T/example_r14.dwg $T/example_2000.dwg $T/example_2004.dwg              $T/r14/*.dwg $T/2000/*.dwg $T/2004/*.dwg; do
+      n_as=$((n_as + 1))
+      name=as2007_$(echo "${f#$T/}" | tr / _); name=${name%.dwg}
+      rc=0
+      timeout 60 converter/api/_bin/dwg2dxf -y --as r2007 -o "out/$name.dxf" "$f" 2> "out/$name.err" || rc=$?
+      echo "$rc" > "out/$name.rc"
+      size=$(stat -c %s "out/$name.dxf" 2>/dev/null || echo 0)
+      echo "$name rc=$rc dxf_bytes=$size"
+      if grep -iE 'iconv|gconv' "out/$name.err"; then echo "FAIL $name: iconv/gconv on stderr"; fail=1; fi
+      if [ "$size" -eq 0 ]; then echo "FAIL $name: empty or missing DXF"; fail=1; fi
+      if [ "$rc" -ge 124 ]; then echo "FAIL $name: timeout or crash (rc=$rc)"; fail=1; fi
+    done
+    echo "converted $n_as files with --as r2007"
+    exit $fail
+  FETCH_SCRIPT: |
+    set -eu
+    curl -fsSL https://ftpmirror.gnu.org/libredwg/libredwg-0.14.tar.gz -o libredwg.tar.gz
+    echo "cb6ee0b078c6d9e0f09d66f1feac33ba6342df88ae544e9f9335fab475218351  libredwg.tar.gz" | sha256sum -c
+    tar xzf libredwg.tar.gz libredwg-0.14/test/test-data
+  # Shows whether the binary even tries to load gconv modules (and from where) on these files.
+  TRACE_SCRIPT: |
+    T=libredwg-0.14/test/test-data
+    for args in "$T/example_2000.dwg" "$T/2000/TS1.dwg" "$T/2007/ATMOS-DC22S.dwg" \
+                "--as r2007 $T/2000/TS1.dwg" "--as r2007 $T/example_2004.dwg"; do
+      echo "== $args"
+      strace -f -e trace=open,openat,stat,newfstatat -o trace.txt converter/api/_bin/dwg2dxf -y -o trace.dxf $args 2>/dev/null || true
+      echo "traced $(wc -l < trace.txt) file syscalls; input opened: $(grep -c '\.dwg"' trace.txt)"
+      grep -iE 'gconv|iconv|locale' trace.txt || echo "(no gconv/locale file access)"
+    done
+jobs:
+  amazonlinux:
+    runs-on: ubuntu-22.04
+    container: amazonlinux:2023
+    steps:
+      - name: Tools
+        run: dnf install -y -q git tar gzip findutils diffutils strace
+      - uses: actions/checkout@v4
+      - name: Fetch and verify LibreDWG 0.14 test data
+        run: bash -c "$FETCH_SCRIPT"
+      - name: Environment
+        run: |
+          cat /etc/os-release | head -3
+          (ldd --version 2>&1 || true) | head -1
+          ls -d /usr/lib/x86_64-linux-gnu/gconv /usr/lib64/gconv 2>&1 || true
+          ls -l converter/api/_bin/dwg2dxf
+          sha256sum converter/api/_bin/dwg2dxf
+      - name: gconv access trace (informational)
+        run: bash -c "$TRACE_SCRIPT"
+      - name: Convert
+        run: bash -c "$CONVERT_SCRIPT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: out-amazonlinux
+          path: out
+  ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Tools
+        run: sudo apt-get install -y -qq strace
+      - uses: actions/checkout@v4
+      - name: Fetch and verify LibreDWG 0.14 test data
+        run: bash -c "$FETCH_SCRIPT"
+      - name: Environment
+        run: |
+          cat /etc/os-release | head -3
+          ldd --version | head -1
+          ls -d /usr/lib/x86_64-linux-gnu/gconv /usr/lib64/gconv 2>&1 || true
+          sha256sum converter/api/_bin/dwg2dxf
+      - name: gconv access trace (informational)
+        run: bash -c "$TRACE_SCRIPT"
+      - name: Convert
+        run: bash -c "$CONVERT_SCRIPT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: out-ubuntu
+          path: out
+  compare:
+    needs: [amazonlinux, ubuntu]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: out-amazonlinux
+          path: al
+      - uses: actions/download-artifact@v4
+        with:
+          name: out-ubuntu
+          path: ub
+      - name: Compare TEXT strings and whole DXFs
+        run: |
+          fail=0
+          for dxf in ub/*.dxf; do
+            name=$(basename "$dxf" .dxf)
+            # Text-bearing group codes: 1 (text), 3 (extra text / names), 2 (names), 7 (style).
+            for d in ub al; do
+              # DXF is CRLF code/value line pairs.
+              LC_ALL=C awk '{sub(/\r$/, "")} NR%2==1 {code=$1+0; next} code==1||code==2||code==3||code==7 {print code": "$0}' \
+                "$d/$name.dxf" > "$d/$name.text"
+            done
+            if ! cmp -s "ub/$name.text" "al/$name.text"; then
+              echo "FAIL $name: text strings differ"; diff "ub/$name.text" "al/$name.text" | head -20; fail=1
+            fi
+            if ! cmp -s "ub/$name.dxf" "al/$name.dxf"; then
+              echo "FAIL $name: DXF bytes differ"; fail=1
+            fi
+            if ! cmp -s "ub/$name.rc" "al/$name.rc"; then
+              echo "FAIL $name: exit code differs ($(cat ub/$name.rc) vs $(cat al/$name.rc))"; fail=1
+            fi
+          done
+          echo "compared $(ls ub/*.dxf | wc -l) DXFs"
+          echo "non-ASCII text lines checked (ubuntu side):"
+          LC_ALL=C grep -c -a -P '[\x80-\xff]' ub/*.text | grep -v ':0$' || true
+          exit $fail

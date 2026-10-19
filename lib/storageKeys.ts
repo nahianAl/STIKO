@@ -119,3 +119,19 @@ export function isAllowedCommentKey(value: string): boolean {
     value.startsWith(COMMENT_ATTACHMENT_PREFIX)
   );
 }
+
+const DRAWING_PDF_SUFFIX = '.drawing.pdf';
+
+/**
+ * Where a DWG/DXF's converted PDF lives: beside the original, same stem. Always derived from
+ * the original's key on the server, never accepted from a caller (see the variant-key note
+ * at the top of this file).
+ */
+export function drawingPdfKey(originalStorageKey: string): string {
+  const slash = originalStorageKey.lastIndexOf('/');
+  const directory = originalStorageKey.slice(0, slash + 1);
+  const base = originalStorageKey.slice(slash + 1);
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  return `${directory}${stem}${DRAWING_PDF_SUFFIX}`;
+}

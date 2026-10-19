@@ -42,3 +42,7 @@ next-env.d.ts
 
 # superpowers scratch (sdd ledgers, brainstorm mockups)
 .superpowers/
+
+# Python (drawing converter)
+__pycache__/
+*.pyc
