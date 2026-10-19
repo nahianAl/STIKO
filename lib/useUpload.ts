@@ -5,6 +5,8 @@ import type { FileWithPath } from '@/components/ui/FileDropzone';
 import type { UploadItem } from '@/components/ui/UploadProgress';
 import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptimize';
 import { isDrawingFilename } from '@/lib/drawingConversion';
+import { isSldprtFilename } from '@/lib/cadConversion';
+import { sldprtConversionEnabled } from '@/lib/fileFormats';
 import {
   MAX_UPLOAD_ATTEMPTS,
   REQUEST_TIMEOUT_MS,
@@ -256,6 +258,12 @@ export function useUpload() {
           fetch(`/api/files/${fileId}/convert-drawing`, { method: 'POST', keepalive: true }).catch(
             () => {}
           );
+        }
+
+        // SolidWorks: start the GLB conversion now; nothing waits on it, and the viewer starts it
+        // again if this is lost.
+        if (isSldprtFilename(entry.file.name) && sldprtConversionEnabled()) {
+          fetch(`/api/files/${fileId}/convert-cad`, { method: 'POST', keepalive: true }).catch(() => {});
         }
 
         patch(entry.path, { state: 'done', progress: 100 });

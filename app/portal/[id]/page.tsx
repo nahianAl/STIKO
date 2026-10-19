@@ -51,8 +51,9 @@ import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
 import { distance } from '@/lib/measure/geometry';
 import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
-import { extensionOf, MODEL_FORMATS } from '@/lib/fileFormats';
+import { extensionOf } from '@/lib/fileFormats';
 import { viewerKindFor } from '@/lib/drawingConversion';
+import { isPendingCad, opensAsModel } from '@/lib/cadConversion';
 
 interface Project {
   id: string;
@@ -699,8 +700,8 @@ export default function PortalPage() {
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
-    const ext = selectedFile.filename.split('.').pop()?.toLowerCase() ?? '';
-    return MODEL_FORMATS.includes(ext);
+    // A .sldprt counts only once its GLB exists; until then there is no model to measure or pin.
+    return opensAsModel(selectedFile.filename, selectedFile.convertedStorageKey);
   }, [selectedFile]);
 
   // Same reason as handlePartsLoaded: off a 3D file the panel is not on screen to be closed.
@@ -717,6 +718,10 @@ export default function PortalPage() {
   // A DWG/DXF whose PDF does not exist yet (converting, or failed). It has no surface to mark up.
   const selectedIsPendingDrawing =
     !!selectedFile && viewerKindFor(selectedFile.filename, selectedFile.convertedStorageKey) === 'drawing';
+
+  // A .sldprt whose GLB does not exist yet (converting, deferred, failed, or switched off).
+  const selectedIsPendingCad =
+    !!selectedFile && isPendingCad(selectedFile.filename, selectedFile.convertedStorageKey);
 
   /**
    * Positive, not exclusion: is the selected file one of the extensions the image viewer opens.
@@ -2436,7 +2441,9 @@ export default function PortalPage() {
                         ? 'Loading files…'
                         : selectedIsPendingDrawing
                           ? 'Preparing drawing…'
-                          : 'Opening file…'
+                          : selectedIsPendingCad
+                            ? 'Preparing SolidWorks part…'
+                            : 'Opening file…'
                   }
                 />
               </div>
@@ -2445,7 +2452,7 @@ export default function PortalPage() {
             {/* Markup tools float over the top of the viewport rather than taking a row above
                 it. Hidden while an attachment is open there — there is nothing to mark up. */}
             {/* Not for a drawing with no PDF yet (markup would mis-anchor once it converts); an attachment session keeps its tools. */}
-            {!viewportBusy && !viewportImage && (!selectedIsPendingDrawing || annotatingFile !== null) && (
+            {!viewportBusy && !viewportImage && ((!selectedIsPendingDrawing && !selectedIsPendingCad) || annotatingFile !== null) && (
               <DrawingTools
                 activeTool={activeTool}
                 onToolChange={setActiveTool}
