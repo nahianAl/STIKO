@@ -667,7 +667,8 @@ export default function CommentsPanel({ fileId, onCommentClick, onSeekTimestamp,
         <span className="text-[15px] font-extrabold text-stiko-ink">Comments</span>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-bold text-stiko-primary bg-stiko-tint px-[9px] py-[3px] rounded-[20px]">
-            {topLevelComments.length} open
+            {/* Not "open": comments cannot be resolved, so this is simply how many there are. */}
+            {topLevelComments.length} {topLevelComments.length === 1 ? 'comment' : 'comments'}
           </span>
           {onToggleCollapse && (
             <button onClick={onToggleCollapse} title="Collapse comments" className="p-1 rounded-lg text-stiko-faint hover:bg-stiko-subtle transition-colors">

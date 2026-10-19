@@ -19,10 +19,13 @@ import CommandPalette from '@/components/shell/CommandPalette';
 import { DISCLOSURE, type DisclosureState } from '@/lib/disclosure';
 import {
   filterGroups,
+  focusGroups,
   groupProjects,
+  homeStats,
   needsYou,
   showFilterRow,
   type HomeFilter,
+  type StatFocus,
 } from '@/lib/home';
 import type { PackageCard, ProjectSummary } from '@/lib/queries';
 import { useAuthSession } from '@/lib/authClient';
@@ -48,6 +51,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   const [filter, setFilter] = useState<HomeFilter>('all');
+  // A rail tile narrowing the grid to the packages it counts. Layered on top of `filter`.
+  const [focus, setFocus] = useState<StatFocus | null>(null);
   const [peoplePanelProjectId, setPeoplePanelProjectId] = useState<string | null>(
     null
   );
@@ -103,6 +108,12 @@ export default function Home() {
     setFilter(key);
     setSelected(null);
   };
+
+  // Same reason as changeFilter: the selected card may be about to leave the grid.
+  const changeFocus = useCallback((next: StatFocus | null) => {
+    setFocus(next);
+    setSelected(null);
+  }, []);
 
   // Two entry points share one ProjectPanel instance (see panelProjectId /
   // panelView below). Each clears the other's id on open, not just on close —
@@ -196,12 +207,28 @@ export default function Home() {
     }
   }, [groups, selected]);
 
-  const visible = useMemo(() => {
+  // Owned/Shared only — what the rail's tiles count over, so focusing one tile never changes
+  // the other two numbers.
+  const filtered = useMemo(() => {
     // The pills unmount when there is nothing to filter; without this the last
     // selection would keep filtering a grid the user can no longer unfilter.
     const active = showFilterRow(groups) ? filter : 'all';
     return filterGroups(groups, active);
   }, [groups, filter]);
+  const filteredPackages = useMemo(() => filtered.flatMap((g) => g.packages), [filtered]);
+
+  // A focus whose tile has dropped to zero (a reload after reading everything, say) would leave
+  // an empty grid with the reason hidden in the rail, so it lapses on its own. Derived, so there
+  // is no effect to race.
+  const stats = homeStats(filteredPackages);
+  const activeFocus: StatFocus | null =
+    focus === null
+      ? null
+      : (focus === 'needsYou' ? stats.needsYou : focus === 'comments' ? stats.openComments : stats.inReview) > 0
+        ? focus
+        : null;
+
+  const visible = useMemo(() => focusGroups(filtered, activeFocus), [filtered, activeFocus]);
 
   const newPackage = () => router.push('/new');
 
@@ -305,14 +332,17 @@ export default function Home() {
   const subline = [
     `${visible.length} ${visible.length === 1 ? 'project' : 'projects'}`,
     `${visiblePackages.length} ${visiblePackages.length === 1 ? 'package' : 'packages'}`,
-    needsYouCount > 0 ? `${needsYouCount} need you` : null,
+    needsYouCount > 0 ? `${needsYouCount} new for you` : null,
   ]
     .filter(Boolean)
     .join(' · ');
 
   // The last selection, not the current one — both panels keep rendering it
   // while they animate shut.
-  const panelGroup = groups.find((g) => g.project.id === lastId) ?? null;
+  // From the focused groups when a tile is active, so the Packages panel lists the same subset
+  // the card now describes.
+  const panelGroup =
+    (activeFocus ? visible : groups).find((g) => g.project.id === lastId) ?? null;
   const panelOpen = selected !== null && panelGroup !== null;
 
   // Whichever entry point was used last — the avatar stack (people) or the
@@ -372,6 +402,22 @@ export default function Home() {
                   Your projects
                 </h1>
                 <p className="text-[12.5px] text-stiko-muted">{subline}</p>
+                {activeFocus && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      changeFocus(null);
+                    }}
+                    title="Show everything"
+                    className="flex items-center gap-[6px] self-center rounded-pill bg-stiko-tint py-[3px] pl-[10px] pr-[7px] text-[11.5px] font-bold text-stiko-primary transition duration-150 hover:brightness-95"
+                  >
+                    Only: {FOCUS_LABEL[activeFocus]}
+                    <svg className="h-[10px] w-[10px]" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden>
+                      <path d="M2 2l8 8M10 2l-8 8" />
+                    </svg>
+                  </button>
+                )}
               </div>
               {/* The only place in the product that states this contract to an
                   invited-only user: they never publish, so the sole signal
@@ -470,7 +516,9 @@ export default function Home() {
         {notifications.length > 0 && (
           <ActivityRail
             notifications={notifications}
-            packages={visiblePackages}
+            packages={filteredPackages}
+            focus={activeFocus}
+            onFocusChange={changeFocus}
             railOpen={railOpen}
             onChanged={load}
             onCollapse={toggleRail}
@@ -516,6 +564,13 @@ export default function Home() {
     </Shell>
   );
 }
+
+/** The header chip's wording for each rail tile, matching the tile's own label. */
+const FOCUS_LABEL: Record<StatFocus, string> = {
+  needsYou: 'new for you',
+  comments: 'packages with comments',
+  inReview: 'waiting on reviewers',
+};
 
 /**
  * The trash door — bottom-right.

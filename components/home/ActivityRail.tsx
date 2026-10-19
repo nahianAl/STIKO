@@ -4,6 +4,7 @@ import React from 'react';
 import ActivityFeedPanel from '@/components/home/ActivityFeedPanel';
 import type { NotificationRow } from '@/components/shell/NotificationTray';
 import type { PackageCard } from '@/lib/queries';
+import type { StatFocus } from '@/lib/home';
 
 /**
  * The left-hand rail: an AI summary panel stacked over the activity feed.
@@ -23,12 +24,16 @@ export default function ActivityRail({
   packages,
   railOpen,
   summary,
+  focus,
+  onFocusChange,
   onChanged,
   onCollapse,
 }: {
   notifications: NotificationRow[];
-  /** The FILTERED package set — the stat tiles must match the page subline. */
+  /** Owned/Shared-filtered, before a tile's focus — see ActivityFeedPanel. */
   packages: PackageCard[];
+  focus: StatFocus | null;
+  onFocusChange: (focus: StatFocus | null) => void;
   railOpen: boolean;
   summary: React.ReactNode;
   onChanged: () => void;
@@ -63,6 +68,8 @@ export default function ActivityRail({
         <ActivityFeedPanel
           notifications={notifications}
           packages={packages}
+          focus={focus}
+          onFocusChange={onFocusChange}
           onChanged={onChanged}
           onCollapse={onCollapse}
         />

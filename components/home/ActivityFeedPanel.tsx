@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { Avatar } from '@/components/ui/Primitives';
-import { activityAccent, groupActivity, homeStats } from '@/lib/home';
+import { activityAccent, groupActivity, homeStats, type StatFocus } from '@/lib/home';
 import { relativeTime } from '@/lib/design';
 import type { NotificationRow } from '@/components/shell/NotificationTray';
 import type { PackageCard } from '@/lib/queries';
@@ -25,12 +25,20 @@ const BADGE_COLOR: Record<string, { bg: string; fg: string }> = {
 export default function ActivityFeedPanel({
   notifications,
   packages,
+  focus,
+  onFocusChange,
   onChanged,
   onCollapse,
 }: {
   notifications: NotificationRow[];
-  /** The FILTERED package set — the stat tiles must match the page subline. */
+  /**
+   * The package set after the Owned/Shared filter but BEFORE a tile's own focus. The tiles
+   * count over this, so clicking one never changes the numbers on the other two.
+   */
   packages: PackageCard[];
+  /** The tile currently filtering the dashboard, if any. */
+  focus: StatFocus | null;
+  onFocusChange: (focus: StatFocus | null) => void;
   onChanged: () => void;
   onCollapse: () => void;
 }) {
@@ -101,9 +109,18 @@ export default function ActivityFeedPanel({
       </div>
 
       <div className="grid shrink-0 grid-cols-3 gap-2 px-3 pb-[6px] pt-3">
-        <StatTile value={stats.needsYou} label="need you" color="#B23A52" />
-        <StatTile value={stats.openComments} label="open comments" color="#1C2030" />
-        <StatTile value={stats.inReview} label="in review" color="#7A5E00" />
+        {STAT_TILES.map((tile, i) => (
+          <StatTile
+            key={tile.focus}
+            value={stats[tile.stat]}
+            label={tile.label}
+            explain={tile.explain}
+            color={tile.color}
+            align={i === 0 ? 'left' : i === STAT_TILES.length - 1 ? 'right' : 'center'}
+            active={focus === tile.focus}
+            onClick={() => onFocusChange(focus === tile.focus ? null : tile.focus)}
+          />
+        ))}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[14px] pt-[6px]">
@@ -168,25 +185,98 @@ export default function ActivityFeedPanel({
   );
 }
 
+/**
+ * The rail's three counts. Each label is what the number counts in plain words, and `explain`
+ * is the exact rule, shown on hover — the labels alone used to read as jargon ("need you",
+ * "open comments", "in review") with nothing on screen to say what they meant.
+ */
+const STAT_TILES: {
+  focus: StatFocus;
+  stat: keyof ReturnType<typeof homeStats>;
+  label: string;
+  explain: string;
+  color: string;
+}[] = [
+  {
+    focus: 'needsYou',
+    stat: 'needsYou',
+    label: 'new for you',
+    explain: 'Packages where someone @mentioned you, or with a submission you haven’t opened yet.',
+    color: '#B23A52',
+  },
+  {
+    focus: 'comments',
+    stat: 'openComments',
+    label: 'comments',
+    explain: 'Every comment on the latest submission of each package. Replies aren’t counted.',
+    color: '#1C2030',
+  },
+  {
+    focus: 'inReview',
+    stat: 'inReview',
+    label: 'waiting on reviewers',
+    explain: 'Packages marked In review: nobody has asked for changes, and not every reviewer has approved yet.',
+    color: '#7A5E00',
+  },
+];
+
 function StatTile({
   value,
   label,
+  explain,
   color,
+  align,
+  active,
+  onClick,
 }: {
   value: number;
   label: string;
+  explain: string;
   color: string;
+  /** Which edge the explanation lines up with, so it never runs off the rail. */
+  align: 'left' | 'center' | 'right';
+  active: boolean;
+  onClick: () => void;
 }) {
+  // Nothing to show at zero, so there is nothing to filter to — unless it is the active
+  // filter, which must stay clickable so it can be turned off.
+  const disabled = value === 0 && !active;
+  const place =
+    align === 'left' ? 'left-0' : align === 'right' ? 'right-0' : 'left-1/2 -translate-x-1/2';
+
   return (
-    <div className="rounded-inset bg-stiko-app px-[11px] py-[10px]">
-      <div className="text-[19px] font-extrabold leading-none" style={{ color }}>
-        {value}
-      </div>
-      <div
-        className="mt-1 text-[10.5px] text-stiko-muted"
-        style={{ lineHeight: 1.3 }}
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-pressed={active}
+        aria-label={`${value} ${label}. ${explain}`}
+        className={`flex h-full w-full flex-col items-start justify-start rounded-inset px-[11px] py-[10px] text-left transition duration-150 focus:outline-none focus-visible:shadow-stiko-focus disabled:cursor-default ${
+          active ? 'bg-white' : 'bg-stiko-app enabled:hover:bg-stiko-idle'
+        }`}
+        // An inset ring in the tile's own colour, so the active tile reads as "this is the
+        // filter" without changing its size.
+        style={active ? { boxShadow: `inset 0 0 0 1.5px ${color}` } : undefined}
       >
-        {label}
+        <div className="text-[19px] font-extrabold leading-none" style={{ color }}>
+          {value}
+        </div>
+        <div
+          className="mt-1 text-[10.5px] text-stiko-muted"
+          style={{ lineHeight: 1.3 }}
+        >
+          {label}
+        </div>
+      </button>
+      <div
+        role="tooltip"
+        className={`pointer-events-none absolute top-full z-20 mt-[6px] w-[200px] rounded-[10px] bg-stiko-ink px-[10px] py-2 text-[11px] leading-[1.45] text-white opacity-0 shadow-stiko-sheet transition-opacity duration-150 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 ${place}`}
+      >
+        {explain}
+        <span className="mt-1 block font-bold text-white/70">
+          {active ? 'Click again to show everything.' : disabled ? 'Nothing here right now.' : 'Click to show only these.'}
+        </span>
       </div>
     </div>
   );
