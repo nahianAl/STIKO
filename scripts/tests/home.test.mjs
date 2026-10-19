@@ -14,6 +14,9 @@ import {
   openCommentsLabel,
   packageMeta,
   packageCountLabel,
+  matchesStatFocus,
+  focusGroups,
+  activityForProject,
 } from '../../lib/home.ts';
 
 const pkg = (over = {}) => ({
@@ -265,10 +268,10 @@ test('the package count is singular only for one', () => {
   assert.equal(packagesLabel(4), '4 packages');
 });
 
-test('the open-comments line says Nothing open at zero', () => {
-  assert.equal(openCommentsLabel(0), 'Nothing open');
-  assert.equal(openCommentsLabel(1), '1 open comment');
-  assert.equal(openCommentsLabel(13), '13 open comments');
+test('the comments line says No comments at zero, and never "open"', () => {
+  assert.equal(openCommentsLabel(0), 'No comments');
+  assert.equal(openCommentsLabel(1), '1 comment');
+  assert.equal(openCommentsLabel(13), '13 comments');
 });
 
 const NOW = Date.parse('2026-09-22T12:00:00Z');
@@ -309,9 +312,61 @@ test('a package with no version asks for files', () => {
   );
 });
 
-test('the count prefers open comments, then files, then empty', () => {
-  assert.equal(packageCountLabel(pkg({ openComments: 7, fileCount: 12 })), '7 open');
+test('the count prefers comments, then files, then empty', () => {
+  assert.equal(packageCountLabel(pkg({ openComments: 7, fileCount: 12 })), '7 comments');
+  assert.equal(packageCountLabel(pkg({ openComments: 1, fileCount: 12 })), '1 comment');
   assert.equal(packageCountLabel(pkg({ openComments: 0, fileCount: 1 })), '1 file');
   assert.equal(packageCountLabel(pkg({ openComments: 0, fileCount: 9 })), '9 files');
   assert.equal(packageCountLabel(pkg({ openComments: 0, fileCount: 0 })), 'empty');
+});
+
+/* ------------------------------------------------------------ stat focus -- */
+
+test('each tile filter matches exactly what its tile counts', () => {
+  const pkgs = [
+    pkg({ id: 'a', openComments: 3, mentions: 1, status: 'in_review' }),
+    pkg({ id: 'b', openComments: 2, status: 'approved' }),
+    pkg({ id: 'c', openComments: 0, status: 'in_review', seenLatest: false }),
+    pkg({ id: 'd', openComments: 0, status: 'draft' }),
+  ];
+  const stats = homeStats(pkgs);
+  assert.equal(pkgs.filter((p) => matchesStatFocus(p, 'needsYou')).length, stats.needsYou);
+  assert.equal(pkgs.filter((p) => matchesStatFocus(p, 'inReview')).length, stats.inReview);
+  const commented = pkgs.filter((p) => matchesStatFocus(p, 'comments'));
+  assert.equal(commented.reduce((n, p) => n + p.openComments, 0), stats.openComments);
+});
+
+test('focusing narrows packages, drops empty projects and recomputes totals', () => {
+  const groups = groupProjects(
+    [
+      pkg({ id: 'a', projectId: 'x', openComments: 4, status: 'in_review' }),
+      pkg({ id: 'b', projectId: 'x', openComments: 1, status: 'approved' }),
+      pkg({ id: 'c', projectId: 'y', openComments: 0, status: 'approved' }),
+    ],
+    [proj({ id: 'x' }), proj({ id: 'y' })]
+  );
+  const focused = focusGroups(groups, 'inReview');
+  assert.deepEqual(focused.map((g) => g.project.id), ['x']);
+  assert.deepEqual(focused[0].packages.map((p) => p.id), ['a']);
+  assert.equal(focused[0].packageCount, 1);
+  assert.equal(focused[0].openComments, 4);
+});
+
+test('no focus leaves the groups untouched', () => {
+  const groups = groupProjects([pkg()], [proj()]);
+  assert.equal(focusGroups(groups, null), groups);
+});
+
+/* ------------------------------------------------------ project activity -- */
+
+test('activity narrows to the selected project, and to nothing unattached', () => {
+  const rows = [
+    { id: '1', projectId: 'A' },
+    { id: '2', projectId: 'B' },
+    { id: '3', projectId: null },
+    { id: '4', projectId: 'A' },
+  ];
+  assert.deepEqual(activityForProject(rows, 'A').map((r) => r.id), ['1', '4']);
+  assert.deepEqual(activityForProject(rows, 'Z'), []);
+  assert.equal(activityForProject(rows, null), rows);
 });

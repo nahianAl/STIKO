@@ -2,11 +2,37 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 
-/** GET — the tray (3i). Grouped by package on the client. */
-export async function GET() {
+/**
+ * GET — the tray (3i). Grouped by package on the client.
+ *
+ * `?projectId=` narrows it to one project, for the dashboard's Activity panel while that
+ * project is selected. Filtered here, not in the browser: the list is capped at 50, so a quiet
+ * project's activity can be entirely pushed out of the newest 50 across everything. Still
+ * scoped to the session user, so the parameter can only ever narrow what they already see.
+ */
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const projectId = request.nextUrl.searchParams.get('projectId');
+  if (projectId) {
+    const rows = await sql`
+      SELECT n.id, n.type, n.title, n.excerpt, n.href, n.created_at AS "createdAt",
+             n.read_at AS "readAt", n.portal_id AS "portalId",
+             po.name AS "packageName",
+             pr.id AS "projectId", pr.name AS "projectName",
+             actor.id AS "actorId", actor.name AS "actorName"
+      FROM notifications n
+      JOIN portals po ON po.id = n.portal_id
+      JOIN projects pr ON pr.id = po.project_id
+      LEFT JOIN users actor ON actor.id = n.actor_id
+      WHERE n.user_id = ${session.user.id} AND pr.id = ${projectId}
+      ORDER BY n.created_at DESC
+      LIMIT 50
+    `;
+    return NextResponse.json(rows);
   }
 
   const rows = await sql`
@@ -34,7 +60,20 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { id, all, portalId } = await request.json();
+  const { id, all, portalId, projectId } = await request.json();
+
+  // "Mark all read" while the Activity panel is scoped to one project marks only what it shows.
+  if (all && typeof projectId === 'string' && projectId) {
+    await sql`
+      UPDATE notifications n SET read_at = NOW()
+      FROM portals po
+      WHERE po.id = n.portal_id
+        AND po.project_id = ${projectId}
+        AND n.user_id = ${session.user.id}
+        AND n.read_at IS NULL
+    `;
+    return NextResponse.json({ ok: true });
+  }
 
   if (all) {
     await sql`

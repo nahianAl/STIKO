@@ -200,6 +200,40 @@ export function projectAttention(pkgs: PackageCard[]): Attention | null {
   return null;
 }
 
+/**
+ * The three activity-rail tiles, each a filter as well as a count. Clicking one narrows the
+ * dashboard to exactly the packages that tile counts, so its number explains itself.
+ */
+export type StatFocus = 'needsYou' | 'comments' | 'inReview';
+
+/** The per-package test behind each tile — the same one `homeStats` counts with. */
+export function matchesStatFocus(pkg: PackageCard, focus: StatFocus): boolean {
+  if (focus === 'needsYou') return needsYou(pkg);
+  if (focus === 'comments') return pkg.openComments > 0;
+  return pkg.status === 'in_review';
+}
+
+/**
+ * Narrows each project to its matching packages and drops projects left with none. Totals are
+ * recomputed from what remains, so a card describes what is on screen, not what is hidden.
+ */
+export function focusGroups(groups: ProjectGroup[], focus: StatFocus | null): ProjectGroup[] {
+  if (focus === null) return groups;
+  const out: ProjectGroup[] = [];
+  for (const g of groups) {
+    const pkgs = g.packages.filter((p) => matchesStatFocus(p, focus));
+    if (pkgs.length === 0) continue;
+    out.push({
+      ...g,
+      packages: pkgs,
+      packageCount: pkgs.length,
+      openComments: pkgs.reduce((n, p) => n + p.openComments, 0),
+      people: projectPeople(pkgs),
+    });
+  }
+  return out;
+}
+
 export function homeStats(packages: PackageCard[]): {
   needsYou: number;
   openComments: number;
@@ -221,10 +255,15 @@ export function packagesLabel(count: number): string {
   return count === 1 ? '1 package' : `${count} packages`;
 }
 
-/** The Packages panel header's open-comment line. */
+/**
+ * The Packages panel header's comment line.
+ *
+ * Not "open": comments cannot be resolved, so every comment on the latest submission counts,
+ * and calling them open promised a resolve step that does not exist.
+ */
 export function openCommentsLabel(count: number): string {
-  if (count === 0) return 'Nothing open';
-  return `${count} open ${count === 1 ? 'comment' : 'comments'}`;
+  if (count === 0) return 'No comments';
+  return `${count} ${count === 1 ? 'comment' : 'comments'}`;
 }
 
 /**
@@ -245,9 +284,11 @@ export function packageMeta(pkg: PackageCard, now: number = Date.now()): string 
     .join(' · ');
 }
 
-/** Open comments win; otherwise the file count; otherwise "empty". */
+/** Comments win; otherwise the file count; otherwise "empty". */
 export function packageCountLabel(pkg: PackageCard): string {
-  if (pkg.openComments > 0) return `${pkg.openComments} open`;
+  if (pkg.openComments > 0) {
+    return `${pkg.openComments} ${pkg.openComments === 1 ? 'comment' : 'comments'}`;
+  }
   if (pkg.fileCount > 0) {
     return `${pkg.fileCount} ${pkg.fileCount === 1 ? 'file' : 'files'}`;
   }
@@ -300,6 +341,19 @@ function startOfLocalDay(ms: number): number {
  * Recency buckets for the feed. Generic over `{ createdAt }` so lib/ does not
  * have to import a type that lives in a component.
  */
+/**
+ * The rows that belong to one project, or every row when none is selected. Used for the instant
+ * first paint when a project is selected; the server's own project-scoped list replaces it once
+ * it arrives, since the dashboard's global list is capped and can miss a quiet project's rows.
+ */
+export function activityForProject<T extends { projectId: string | null }>(
+  rows: T[],
+  projectId: string | null
+): T[] {
+  if (projectId === null) return rows;
+  return rows.filter((r) => r.projectId === projectId);
+}
+
 export function groupActivity<T extends { createdAt: string }>(
   rows: T[],
   now: number = Date.now()
