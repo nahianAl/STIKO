@@ -11,7 +11,11 @@ interface Props {
   fileId: string;
   /** Called once with the GLB's key; the parent swaps the file over to the 3D viewer. */
   onConverted: (convertedStorageKey: string) => void;
-  /** Must be called when this ends without a model, to release the page's loading indicator. */
+  /**
+   * Releases the page's loading indicator. Called once: when this ends without a model, or as
+   * soon as a conversion is under way (so the progress below is visible instead of the page's
+   * overlay). Never again after that, even if a later terminal state is reached.
+   */
   onReady?: () => void;
 }
 
@@ -46,12 +50,19 @@ export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = Date.now();
+    // Once-only, and per run of this effect rather than per mount, so a new fileId starts clean.
+    let readyCalled = false;
+    const release = () => {
+      if (readyCalled) return;
+      readyCalled = true;
+      onReady?.();
+    };
 
     const stop = (next: View) => {
       cancelled = true;
       if (timer) clearTimeout(timer);
       setView(next);
-      onReady?.();
+      release();
     };
 
     const settle = (status: ConversionStatus, key: string | null): boolean => {
@@ -109,6 +120,9 @@ export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
           return;
         }
         if (settle(body.conversionStatus, body.convertedStorageKey)) return;
+        // A conversion is under way and nothing is final: let the page's overlay go so the
+        // converting state below is what the person sees while it runs.
+        release();
         timer = setTimeout(poll, CAD_POLL_INTERVAL_MS);
       })
       .catch(() => {
@@ -138,7 +152,15 @@ export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
   return (
     <div role="status" aria-live="polite" className="flex h-full w-full items-center justify-center p-8">
       <div className="max-w-sm text-center">
-        <p className={view.kind === 'converting' ? 'text-sm text-gray-500' : 'text-sm font-medium text-gray-700'}>{heading}</p>
+        <p className={view.kind === 'converting' ? 'text-sm text-gray-500' : 'text-sm font-medium text-gray-700'}>
+          {view.kind === 'converting' && (
+            <span
+              aria-hidden="true"
+              className="mr-2 inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-500 align-[-2px]"
+            />
+          )}
+          {heading}
+        </p>
         {detail && <p className="mt-1 text-sm text-gray-500">{detail}</p>}
       </div>
     </div>

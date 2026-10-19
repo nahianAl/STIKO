@@ -983,13 +983,19 @@ export default function PortalPage() {
     setContentTransform(transform);
   }, []);
 
-  // A DWG/DXF's PDF now exists: record it on the file so the viewer swaps to PDFKonvaViewer.
+  // A DWG/DXF's PDF (or a SolidWorks part's GLB) now exists: record it on the file so the viewer
+  // swaps to PDFKonvaViewer / ModelViewer.
   const handleDrawingConverted = useCallback((fileId: string, convertedStorageKey: string) => {
     setFiles((prev) =>
       prev.map((f) =>
         f.id === fileId ? { ...f, convertedStorageKey, conversionStatus: 'completed' } : f
       )
     );
+    // A converted file's real viewer still has to load, so the page indicator returns as
+    // "Opening file…". A preparer can have released it already (CadPreparer does, while a part
+    // converts); for a drawing this is a no-op. Only for the file on screen: a late answer for a
+    // file the person has since left must not cover the one they are looking at.
+    if (fileId === currentFileIdRef.current) setViewerReady(false);
   }, []);
 
   // Persist the 3D object's move/rotate gizmo transform once a drag ends.
