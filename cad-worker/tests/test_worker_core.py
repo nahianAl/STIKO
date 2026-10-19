@@ -28,6 +28,12 @@ class Fake(BaseHTTPRequestHandler):
             self.send_header('Location', '/source')
             self.end_headers()
             return
+        if self.path == '/truncated':
+            self.send_response(200)
+            self.send_header('Content-Length', '100')
+            self.end_headers()
+            self.wfile.write(b'0123456789')
+            return
         self.send_response(200)
         self.send_header('Content-Length', str(len(Fake.source)))
         self.end_headers()
@@ -36,13 +42,16 @@ class Fake(BaseHTTPRequestHandler):
     def do_PUT(self):
         body = self.rfile.read(int(self.headers['Content-Length']))
         Fake.puts.append((self.path, self.headers['Content-Type'], body))
-        self.send_response(200)
+        self.send_response(403 if self.path == '/forbidden' else 200)
         self.end_headers()
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         Fake.callbacks.append(body)
         status = Fake.callback_statuses.pop(0) if Fake.callback_statuses else 200
+        if status == 'garbage':
+            self.wfile.write(b'garbage\r\n')
+            return
         self.send_response(status)
         self.end_headers()
 
@@ -100,6 +109,10 @@ def test_every_field_is_required(field):
     ('targetUrl', 'https://evil.example/b/a'),
     ('callbackUrl', 'https://app.stiko.design.evil.example/cb'),
     ('callbackUrl', 'http://app.stiko.design/cb'),
+    ('sourceUrl', 'https://[abc/b/a'),
+    ('sourceUrl', 'https://user:pw@acct.r2.cloudflarestorage.com/x'),
+    ('targetUrl', 'https://acct.r2.cloudflarestorage.com:8443/x'),
+    ('callbackUrl', 'https://app.stiKo.design/cb'),  # U+212A KELVIN SIGN, lowercases to ASCII k
 ])
 def test_wrong_scheme_or_host_is_refused(field, url):
     body = valid()
@@ -167,6 +180,29 @@ def test_the_callback_is_not_retried_on_4xx(server, tmp_path):
     assert len(Fake.callbacks) == 1
 
 
+def test_a_truncated_download_is_transient(server, tmp_path):
+    calls = []
+    def convert(src, usd, glb):
+        calls.append(src)
+        glb.write_bytes(GLB)
+    assert worker_core.process_job(job(server, sourceUrl=f'{server}/truncated'), tmp_path,
+                                   convert=convert, sleep=lambda s: None) is None
+    assert calls == [] and Fake.puts == [] and Fake.callbacks == []
+
+
+def test_a_403_on_the_upload_is_transient_and_reports_nothing(server, tmp_path):
+    assert worker_core.process_job(job(server, targetUrl=f'{server}/forbidden'), tmp_path,
+                                   convert=fake_convert, sleep=lambda s: None) is None
+    assert Fake.callbacks == []
+
+
+def test_a_garbage_callback_response_is_retried(server, tmp_path):
+    Fake.callback_statuses = ['garbage', 200]
+    slept = []
+    payload = worker_core.process_job(job(server), tmp_path, convert=fake_convert, sleep=slept.append)
+    assert payload is not None and len(Fake.callbacks) == 2 and len(slept) == 1
+
+
 # --- default_convert's GLB check ------------------------------------------------------------------
 
 def test_usd_to_glb_exit_3_is_a_verdict(tmp_path):
@@ -192,3 +228,18 @@ def test_a_converter_timeout_is_a_verdict(tmp_path):
         raise subprocess.TimeoutExpired(cmd='usd-convert-cad', timeout=1)
     with pytest.raises(JobFailed, match='timeout'):
         worker_core.run_converter(tmp_path / 'a.sldprt', tmp_path / 'a.usdc', run=run)
+
+
+def test_a_converter_killed_by_a_signal_is_transient(tmp_path):
+    class R:
+        returncode, stdout, stderr = -9, '', ''
+    with pytest.raises(RuntimeError) as e:
+        worker_core.run_converter(tmp_path / 'a.sldprt', tmp_path / 'a.usdc', run=lambda *a, **k: R())
+    assert not isinstance(e.value, JobFailed)
+
+
+def test_a_converter_nonzero_exit_is_a_verdict(tmp_path):
+    class R:
+        returncode, stdout, stderr = 1, '', 'cannot parse'
+    with pytest.raises(JobFailed, match='unreadable'):
+        worker_core.run_converter(tmp_path / 'a.sldprt', tmp_path / 'a.usdc', run=lambda *a, **k: R())

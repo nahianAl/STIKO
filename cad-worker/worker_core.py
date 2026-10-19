@@ -11,6 +11,7 @@ Two kinds of failure, kept apart on purpose (see the spec's failure table):
   after 15 minutes and Stiko retries, at most three attempts in all.
 """
 
+import http.client
 import json
 import subprocess
 import sys
@@ -59,7 +60,15 @@ def _host_allowed(host, entries):
 
 
 def _check_url(field, url, entries, allow_local_http):
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        port = parts.port  # raises ValueError on a malformed port
+    except ValueError:
+        raise Refused(400, f'{field} is not a valid URL') from None
+    if not parts.netloc.isascii():  # checked on the raw netloc: .hostname lowercases, folding U+212A to k
+        raise Refused(400, f'{field} has a non-ASCII host')
+    if parts.username is not None or parts.password is not None or port is not None:
+        raise Refused(400, f'{field} may not carry credentials or a port')
     local = parts.hostname in ('127.0.0.1', 'localhost')
     if parts.scheme == 'https' and _host_allowed(parts.hostname, entries):
         return
@@ -105,6 +114,10 @@ def download(url, dest, timeout=60):
                 if total > MAX_INPUT_BYTES:
                     raise JobFailed('too_large')
                 out.write(chunk)
+    # http.client returns EOF silently when the server cuts the connection early: that is a network
+    # failure, not a verdict on the file, so it must not become an 'unreadable' verdict.
+    if declared and total != int(declared):
+        raise RuntimeError('source truncated')
     return total
 
 
@@ -114,6 +127,8 @@ def run_converter(src, usd, run=subprocess.run):
         p = run(cmd, capture_output=True, text=True, timeout=CONVERT_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         raise JobFailed('timeout') from None
+    if p.returncode < 0:  # killed by a signal (OOM, SIGSEGV): not a verdict on the file
+        raise RuntimeError(f'usd-convert-cad killed by signal {-p.returncode}')
     if p.returncode != 0 or not Path(usd).exists():
         raise JobFailed('unreadable: ' + (p.stderr or p.stdout or '').strip()[-300:])
 
@@ -141,18 +156,24 @@ def default_convert(src, usd, glb):
 def put_file(url, path, content_type='model/gltf-binary', timeout=120):
     data = Path(path).read_bytes()
     req = urllib.request.Request(url, data=data, method='PUT', headers={'Content-Type': content_type})
-    with _opener.open(req, timeout=timeout) as res:
+    try:
+        res = _opener.open(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        e.close()
+        raise RuntimeError(f'target answered {e.code}') from None
+    with res:
         if res.status != 200:
             raise RuntimeError(f'target answered {res.status}')
 
 
 def post_callback(url, payload, attempts=3, sleep=time.sleep, timeout=20):
-    """POST the result. Retries network errors and 5xx; a 4xx is final. Returns the last status."""
+    """POST the result. Retries network errors, malformed responses and 5xx; a 4xx is final.
+    Returns the last status, or None if no attempt got an HTTP status back."""
     data = json.dumps(payload).encode()
     status = None
     for attempt in range(attempts):
-        req = urllib.request.Request(url, data=data, method='POST', headers={'Content-Type': 'application/json'})
         try:
+            req = urllib.request.Request(url, data=data, method='POST', headers={'Content-Type': 'application/json'})
             with _opener.open(req, timeout=timeout) as res:
                 return res.status
         except urllib.error.HTTPError as e:
@@ -161,7 +182,7 @@ def post_callback(url, payload, attempts=3, sleep=time.sleep, timeout=20):
             if e.code < 500:
                 print(f'cad-worker: callback refused with {e.code}', file=sys.stderr)
                 return status
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
             print(f'cad-worker: callback failed: {e!r}', file=sys.stderr)
         if attempt < attempts - 1:
             sleep(2 ** attempt)
@@ -169,7 +190,8 @@ def post_callback(url, payload, attempts=3, sleep=time.sleep, timeout=20):
 
 
 def process_job(job, workdir, *, convert=default_convert, sleep=time.sleep):
-    """Run one job end to end and report it. Returns the payload sent, or None if nothing was."""
+    """Run one job end to end and report it. Returns the payload it attempted to send (the callback
+    may still have failed), or None when nothing was sent because the failure was transient."""
     workdir = Path(workdir)
     base = {'fileId': job['fileId'], 'claimId': job['claimId'], 'token': job['token']}
     src, usd, glb = workdir / 'input.sldprt', workdir / 'out.usdc', workdir / 'out.glb'
