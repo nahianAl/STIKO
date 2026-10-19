@@ -79,3 +79,9 @@ test('calibration is looked up per page', () => {
 test('the assumption reads the original upload name, never the converted GLB', () => {
   assert.equal(resolveScale({ filename: 'bracket.step' }).mmPerUnit, 1);
 });
+
+test('SolidWorks parts are millimetres, because the worker writes them that way', () => {
+  assert.equal(assumedMmPerUnit('bracket.sldprt'), 1);
+  assert.equal(assumedMmPerUnit('BRACKET.SLDPRT'), 1);
+  assert.equal(assumedMmPerUnit('assembly.sldasm'), null);
+});

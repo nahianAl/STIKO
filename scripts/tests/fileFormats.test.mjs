@@ -9,6 +9,8 @@ import {
   isSupportedFilename,
   partitionBySupport,
   ACCEPT_ATTRIBUTE,
+  formatTables,
+  sldprtConversionEnabled,
 } from '../../lib/fileFormats.ts';
 
 // Mirrors the branches in components/viewers/ViewerContainer.tsx. Stated
@@ -106,7 +108,7 @@ test('the accept attribute lists every supported extension, dotted', () => {
 
 test('the model list is exactly the formats the 3D viewer opens', () => {
   assert.deepEqual([...MODEL_FORMATS].sort(), [
-    '3dm', '3ds', '3mf', 'brep', 'dae', 'fbx', 'glb', 'gltf', 'iges', 'igs', 'obj', 'ply', 'step', 'stl', 'stp',
+    '3dm', '3ds', '3mf', 'brep', 'dae', 'fbx', 'glb', 'gltf', 'iges', 'igs', 'obj', 'ply', 'sldprt', 'step', 'stl', 'stp',
   ]);
 });
 
@@ -116,7 +118,6 @@ test('every model format is also a supported upload', () => {
 
 test('native CAD files get the advice row the spec fixed', () => {
   const cases = {
-    'part.sldprt': ['SolidWorks', 'Save As STEP, then upload.'],
     'asm.sldasm': ['SolidWorks', 'Save As STEP, then upload.'],
     'a.ipt': ['Inventor', 'Export STEP, then upload.'],
     'a.iam': ['Inventor', 'Export STEP, then upload.'],
@@ -152,7 +153,7 @@ test('native CAD files get the advice row the spec fixed', () => {
 });
 
 test('advice matching ignores case', () => {
-  assert.equal(adviceFor('PART.SLDPRT')?.app, 'SolidWorks');
+  assert.equal(adviceFor('ASM.SLDASM')?.app, 'SolidWorks');
 });
 
 test('supported, unknown and extensionless files get no advice', () => {
@@ -172,4 +173,22 @@ test('no advised extension is a supported upload', () => {
   for (const ext of Object.keys(NATIVE_CAD_ADVICE)) {
     assert.equal(SUPPORTED_EXTENSIONS.has(ext), false, ext);
   }
+});
+
+test('the SolidWorks switch is on unless explicitly off', () => {
+  assert.equal(sldprtConversionEnabled(undefined), true);
+  assert.equal(sldprtConversionEnabled('on'), true);
+  assert.equal(sldprtConversionEnabled(' OFF '), false);
+  assert.equal(sldprtConversionEnabled('off'), false);
+});
+
+test('switching SolidWorks off moves .sldprt from the model list back to the advice table', () => {
+  const on = formatTables(true);
+  const off = formatTables(false);
+  assert.equal(on.model.includes('sldprt'), true);
+  assert.equal('sldprt' in on.advice, false);
+  assert.equal(off.model.includes('sldprt'), false);
+  assert.deepEqual(off.advice.sldprt, { app: 'SolidWorks', advice: 'Save As STEP, then upload.' });
+  // Assemblies keep their advice either way.
+  assert.equal('sldasm' in on.advice && 'sldasm' in off.advice, true);
 });

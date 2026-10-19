@@ -135,3 +135,11 @@ export function drawingPdfKey(originalStorageKey: string): string {
   const stem = dot > 0 ? base.slice(0, dot) : base;
   return `${directory}${stem}${DRAWING_PDF_SUFFIX}`;
 }
+
+/**
+ * Where a SolidWorks part's converted GLB lives: beside the original, the original's full name
+ * plus '.glb'. Always derived from the original's key on the server, never accepted from a caller.
+ */
+export function cadGlbKey(originalStorageKey: string): string {
+  return `${originalStorageKey}.glb`;
+}
