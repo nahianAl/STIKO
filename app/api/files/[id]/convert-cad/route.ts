@@ -97,10 +97,28 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
   }
   if (decision.kind === 'give-up') {
     console.error(`SolidWorks conversion gave up on file ${params.id} after repeated stale claims`);
-    await sql`
+    // Only a still-processing, unconverted row may be marked failed: a late or duplicate callback
+    // may have recorded a verdict (or a GLB) since this request read the row.
+    const gaveUp = await sql`
       UPDATE files SET conversion_status = 'failed'
-      WHERE id = ${params.id} AND conversion_job_id IS NOT DISTINCT FROM ${file.conversionJobId}
+      WHERE id = ${params.id}
+        AND conversion_job_id IS NOT DISTINCT FROM ${file.conversionJobId}
+        AND conversion_status = 'processing'
+        AND converted_storage_key IS NULL
+      RETURNING id
     `;
+    if (gaveUp.length === 0) {
+      // Nothing changed, so 'failed' would be a claim about a row we did not touch: report the
+      // row as it is now.
+      const fresh = (await sql`
+        SELECT conversion_status AS "conversionStatus", converted_storage_key AS "convertedStorageKey"
+        FROM files WHERE id = ${params.id}
+      `) as Pick<Row, 'conversionStatus' | 'convertedStorageKey'>[];
+      return NextResponse.json({
+        conversionStatus: fresh[0]?.conversionStatus ?? null,
+        convertedStorageKey: fresh[0]?.convertedStorageKey ?? null,
+      });
+    }
     return NextResponse.json({ conversionStatus: 'failed', convertedStorageKey: null });
   }
 
@@ -167,9 +185,15 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
   }
 
   console.error(`SolidWorks conversion not started for file ${params.id}, will retry: ${reason}`);
+  // Release only a claim that is still processing and unconverted: the worker may have started
+  // after all (a timeout is not proof it did not) and its callback may already have recorded the
+  // verdict, which this must not undo.
   await sql`
     UPDATE files SET conversion_status = NULL, conversion_job_id = NULL
-    WHERE id = ${params.id} AND conversion_job_id = ${claimId}
+    WHERE id = ${params.id}
+      AND conversion_job_id = ${claimId}
+      AND conversion_status = 'processing'
+      AND converted_storage_key IS NULL
   `;
   return NextResponse.json(
     { conversionStatus: null, convertedStorageKey: null, reason: 'retry' },
