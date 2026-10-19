@@ -2511,7 +2511,7 @@ export default function PortalPage() {
               />
             )}
             {/* Same reason as DrawingTools above: no pins or tagging before the PDF exists. */}
-            {selectedFileId && !isPDFFile && !selectedIsPendingDrawing && !annotating && (
+            {selectedFileId && !isPDFFile && !selectedIsPendingDrawing && !selectedIsPendingCad && !annotating && (
               <MarkupOverlay
                 fileId={selectedFileId}
                 tagging={tagging}

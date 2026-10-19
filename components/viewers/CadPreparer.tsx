@@ -75,15 +75,20 @@ export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
 
     const poll = async () => {
       if (cancelled) return;
+      let body: StartBody | null = null;
       try {
         const res = await fetch(`/api/files/${fileId}/conversion-status`);
-        const body = res.ok ? ((await res.json()) as StartBody) : null;
-        if (cancelled) return;
-        if (body && settle(body.conversionStatus, body.convertedStorageKey)) return;
+        body = res.ok ? ((await res.json()) as StartBody) : null;
       } catch {
-        // A failed status check is not a verdict; keep polling until the limit.
+        // A failed status check is not a verdict, but it still counts toward the time limit:
+        // it goes through settle() as an unknown status, so the limit is reached even when
+        // every check fails.
       }
-      if (!cancelled) timer = setTimeout(poll, CAD_POLL_INTERVAL_MS);
+      // The fetch and the body read are both awaits: the file may have changed (or another
+      // path settled) meanwhile, and a stale answer must not settle anything.
+      if (cancelled) return;
+      if (settle(body?.conversionStatus ?? null, body?.convertedStorageKey ?? null)) return;
+      timer = setTimeout(poll, CAD_POLL_INTERVAL_MS);
     };
 
     fetch(`/api/files/${fileId}/convert-cad`, { method: 'POST' })
@@ -131,7 +136,7 @@ export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
   const heading = view.kind === 'deferred' ? `Preview available from ${formatDay(view.until)}.` : title;
 
   return (
-    <div className="flex h-full w-full items-center justify-center p-8">
+    <div role="status" aria-live="polite" className="flex h-full w-full items-center justify-center p-8">
       <div className="max-w-sm text-center">
         <p className={view.kind === 'converting' ? 'text-sm text-gray-500' : 'text-sm font-medium text-gray-700'}>{heading}</p>
         {detail && <p className="mt-1 text-sm text-gray-500">{detail}</p>}
