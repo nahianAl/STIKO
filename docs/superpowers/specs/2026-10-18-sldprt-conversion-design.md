@@ -1,7 +1,24 @@
 # SolidWorks parts shown as GLB — design
 
 **Date:** 2026-10-18
-**Status:** Approved in conversation; spec for review
+**Status:** Approved in conversation. Revised the same day after the real-file test (below).
+
+## Real-file test (2026-10-18)
+
+Ten public `.sldprt` files (MIT or CERN-OHL repos) were run through `usd-convert-cad` 0.3.0 on a Modal T4:
+- **Known-dimension parts:** a 10 mm cube, a cube with a 5 mm hole, a 1 mm shell and a torus, saved in SolidWorks 2011 and 2022.
+- **Keycaps with legends.**
+- **An enclosure.**
+- **Three large course models:** Saturn V (17 MB), Watch (9 MB, 21 bodies) and Screwdrivers (20 MB).
+
+Results:
+- **Conversion:** all 10 converted. 18 s on the first (cold) call, then 5–7 s each.
+- **Scale:** sizes are exact in millimetres. The 10 mm cube measures 10.00 mm.
+- **Inch-based parts:** three of the files are drawn in inches (`metersPerUnit 0.0254`). The converter keeps the file's unit and has no option to change it.
+- **Colours come in three forms:** constant `displayColor`, a bound UsdPreviewSurface, and **per-face** (`uniform`, indexed) `displayColor`.
+- **`usd2gltf` crashed** on per-face colours (Screwdrivers) and wrote GLBs 2–7× larger than necessary.
+- **Our own converter worked:** the replacement (`cad-worker/usd_to_glb.py`, below) produced 10 GLBs with 0 errors and 0 warnings in the Khronos glTF validator. All 10 render correctly in Stiko's real `ModelViewer`: upright, colours and per-face colours intact, the 21 watch bodies picked up as 21 parts.
+- **Names:** SolidWorks body names do not survive; every mesh prim is `Mesh`, `Mesh_1`, ….
 
 ## Goal
 
@@ -13,8 +30,8 @@ and comments then work with no new viewer code.
 ## Decisions already made
 
 - **Converter:** NVIDIA's `usd-convert-cad` (PyPI; HOOPS Exchange inside, no Omniverse Kit)
-  turns `.sldprt` into USD. A second step turns USD into GLB: `usd2gltf` first, headless Blender
-  if the real-file test shows `usd2gltf` loses colours or normals. Chosen over:
+  turns `.sldprt` into USD. Our own `usd_to_glb.py` (Pixar `usd-core` + numpy) turns USD into GLB.
+  `usd2gltf` was tried and rejected in the real-file test. Chosen over:
   - cadmpeg, which is free but rated L1 for `.sldprt` and leaves undecodable faces empty;
   - Autodesk APS, which the user rejected;
   - convert3d, whose terms are blocked.
@@ -130,7 +147,8 @@ A Python Modal app (`cad-worker/app.py`, `cad-worker/requirements.txt`, `cad-wor
 
 - **Image:**
   - Base: Debian bookworm with Python 3.12 (needs glibc 2.35+).
-  - Packages: `usd-convert-cad` pinned to the tested version, `usd2gltf` and `usd-core` pinned.
+  - Packages: `usd-convert-cad==0.3.0` in the system Python. `usd-core` and `numpy`, pinned, in a
+    separate venv `/opt/gltf`, so the two OpenUSD builds never load in one interpreter.
   - The converter's telemetry is disabled by env var.
 - **Start endpoint:**
   - Accepts a POST and checks `X-Worker-Secret` with a constant-time compare (401 otherwise).
@@ -141,10 +159,22 @@ A Python Modal app (`cad-worker/app.py`, `cad-worker/requirements.txt`, `cad-wor
 - **GPU function:** `gpu="T4"`, `timeout=600`, no retries.
   1. Downloads with a streaming 200 MB cap. Over the cap → callback `ok: false` with reason
      `too_large`.
-  2. Runs `usd-convert-cad -i in.sldprt -o out.usdc` with millimetres and Y-up via the
-     converter's options, and default tessellation (LOD 2). The output is checked for at least
-     one mesh.
-  3. Runs `usd2gltf` to produce `out.glb`, asserting a nonzero size and a valid GLB header.
+  2. Runs `usd-convert-cad -i in.sldprt -o out.usdc --up-axis y --material-type preview-surface`
+     at default tessellation.
+  3. Runs `/opt/gltf/bin/python usd_to_glb.py out.usdc out.glb`, then asserts a nonzero size and a
+     valid GLB header. The converter:
+     - **Geometry:** walks meshes through instance proxies and skips invisible ones. It bakes world
+       transforms and the stage's `metersPerUnit` into the positions, so one unit is 1 mm whatever
+       unit the part was drawn in.
+     - **Faces and normals:** fan-triangulates and honours `leftHanded` and mirrored transforms. It
+       reads indexed `primvars:normals` (vertex, faceVarying or uniform).
+     - **Colours:** splits each mesh into one primitive per colour (constant or uniform
+       `displayColor`, else the bound material's `diffuseColor`, else grey). It welds identical
+       vertices.
+     - **Parts:** writes one node per mesh named `Body N` with `extras.stikoPart = true`, the marker
+       `lib/model/partTree.ts` reads.
+     - **Empty output:** a stage with no visible mesh exits non-zero, which counts as a
+       failed conversion.
   4. PUTs the GLB to `targetUrl`.
   5. POSTs the callback, retrying it 3 times with backoff on network or 5xx errors.
   6. Any exception or timeout → callback `ok: false` with the reason.
@@ -169,7 +199,7 @@ A Python Modal app (`cad-worker/app.py`, `cad-worker/requirements.txt`, `cad-wor
 
   | State | What the viewer shows |
   |---|---|
-  | converting | "Converting SolidWorks part… this can take a minute the first time." |
+  | converting | "Converting SolidWorks part… the first one after a quiet spell can take a couple of minutes." |
   | deferred | "Preview available from <date>. Save As STEP to view it now." |
   | disabled | The switch-off message from section 1. |
   | failed | "Couldn't convert this SolidWorks part. Save As STEP and upload that." |
@@ -199,13 +229,14 @@ A Python Modal app (`cad-worker/app.py`, `cad-worker/requirements.txt`, `cad-wor
 
 1. **Real-file test first, before any Stiko code.** Deploy `cad-worker/` alone and convert the
    user's real `.sldprt` samples (5–10 files, several SolidWorks years, a couple of complex ones)
-   through a temporary local script. For each file, record:
+   through a temporary local script. **Done 2026-10-18; see "Real-file test" above.** The
+   worker's own tests re-run these files. For each file, record:
    - geometry against a STEP export of the same part where one is available;
    - colours;
    - millimetre scale and Y-up orientation;
    - GLB size;
    - warm and cold conversion time.
-   Choose `usd2gltf` or Blender here. **If the output is poor, stop.**
+   `usd2gltf` was rejected here in favour of our own converter.
 2. **`node --test`:** every rule in `lib/cadConversion.ts`, `cadGlbKey`, the `sldprt` entry in
    `assumedMmPerUnit`, and the switch's effect on the format lists, including the disjointness
    test.
