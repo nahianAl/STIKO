@@ -33,6 +33,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
 -- further down this file.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
 
+-- Stripe billing, mirrored in lib/migrations/018-stripe-billing.sql.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_status TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_id_key
+  ON users (stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
