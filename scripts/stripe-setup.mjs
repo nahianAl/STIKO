@@ -31,11 +31,28 @@ const PRICES = [
 ];
 const PORTAL_KEY = 'stiko_portal';
 
+// Where Stripe sends events. Pass WEBHOOK_URL to register it; skipped otherwise
+// (local testing uses `stripe listen` instead).
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+// Keep in step with app/api/billing/webhook/route.ts.
+const WEBHOOK_EVENTS = [
+  'checkout.session.completed',
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+  'customer.subscription.paused',
+  'customer.subscription.resumed',
+];
+
 async function findOrCreateProduct() {
-  const found = await stripe.products.search({ query: `metadata['stiko_product']:'${PRODUCT_KEY}'` });
-  if (found.data[0]) {
-    console.log(`product   exists   ${found.data[0].id}`);
-    return found.data[0];
+  // A direct list, not products.search: search is eventually consistent, so a
+  // re-run seconds after the first one would not see the product and make a
+  // second one.
+  for await (const p of stripe.products.list({ active: true, limit: 100 })) {
+    if (p.metadata?.stiko_product === PRODUCT_KEY) {
+      console.log(`product   exists   ${p.id}`);
+      return p;
+    }
   }
   const product = await stripe.products.create({
     name: 'Stiko Standard',
@@ -93,9 +110,31 @@ async function findOrCreatePortal(product, prices) {
   return config;
 }
 
+async function findOrCreateWebhook() {
+  for await (const w of stripe.webhookEndpoints.list({ limit: 100 })) {
+    if (w.url === WEBHOOK_URL) {
+      console.log(`webhook   exists   ${w.id} ${w.url}`);
+      console.log('          (its signing secret was shown only when it was created —');
+      console.log('           find it in the Stripe dashboard under Developers → Webhooks)');
+      return;
+    }
+  }
+  const w = await stripe.webhookEndpoints.create({
+    url: WEBHOOK_URL,
+    enabled_events: WEBHOOK_EVENTS,
+    description: 'Stiko billing',
+  });
+  console.log(`webhook   created  ${w.id} ${w.url}`);
+  console.log('');
+  console.log('  STRIPE_WEBHOOK_SECRET for Vercel (shown once, copy it now):');
+  console.log(`  ${w.secret}`);
+  console.log('');
+}
+
 console.log(`Stripe ${mode} mode`);
 const product = await findOrCreateProduct();
 const prices = [];
 for (const spec of PRICES) prices.push(await findOrCreatePrice(product, spec));
 await findOrCreatePortal(product, prices);
+if (WEBHOOK_URL) await findOrCreateWebhook();
 console.log('done');
