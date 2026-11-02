@@ -13,7 +13,7 @@ import {
   type TextStyle,
 } from '@/lib/markup/text';
 
-const BTN = 'flex h-[28px] min-w-[28px] items-center justify-center rounded-[8px] px-[5px] text-[13px] leading-none transition-colors';
+const BTN = 'flex h-[28px] min-w-[28px] items-center justify-center rounded-[8px] px-[5px] text-[13px] leading-none transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#5B60FF]';
 const btn = (active: boolean) => `${BTN} ${active ? 'bg-stiko-tint text-stiko-primary' : 'text-stiko-secondary hover:bg-stiko-subtle'}`;
 const MENU = 'absolute top-full mt-[6px] rounded-[10px] border border-stiko-border bg-white p-[4px] shadow-stiko-panel';
 
@@ -147,6 +147,19 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
     if (Number.isFinite(n)) onChange({ fontSize: clampFontSize(n) });
   };
 
+  // The bar can unmount with a size typed but not committed — the click on empty canvas that
+  // deselects the text takes the bar away before the field's blur. Commit it on the way out,
+  // through the last onChange this bar was given (bound to the texts it was showing).
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  useEffect(() => () => {
+    const d = draftRef.current;
+    draftRef.current = null;
+    if (d === null) return;
+    const n = parseFloat(d);
+    if (Number.isFinite(n)) onChangeRef.current({ fontSize: clampFontSize(n) });
+  }, []);
+
   // A selection shows Konva's rotate handle 50px above the box; the bar clears it rather than
   // covering it. While editing there is no Transformer, so it comes in close.
   const pos = size ? placeTextBar(anchor, size, view, editing ? TEXT_BAR_GAP : TEXT_BAR_ROTATER_GAP) : null;
@@ -190,6 +203,9 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
               if (editing) refocusEditor();
             } else if (e.key === 'Escape') {
               e.preventDefault();
+              // React is hydrated onto `document`; the bar's stopPropagation does not stop the
+              // portal Drawer's own document Escape listener. Only this does.
+              e.nativeEvent.stopImmediatePropagation();
               writeDraft(null);
               e.currentTarget.blur();
               if (editing) refocusEditor();
@@ -200,7 +216,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
         <button
           type="button"
           aria-label="Font size presets"
-          aria-haspopup="listbox"
+          aria-haspopup="menu"
           aria-expanded={menu === 'size'}
           className={btn(menu === 'size')}
           onClick={() => setMenu(menu === 'size' ? null : 'size')}
@@ -210,11 +226,13 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
           </svg>
         </button>
         {menu === 'size' && (
-          <div className={`${MENU} left-0 flex flex-col`}>
+          <div role="menu" aria-label="Font size presets" className={`${MENU} left-0 flex flex-col`}>
             {FONT_SIZE_PRESETS.map((p) => (
               <button
                 key={p}
                 type="button"
+                role="menuitemradio"
+                aria-checked={style.fontSize === p}
                 className={`${btn(style.fontSize === p)} w-[56px] justify-start px-[10px]`}
                 onClick={() => {
                   act({ fontSize: p });
@@ -248,15 +266,16 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
       <Divider />
 
       <div className="relative flex">
-        <button type="button" aria-label="Fill" aria-haspopup="true" aria-expanded={menu === 'fill'} className={btn(menu === 'fill')} onClick={() => setMenu(menu === 'fill' ? null : 'fill')}>
+        <button type="button" aria-label="Fill" aria-haspopup="menu" aria-expanded={menu === 'fill'} className={btn(menu === 'fill')} onClick={() => setMenu(menu === 'fill' ? null : 'fill')}>
           <FillChip fill={style.fill} />
         </button>
         {menu === 'fill' && (
-          <div className={`${MENU} left-1/2 flex -translate-x-1/2 gap-[2px]`}>
+          <div role="menu" aria-label="Fill" aria-orientation="horizontal" className={`${MENU} left-1/2 flex -translate-x-1/2 gap-[2px]`}>
             <button
               type="button"
+              role="menuitemradio"
               aria-label="No fill"
-              aria-pressed={!style.fill}
+              aria-checked={!style.fill}
               className={btn(!style.fill)}
               onClick={() => {
                 act({ fill: '' });
@@ -269,8 +288,9 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
               <button
                 key={s.value}
                 type="button"
+                role="menuitemradio"
                 aria-label={`${s.label} fill`}
-                aria-pressed={style.fill === s.value}
+                aria-checked={style.fill === s.value}
                 className={btn(style.fill === s.value)}
                 onClick={() => {
                   act({ fill: s.value });

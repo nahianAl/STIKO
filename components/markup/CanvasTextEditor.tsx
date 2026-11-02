@@ -195,6 +195,10 @@ export default function CanvasTextEditor({
             // Plain Enter inserts a newline. Esc and Ctrl/Cmd+Enter finish.
             if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
               e.preventDefault();
+              // React is hydrated onto `document`, so stopPropagation() above does not stop another
+              // document-level listener — the portal Drawer closes on Escape there. Only this does.
+              // (Ctrl/Cmd+Enter too: finishing an edit is this key's whole meaning here.)
+              e.nativeEvent.stopImmediatePropagation();
               commitRef.current();
               return;
             }

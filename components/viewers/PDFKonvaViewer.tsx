@@ -187,10 +187,10 @@ function PDFKonvaViewer(
     const { begin: marqueeBegin, move: marqueeMove, cancel: marqueeCancel } = marquee;
     // Text creation, editing, the floating bar's target and its shortcuts — shared with
     // AnnotationCanvas. Shortcuts only inside a markup session.
-    const markupText = useMarkupText(ann, { enabled: annotating, activeTool, onObjectCreated });
+    const markupText = useMarkupText(ann, { enabled: annotating, activeTool, onObjectCreated, containerRef });
     const { beginCreate: textBegin, moveCreate: textMove, endCreate: textEnd } = markupText;
     // Where the bar goes: the target texts' box, in this container's pixels (zoom and pan included).
-    const barRect = useNodesScreenRect(stageRef, markupText.targetIds);
+    const barRect = useNodesScreenRect(stageRef, markupText.targetIds, markupText.gesture);
 
     // Eraser drag state. Refs, not state: this changes on every pointer move and nothing
     // renders from it.
@@ -243,12 +243,15 @@ function PDFKonvaViewer(
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         const el = document.activeElement as HTMLElement | null;
         if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+        // A text open in the editor is never deleted from under it — focus may have Tabbed to a
+        // bar button, where Backspace is no longer typing.
+        if (markupText.editingId) return;
         if (ann.selectedIds.length) { e.preventDefault(); ann.deleteSelected(); }
       };
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [annotating, ann.selectedIds, ann.deleteSelected]);
+    }, [annotating, ann.selectedIds, ann.deleteSelected, markupText.editingId]);
 
     // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
     // is a fresh object every render. Depending on its identity would fire this effect on every
@@ -1065,7 +1068,9 @@ function PDFKonvaViewer(
               view={containerSize}
               style={markupText.targetObject}
               editing={markupText.editingId !== null}
-              onChange={markupText.applyStyle}
+              // Bound to THIS render's targets: a size draft the bar commits as it unmounts (the
+              // click that deselected it) must still reach the texts it was showing.
+              onChange={(patch) => markupText.applyStyle(patch, markupText.targetIds)}
             />
           )}
         </div>

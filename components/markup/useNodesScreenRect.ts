@@ -19,8 +19,12 @@ function sameRect(a: RectLike | null, b: RectLike | null): boolean {
  * (typing, the bar, a drag, a zoom, a pan, a resize): each of those redraws a layer, and
  * a draw happens after Konva has the new attributes, which a React effect cannot promise —
  * react-konva commits into Konva from its own reconciler. State is set only on a real change.
+ *
+ * `paused` (a drag or transform in flight, while the bar is hidden) stops measuring: every frame
+ * of a drag moves the box, and setting state on each would re-render the whole surface for a bar
+ * nobody can see. It measures again the moment the gesture ends.
  */
-export function useNodesScreenRect(stageRef: RefObject<Konva.Stage>, ids: readonly string[]): RectLike | null {
+export function useNodesScreenRect(stageRef: RefObject<Konva.Stage>, ids: readonly string[], paused = false): RectLike | null {
   const [rect, setRect] = useState<RectLike | null>(null);
   const key = ids.join(' ');
 
@@ -30,6 +34,7 @@ export function useNodesScreenRect(stageRef: RefObject<Konva.Stage>, ids: readon
       setRect(null);
       return;
     }
+    if (paused) return;
     const wanted = key.split(' ');
     const measure = () => {
       let next: RectLike | null = null;
@@ -58,7 +63,7 @@ export function useNodesScreenRect(stageRef: RefObject<Konva.Stage>, ids: readon
     return () => {
       for (const l of layers) l.off('draw.nodesScreenRect', measure);
     };
-  }, [stageRef, key]);
+  }, [stageRef, key, paused]);
 
   return key ? rect : null;
 }
