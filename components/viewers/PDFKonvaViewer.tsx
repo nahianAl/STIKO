@@ -20,6 +20,7 @@ import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
 import { sweepPoints } from '@/lib/markup/eraseSweep';
+import PageArrows from './pdf/PageArrows';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -633,6 +634,28 @@ function PDFKonvaViewer(
     // by construction, which is exactly the case the unlock is for.
     const pageNavLocked = annotating && !(isMeasureTool(activeTool) && !ann.hasObjects());
 
+    const goPrev = useCallback(() => setCurrentPage((p) => Math.max(1, p - 1)), []);
+    const goNext = useCallback(() => setCurrentPage((p) => Math.min(numPages, p + 1)), [numPages]);
+
+    // ←/→ turn pages, under the same lock as the arrows. Skipped while typing, with a modifier held,
+    // and when a handler nearer the target already used the key (the colour picker uses arrows;
+    // React's root listener runs before this window listener, so its preventDefault is visible).
+    useEffect(() => {
+      if (numPages <= 1) return;
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const el = document.activeElement as HTMLElement | null;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+        if (pageNavLocked) return;
+        e.preventDefault();
+        if (e.key === 'ArrowLeft') goPrev();
+        else goNext();
+      };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }, [numPages, pageNavLocked, goPrev, goNext]);
+
     // The zoom and pan live on the Stage, so every layer inherits them — the fill has to be
     // expressed in page space or it scrolls away from the viewport with the page.
     const matte = matteRectForStage({ stagePos, stageScale, containerSize });
@@ -641,29 +664,11 @@ function PDFKonvaViewer(
       <div className="flex h-full w-full flex-col">
         {/* Toolbar */}
         <div className="flex items-center justify-between px-3 py-1.5 bg-white border-b border-gray-200 flex-shrink-0">
-          {/* Page navigation */}
+          {/* Page counter. Pages turn with the side arrows / ←→ (single-page) or by scrolling (scroll mode). */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage <= 1 || pageNavLocked}
-              className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
             <span className="text-sm text-gray-600 min-w-[60px] text-center">
               {currentPage} / {numPages || '...'}
             </span>
-            <button
-              onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-              disabled={currentPage >= numPages || pageNavLocked}
-              className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
           </div>
 
           {/* Zoom controls */}
@@ -872,6 +877,16 @@ function PDFKonvaViewer(
                 })}
               </Layer>
             </Stage>
+          )}
+
+          {numPages > 1 && (
+            <PageArrows
+              canPrev={currentPage > 1}
+              canNext={currentPage < numPages}
+              disabled={pageNavLocked}
+              onPrev={goPrev}
+              onNext={goNext}
+            />
           )}
 
           {editingObj && (
