@@ -103,8 +103,9 @@ single-page mode, and scroll mode doesn't need them.
 - **Auto-switch for drawing and measuring:** when `annotating` becomes true while in
   scroll mode, the viewer switches to single-page view on the current page and hides the
   sidebar. When `annotating` returns to false, it switches back to scroll mode at that
-  same page. This is internal state (`suspendedForSession`): it does **not** overwrite
-  the remembered mode.
+  same page. The mode is derived from `annotating` on every render (no extra state), so
+  there is never a frame of the wrong mode, and it does **not** overwrite the remembered
+  mode.
 - Dropping a pin (`tagging`) does **not** switch modes. If the portal then starts a markup
   session for that comment, `annotating` flips and the auto-switch applies.
 
@@ -154,8 +155,9 @@ New:
   can load it):
   - `readStoredMode(storage): 'scroll' | 'single'` and `writeStoredMode(storage, mode)`.
     Both take a `Storage`-like object and are try/catch-guarded.
-  - `effectiveMode({ stored, numPages, suspendedForSession }): 'scroll' | 'single'`.
-  - `mostVisiblePage(rects: {page, top, bottom}[], viewportTop, viewportBottom): number`.
+  - `effectiveMode({ sidebarOpen, numPages, annotating }): 'scroll' | 'single'`.
+  - `mostVisiblePage(pages, viewTop, viewBottom, scrolledToEnd): number` (scrolled to the
+    very end → the last page, so the counter can reach N).
   - `fitWidthScale(pageWidths: number[], viewportWidth: number, padding: number): number`.
   - `zoomAnchoredScrollTop(...)`: the new `scrollTop` that keeps the content under the
     cursor fixed across a zoom change (and the same for `scrollLeft`).
@@ -185,15 +187,17 @@ New:
 Changed:
 
 - `components/viewers/PDFKonvaViewer.tsx`:
-  - Adds `sidebarOpen` (from `readStoredMode`) and `suspendedForSession`, and derives the
-    mode via `effectiveMode`.
+  - Adds `sidebarOpen` (from `readStoredMode`), and derives the mode via `effectiveMode`
+    from it, the page count and `annotating`.
   - New header layout (toggle + counter left, zoom right). The old header arrows are
     removed.
   - Body = `[PdfSidebar?] [PdfScrollView | existing stage container + PageArrows]`.
   - Zoom controls dispatch to whichever view is active. In scroll mode they drive the
     scroll view's zoom; in single-page mode, the existing `adjustZoom` / `resetZoom`.
-  - Watches `annotating` to set or clear `suspendedForSession` and restore the scroll
-    position afterwards.
+  - When a session ends the scroll view remounts at the current page (it reads
+    `initialPage` once at mount), which restores the position.
+  - `insertImage` waits for the page size if the page has not rendered yet (a session
+    started from scroll mode inserts in the same tick it switches to single-page).
   - Keyboard ←/→ handler (single-page mode only).
   - The loaded `pdfDoc` is shared with the sidebar and the scroll view, so the file is
     fetched and parsed once.
@@ -208,7 +212,7 @@ pdfjs.getDocument(url) ─► pdfDoc (PDFKonvaViewer state)
                              ├─► PdfScrollView   (scroll mode)         ─► onCurrentPageChange ─► currentPage
                              └─► Konva stage     (single-page mode)    ◄─ currentPage (arrows/keys set it)
 currentPage ─► header counter, sidebar highlight, onPageChange(prop), getCurrentPage(handle)
-annotating(prop) ─► suspendedForSession ─► effectiveMode
+sidebarOpen + numPages + annotating(prop) ─► effectiveMode ─► mode
 ```
 
 ### Error handling
