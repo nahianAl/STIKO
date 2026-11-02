@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useImperativeHandle, type Ref } from 'react';
 import { Stage, Layer, Rect, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
+import { useMarqueeSelect } from './useMarqueeSelect';
 import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from './useAnnotationObjects';
 import AnnotationObjects from './AnnotationObjects';
 import MeasureObjects from './MeasureObjects';
@@ -134,6 +135,7 @@ export default function AnnotationCanvas({
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const ann = useAnnotationObjects();
+  const marquee = useMarqueeSelect(ann);
 
   // Eraser drag state. Refs, not state: this changes on every pointer move and nothing
   // renders from it.
@@ -196,12 +198,12 @@ export default function AnnotationCanvas({
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
-      if (ann.selectedId) { e.preventDefault(); ann.deleteObject(ann.selectedId); }
+      if (ann.selectedIds.length) { e.preventDefault(); ann.deleteSelected(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ann.selectedId, ann.deleteObject]);
+  }, [ann.selectedIds, ann.deleteSelected]);
 
   // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
   // is a fresh object every render. Depending on its identity would fire this effect on every
@@ -332,7 +334,7 @@ export default function AnnotationCanvas({
       reader.readAsDataURL(file);
     },
     applyStyleToSelection: (patch) => {
-      if (ann.selectedId) ann.applyStyle(ann.selectedId, patch);
+      ann.applyStyleToSelected(patch);
     },
   }));
 
@@ -395,13 +397,21 @@ export default function AnnotationCanvas({
       return;
     }
     if (activeTool === 'pointer') {
-      // Empty matte clears the markup selection, as it always has — and so does a press that
-      // lands on a dimension, which is the other half of the clear above. One Delete keypress
-      // answers to BOTH selections (this component's listener deletes the markup object, the
-      // portal's deletes the measurement), so the only safe invariant is that at most one of
-      // them is live at a time. Without this clause the two orders differ: rectangle-then-
-      // dimension would leave both selected and delete two objects on one key.
-      if (e.target === stage || e.target.getLayer() === measureLayerRef.current) ann.setSelectedId(null);
+      // A press on a dimension clears the markup selection: one Delete key answers to BOTH
+      // selections (this component's listener deletes the markup objects, the portal's deletes
+      // the measurement), so at most one may be live at a time. Without this, rectangle-then-
+      // dimension would leave both selected and one key would delete two kinds of object.
+      if (e.target.getLayer() === measureLayerRef.current) {
+        ann.setSelectedId(null);
+        return;
+      }
+      // Empty matte: start a selection box. A plain press also clears the selection (a click
+      // that never becomes a box is exactly the old "click empty space to deselect"); Shift
+      // keeps it, so a Shift+box adds.
+      if (e.target === stage) {
+        if (!e.evt.shiftKey) ann.setSelectedId(null);
+        marquee.begin(p, e.evt.shiftKey);
+      }
       return;
     }
     if (activeTool === 'eraser') {
@@ -453,6 +463,13 @@ export default function AnnotationCanvas({
       lastErasePointRef.current = p;
       return;
     }
+    if (activeTool === 'pointer') {
+      // A mouseup this stage never received (focus lost mid-drag) would leave the box stuck to
+      // the cursor — the same guard the eraser uses above.
+      if (e.evt.buttons === 0) { marquee.cancel(); return; }
+      marquee.move(p);
+      return;
+    }
     // Read Shift off the event rather than tracking it: the constraint applies from the next
     // pointer move, which is what every other design tool does.
     ann.moveDraw(activeTool as AnnTool, p, e.evt.shiftKey);
@@ -486,8 +503,8 @@ export default function AnnotationCanvas({
           height={size.height}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
-          onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
+          onMouseUp={() => { stopErasing(); marquee.end(stageRef.current, 3); if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseLeave={() => { stopErasing(); marquee.end(stageRef.current, 3); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
         >
           <Layer listening={false}>
             {/* Inside the stage, not on the container: toDataURL reads the stage, and JPEG has no
@@ -499,9 +516,12 @@ export default function AnnotationCanvas({
             <AnnotationObjects
               objects={ann.objects}
               draft={ann.draft}
-              selectedId={ann.selectedId}
+              selectedIds={ann.selectedIds}
               activeTool={activeTool as AnnTool}
-              onSelect={ann.setSelectedId}
+              // A press on an object never reaches the stage's mousedown (AnnotationObjects cancels the
+              // bubble), so the stage's measurement clear cannot cover it: clear it here instead.
+              onSelect={(id, additive) => { onSelectMeasurement?.(null); ann.pick(id, additive); }}
+              marquee={marquee.box}
               onErase={ann.deleteObject}
               onChange={ann.updateObject}
               editingId={editingId}
