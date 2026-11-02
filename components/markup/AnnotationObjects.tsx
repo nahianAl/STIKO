@@ -115,6 +115,11 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
       // Edit it rather than stacking a new box on top. Cancelled so the stage never starts a
       // create gesture underneath.
       e.cancelBubble = true;
+      // Konva delivers this press on pointerdown, and the editor mounts and focuses inside it.
+      // The browser's default for the mousedown that follows then moves focus off the textarea
+      // (the canvas is not focusable, so focus goes to the body) and typing lands nowhere.
+      // Cancelling the pointerdown suppresses that compatibility mousedown and its focus change.
+      e.evt.preventDefault();
       onEditText(obj.id);
     }
   };
