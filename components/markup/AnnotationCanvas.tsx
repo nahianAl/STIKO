@@ -14,7 +14,7 @@ import { naturalPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/spa
 import { UNPAGED } from '@/lib/measure/calibration';
 import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from './CanvasTextEditor';
-import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
+import { wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { sweepPoints } from '@/lib/markup/eraseSweep';
@@ -385,7 +385,8 @@ export default function AnnotationCanvas({
       const id = ann.addText({ x, y: p.y }, {
         text: '',
         color,
-        fontSize: fontSizeForStrokeWidth(strokeWidth),
+        strokeWidth,
+        autoWidth: false,
         // The fitted background region, not the stage: the wrap width must not depend on how
         // much matte happens to surround the snapshot.
         width: wrapWidth,

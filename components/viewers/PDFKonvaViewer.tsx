@@ -16,7 +16,7 @@ import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { PDF_RENDER_SCALE, pointsPerStagePixel } from '@/lib/measure/space';
 import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
-import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
+import { wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
@@ -526,7 +526,8 @@ function PDFKonvaViewer(
         const id = ann.addText({ x, y: coords.y }, {
           text: '',
           color,
-          fontSize: fontSizeForStrokeWidth(strokeWidth),
+          strokeWidth,
+          autoWidth: false,
           // The page's own width, not the stage's: the stage width changes with the zoom, and a
           // zoom-dependent wrap would reflow committed text on every scroll.
           width: wrapWidth,
