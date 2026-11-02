@@ -15,7 +15,9 @@ import { naturalPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/spa
 import { UNPAGED } from '@/lib/measure/calibration';
 import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from './CanvasTextEditor';
-import { stepFontSize, wrapWidthForContent, isBlank } from '@/lib/markup/text';
+import TextStyleBar from './TextStyleBar';
+import { useMarkupText } from './useMarkupText';
+import { useNodesScreenRect } from './useNodesScreenRect';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { sweepPoints } from '@/lib/markup/eraseSweep';
@@ -131,12 +133,12 @@ export default function AnnotationCanvas({
   const measureLayerRef = useRef<Konva.Layer>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
-  // The text object currently open for editing. The object itself already exists in `ann` —
-  // this is only which one the editor is bound to.
-  const [editingId, setEditingId] = useState<string | null>(null);
-
   const ann = useAnnotationObjects();
   const marquee = useMarqueeSelect(ann);
+  // Text creation, editing, the floating bar's target and its shortcuts — shared with the PDF viewer.
+  const markupText = useMarkupText(ann, { enabled: true, activeTool, onObjectCreated });
+  // Where the bar goes: the target texts' box, in this container's pixels.
+  const barRect = useNodesScreenRect(stageRef, markupText.targetIds);
 
   // Eraser drag state. Refs, not state: this changes on every pointer move and nothing
   // renders from it.
@@ -291,8 +293,8 @@ export default function AnnotationCanvas({
       // hidden (`visible={editingId !== obj.id}`) so the textarea can stand in for it, and
       // `setEditingId(null)` is a React state update that will not have been applied by the
       // time toDataURL runs on the next line. Un-hide the node directly instead.
-      if (editingId) (stage.findOne(`#${editingId}`) as Konva.Node | undefined)?.visible(true);
-      setEditingId(null);
+      if (markupText.editingId) (stage.findOne(`#${markupText.editingId}`) as Konva.Node | undefined)?.visible(true);
+      markupText.setEditingId(null);
       stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
       stage.draw();
       let url: string;
@@ -316,7 +318,7 @@ export default function AnnotationCanvas({
       ann.setSelectedId(null);
       return url;
     },
-    clear: () => { setEditingId(null); ann.clear(); },
+    clear: () => { markupText.setEditingId(null); ann.clear(); },
     hasObjects: () => ann.hasObjects(),
     insertImage: (file: File) => {
       const reader = new FileReader();
@@ -378,25 +380,10 @@ export default function AnnotationCanvas({
     }
 
     if (activeTool === 'text') {
-      const wrapWidth = wrapWidthForContent(bgFit ? bgFit.width : size.width);
-      // Keep the whole box on the surface. Clamp against the fitted background when there is
-      // one — a native-resolution capture crops to exactly that region, so a box outside it
-      // would be cropped away entirely.
-      const bounds = bgFit ?? { x: 0, y: 0, width: size.width, height: size.height };
-      const x = Math.max(bounds.x, Math.min(p.x, bounds.x + bounds.width - wrapWidth));
-      const id = ann.addText({ x, y: p.y }, {
-        text: '',
-        color,
-        strokeWidth,
-        autoWidth: false,
-        // The fitted background region, not the stage: the wrap width must not depend on how
-        // much matte happens to surround the snapshot.
-        width: wrapWidth,
-      });
-      setEditingId(id);
-      // Return to the pointer immediately. Otherwise the click that commits this box would also
-      // start another one, since the text tool would still be armed.
-      onObjectCreated?.();
+      // A press on an existing text never gets here: AnnotationObjects opens it for editing and
+      // cancels the bubble. Anything else starts a create gesture; the mouseup decides click
+      // (auto width) or drag (fixed width) — see finishText.
+      markupText.beginCreate(p);
       return;
     }
     if (activeTool === 'pointer') {
@@ -466,6 +453,12 @@ export default function AnnotationCanvas({
       lastErasePointRef.current = p;
       return;
     }
+    if (activeTool === 'text') {
+      // A release this stage never received ends the press here, as the eraser's guard does.
+      if (e.evt.buttons === 0) { finishText(); return; }
+      markupText.moveCreate(p);
+      return;
+    }
     if (activeTool === 'pointer') {
       // A mouseup this stage never received (focus lost mid-drag) would leave the box stuck to
       // the cursor — the same guard the eraser uses above.
@@ -478,14 +471,16 @@ export default function AnnotationCanvas({
     ann.moveDraw(activeTool as AnnTool, p, e.evt.shiftKey);
   };
 
-  const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
+  const editingObj = markupText.editingId ? ann.objects.find((o) => o.id === markupText.editingId) ?? null : null;
 
-  /** Blank in, nothing out — an empty box is a mis-click, not an object. */
-  const commitText = () => {
-    if (editingObj && isBlank(editingObj.text)) {
-      ann.deleteObject(editingObj.id);
-    }
-    setEditingId(null);
+  /**
+   * End a Text-tool press (a no-op when none is in flight). The box stays on the fitted
+   * background when there is one — a native-resolution capture crops to exactly that region, so
+   * a box outside it would be cropped away — else on the stage. The stage is untransformed, so
+   * one stage pixel is one screen pixel for the drag threshold.
+   */
+  const finishText = () => {
+    markupText.endCreate({ color, strokeWidth }, 1, bgFit ?? { x: 0, y: 0, width: size.width, height: size.height });
   };
 
   const cursor = activeTool === 'pointer' ? 'default' : activeTool === 'eraser' ? ERASER_CURSOR : 'crosshair';
@@ -506,8 +501,8 @@ export default function AnnotationCanvas({
           height={size.height}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          onMouseUp={() => { stopErasing(); marquee.end(stageRef.current, 3); if (ann.endDraw()) onObjectCreated?.(); }}
-          onMouseLeave={() => { stopErasing(); marquee.end(stageRef.current, 3); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
+          onMouseUp={() => { stopErasing(); finishText(); marquee.end(stageRef.current, 3); if (ann.endDraw()) onObjectCreated?.(); }}
+          onMouseLeave={() => { stopErasing(); finishText(); marquee.end(stageRef.current, 3); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
         >
           <Layer listening={false}>
             {/* Inside the stage, not on the container: toDataURL reads the stage, and JPEG has no
@@ -524,13 +519,15 @@ export default function AnnotationCanvas({
               // A press on an object never reaches the stage's mousedown (AnnotationObjects cancels the
               // bubble), so the stage's measurement clear cannot cover it: clear it here instead.
               onSelect={(id, additive) => { onSelectMeasurement?.(null); ann.pick(id, additive); }}
-              marquee={marquee.box}
+              // The Text tool's live drag reuses the selection box's look.
+              marquee={marquee.box ?? markupText.createBox}
               onErase={ann.deleteObject}
               onChange={ann.updateObject}
-              editingId={editingId}
-              onEditText={setEditingId}
+              editingId={markupText.editingId}
+              onEditText={markupText.startEditing}
               onBakeText={ann.bakeTextTransform}
               onSetTextWidth={ann.setTextWidth}
+              onGestureChange={markupText.setGesture}
             />
           </Layer>
 
@@ -620,8 +617,20 @@ export default function AnnotationCanvas({
           y={editingObj.y}
           scale={1}
           onChange={(t) => ann.updateText(editingObj.id, t)}
-          onCommit={commitText}
-          onStepFontSize={(dir) => ann.updateTextStyle([editingObj.id], { fontSize: stepFontSize(editingObj.fontSize, dir) })}
+          onCommit={markupText.commit}
+          onStepFontSize={markupText.stepFont}
+        />
+      )}
+
+      {/* The floating text bar: the edited text, or a text-only selection. Hidden while an
+          object is dragged or transformed, and until the selection has been measured. */}
+      {markupText.targetObject && barRect && !markupText.gesture && (
+        <TextStyleBar
+          anchor={barRect}
+          view={size}
+          style={markupText.targetObject}
+          editing={markupText.editingId !== null}
+          onChange={markupText.applyStyle}
         />
       )}
     </div>
