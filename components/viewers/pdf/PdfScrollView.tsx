@@ -96,9 +96,12 @@ export default function PdfScrollView({
       setScale(clamped);
       return;
     }
-    if (clamped === prev) {
-      // Net-zero zoom: if nothing is left to commit, no render will consume a stale pending scroll.
-      if (committedScaleRef.current === clamped) pendingScrollRef.current = null;
+    if (clamped === prev) return;
+    // Back at the zoom already on screen (e.g. pinch jitter 5 → 4.5 → 5 in one frame): React will
+    // skip the render, so nothing would consume a pending scroll — and none is needed.
+    if (clamped === committedScaleRef.current) {
+      pendingScrollRef.current = null;
+      setScale(clamped);
       return;
     }
     const from = pendingScrollRef.current ?? { left: el.scrollLeft, top: el.scrollTop };
