@@ -216,7 +216,9 @@ export default function AnnotationCanvas({
   // The same loop exists from the other end: `onSelectionChange` is in this dependency array,
   // so the caller MUST pass a `useCallback`-stable reference. An inline arrow function there
   // re-subscribes this effect on every render and reintroduces exactly the same cycle.
-  const sel = ann.selectedObject;
+  // toolbarObject, not selectedObject: in a mixed selection the toolbar reflects a shape, so the
+  // stroke picker (hidden for text) stays available for the shapes it would restyle.
+  const sel = ann.toolbarObject;
   const selType = sel?.type ?? null;
   const selColor = sel?.color ?? null;
   const selStroke = sel?.strokeWidth ?? null;
