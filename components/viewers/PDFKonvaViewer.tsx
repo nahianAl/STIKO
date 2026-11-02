@@ -6,6 +6,7 @@ import type Konva from 'konva';
 import { pdfjs } from 'react-pdf';
 import type { Comment } from '@/lib/types';
 import { buildTagNumbers } from '@/lib/tagNumbers';
+import { useMarqueeSelect } from '@/components/markup/useMarqueeSelect';
 import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
 import MeasureObjects from '@/components/markup/MeasureObjects';
@@ -179,6 +180,8 @@ function PDFKonvaViewer(
 
     // Shared Konva annotation object model (select/move/scale/rotate/erase)
     const ann = useAnnotationObjects();
+    const marquee = useMarqueeSelect(ann);
+    const { begin: marqueeBegin, move: marqueeMove } = marquee;
     // The text object currently open for editing. The object itself already exists in `ann` —
     // this is only which one the editor is bound to.
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -233,12 +236,12 @@ function PDFKonvaViewer(
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         const el = document.activeElement as HTMLElement | null;
         if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
-        if (ann.selectedId) { e.preventDefault(); ann.deleteObject(ann.selectedId); }
+        if (ann.selectedIds.length) { e.preventDefault(); ann.deleteSelected(); }
       };
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [annotating, ann.selectedId, ann.deleteObject]);
+    }, [annotating, ann.selectedIds, ann.deleteSelected]);
 
     // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
     // is a fresh object every render. Depending on its identity would fire this effect on every
@@ -321,7 +324,7 @@ function PDFKonvaViewer(
         reader.readAsDataURL(file);
       },
       applyStyleToSelection: (patch) => {
-        if (ann.selectedId) ann.applyStyle(ann.selectedId, patch);
+        ann.applyStyleToSelected(patch);
       },
     }));
 
@@ -533,14 +536,20 @@ function PDFKonvaViewer(
         return;
       }
       if (activeTool === 'pointer') {
-        // Empty sheet clears the markup selection, as it always has — and so does a press that
-        // lands on a dimension, which is the other half of the clear above. One Delete keypress
-        // answers to BOTH selections (this viewer's listener deletes the markup object, the
-        // portal's deletes the measurement), so the only safe invariant is that at most one of
-        // them is live at a time. Without this clause the two orders differ: rectangle-then-
-        // dimension would leave both selected and delete two objects on one key.
-        if (e.target === stage || e.target.getLayer() === measureLayerRef.current) {
+        // A press on a dimension clears the markup selection: one Delete key answers to BOTH
+        // selections (this viewer's listener deletes the markup objects, the portal's deletes the
+        // measurement), so at most one may be live at a time. Without this, rectangle-then-
+        // dimension would leave both selected and one key would delete two kinds of object.
+        if (e.target.getLayer() === measureLayerRef.current) {
           ann.setSelectedId(null);
+          return;
+        }
+        // Empty sheet: start a selection box. A plain press also clears the selection (a click
+        // that never becomes a box is exactly the old "click empty space to deselect"); Shift
+        // keeps it, so a Shift+box adds.
+        if (e.target === stage) {
+          if (!e.evt.shiftKey) ann.setSelectedId(null);
+          marqueeBegin(coords, e.evt.shiftKey);
         }
         return;
       }
@@ -553,7 +562,7 @@ function PDFKonvaViewer(
         return;
       }
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint, onSelectMeasurement, pendingMeasurement]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint, onSelectMeasurement, pendingMeasurement, marqueeBegin]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
@@ -595,9 +604,14 @@ function PDFKonvaViewer(
         lastErasePointRef.current = p;
         return;
       }
+      if (activeTool === 'pointer') {
+        const c = getPageCoords(stage);
+        if (c) marqueeMove(c);
+        return;
+      }
       const coords = getPageCoords(stage);
       if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
-    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover]);
+    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover, marqueeMove]);
 
     const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
 
@@ -839,8 +853,8 @@ function PDFKonvaViewer(
               onWheel={handleWheel}
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
-              onMouseUp={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); }}
-              onMouseLeave={() => { stopErasing(); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
+              onMouseUp={() => { stopErasing(); marquee.end(stageRef.current, 3 / stageScale); if (ann.endDraw()) onObjectCreated?.(); }}
+              onMouseLeave={() => { stopErasing(); marquee.end(stageRef.current, 3 / stageScale); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
             >
               {/* PDF Background */}
               <Layer>
@@ -855,9 +869,10 @@ function PDFKonvaViewer(
                 <AnnotationObjects
                   objects={ann.objects}
                   draft={ann.draft}
-                  selectedId={ann.selectedId}
+                  selectedIds={ann.selectedIds}
                   activeTool={activeTool as AnnTool}
-                  onSelect={ann.setSelectedId}
+                  onSelect={ann.pick}
+                  marquee={marquee.box}
                   onErase={ann.deleteObject}
                   onChange={ann.updateObject}
                   editingId={editingId}

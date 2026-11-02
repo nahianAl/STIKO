@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Line, Arrow, Rect, Shape, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import type Konva from 'konva';
+import type { Box } from '@/lib/markup/selection';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
 import { TEXT_FONT_FAMILY } from '@/lib/markup/text';
 import { cloudArcs } from '@/lib/markup/cloud';
@@ -28,9 +29,10 @@ function ImageObj({ obj, common, onLoaded }: { obj: AnnotationObject; common: Om
 interface AnnotationObjectsProps {
   objects: AnnotationObject[];
   draft: AnnotationObject | null;
-  selectedId: string | null;
+  selectedIds: string[];
   activeTool: AnnTool;
-  onSelect: (id: string) => void;
+  /** Shift (additive) toggles; see pickId. */
+  onSelect: (id: string, additive: boolean) => void;
   onErase: (id: string) => void;
   onChange: (id: string, patch: Partial<AnnotationObject>) => void;
   /** The text object currently open in the editor. Its Konva node is hidden so the glyphs are
@@ -40,26 +42,32 @@ interface AnnotationObjectsProps {
   onEditText?: (id: string) => void;
   /** Text transforms bake their scale instead of storing it — see bakeTextTransform. */
   onBakeText?: (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => void;
+  /** The live selection box, in the same drawing space as the objects. */
+  marquee?: Box | null;
 }
 
-export default function AnnotationObjects({ objects, draft, selectedId, activeTool, onSelect, onErase, onChange, editingId = null, onEditText, onBakeText }: AnnotationObjectsProps) {
+export default function AnnotationObjects({ objects, draft, selectedIds, activeTool, onSelect, onErase, onChange, editingId = null, onEditText, onBakeText, marquee = null }: AnnotationObjectsProps) {
   const trRef = useRef<Konva.Transformer>(null);
   // Bumped when an ImageObj finishes decoding, so the Transformer rebinds once the
   // (initially null) image node actually exists in the stage.
   const [imgLoadTick, setImgLoadTick] = useState(0);
   const shiftHeld = useShiftKey();
 
-  // Bind the Transformer to the selected node — unless that node is open in the text editor,
-  // where resize handles would fight the caret and sit over the textarea.
+  // Bind the Transformer to every selected node — except one open in the text editor, where
+  // resize handles would fight the caret and sit over the textarea.
   useEffect(() => {
     const tr = trRef.current;
     if (!tr) return;
     const stage = tr.getStage();
-    const editing = selectedId !== null && selectedId === editingId;
-    const node = selectedId && stage && !editing ? stage.findOne(`#${selectedId}`) : null;
-    tr.nodes(node ? [node as Konva.Node] : []);
+    const nodes = stage
+      ? selectedIds
+          .filter((id) => id !== editingId)
+          .map((id) => stage.findOne(`#${id}`))
+          .filter((n): n is Konva.Node => !!n)
+      : [];
+    tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, objects, activeTool, imgLoadTick, editingId]);
+  }, [selectedIds, objects, activeTool, imgLoadTick, editingId]);
 
   // Object click: select (pointer) or erase; ignored for draw tools so you can draw over objects
   const handleObj = (e: Konva.KonvaEventObject<MouseEvent>, id: string) => {
@@ -70,7 +78,7 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
     // The stage handler will also erase this object a moment later via getIntersection; that's
     // a harmless double delete since deleteObject filters by id.
     if (activeTool === 'eraser') { onErase(id); }
-    else if (activeTool === 'pointer') { e.cancelBubble = true; onSelect(id); }
+    else if (activeTool === 'pointer') { e.cancelBubble = true; onSelect(id, e.evt.shiftKey); }
   };
 
   const renderObj = (obj: AnnotationObject, isDraft: boolean) => {
@@ -84,7 +92,17 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
       draggable: !isDraft && activeTool === 'pointer',
       onMouseDown: isDraft ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => handleObj(e, obj.id),
       onTap: isDraft ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => handleObj(e, obj.id),
-      onDragEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<DragEvent>) => onChange(obj.id, { x: e.target.x(), y: e.target.y() }),
+      // Konva's Transformer drags the other selected nodes along with this one. Persist every
+      // selected position here rather than trusting each node to report its own dragend, so a
+      // group move can never leave state behind the canvas. Writing the same value twice is harmless.
+      onDragEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<DragEvent>) => {
+        const stage = e.target.getStage();
+        const ids = selectedIds.includes(obj.id) ? selectedIds : [obj.id];
+        for (const sid of ids) {
+          const n = sid === obj.id ? e.target : stage?.findOne(`#${sid}`);
+          if (n) onChange(sid, { x: n.x(), y: n.y() });
+        }
+      },
       onTransformEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<Event>) => {
         const n = e.target;
         const t = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
@@ -208,6 +226,20 @@ export default function AnnotationObjects({ objects, draft, selectedId, activeTo
         rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
         boundBoxFunc={(oldBox, newBox) => (newBox.width < 5 || newBox.height < 5 ? oldBox : newBox)}
       />
+      {marquee && (
+        <Rect
+          x={marquee.x}
+          y={marquee.y}
+          width={marquee.width}
+          height={marquee.height}
+          stroke="#5B60FF"
+          strokeWidth={1}
+          dash={[4, 4]}
+          fill="rgba(91, 96, 255, 0.08)"
+          strokeScaleEnabled={false}
+          listening={false}
+        />
+      )}
     </>
   );
 }
