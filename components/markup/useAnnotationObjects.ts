@@ -167,6 +167,11 @@ export function useAnnotationObjects() {
     );
   }, []);
 
+  /** Restyle every selected object (images ignore it; on text a width is a font size — see applyStyle). */
+  const applyStyleToSelected = useCallback((patch: { color?: string; strokeWidth?: number }) => {
+    for (const id of selectedIds) applyStyle(id, patch);
+  }, [selectedIds, applyStyle]);
+
   /**
    * Folds a text object's transform scale into its font size and wrap width, resetting the
    * scale to 1.
@@ -176,11 +181,6 @@ export function useAnnotationObjects() {
    * keeps the presets absolute. strokeWidth follows the new size so the toolbar highlights the
    * right chip after a manual resize.
    */
-  /** Restyle every selected object (images ignore it; on text a width is a font size — see applyStyle). */
-  const applyStyleToSelected = useCallback((patch: { color?: string; strokeWidth?: number }) => {
-    for (const id of selectedIds) applyStyle(id, patch);
-  }, [selectedIds, applyStyle]);
-
   const bakeTextTransform = useCallback(
     (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => {
       setObjects((prev) =>
