@@ -237,9 +237,10 @@ export function useAnnotationObjects() {
           const sx = Math.abs(t.scaleX) || 1;
           const sy = Math.abs(t.scaleY) || 1;
           const corner = scaledTextOnCorner(o.fontSize, o.width, sy, textPadding(o));
-          // The dragged Group scales its padding too, so mid-drag a boxed text's padding briefly
-          // looks scaled. Accepted: after the bake the padding is constant in drawing units again.
-          // Auto-width has no wrap width, so nothing snaps there either.
+          // A lone text's corner drag is re-laid-out live (AnnotationObjects) and arrives here with
+          // the factor its live font got, so this reproduces what is on screen. A group scale
+          // still scales a boxed member's padding mid-drag; after the bake it is constant again.
+          // Auto-width has no wrap width to scale.
           const width = o.autoWidth ? o.width : Math.abs(sx - sy) < 1e-3 ? corner.width : widthOnSideDrag(o.width, sx);
           return {
             ...o,

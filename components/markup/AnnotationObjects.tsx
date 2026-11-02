@@ -5,7 +5,7 @@ import { Line, Arrow, Rect, Shape, Text, Group, Image as KonvaImage, Transformer
 import type Konva from 'konva';
 import type { Box } from '@/lib/markup/selection';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
-import { MIN_TEXT_WIDTH, TEXT_BORDER_WIDTH, TEXT_FONT_FAMILY, konvaFontStyle, scaledTextOnCorner, textPadding, widthOnSideDrag } from '@/lib/markup/text';
+import { MIN_TEXT_WIDTH, TEXT_BORDER_WIDTH, TEXT_FONT_FAMILY, cornerScaleFromFrame, konvaFontStyle, scaledTextOnCorner, textPadding, widthOnSideDrag } from '@/lib/markup/text';
 import { TEXT_BOX_NAME, TEXT_GROUP_NAME, glyphLineRects, textOf } from './textNode';
 import { cloudArcs } from '@/lib/markup/cloud';
 import { normalizedBox } from '@/lib/markup/draft';
@@ -21,6 +21,7 @@ const TEXT_ANCHORS = ['top-left', 'top-right', 'middle-left', 'middle-right', 'b
 const CORNER_ANCHORS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 const isSideAnchor = (a: string | null | undefined) => a === 'middle-left' || a === 'middle-right';
+const isCornerAnchor = (a: string | null | undefined): a is string => !!a && CORNER_ANCHORS.includes(a);
 
 /**
  * A plain text is hit on its glyphs, line by line. Konva's default Text hit area is the whole
@@ -80,6 +81,9 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
   // (initially null) image node actually exists in the stage.
   const [imgLoadTick, setImgLoadTick] = useState(0);
   const shiftHeld = useShiftKey();
+  // A lone text's font size and wrap width when its transform began: a live corner drag re-lays
+  // the text out from these on every frame (see the Group's onTransform).
+  const textBaseRef = useRef<{ id: string; fontSize: number; width: number } | null>(null);
 
   // Exactly one object selected, and it is a text: corner = font size, side = width.
   const singleText = selectedIds.length === 1 && objects.some((o) => o.id === selectedIds[0] && o.type === 'text');
@@ -148,7 +152,10 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
           if (n) onChange(sid, { x: n.x(), y: n.y() });
         }
       },
-      onTransformStart: isDraft ? undefined : () => onGestureChange?.(true),
+      onTransformStart: isDraft ? undefined : () => {
+        textBaseRef.current = obj.type === 'text' ? { id: obj.id, fontSize: obj.fontSize, width: obj.width } : null;
+        onGestureChange?.(true);
+      },
       onTransformEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<Event>) => {
         onGestureChange?.(false);
         const n = e.currentTarget;
@@ -161,6 +168,17 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
           const tx = textOf(n);
           onChange(obj.id, { x: t.x, y: t.y, rotation: t.rotation, scaleX: 1, scaleY: 1 });
           if (tx) onSetTextWidth?.(obj.id, tx.width());
+          return;
+        }
+        if (singleText && isCornerAnchor(trRef.current?.getActiveAnchor()) && onBakeText) {
+          // onTransform re-laid the text out live and left the scale at 1. Persist exactly what is
+          // on screen: the bake's factor is the one the live font got, so its font and (padding-
+          // aware) width are the live ones, and nothing moves on release.
+          const tx = textOf(n);
+          const k = tx && obj.fontSize > 0 ? tx.fontSize() / obj.fontSize : 1;
+          n.scaleX(1);
+          n.scaleY(1);
+          onBakeText(obj.id, { x: t.x, y: t.y, rotation: t.rotation, scaleX: k, scaleY: k });
           return;
         }
         if (onBakeText) {
@@ -244,12 +262,41 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
             // scale, so fold the horizontal stretch into the Text's width on every frame: the
             // glyphs reflow instead of stretching. Width first, then the scale reset — the reset
             // is what makes the Transformer re-measure the group, and it must see the reflowed
-            // height. Corners are left alone and baked on transformend.
+            // height. A corner is folded in live the same way (font size and width), so the
+            // padding never scales and the box does not snap on release.
             onTransform={(e: Konva.KonvaEventObject<Event>) => {
-              if (!singleText || !isSideAnchor(trRef.current?.getActiveAnchor())) return;
+              if (!singleText) return;
+              const anchor = trRef.current?.getActiveAnchor();
               const g = e.currentTarget;
               const t = textOf(g);
               if (!t) return;
+              if (isCornerAnchor(anchor)) {
+                const base = textBaseRef.current;
+                if (!base || base.id !== obj.id) return;
+                // The corner opposite the dragged one, which must stay put. Group-local, the box is
+                // (0, 0, text width, text height).
+                const fx = anchor.includes('left') ? 1 : 0;
+                const fy = anchor.includes('top') ? 1 : 0;
+                const fixedBefore = g.getAbsoluteTransform().point({ x: fx * t.width(), y: fy * t.height() });
+                // Konva scaled the whole box, padding included. Re-lay it out at scale 1 with the
+                // padding constant and the glyph area taking the stretch, from the base size, so
+                // clamping cannot drift. scaleX only: keepRatio pins the aspect at mousedown, which a
+                // constant padding no longer matches exactly, so the axes differ by a hair.
+                const k = cornerScaleFromFrame(base.fontSize, t.fontSize(), t.width(), g.scaleX(), pad);
+                const next = scaledTextOnCorner(base.fontSize, base.width, k, pad);
+                t.fontSize(next.fontSize);
+                if (!obj.autoWidth) t.width(next.width);
+                g.scaleX(1);
+                g.scaleY(1);
+                // The re-laid-out box differs in size from the scaled one; slide it so the opposite
+                // corner is where Konva left it (it already was, for a bottom-right drag).
+                const fixedAfter = g.getAbsoluteTransform().point({ x: fx * t.width(), y: fy * t.height() });
+                const ap = g.absolutePosition();
+                g.absolutePosition({ x: ap.x + fixedBefore.x - fixedAfter.x, y: ap.y + fixedBefore.y - fixedAfter.y });
+                trRef.current?.forceUpdate();
+                return;
+              }
+              if (!isSideAnchor(anchor)) return;
               // An auto-width text renders with wrap 'none', which a width alone does not reflow;
               // the drag is about to make it fixed-width (setTextWidth), so wrap it like one now.
               if (t.wrap() !== 'word') t.wrap('word');

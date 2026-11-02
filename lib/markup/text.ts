@@ -151,6 +151,28 @@ export function scaledTextOnCorner(
   return { fontSize: next, width: Math.max(MIN_TEXT_WIDTH, inner * k + padding * 2) };
 }
 
+/**
+ * One frame of a LIVE corner drag on a single text. Konva's Transformer has just scaled the Group
+ * by `scaleX` to put the dragged corner under the pointer; the Text is about to be re-laid-out at
+ * scale 1 instead. Returns the TOTAL scale against `baseFontSize` (the size at transformstart) to
+ * hand to scaledTextOnCorner, chosen so the re-laid-out box is as wide as the scaled one: the glyph
+ * area takes all of the stretch and the padding stays constant, so the corner tracks the pointer
+ * and nothing snaps on release. `liveFontSize` and `liveWidth` (the outer width, padding included)
+ * are what the Text shows going into this frame.
+ */
+export function cornerScaleFromFrame(
+  baseFontSize: number,
+  liveFontSize: number,
+  liveWidth: number,
+  scaleX: number,
+  padding = 0,
+): number {
+  const s = Math.abs(scaleX);
+  const inner = liveWidth - padding * 2;
+  const step = inner > 0 ? Math.max(0, liveWidth * s - padding * 2) / inner : s;
+  return baseFontSize > 0 ? (liveFontSize * step) / baseFontSize : step;
+}
+
 /** A side drag: only the width changes. */
 export function widthOnSideDrag(width: number, scaleX: number): number {
   return Math.max(MIN_TEXT_WIDTH, width * Math.abs(scaleX));
@@ -196,13 +218,16 @@ export function textBoxFromGesture(
   const left = Math.min(start.x, end.x);
   const right = Math.max(start.x, end.x);
   const maxX = bounds.x + bounds.width;
+  // Vertically the box grows downwards as you type: keep its top on the surface with room for one
+  // line at the default size, so a press in AnnotationCanvas's letterbox matte lands on the image.
+  const clampY = (y: number) => Math.max(bounds.y, Math.min(y, bounds.y + bounds.height - DEFAULT_TEXT_STYLE.fontSize));
   if (!isTextDrag({ width: right - left }, TEXT_DRAG_MIN_SCREEN_PX, scale)) {
     // The box grows rightwards as you type, so all that can be kept on the surface is its origin.
-    return { x: Math.max(bounds.x, Math.min(start.x, maxX - MIN_TEXT_WIDTH)), y: start.y, width: 0, autoWidth: true };
+    return { x: Math.max(bounds.x, Math.min(start.x, maxX - MIN_TEXT_WIDTH)), y: clampY(start.y), width: 0, autoWidth: true };
   }
   const l = Math.max(bounds.x, left);
   const width = Math.max(MIN_TEXT_WIDTH, Math.min(maxX, right) - l);
-  return { x: Math.max(bounds.x, Math.min(l, maxX - width)), y: Math.min(start.y, end.y), width, autoWidth: false };
+  return { x: Math.max(bounds.x, Math.min(l, maxX - width)), y: clampY(Math.min(start.y, end.y)), width, autoWidth: false };
 }
 
 /**

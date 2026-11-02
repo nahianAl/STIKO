@@ -25,6 +25,7 @@ import {
   fontStepFromKey,
   textBoxFromGesture,
   placeTextBar,
+  cornerScaleFromFrame,
 } from '../../lib/markup/text.ts';
 
 test('the values the spec fixes', () => {
@@ -175,4 +176,36 @@ test('placeTextBar: centred above, dropping below when there is no room, clamped
   assert.equal(placeTextBar({ x: 300, y: 40, width: 200, height: 600 }, bar, view, TEXT_BAR_GAP).top, 556);
   // A view narrower than the bar pins it to the left margin rather than off-screen.
   assert.equal(placeTextBar({ x: 50, y: 300, width: 20, height: 20 }, bar, { width: 200, height: 600 }, TEXT_BAR_GAP).left, 8);
+});
+
+test('textBoxFromGesture: the box is kept on the surface vertically too (AnnotationCanvas letterbox matte)', () => {
+  // Background fitted at y 100..500 inside a taller stage.
+  const bg = { x: 0, y: 100, width: 800, height: 400 };
+  // A click in the matte ABOVE the image lands on its top edge.
+  assert.deepEqual(textBoxFromGesture({ x: 200, y: 30 }, { x: 200, y: 30 }, 1, bg), { x: 200, y: 100, width: 0, autoWidth: true });
+  // BELOW it: pulled up so one default-size line stays on the image.
+  assert.deepEqual(
+    textBoxFromGesture({ x: 200, y: 560 }, { x: 200, y: 560 }, 1, bg),
+    { x: 200, y: 500 - DEFAULT_TEXT_STYLE.fontSize, width: 0, autoWidth: true },
+  );
+  // A drag in the matte is clamped the same way.
+  assert.equal(textBoxFromGesture({ x: 100, y: 20 }, { x: 300, y: 40 }, 1, bg).y, 100);
+  assert.equal(textBoxFromGesture({ x: 100, y: 590 }, { x: 300, y: 600 }, 1, bg).y, 500 - DEFAULT_TEXT_STYLE.fontSize);
+  // Inside the image: untouched.
+  assert.equal(textBoxFromGesture({ x: 200, y: 250 }, { x: 200, y: 250 }, 1, bg).y, 250);
+});
+
+test('cornerScaleFromFrame: the total corner scale that makes the box follow the dragged corner', () => {
+  // Plain text: the frame's scale is the step.
+  assert.equal(cornerScaleFromFrame(20, 20, 200, 1.5, 0), 1.5);
+  // Already grown to 30 (1.5x) and this frame adds 2x: 3x the base.
+  assert.equal(cornerScaleFromFrame(20, 30, 300, 2, 0), 3);
+  // Boxed (p 8): outer 116 -> target 232 -> inner 216 vs 100 -> step 2.16.
+  assert.ok(Math.abs(cornerScaleFromFrame(20, 20, 116, 2, 8) - 2.16) < 1e-9);
+  // Its outer width then matches the dragged box: scaledTextOnCorner gives inner*k + 2p = 232.
+  assert.ok(Math.abs(scaledTextOnCorner(20, 116, cornerScaleFromFrame(20, 20, 116, 2, 8), 8).width - 232) < 1e-9);
+  // Dragged smaller than the padding alone: never negative.
+  assert.equal(cornerScaleFromFrame(20, 20, 116, 0.1, 8), 0);
+  // Flipped scales count by magnitude.
+  assert.equal(cornerScaleFromFrame(20, 20, 200, -1.5, 0), 1.5);
 });
