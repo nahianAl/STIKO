@@ -21,9 +21,9 @@ interface DrawingToolsProps {
   /** Distance from the top of the viewport, in px. Raised for viewers that put a strip of
    *  their own up there (the PDF page/zoom nav) so the bar never lands on it. */
   offsetTop?: number;
-  /** Type of the currently selected markup object, or null. The stroke picker reads this to
-   *  decide whether it is presenting stroke weights or text sizes — there is no other way for
-   *  the toolbar to know what kind of object a width would be applied to. */
+  /** Type of the selected markup object the toolbar reflects, or null. 'text' only when the
+   *  selection is text and nothing else — the stroke picker hides then, since a text's size
+   *  lives in the floating text bar. */
   selectionType?: AnnotationObjectType | null;
   /** The unit measurements are read in on this file. */
   measureUnit: LengthUnit;
@@ -192,13 +192,10 @@ const CUSTOM_CHIP_GRADIENT = 'linear-gradient(135deg, #E4E8FD 0%, #FFDCE8 100%)'
 const CUSTOM_CHIP_BORDER = '#6B4FC4';
 
 const STROKE_PRESETS = [
-  { value: 2, label: 'Thin', textLabel: 'Small' },
-  { value: 4, label: 'Medium', textLabel: 'Medium' },
-  { value: 6, label: 'Thick', textLabel: 'Large' },
+  { value: 2, label: 'Thin' },
+  { value: 4, label: 'Medium' },
+  { value: 6, label: 'Thick' },
 ];
-
-/** Glyph heights for the text-size variant of the picker, index-aligned with STROKE_PRESETS. */
-const TEXT_PREVIEW_SIZES = [10, 13, 16];
 
 /**
  * A single slot plus its hover label. Labels hang below the slot, which is the only side
@@ -299,8 +296,14 @@ export default function DrawingTools({
     </ToolButton>
   );
 
-  // Width means font size on a text object, so the picker relabels rather than lying about it.
-  const strokeIsTextSize = selectionType === 'text';
+  // A text-only selection has no stroke: its size lives in the floating text bar. Hide the
+  // picker rather than offer a control that would do nothing.
+  const strokeHidden = selectionType === 'text';
+  // The picker can vanish with its sub-bar open (select a text while it is up). Close it, or
+  // `menu` stays 'stroke' and every other label stays muted behind an invisible sub-bar.
+  useEffect(() => {
+    if (strokeHidden && menu === 'stroke') setMenu(null);
+  }, [strokeHidden, menu]);
 
   return (
     <div
@@ -433,52 +436,38 @@ export default function DrawingTools({
         </div>
         )}
 
-        {/* Stroke width */}
-        <div className="relative flex">
-          <ToolButton
-            label={strokeIsTextSize ? 'Text size' : 'Stroke width'}
-            active={menu === 'stroke'}
-            expanded={menu === 'stroke'}
-            hideLabel={menu !== null}
-            onClick={() => setMenu(menu === 'stroke' ? null : 'stroke')}
-          >
-            {StrokeWidthIcon}
-          </ToolButton>
-          {menu === 'stroke' && (
-            <div className={SUB_BAR}>
-              <div className={BAR}>
-                {STROKE_PRESETS.map((s, i) => (
-                  <ToolButton
-                    key={s.value}
-                    label={strokeIsTextSize ? s.textLabel : s.label}
-                    active={strokeWidth === s.value}
-                    onClick={() => { onStrokeWidthChange(s.value); setMenu(null); }}
-                  >
-                    {strokeIsTextSize ? (
-                      <svg width="18" height="18" viewBox="0 0 18 18">
-                        <text
-                          x="9"
-                          y="9"
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          fontSize={TEXT_PREVIEW_SIZES[i]}
-                          fontWeight="bold"
-                          fill="currentColor"
-                        >
-                          A
-                        </text>
-                      </svg>
-                    ) : (
+        {/* Stroke width — not for a text-only selection (see strokeHidden) */}
+        {!strokeHidden && (
+          <div className="relative flex">
+            <ToolButton
+              label="Stroke width"
+              active={menu === 'stroke'}
+              expanded={menu === 'stroke'}
+              hideLabel={menu !== null}
+              onClick={() => setMenu(menu === 'stroke' ? null : 'stroke')}
+            >
+              {StrokeWidthIcon}
+            </ToolButton>
+            {menu === 'stroke' && (
+              <div className={SUB_BAR}>
+                <div className={BAR}>
+                  {STROKE_PRESETS.map((s) => (
+                    <ToolButton
+                      key={s.value}
+                      label={s.label}
+                      active={strokeWidth === s.value}
+                      onClick={() => { onStrokeWidthChange(s.value); setMenu(null); }}
+                    >
                       <svg width="18" height="18" viewBox="0 0 18 18">
                         <line x1="2" y1="9" x2="16" y2="9" stroke="currentColor" strokeWidth={s.value} strokeLinecap="round" />
                       </svg>
-                    )}
-                  </ToolButton>
-                ))}
+                    </ToolButton>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {pickTool('text', 'Text', TextIcon)}
 

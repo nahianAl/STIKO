@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type Konva from 'konva';
 import { boxesTouch, isTinyBox, normalizeBox, type Box, type Point } from '@/lib/markup/selection';
+import { TEXT_BOX_NAME, TEXT_GROUP_NAME, glyphSpan, textOf } from './textNode';
 
 interface Selectable {
   objects: { id: string }[];
@@ -53,12 +54,18 @@ export function useMarqueeSelect(ann: Selectable) {
       const layer = node.getLayer();
       if (!layer) continue;
       const r = node.getClientRect({ relativeTo: layer });
-      // A text node's box is its WRAP width, often far wider than its words; test the glyphs,
-      // the same area a click hits (AnnotationObjects' text hitFunc). Unrotated text only — a
-      // rotated label keeps its full client rect, which is still a fair "touching" test.
-      if (node.getClassName() === 'Text' && !node.rotation()) {
-        const t = node as Konva.Text;
-        r.width = t.getTextWidth() * Math.abs(t.scaleX());
+      // A plain text's box is its WRAP width, often far wider than its words; test the glyphs,
+      // the same area a click hits (AnnotationObjects' glyphHitFunc). A text with a fill or a
+      // border is hit on its whole box, so its client rect already is the right test. The id
+      // sits on the text's Group (the layer's direct child), not on its Text. Unrotated text
+      // only — a rotated label keeps its full client rect, which is still a fair "touching" test.
+      if (node.hasName(TEXT_GROUP_NAME) && !node.rotation() && !(node as Konva.Group).findOne(`.${TEXT_BOX_NAME}`)) {
+        const t = textOf(node);
+        if (t) {
+          const span = glyphSpan(t);
+          r.x = node.x() + span.x * node.scaleX();
+          r.width = span.width * Math.abs(node.scaleX());
+        }
       }
       if (boxesTouch(b, r)) hits.push(o.id);
     }

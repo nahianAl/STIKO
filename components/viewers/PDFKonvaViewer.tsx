@@ -9,6 +9,7 @@ import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useMarqueeSelect } from '@/components/markup/useMarqueeSelect';
 import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
+import { hitObjectId } from '@/components/markup/textNode';
 import MeasureObjects from '@/components/markup/MeasureObjects';
 import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
@@ -16,7 +17,9 @@ import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { PDF_RENDER_SCALE, pointsPerStagePixel } from '@/lib/measure/space';
 import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
-import { fontSizeForStrokeWidth, wrapWidthForContent, isBlank } from '@/lib/markup/text';
+import TextStyleBar from '@/components/markup/TextStyleBar';
+import { useMarkupText } from '@/components/markup/useMarkupText';
+import { useNodesScreenRect } from '@/components/markup/useNodesScreenRect';
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
@@ -182,9 +185,12 @@ function PDFKonvaViewer(
     const ann = useAnnotationObjects();
     const marquee = useMarqueeSelect(ann);
     const { begin: marqueeBegin, move: marqueeMove, cancel: marqueeCancel } = marquee;
-    // The text object currently open for editing. The object itself already exists in `ann` —
-    // this is only which one the editor is bound to.
-    const [editingId, setEditingId] = useState<string | null>(null);
+    // Text creation, editing, the floating bar's target and its shortcuts — shared with
+    // AnnotationCanvas. Shortcuts only inside a markup session.
+    const markupText = useMarkupText(ann, { enabled: annotating, activeTool, onObjectCreated, containerRef });
+    const { beginCreate: textBegin, moveCreate: textMove, endCreate: textEnd } = markupText;
+    // Where the bar goes: the target texts' box, in this container's pixels (zoom and pan included).
+    const barRect = useNodesScreenRect(stageRef, markupText.targetIds, markupText.gesture);
 
     // Eraser drag state. Refs, not state: this changes on every pointer move and nothing
     // renders from it.
@@ -201,8 +207,9 @@ function PDFKonvaViewer(
     const eraseAt = useCallback((stage: Konva.Stage, p: { x: number; y: number }) => {
       // The LEAF shape under the cursor, never the Group wrapping it — which is why every
       // erasable measurement shape carries its own id and not just its Group (see
-      // MeasureObjects).
-      const id = stage.getIntersection(p)?.id();
+      // MeasureObjects). A markup text is the one exception: its id is on its Group, and
+      // hitObjectId borrows it.
+      const id = hitObjectId(stage.getIntersection(p));
       // Konva returns the Transformer's own handles, a comment pin's circle and any other
       // unnamed node too; only our objects carry an id at all.
       if (!id) return;
@@ -236,12 +243,15 @@ function PDFKonvaViewer(
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         const el = document.activeElement as HTMLElement | null;
         if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+        // A text open in the editor is never deleted from under it — focus may have Tabbed to a
+        // bar button, where Backspace is no longer typing.
+        if (markupText.editingId) return;
         if (ann.selectedIds.length) { e.preventDefault(); ann.deleteSelected(); }
       };
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [annotating, ann.selectedIds, ann.deleteSelected]);
+    }, [annotating, ann.selectedIds, ann.deleteSelected, markupText.editingId]);
 
     // Depend on the FIELDS, never on `sel` itself: `selectedObject` is derived with `find`, so it
     // is a fresh object every render. Depending on its identity would fire this effect on every
@@ -250,7 +260,9 @@ function PDFKonvaViewer(
     // The same loop exists from the other end: `onSelectionChange` is in this dependency array,
     // so the caller MUST pass a `useCallback`-stable reference. An inline arrow function there
     // re-subscribes this effect on every render and reintroduces exactly the same cycle.
-    const sel = ann.selectedObject;
+    // toolbarObject, not selectedObject: in a mixed selection the toolbar reflects a shape, so
+    // the stroke picker (hidden for text) stays available for the shapes it would restyle.
+    const sel = ann.toolbarObject;
     const selType = sel?.type ?? null;
     const selColor = sel?.color ?? null;
     const selStroke = sel?.strokeWidth ?? null;
@@ -296,8 +308,8 @@ function PDFKonvaViewer(
         if (!stage) return null;
         // See Task 10 Step 5: the edited object's node is hidden, and setEditingId is a state
         // update that will not have applied by the time toDataURL runs below.
-        if (editingId) (stage.findOne(`#${editingId}`) as Konva.Node | undefined)?.visible(true);
-        setEditingId(null);
+        if (markupText.editingId) (stage.findOne(`#${markupText.editingId}`) as Konva.Node | undefined)?.visible(true);
+        markupText.setEditingId(null);
         stage.find('Transformer').forEach((t) => (t as Konva.Transformer).nodes([]));
         stage.draw();
         const url = stage.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.88 });
@@ -305,7 +317,7 @@ function PDFKonvaViewer(
         return url;
       },
       getCurrentPage: () => currentPage,
-      clearDrawings: () => { setEditingId(null); ann.clear(); },
+      clearDrawings: () => { markupText.setEditingId(null); ann.clear(); },
       hasObjects: () => ann.hasObjects(),
       insertImage: (file: File) => {
         const reader = new FileReader();
@@ -455,6 +467,13 @@ function PDFKonvaViewer(
       y: (yPct / 100) * pageSize.height,
     }), [pageSize]);
 
+    // End a Text-tool press (a no-op when none is in flight): on mouseup, on leaving the stage,
+    // or on the first move after a release this stage never saw. The box stays on the page, and
+    // the drag threshold is in screen pixels — page pixels times the zoom.
+    const finishText = useCallback(() => {
+      textEnd({ color, strokeWidth }, stageScale, { x: 0, y: 0, width: pageSize.width, height: pageSize.height });
+    }, [textEnd, color, strokeWidth, stageScale, pageSize.width, pageSize.height]);
+
     const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       const stage = e.target.getStage();
       if (!stage) return;
@@ -521,18 +540,10 @@ function PDFKonvaViewer(
       }
 
       if (activeTool === 'text') {
-        const wrapWidth = wrapWidthForContent(pageSize.width);
-        const x = Math.max(0, Math.min(coords.x, pageSize.width - wrapWidth));
-        const id = ann.addText({ x, y: coords.y }, {
-          text: '',
-          color,
-          fontSize: fontSizeForStrokeWidth(strokeWidth),
-          // The page's own width, not the stage's: the stage width changes with the zoom, and a
-          // zoom-dependent wrap would reflow committed text on every scroll.
-          width: wrapWidth,
-        });
-        setEditingId(id);
-        onObjectCreated?.();
+        // A press on an existing text never gets here: AnnotationObjects opens it for editing
+        // and cancels the bubble. Anything else starts a create gesture; the mouseup decides
+        // click (auto width) or drag (fixed width) — see finishText.
+        textBegin(coords);
         return;
       }
       if (activeTool === 'pointer') {
@@ -562,7 +573,7 @@ function PDFKonvaViewer(
         return;
       }
       ann.startDraw(activeTool as AnnTool, coords, color, strokeWidth);
-    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, pageSize.width, onObjectCreated, eraseAt, onMeasurePoint, onSelectMeasurement, pendingMeasurement, marqueeBegin]);
+    }, [tagging, annotating, activeTool, getPageCoords, toPercent, onCommentPlace, currentPage, color, strokeWidth, ann, eraseAt, onMeasurePoint, onSelectMeasurement, pendingMeasurement, marqueeBegin, textBegin]);
 
     const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!annotating) return;
@@ -604,6 +615,13 @@ function PDFKonvaViewer(
         lastErasePointRef.current = p;
         return;
       }
+      if (activeTool === 'text') {
+        // A release this stage never received ends the press here, as the eraser's guard does.
+        if (e.evt.buttons === 0) { finishText(); return; }
+        const c = getPageCoords(stage);
+        if (c) textMove(c);
+        return;
+      }
       if (activeTool === 'pointer') {
         // A mouseup this stage never received (focus lost mid-drag) would leave the box stuck
         // to the cursor — the same guard the eraser uses above.
@@ -614,15 +632,9 @@ function PDFKonvaViewer(
       }
       const coords = getPageCoords(stage);
       if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
-    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover, marqueeMove, marqueeCancel]);
+    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover, marqueeMove, marqueeCancel, textMove, finishText]);
 
-    const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
-
-    const commitText = useCallback(() => {
-      const obj = editingId ? ann.objects.find((o) => o.id === editingId) : null;
-      if (obj && isBlank(obj.text)) ann.deleteObject(obj.id);
-      setEditingId(null);
-    }, [editingId, ann]);
+    const editingObj = markupText.editingId ? ann.objects.find((o) => o.id === markupText.editingId) ?? null : null;
 
     // Wheel zoom
     const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -856,8 +868,8 @@ function PDFKonvaViewer(
               onWheel={handleWheel}
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
-              onMouseUp={() => { stopErasing(); marquee.end(stageRef.current, 3 / stageScale); if (ann.endDraw()) onObjectCreated?.(); }}
-              onMouseLeave={() => { stopErasing(); marquee.end(stageRef.current, 3 / stageScale); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
+              onMouseUp={() => { stopErasing(); finishText(); marquee.end(stageRef.current, 3 / stageScale); if (ann.endDraw()) onObjectCreated?.(); }}
+              onMouseLeave={() => { stopErasing(); finishText(); marquee.end(stageRef.current, 3 / stageScale); if (ann.endDraw()) onObjectCreated?.(); onMeasureHover?.(null); }}
             >
               {/* PDF Background */}
               <Layer>
@@ -877,12 +889,15 @@ function PDFKonvaViewer(
                   // A press on an object never reaches the stage's mousedown (AnnotationObjects cancels the
                   // bubble), so the stage's measurement clear cannot cover it: clear it here instead.
                   onSelect={(id, additive) => { onSelectMeasurement?.(null); ann.pick(id, additive); }}
-                  marquee={marquee.box}
+                  // The Text tool's live drag reuses the selection box's look.
+                  marquee={marquee.box ?? markupText.createBox}
                   onErase={ann.deleteObject}
                   onChange={ann.updateObject}
-                  editingId={editingId}
-                  onEditText={setEditingId}
+                  editingId={markupText.editingId}
+                  onEditText={markupText.startEditing}
                   onBakeText={ann.bakeTextTransform}
+                  onSetTextWidth={ann.setTextWidth}
+                  onGestureChange={markupText.setGesture}
                 />
               </Layer>
 
@@ -1035,15 +1050,27 @@ function PDFKonvaViewer(
               key={editingObj.id}
               // Page space -> screen space. The Stage carries the zoom and the pan, so the
               // overlay has to apply them by hand to sit on top of the node it stands in for.
+              object={editingObj}
               x={editingObj.x * stageScale + stagePos.x}
               y={editingObj.y * stageScale + stagePos.y}
               scale={stageScale}
-              color={editingObj.color}
-              fontSize={editingObj.fontSize}
-              wrapWidth={editingObj.width}
-              value={editingObj.text}
               onChange={(t) => ann.updateText(editingObj.id, t)}
-              onCommit={commitText}
+              onCommit={markupText.commit}
+              onStepFontSize={markupText.stepFont}
+            />
+          )}
+
+          {/* The floating text bar: the edited text, or a text-only selection. Hidden while an
+              object is dragged or transformed, and until the selection has been measured. */}
+          {annotating && markupText.targetObject && barRect && !markupText.gesture && (
+            <TextStyleBar
+              anchor={barRect}
+              view={containerSize}
+              style={markupText.targetObject}
+              editing={markupText.editingId !== null}
+              // Bound to THIS render's targets: a size draft the bar commits as it unmounts (the
+              // click that deselected it) must still reach the texts it was showing.
+              onChange={(patch) => markupText.applyStyle(patch, markupText.targetIds)}
             />
           )}
         </div>

@@ -1,15 +1,40 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Line, Arrow, Rect, Shape, Text, Image as KonvaImage, Transformer } from 'react-konva';
+import { Line, Arrow, Rect, Shape, Text, Group, Image as KonvaImage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import type { Box } from '@/lib/markup/selection';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
-import { TEXT_FONT_FAMILY } from '@/lib/markup/text';
+import { MIN_TEXT_WIDTH, TEXT_BORDER_WIDTH, TEXT_FONT_FAMILY, cornerScaleFromFrame, konvaFontStyle, scaledTextOnCorner, textPadding, widthOnSideDrag } from '@/lib/markup/text';
+import { TEXT_BOX_NAME, TEXT_GROUP_NAME, glyphLineRects, textOf } from './textNode';
 import { cloudArcs } from '@/lib/markup/cloud';
 import { normalizedBox } from '@/lib/markup/draft';
 import useShiftKey from './useShiftKey';
 import { ROTATION_SNAPS_DEG, ROTATION_SNAP_TOLERANCE_DEG } from '@/lib/markup/rotationSnap';
+
+/** Every handle. Konva's own default, spelled out because a lone text swaps in a subset. */
+const ALL_ANCHORS = ['top-left', 'top-center', 'top-right', 'middle-right', 'middle-left', 'bottom-left', 'bottom-center', 'bottom-right'];
+
+/** One text: corners scale the font, sides set the width. No top/bottom — the height always fits the text. */
+const TEXT_ANCHORS = ['top-left', 'top-right', 'middle-left', 'middle-right', 'bottom-left', 'bottom-right'];
+
+const CORNER_ANCHORS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+const isSideAnchor = (a: string | null | undefined) => a === 'middle-left' || a === 'middle-right';
+const isCornerAnchor = (a: string | null | undefined): a is string => !!a && CORNER_ANCHORS.includes(a);
+
+/**
+ * A plain text is hit on its glyphs, line by line. Konva's default Text hit area is the whole
+ * width x height, and the width is the WRAP width — a two-word label in a 300px box would
+ * swallow clicks meant for whatever is beside it. (A text with a fill or border is hit on its
+ * whole box instead, by the box shape behind it.)
+ */
+function glyphHitFunc(ctx: Konva.Context, shape: Konva.Shape) {
+  ctx.beginPath();
+  for (const r of glyphLineRects(shape as Konva.Text)) ctx.rect(r.x, r.y, Math.max(r.width, 1), r.height);
+  ctx.closePath();
+  ctx.fillStrokeShape(shape);
+}
 
 function ImageObj({ obj, common, onLoaded }: { obj: AnnotationObject; common: Omit<React.ComponentProps<typeof KonvaImage>, 'image'>; onLoaded?: () => void }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -38,20 +63,30 @@ interface AnnotationObjectsProps {
   /** The text object currently open in the editor. Its Konva node is hidden so the glyphs are
    *  not drawn twice at slightly different rasterisations. */
   editingId?: string | null;
-  /** Double-click on a committed text object, with the pointer tool active. */
+  /** Open a committed text for editing: a Pointer double-click, or a Text-tool press on it. */
   onEditText?: (id: string) => void;
   /** Text transforms bake their scale instead of storing it — see bakeTextTransform. */
   onBakeText?: (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => void;
+  /** A side-handle drag on a lone text ended at this box width — see setTextWidth. */
+  onSetTextWidth?: (id: string, width: number) => void;
+  /** True while an object is being dragged or transformed, false when it ends. The floating text bar hides meanwhile. */
+  onGestureChange?: (active: boolean) => void;
   /** The live selection box, in the same drawing space as the objects. */
   marquee?: Box | null;
 }
 
-export default function AnnotationObjects({ objects, draft, selectedIds, activeTool, onSelect, onErase, onChange, editingId = null, onEditText, onBakeText, marquee = null }: AnnotationObjectsProps) {
+export default function AnnotationObjects({ objects, draft, selectedIds, activeTool, onSelect, onErase, onChange, editingId = null, onEditText, onBakeText, onSetTextWidth, onGestureChange, marquee = null }: AnnotationObjectsProps) {
   const trRef = useRef<Konva.Transformer>(null);
   // Bumped when an ImageObj finishes decoding, so the Transformer rebinds once the
   // (initially null) image node actually exists in the stage.
   const [imgLoadTick, setImgLoadTick] = useState(0);
   const shiftHeld = useShiftKey();
+  // A lone text's font size and wrap width when its transform began: a live corner drag re-lays
+  // the text out from these on every frame (see the Group's onTransform).
+  const textBaseRef = useRef<{ id: string; fontSize: number; width: number } | null>(null);
+
+  // Exactly one object selected, and it is a text: corner = font size, side = width.
+  const singleText = selectedIds.length === 1 && objects.some((o) => o.id === selectedIds[0] && o.type === 'text');
 
   // Bind the Transformer to every selected node — except one open in the text editor, where
   // resize handles would fight the caret and sit over the textarea.
@@ -69,16 +104,28 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
     tr.getLayer()?.batchDraw();
   }, [selectedIds, objects, activeTool, imgLoadTick, editingId]);
 
-  // Object click: select (pointer) or erase; ignored for draw tools so you can draw over objects
-  const handleObj = (e: Konva.KonvaEventObject<MouseEvent>, id: string) => {
+  // Object press: select (pointer), erase, or — Text tool on a text — edit it. Ignored for the
+  // draw tools so you can draw over objects.
+  const handleObj = (e: Konva.KonvaEventObject<MouseEvent>, obj: AnnotationObject) => {
     // Erase this object immediately (so a plain click erases with no drag needed), but do NOT
     // cancel the bubble: the stage-level handler owns the drag-erase sweep and arms it on this
     // same mousedown. Swallowing the event here would mean a drag that starts on top of an
     // object erases that one object and then arms nothing, leaving the rest of the drag inert.
     // The stage handler will also erase this object a moment later via getIntersection; that's
     // a harmless double delete since deleteObject filters by id.
-    if (activeTool === 'eraser') { onErase(id); }
-    else if (activeTool === 'pointer') { e.cancelBubble = true; onSelect(id, e.evt.shiftKey); }
+    if (activeTool === 'eraser') { onErase(obj.id); }
+    else if (activeTool === 'pointer') { e.cancelBubble = true; onSelect(obj.id, e.evt.shiftKey); }
+    else if (activeTool === 'text' && obj.type === 'text' && onEditText) {
+      // Edit it rather than stacking a new box on top. Cancelled so the stage never starts a
+      // create gesture underneath.
+      e.cancelBubble = true;
+      // Konva delivers this press on pointerdown, and the editor mounts and focuses inside it.
+      // The browser's default for the mousedown that follows then moves focus off the textarea
+      // (the canvas is not focusable, so focus goes to the body) and typing lands nowhere.
+      // Cancelling the pointerdown suppresses that compatibility mousedown and its focus change.
+      e.evt.preventDefault();
+      onEditText(obj.id);
+    }
   };
 
   const renderObj = (obj: AnnotationObject, isDraft: boolean) => {
@@ -90,12 +137,14 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
       scaleX: obj.scaleX,
       scaleY: obj.scaleY,
       draggable: !isDraft && activeTool === 'pointer',
-      onMouseDown: isDraft ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => handleObj(e, obj.id),
-      onTap: isDraft ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => handleObj(e, obj.id),
+      onMouseDown: isDraft ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => handleObj(e, obj),
+      onTap: isDraft ? undefined : (e: Konva.KonvaEventObject<MouseEvent>) => handleObj(e, obj),
+      onDragStart: isDraft ? undefined : () => onGestureChange?.(true),
       // Konva's Transformer drags the other selected nodes along with this one. Persist every
       // selected position here rather than trusting each node to report its own dragend, so a
       // group move can never leave state behind the canvas. Writing the same value twice is harmless.
       onDragEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<DragEvent>) => {
+        onGestureChange?.(false);
         const stage = e.target.getStage();
         const ids = selectedIds.includes(obj.id) ? selectedIds : [obj.id];
         for (const sid of ids) {
@@ -103,10 +152,44 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
           if (n) onChange(sid, { x: n.x(), y: n.y() });
         }
       },
+      onTransformStart: isDraft ? undefined : () => {
+        textBaseRef.current = obj.type === 'text' ? { id: obj.id, fontSize: obj.fontSize, width: obj.width } : null;
+        onGestureChange?.(true);
+      },
       onTransformEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<Event>) => {
-        const n = e.target;
+        onGestureChange?.(false);
+        const n = e.currentTarget;
         const t = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
-        if (obj.type === 'text' && onBakeText) {
+        if (obj.type !== 'text') { onChange(obj.id, t); return; }
+        // Still set during transformend — Konva clears it only after firing.
+        if (singleText && isSideAnchor(trRef.current?.getActiveAnchor())) {
+          // onTransform already folded every frame's stretch into the Text's width (scale is
+          // back to 1). Persist that width and the origin, which moves on a middle-left drag.
+          const tx = textOf(n);
+          onChange(obj.id, { x: t.x, y: t.y, rotation: t.rotation, scaleX: 1, scaleY: 1 });
+          if (tx) onSetTextWidth?.(obj.id, tx.width());
+          return;
+        }
+        if (singleText && isCornerAnchor(trRef.current?.getActiveAnchor()) && onBakeText) {
+          // onTransform re-laid the text out live and left the scale at 1. Persist exactly what is
+          // on screen: the bake's factor is the one the live font got, so its font and (padding-
+          // aware) width are the live ones, and nothing moves on release.
+          const tx = textOf(n);
+          const k = tx && obj.fontSize > 0 ? tx.fontSize() / obj.fontSize : 1;
+          n.scaleX(1);
+          n.scaleY(1);
+          onBakeText(obj.id, { x: t.x, y: t.y, rotation: t.rotation, scaleX: k, scaleY: k });
+          return;
+        }
+        if (onBakeText) {
+          // Write the baked font and width onto the Text now. React re-renders a frame later, and
+          // until then the Text (and the box sized off it) would show the old font at scale 1.
+          const tx = textOf(n);
+          if (tx && Math.abs(t.scaleX - t.scaleY) < 1e-3) {
+            const corner = scaledTextOnCorner(obj.fontSize, obj.width, t.scaleY, textPadding(obj));
+            tx.fontSize(corner.fontSize);
+            if (!obj.autoWidth) tx.width(corner.width);
+          }
           // Reset on the node as well as in state: React re-renders a frame later, and without
           // this the text visibly springs to double size and back.
           n.scaleX(1);
@@ -166,31 +249,61 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
           />
         );
       }
-      case 'text':
+      case 'text': {
+        const pad = textPadding(obj);
+        const boxed = pad > 0;
         return (
-          <Text
+          <Group
             key={obj.id}
             {...common}
-            text={obj.text}
-            fontSize={obj.fontSize}
-            fontFamily={TEXT_FONT_FAMILY}
-            fill={obj.color}
-            fontStyle="bold"
-            // The same number the editor wrapped at, so committing does not reflow the text.
-            width={obj.width > 0 ? obj.width : undefined}
-            wrap="word"
-            // Konva's default Text hit area is getWidth() x getHeight(), and getWidth() returns
-            // the explicit `width` attr — which we must set for wrap parity with the editor. That
-            // would give a two-character label a hit box hundreds of px wide, swallowing clicks
-            // meant for whatever is beneath it. Hit-test the glyphs instead.
-            hitFunc={(ctx, shape) => {
-              const t = shape as Konva.Text;
-              ctx.beginPath();
-              ctx.rect(0, 0, t.getTextWidth(), t.height());
-              ctx.closePath();
-              ctx.fillStrokeShape(t);
-            }}
+            name={TEXT_GROUP_NAME}
             visible={editingId !== obj.id}
+            // A side handle on a lone text sets its WIDTH. Konva's Transformer only knows how to
+            // scale, so fold the horizontal stretch into the Text's width on every frame: the
+            // glyphs reflow instead of stretching. Width first, then the scale reset — the reset
+            // is what makes the Transformer re-measure the group, and it must see the reflowed
+            // height. A corner is folded in live the same way (font size and width), so the
+            // padding never scales and the box does not snap on release.
+            onTransform={(e: Konva.KonvaEventObject<Event>) => {
+              if (!singleText) return;
+              const anchor = trRef.current?.getActiveAnchor();
+              const g = e.currentTarget;
+              const t = textOf(g);
+              if (!t) return;
+              if (isCornerAnchor(anchor)) {
+                const base = textBaseRef.current;
+                if (!base || base.id !== obj.id) return;
+                // The corner opposite the dragged one, which must stay put. Group-local, the box is
+                // (0, 0, text width, text height).
+                const fx = anchor.includes('left') ? 1 : 0;
+                const fy = anchor.includes('top') ? 1 : 0;
+                const fixedBefore = g.getAbsoluteTransform().point({ x: fx * t.width(), y: fy * t.height() });
+                // Konva scaled the whole box, padding included. Re-lay it out at scale 1 with the
+                // padding constant and the glyph area taking the stretch, from the base size, so
+                // clamping cannot drift. scaleX only: keepRatio pins the aspect at mousedown, which a
+                // constant padding no longer matches exactly, so the axes differ by a hair.
+                const k = cornerScaleFromFrame(base.fontSize, t.fontSize(), t.width(), g.scaleX(), pad);
+                const next = scaledTextOnCorner(base.fontSize, base.width, k, pad);
+                t.fontSize(next.fontSize);
+                if (!obj.autoWidth) t.width(next.width);
+                g.scaleX(1);
+                g.scaleY(1);
+                // The re-laid-out box differs in size from the scaled one; slide it so the opposite
+                // corner is where Konva left it (it already was, for a bottom-right drag).
+                const fixedAfter = g.getAbsoluteTransform().point({ x: fx * t.width(), y: fy * t.height() });
+                const ap = g.absolutePosition();
+                g.absolutePosition({ x: ap.x + fixedBefore.x - fixedAfter.x, y: ap.y + fixedBefore.y - fixedAfter.y });
+                trRef.current?.forceUpdate();
+                return;
+              }
+              if (!isSideAnchor(anchor)) return;
+              // An auto-width text renders with wrap 'none', which a width alone does not reflow;
+              // the drag is about to make it fixed-width (setTextWidth), so wrap it like one now.
+              if (t.wrap() !== 'word') t.wrap('word');
+              t.width(widthOnSideDrag(t.width(), g.scaleX()));
+              g.scaleX(1);
+              g.scaleY(1);
+            }}
             onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
               if (isDraft || activeTool !== 'pointer' || !onEditText) return;
               e.cancelBubble = true;
@@ -201,8 +314,47 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
               e.cancelBubble = true;
               onEditText(obj.id);
             }}
-          />
+          >
+            {boxed && (
+              <Shape
+                name={TEXT_BOX_NAME}
+                fill={obj.fill || undefined}
+                stroke={obj.border ? obj.color : undefined}
+                strokeWidth={obj.border ? TEXT_BORDER_WIDTH : 0}
+                // Sized off the sibling Text at draw time, not from props: an auto-width box is
+                // as wide as Konva measured the glyphs, and a side-handle drag changes the Text's
+                // width every frame without a React render. The scene function doubles as the hit
+                // function, so a filled or bordered text is clickable anywhere inside its box.
+                sceneFunc={(ctx, shape) => {
+                  const parent = shape.getParent();
+                  const t = parent ? textOf(parent) : null;
+                  if (!t) return;
+                  ctx.beginPath();
+                  ctx.rect(0, 0, t.width(), t.height());
+                  ctx.closePath();
+                  ctx.fillStrokeShape(shape);
+                }}
+              />
+            )}
+            <Text
+              text={obj.text}
+              fontSize={obj.fontSize}
+              fontFamily={TEXT_FONT_FAMILY}
+              fontStyle={konvaFontStyle(obj)}
+              fill={obj.color}
+              align={obj.align}
+              padding={pad}
+              lineHeight={1}
+              // `width` is the box's outer width, padding included — Konva's own convention, so
+              // the Text and the box shape agree. Auto-width leaves it unset and Konva sizes the
+              // node to its longest line.
+              width={obj.autoWidth ? undefined : obj.width}
+              wrap={obj.autoWidth ? 'none' : 'word'}
+              hitFunc={boxed ? undefined : glyphHitFunc}
+            />
+          </Group>
         );
+      }
       case 'image':
         return <ImageObj key={obj.id} obj={obj} common={common} onLoaded={() => setImgLoadTick((t) => t + 1)} />;
       default:
@@ -219,15 +371,29 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
         rotateEnabled
         // A group scales evenly: stretching several nodes unevenly skews any rotated member, and
         // the object model has no skew to store it in, so the canvas and the saved markup would
-        // disagree. A single object can still be stretched freely.
-        keepRatio={selectedIds.length > 1}
+        // disagree. A lone text's corners scale its font, which must stay in proportion too.
+        // Other single objects can still be stretched freely. (Side anchors ignore keepRatio.)
+        keepRatio={selectedIds.length > 1 || singleText}
+        // Konva ignores keepRatio on the middle anchors, so a group would stretch on one axis.
+        enabledAnchors={singleText ? TEXT_ANCHORS : selectedIds.length > 1 ? CORNER_ANCHORS : ALL_ANCHORS}
         ignoreStroke
         // Konva's rotationSnaps are ABSOLUTE angles, which is exactly the behaviour wanted:
         // Shift straightens a crooked object rather than stepping it 90 deg from wherever it
         // was. An empty array means no snapping at all.
         rotationSnaps={shiftHeld ? ROTATION_SNAPS_DEG : []}
         rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
-        boundBoxFunc={(oldBox, newBox) => (newBox.width < 5 || newBox.height < 5 ? oldBox : newBox)}
+        boundBoxFunc={(oldBox, newBox) => {
+          if (newBox.width < 5 || newBox.height < 5) return oldBox;
+          if (singleText) {
+            // Boxes are in absolute px; the text's minimum is in drawing units. The PARENT's
+            // scale, not the group's own, which a corner drag is changing as it goes. Without
+            // this, a middle-left drag below the width floor keeps moving the origin.
+            const parent = trRef.current?.nodes()[0]?.getParent();
+            const k = parent?.getAbsoluteScale().x ?? 1;
+            if (newBox.width < MIN_TEXT_WIDTH * k) return oldBox;
+          }
+          return newBox;
+        }}
       />
       {marquee && (
         <Rect

@@ -1,7 +1,16 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { fontSizeForStrokeWidth, strokeWidthForFontSize, MIN_FONT_SIZE } from '@/lib/markup/text';
+import {
+  DEFAULT_TEXT_STYLE,
+  MIN_TEXT_WIDTH,
+  clampFontSize,
+  scaledTextOnCorner,
+  textPadding,
+  widthOnSideDrag,
+  type TextAlign,
+  type TextStyle,
+} from '@/lib/markup/text';
 import { startGeometry, updateGeometry, isBoxTool, type DraftTool } from '@/lib/markup/draft';
 import { pickId, mergeSelection } from '@/lib/markup/selection';
 
@@ -34,8 +43,14 @@ export interface AnnotationObject {
   type: AnnotationObjectType;
   points: number[];               // freehand/line/arrow (flat [x,y,...], in object space)
   x: number; y: number;           // rect/text origin; drag offset for all types
-  width: number; height: number;  // rect
+  width: number; height: number;  // rect; on text, the box's OUTER width (ignored while autoWidth)
   text: string; fontSize: number; // text
+  // Text style (the floating bar). Non-text objects carry DEFAULT_TEXT_STYLE's values and never
+  // read them, so every object has one shape.
+  bold: boolean; italic: boolean; align: TextAlign;
+  fill: string;                   // '' = no fill
+  border: boolean;
+  autoWidth: boolean;             // no wrapping; the box hugs its longest line
   src: string;                    // image
   rotation: number; scaleX: number; scaleY: number;
   color: string; strokeWidth: number;
@@ -68,7 +83,10 @@ export function useAnnotationObjects() {
 
   const base = (type: AnnotationObjectType, color: string, strokeWidth: number): AnnotationObject => ({
     id: `obj-${idRef.current++}`, type, points: [], x: 0, y: 0, width: 0, height: 0,
-    text: '', fontSize: 16, src: '', rotation: 0, scaleX: 1, scaleY: 1, color, strokeWidth,
+    text: '', fontSize: DEFAULT_TEXT_STYLE.fontSize,
+    bold: DEFAULT_TEXT_STYLE.bold, italic: DEFAULT_TEXT_STYLE.italic, align: DEFAULT_TEXT_STYLE.align,
+    fill: DEFAULT_TEXT_STYLE.fill, border: DEFAULT_TEXT_STYLE.border, autoWidth: false,
+    src: '', rotation: 0, scaleX: 1, scaleY: 1, color, strokeWidth,
   });
 
   const startDraw = useCallback((tool: AnnTool, p: { x: number; y: number }, color: string, strokeWidth: number) => {
@@ -114,15 +132,19 @@ export function useAnnotationObjects() {
    * object and every keystroke can write through to it. That is what puts the text where it
    * will land rather than in a popup somewhere else — and it is why this no longer rejects
    * empty text. Discarding a blank box is the caller's job, on commit.
+   *
+   * Always at DEFAULT_TEXT_STYLE: the size lives in the floating bar now, not in the toolbar's
+   * stroke width. `strokeWidth` is stored only so a selected text reports something sane to the
+   * toolbar; nothing draws with it.
    */
   const addText = useCallback(
-    (p: { x: number; y: number }, opts: { text?: string; color: string; fontSize: number; width: number }): string => {
-      const o = base('text', opts.color, strokeWidthForFontSize(opts.fontSize));
+    (p: { x: number; y: number }, opts: { text?: string; color: string; strokeWidth: number; width: number; autoWidth: boolean }): string => {
+      const o = base('text', opts.color, opts.strokeWidth);
       o.x = p.x;
       o.y = p.y;
       o.text = opts.text ?? '';
-      o.fontSize = opts.fontSize;
-      o.width = opts.width;
+      o.autoWidth = opts.autoWidth;
+      o.width = opts.autoWidth ? 0 : Math.max(MIN_TEXT_WIDTH, opts.width);
       setObjects((prev) => [...prev, o]);
       setSelectedIds([o.id]);
       return o.id;
@@ -149,8 +171,8 @@ export function useAnnotationObjects() {
   }, []);
 
   /**
-   * Restyle an existing object. The type decides what a stroke width means: on text it is a
-   * font size, on an image it means nothing at all.
+   * Restyle an existing object from the main toolbar. A colour recolours anything but an image.
+   * A stroke width means nothing to a text (its size is the floating bar's) or to an image.
    */
   const applyStyle = useCallback((id: string, patch: { color?: string; strokeWidth?: number }) => {
     setObjects((prev) =>
@@ -158,35 +180,68 @@ export function useAnnotationObjects() {
         if (o.id !== id || o.type === 'image') return o;
         const next = { ...o };
         if (patch.color !== undefined) next.color = patch.color;
-        if (patch.strokeWidth !== undefined) {
-          next.strokeWidth = patch.strokeWidth;
-          if (o.type === 'text') next.fontSize = fontSizeForStrokeWidth(patch.strokeWidth);
-        }
+        if (patch.strokeWidth !== undefined && o.type !== 'text') next.strokeWidth = patch.strokeWidth;
         return next;
       })
     );
   }, []);
 
-  /** Restyle every selected object (images ignore it; on text a width is a font size — see applyStyle). */
+  /** Restyle every selected object (see applyStyle for what each type takes). */
   const applyStyleToSelected = useCallback((patch: { color?: string; strokeWidth?: number }) => {
     for (const id of selectedIds) applyStyle(id, patch);
   }, [selectedIds, applyStyle]);
 
   /**
+   * The floating text bar. Text objects only — an id of anything else is skipped, so a caller
+   * can pass a whole selection. Field by field rather than a spread, so a patch carrying an
+   * explicit `undefined` cannot blank a field.
+   */
+  const updateTextStyle = useCallback((ids: readonly string[], patch: Partial<TextStyle>) => {
+    const want = new Set(ids);
+    setObjects((prev) =>
+      prev.map((o) => {
+        if (!want.has(o.id) || o.type !== 'text') return o;
+        const next = { ...o };
+        if (patch.fontSize !== undefined) next.fontSize = clampFontSize(patch.fontSize);
+        if (patch.bold !== undefined) next.bold = patch.bold;
+        if (patch.italic !== undefined) next.italic = patch.italic;
+        if (patch.align !== undefined) next.align = patch.align;
+        if (patch.fill !== undefined) next.fill = patch.fill;
+        if (patch.border !== undefined) next.border = patch.border;
+        return next;
+      })
+    );
+  }, []);
+
+  /** A side-handle drag: the box is now this wide and wraps. An auto-width box becomes fixed. */
+  const setTextWidth = useCallback((id: string, width: number) => {
+    setObjects((prev) =>
+      prev.map((o) => (o.id === id && o.type === 'text' ? { ...o, width: Math.max(MIN_TEXT_WIDTH, width), autoWidth: false } : o))
+    );
+  }, []);
+
+  /**
    * Folds a text object's transform scale into its font size and wrap width, resetting the
-   * scale to 1.
+   * scale to 1, so a stored scale can never multiply against a size set from the bar later.
    *
-   * Without this the Transformer's scaleX/scaleY would multiply against the font-size presets:
-   * a box dragged to 2x and then set to "Thick" would render at 68px rather than 34px. Baking
-   * keeps the presets absolute. strokeWidth follows the new size so the toolbar highlights the
-   * right chip after a manual resize.
+   * Corner drags (keepRatio) and even group scales arrive with scaleX === scaleY: the font and
+   * width scale together. A group's SIDE anchor stretches one axis only (Konva ignores keepRatio
+   * there), and the wrap width then follows the horizontal scale on its own. An auto-width text
+   * has no wrap width to scale: it re-measures around its new font size.
    */
   const bakeTextTransform = useCallback(
     (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => {
       setObjects((prev) =>
         prev.map((o) => {
           if (o.id !== id) return o;
-          const fontSize = Math.max(MIN_FONT_SIZE, o.fontSize * t.scaleY);
+          const sx = Math.abs(t.scaleX) || 1;
+          const sy = Math.abs(t.scaleY) || 1;
+          const corner = scaledTextOnCorner(o.fontSize, o.width, sy, textPadding(o));
+          // A lone text's corner drag is re-laid-out live (AnnotationObjects) and arrives here with
+          // the factor its live font got, so this reproduces what is on screen. A group scale
+          // still scales a boxed member's padding mid-drag; after the bake it is constant again.
+          // Auto-width has no wrap width to scale.
+          const width = o.autoWidth ? o.width : Math.abs(sx - sy) < 1e-3 ? corner.width : widthOnSideDrag(o.width, sx);
           return {
             ...o,
             x: t.x,
@@ -194,9 +249,8 @@ export function useAnnotationObjects() {
             rotation: t.rotation,
             scaleX: 1,
             scaleY: 1,
-            fontSize,
-            width: Math.max(1, o.width * t.scaleX),
-            strokeWidth: strokeWidthForFontSize(fontSize),
+            fontSize: corner.fontSize,
+            width,
           };
         })
       );
@@ -227,10 +281,25 @@ export function useAnnotationObjects() {
   // on its FIELDS, not its identity — `find` returns a fresh reference on every render.
   const selectedObject = objects.find((o) => o.id === selectedId) ?? null;
 
+  const selectedObjects = selectedIds
+    .map((id) => objects.find((o) => o.id === id))
+    .filter((o): o is AnnotationObject => !!o);
+  /** Selected, and every selected object is a text: the floating bar's case. */
+  const textOnlySelection = selectedObjects.length > 0 && selectedObjects.every((o) => o.type === 'text');
+  /**
+   * What the main toolbar reflects. The primary — unless the selection mixes text with other
+   * objects, when it is the first non-text member: the toolbar hides its stroke picker for
+   * 'text', and in a mixed selection that picker still has shapes to restyle. Same identity rule
+   * as selectedObject: depend on its fields.
+   */
+  const toolbarObject = textOnlySelection ? selectedObject : selectedObjects.find((o) => o.type !== 'text') ?? null;
+
   return {
     objects, draft, selectedIds, selectedId, setSelectedId, pick, selectMany, selectedObject,
+    textOnlySelection, toolbarObject,
     startDraw, moveDraw, endDraw, addText, addImage,
     updateObject, updateText, applyStyle, applyStyleToSelected, bakeTextTransform,
+    updateTextStyle, setTextWidth,
     deleteObject, deleteSelected, clear, hasObjects,
   };
 }
