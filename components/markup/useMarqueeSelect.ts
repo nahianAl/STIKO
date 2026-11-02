@@ -52,11 +52,26 @@ export function useMarqueeSelect(ann: Selectable) {
       if (!node || !node.isVisible()) continue;
       const layer = node.getLayer();
       if (!layer) continue;
-      if (boxesTouch(b, node.getClientRect({ relativeTo: layer }))) hits.push(o.id);
+      const r = node.getClientRect({ relativeTo: layer });
+      // A text node's box is its WRAP width, often far wider than its words; test the glyphs,
+      // the same area a click hits (AnnotationObjects' text hitFunc). Unrotated text only — a
+      // rotated label keeps its full client rect, which is still a fair "touching" test.
+      if (node.getClassName() === 'Text' && !node.rotation()) {
+        const t = node as Konva.Text;
+        r.width = t.getTextWidth() * Math.abs(t.scaleX());
+      }
+      if (boxesTouch(b, r)) hits.push(o.id);
     }
     ann.selectMany(hits, s.additive);
     return true;
   }, [ann]);
 
-  return { box, begin, move, end };
+  /** Drop a box without selecting anything (the press ended somewhere this surface never saw). */
+  const cancel = useCallback(() => {
+    startRef.current = null;
+    boxRef.current = null;
+    setBox(null);
+  }, []);
+
+  return { box, begin, move, end, cancel };
 }

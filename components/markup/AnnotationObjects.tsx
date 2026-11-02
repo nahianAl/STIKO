@@ -217,7 +217,10 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
       <Transformer
         ref={trRef}
         rotateEnabled
-        keepRatio={false}
+        // A group scales evenly: stretching several nodes unevenly skews any rotated member, and
+        // the object model has no skew to store it in, so the canvas and the saved markup would
+        // disagree. A single object can still be stretched freely.
+        keepRatio={selectedIds.length > 1}
         ignoreStroke
         // Konva's rotationSnaps are ABSOLUTE angles, which is exactly the behaviour wanted:
         // Shift straightens a crooked object rather than stepping it 90 deg from wherever it

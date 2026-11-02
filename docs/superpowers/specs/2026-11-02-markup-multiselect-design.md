@@ -57,17 +57,17 @@ feature.
 ## Architecture
 
 - **`lib/markup/selection.ts`** (new, pure, no imports, unit-tested):
-  - `toggleId(ids, id)`
+  - `pickId(ids, id, additive)`
   - `mergeSelection(current, hits, additive)`
   - `normalizeBox(a, b)`
   - `boxesTouch(a, b)`
   - `isTinyBox(box, minSize)`
 - **`useAnnotationObjects`**: the single `selectedId` becomes `selectedIds: string[]`.
   - Kept for existing callers: `selectedId` (= the first selected id), `setSelectedId(id | null)` (replaces the selection) and `selectedObject` (the first selected object).
-  - New: `selectedIds`, `toggleSelected(id)`, `selectMany(ids, additive)`, `deleteSelected()` and `applyStyleToSelected(patch)`.
+  - New: `selectedIds`, `pick(id, additive)`, `selectMany(ids, additive)`, `deleteSelected()` and `applyStyleToSelected(patch)`.
   - `deleteObject` also removes the id from the selection.
 - **`components/markup/useMarqueeSelect.ts`** (new): the box gesture.
-  - `begin(p, additive)`, `move(p)` and `end(stage): boolean`, plus the live `box` for rendering.
+  - `begin(p, additive)`, `move(p)` and `end(stage, minSize): boolean` and `cancel()`, plus the live `box` for rendering.
   - `end` hit-tests each object's Konva node via `getClientRect({ relativeTo: node.getLayer() })`, which is the same space the pointer coordinates are in on both surfaces. It skips hidden nodes (the text being edited).
 - **`AnnotationObjects`**:
   - takes `selectedIds` and `onSelect(id, additive)`;

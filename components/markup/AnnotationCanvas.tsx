@@ -463,7 +463,13 @@ export default function AnnotationCanvas({
       lastErasePointRef.current = p;
       return;
     }
-    if (activeTool === 'pointer') { marquee.move(p); return; }
+    if (activeTool === 'pointer') {
+      // A mouseup this stage never received (focus lost mid-drag) would leave the box stuck to
+      // the cursor — the same guard the eraser uses above.
+      if (e.evt.buttons === 0) { marquee.cancel(); return; }
+      marquee.move(p);
+      return;
+    }
     // Read Shift off the event rather than tracking it: the constraint applies from the next
     // pointer move, which is what every other design tool does.
     ann.moveDraw(activeTool as AnnTool, p, e.evt.shiftKey);

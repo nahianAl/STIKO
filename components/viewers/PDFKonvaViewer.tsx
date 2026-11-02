@@ -181,7 +181,7 @@ function PDFKonvaViewer(
     // Shared Konva annotation object model (select/move/scale/rotate/erase)
     const ann = useAnnotationObjects();
     const marquee = useMarqueeSelect(ann);
-    const { begin: marqueeBegin, move: marqueeMove } = marquee;
+    const { begin: marqueeBegin, move: marqueeMove, cancel: marqueeCancel } = marquee;
     // The text object currently open for editing. The object itself already exists in `ann` —
     // this is only which one the editor is bound to.
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -605,13 +605,16 @@ function PDFKonvaViewer(
         return;
       }
       if (activeTool === 'pointer') {
+        // A mouseup this stage never received (focus lost mid-drag) would leave the box stuck
+        // to the cursor — the same guard the eraser uses above.
+        if (e.evt.buttons === 0) { marqueeCancel(); return; }
         const c = getPageCoords(stage);
         if (c) marqueeMove(c);
         return;
       }
       const coords = getPageCoords(stage);
       if (coords) ann.moveDraw(activeTool as AnnTool, coords, e.evt.shiftKey);
-    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover, marqueeMove]);
+    }, [annotating, activeTool, getPageCoords, ann, eraseAt, stopErasing, pendingMeasurement, onMeasureHover, marqueeMove, marqueeCancel]);
 
     const editingObj = editingId ? ann.objects.find((o) => o.id === editingId) ?? null : null;
 
