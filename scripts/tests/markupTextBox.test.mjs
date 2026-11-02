@@ -97,6 +97,18 @@ test('a corner scales font and width together, and a clamped font drags the widt
   assert.equal(scaledTextOnCorner(20, 10, 1).width, MIN_TEXT_WIDTH);
 });
 
+test('boxed corner scales the inner width and keeps the padding constant', () => {
+  // W=116, p=8: inner 100. 2x -> inner 200 -> outer 216.
+  assert.deepEqual(scaledTextOnCorner(20, 116, 2, 8), { fontSize: 40, width: 216 });
+  assert.deepEqual(scaledTextOnCorner(20, 116, 0.5, 8), { fontSize: 10, width: 66 });
+  // 20 * 0.1 clamps to 6 (k = 0.3): inner 100 -> 30 -> outer 46.
+  const c = scaledTextOnCorner(20, 116, 0.1, 8);
+  assert.equal(c.fontSize, 6);
+  assert.ok(Math.abs(c.width - 46) < 1e-9);
+  // Default padding 0 is the old behaviour.
+  assert.deepEqual(scaledTextOnCorner(20, 200, 2), { fontSize: 40, width: 400 });
+});
+
 test('a side drag scales only the width, never below the floor', () => {
   assert.equal(widthOnSideDrag(200, 1.5), 300);
   assert.equal(widthOnSideDrag(200, -0.5), 100);

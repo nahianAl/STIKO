@@ -153,13 +153,21 @@ export function isTextDrag(box: { width: number }, minScreenPx: number, scale = 
 
 /**
  * A corner drag: the font scales and is baked in, and the wrap width scales by what the font
- * ACTUALLY got. Using the raw factor would let a clamped font leave the width racing ahead of it.
+ * ACTUALLY got. `padding` is the text's inset (textPadding), excluded from the scaling. Using the raw factor would let a clamped font leave the width racing ahead of it.
  */
-export function scaledTextOnCorner(fontSize: number, width: number, scale: number): { fontSize: number; width: number } {
+export function scaledTextOnCorner(
+  fontSize: number,
+  width: number,
+  scale: number,
+  padding = 0,
+): { fontSize: number; width: number } {
   const s = Math.abs(scale);
   const next = clampFontSize(fontSize * s);
   const k = fontSize > 0 ? next / fontSize : s;
-  return { fontSize: next, width: Math.max(MIN_TEXT_WIDTH, width * k) };
+  // `width` is the outer width. Only the glyph area scales; the padding is a constant in drawing
+  // units, so a boxed text does not re-wrap when the baked state replaces the dragged Group.
+  const inner = Math.max(0, width - padding * 2);
+  return { fontSize: next, width: Math.max(MIN_TEXT_WIDTH, inner * k + padding * 2) };
 }
 
 /** A side drag: only the width changes. */

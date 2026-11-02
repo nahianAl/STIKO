@@ -6,6 +6,7 @@ import {
   MIN_TEXT_WIDTH,
   clampFontSize,
   scaledTextOnCorner,
+  textPadding,
   widthOnSideDrag,
   type TextAlign,
   type TextStyle,
@@ -235,7 +236,10 @@ export function useAnnotationObjects() {
           if (o.id !== id) return o;
           const sx = Math.abs(t.scaleX) || 1;
           const sy = Math.abs(t.scaleY) || 1;
-          const corner = scaledTextOnCorner(o.fontSize, o.width, sy);
+          const corner = scaledTextOnCorner(o.fontSize, o.width, sy, textPadding(o));
+          // The dragged Group scales its padding too, so mid-drag a boxed text's padding briefly
+          // looks scaled. Accepted: after the bake the padding is constant in drawing units again.
+          // Auto-width has no wrap width, so nothing snaps there either.
           const width = o.autoWidth ? o.width : Math.abs(sx - sy) < 1e-3 ? corner.width : widthOnSideDrag(o.width, sx);
           return {
             ...o,

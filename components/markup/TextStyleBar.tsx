@@ -81,6 +81,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
   // Escape-then-blur (both inside one keydown) sees the cleared draft and commits nothing.
   const [draft, setDraft] = useState<string | null>(null);
   const draftRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Measure after every render: the bar's width depends on nothing it can predict (fonts, the
   // size field's digits). Sets state only on a real change, so it cannot loop.
@@ -106,6 +107,38 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
     draftRef.current = v;
     setDraft(v);
   };
+  /**
+   * Every control but the size field's own typing goes through this. Button presses are
+   * preventDefault'ed, so the size field can still hold focus and a draft; left alone, its later
+   * blur would commit that stale number over the choice just made.
+   */
+  const act = (patch: Partial<TextStyle>) => {
+    writeDraft(null);
+    onChange(patch);
+  };
+
+  // A size changed from outside (Cmd+Shift+>, a preset on another surface) while the field is not
+  // being typed in: whatever it was holding is stale.
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) {
+      draftRef.current = null;
+      setDraft(null);
+    }
+  }, [style.fontSize]);
+
+  // Esc closes an open menu and nothing else (it must not finish the edit). Capture on the
+  // document, because focus is usually in the editor's textarea, which would commit on Esc.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [menu]);
   const commitDraft = () => {
     const d = draftRef.current;
     writeDraft(null);
@@ -136,6 +169,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
     >
       <div className="relative flex items-center">
         <input
+          ref={inputRef}
           aria-label="Font size"
           type="number"
           min={6}
@@ -166,6 +200,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
         <button
           type="button"
           aria-label="Font size presets"
+          aria-haspopup="listbox"
           aria-expanded={menu === 'size'}
           className={btn(menu === 'size')}
           onClick={() => setMenu(menu === 'size' ? null : 'size')}
@@ -182,7 +217,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
                 type="button"
                 className={`${btn(style.fontSize === p)} w-[56px] justify-start px-[10px]`}
                 onClick={() => {
-                  onChange({ fontSize: p });
+                  act({ fontSize: p });
                   setMenu(null);
                 }}
               >
@@ -195,17 +230,17 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
 
       <Divider />
 
-      <button type="button" aria-label="Bold" aria-pressed={style.bold} className={`${btn(style.bold)} font-bold`} onClick={() => onChange({ bold: !style.bold })}>
+      <button type="button" aria-label="Bold" aria-pressed={style.bold} className={`${btn(style.bold)} font-bold`} onClick={() => act({ bold: !style.bold })}>
         B
       </button>
-      <button type="button" aria-label="Italic" aria-pressed={style.italic} className={`${btn(style.italic)} font-serif italic`} onClick={() => onChange({ italic: !style.italic })}>
+      <button type="button" aria-label="Italic" aria-pressed={style.italic} className={`${btn(style.italic)} font-serif italic`} onClick={() => act({ italic: !style.italic })}>
         I
       </button>
 
       <Divider />
 
       {ALIGNS.map((a) => (
-        <button key={a} type="button" aria-label={`Align ${a}`} aria-pressed={style.align === a} className={btn(style.align === a)} onClick={() => onChange({ align: a })}>
+        <button key={a} type="button" aria-label={`Align ${a}`} aria-pressed={style.align === a} className={btn(style.align === a)} onClick={() => act({ align: a })}>
           <AlignIcon align={a} />
         </button>
       ))}
@@ -213,7 +248,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
       <Divider />
 
       <div className="relative flex">
-        <button type="button" aria-label="Fill" aria-expanded={menu === 'fill'} className={btn(menu === 'fill')} onClick={() => setMenu(menu === 'fill' ? null : 'fill')}>
+        <button type="button" aria-label="Fill" aria-haspopup="true" aria-expanded={menu === 'fill'} className={btn(menu === 'fill')} onClick={() => setMenu(menu === 'fill' ? null : 'fill')}>
           <FillChip fill={style.fill} />
         </button>
         {menu === 'fill' && (
@@ -224,7 +259,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
               aria-pressed={!style.fill}
               className={btn(!style.fill)}
               onClick={() => {
-                onChange({ fill: '' });
+                act({ fill: '' });
                 setMenu(null);
               }}
             >
@@ -238,7 +273,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
                 aria-pressed={style.fill === s.value}
                 className={btn(style.fill === s.value)}
                 onClick={() => {
-                  onChange({ fill: s.value });
+                  act({ fill: s.value });
                   setMenu(null);
                 }}
               >
@@ -248,7 +283,7 @@ export default function TextStyleBar({ anchor, view, style, editing, onChange }:
           </div>
         )}
       </div>
-      <button type="button" aria-label="Border" aria-pressed={style.border} className={btn(style.border)} onClick={() => onChange({ border: !style.border })}>
+      <button type="button" aria-label="Border" aria-pressed={style.border} className={btn(style.border)} onClick={() => act({ border: !style.border })}>
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6">
           <rect x="3.5" y="4.5" width="11" height="9" rx="1.5" />
         </svg>

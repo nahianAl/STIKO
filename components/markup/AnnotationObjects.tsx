@@ -5,7 +5,7 @@ import { Line, Arrow, Rect, Shape, Text, Group, Image as KonvaImage, Transformer
 import type Konva from 'konva';
 import type { Box } from '@/lib/markup/selection';
 import type { AnnotationObject, AnnTool } from './useAnnotationObjects';
-import { TEXT_BORDER_WIDTH, TEXT_FONT_FAMILY, konvaFontStyle, textPadding, widthOnSideDrag } from '@/lib/markup/text';
+import { MIN_TEXT_WIDTH, TEXT_BORDER_WIDTH, TEXT_FONT_FAMILY, konvaFontStyle, scaledTextOnCorner, textPadding, widthOnSideDrag } from '@/lib/markup/text';
 import { TEXT_BOX_NAME, TEXT_GROUP_NAME, glyphLineRects, textOf } from './textNode';
 import { cloudArcs } from '@/lib/markup/cloud';
 import { normalizedBox } from '@/lib/markup/draft';
@@ -17,6 +17,8 @@ const ALL_ANCHORS = ['top-left', 'top-center', 'top-right', 'middle-right', 'mid
 
 /** One text: corners scale the font, sides set the width. No top/bottom — the height always fits the text. */
 const TEXT_ANCHORS = ['top-left', 'top-right', 'middle-left', 'middle-right', 'bottom-left', 'bottom-right'];
+
+const CORNER_ANCHORS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 const isSideAnchor = (a: string | null | undefined) => a === 'middle-left' || a === 'middle-right';
 
@@ -157,6 +159,14 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
           return;
         }
         if (onBakeText) {
+          // Write the baked font and width onto the Text now. React re-renders a frame later, and
+          // until then the Text (and the box sized off it) would show the old font at scale 1.
+          const tx = textOf(n);
+          if (tx && Math.abs(t.scaleX - t.scaleY) < 1e-3) {
+            const corner = scaledTextOnCorner(obj.fontSize, obj.width, t.scaleY, textPadding(obj));
+            tx.fontSize(corner.fontSize);
+            if (!obj.autoWidth) tx.width(corner.width);
+          }
           // Reset on the node as well as in state: React re-renders a frame later, and without
           // this the text visibly springs to double size and back.
           n.scaleX(1);
@@ -312,14 +322,26 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
         // disagree. A lone text's corners scale its font, which must stay in proportion too.
         // Other single objects can still be stretched freely. (Side anchors ignore keepRatio.)
         keepRatio={selectedIds.length > 1 || singleText}
-        enabledAnchors={singleText ? TEXT_ANCHORS : ALL_ANCHORS}
+        // Konva ignores keepRatio on the middle anchors, so a group would stretch on one axis.
+        enabledAnchors={singleText ? TEXT_ANCHORS : selectedIds.length > 1 ? CORNER_ANCHORS : ALL_ANCHORS}
         ignoreStroke
         // Konva's rotationSnaps are ABSOLUTE angles, which is exactly the behaviour wanted:
         // Shift straightens a crooked object rather than stepping it 90 deg from wherever it
         // was. An empty array means no snapping at all.
         rotationSnaps={shiftHeld ? ROTATION_SNAPS_DEG : []}
         rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
-        boundBoxFunc={(oldBox, newBox) => (newBox.width < 5 || newBox.height < 5 ? oldBox : newBox)}
+        boundBoxFunc={(oldBox, newBox) => {
+          if (newBox.width < 5 || newBox.height < 5) return oldBox;
+          if (singleText) {
+            // Boxes are in absolute px; the text's minimum is in drawing units. The PARENT's
+            // scale, not the group's own, which a corner drag is changing as it goes. Without
+            // this, a middle-left drag below the width floor keeps moving the origin.
+            const parent = trRef.current?.nodes()[0]?.getParent();
+            const k = parent?.getAbsoluteScale().x ?? 1;
+            if (newBox.width < MIN_TEXT_WIDTH * k) return oldBox;
+          }
+          return newBox;
+        }}
       />
       {marquee && (
         <Rect

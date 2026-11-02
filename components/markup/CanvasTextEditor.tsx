@@ -98,10 +98,14 @@ export default function CanvasTextEditor({
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
-    const h = el.scrollHeight;
-    el.style.height = `${h}px`;
+    // scrollHeight is an integer; Konva's height is lines x fontSize x scale, fractional at PDF
+    // zoom. Auto-width never wraps, so its line count is exact and the box can use Konva's own
+    // formula. Fixed-width wrapping is only known to the browser, so it keeps scrollHeight (the
+    // fill/border can then differ from Konva's by under half a pixel).
+    const h = autoWidth ? value.split('\n').length * displayFontSize : el.scrollHeight;
+    el.style.height = `${autoWidth ? Math.ceil(h) : h}px`;
     setContentHeight(h);
-  }, [value, displayFontSize, fontWeight, fontStyle, textWidth]);
+  }, [value, displayFontSize, fontWeight, fontStyle, textWidth, autoWidth]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
