@@ -37,7 +37,7 @@ export default function PdfSidebar({ pdfDoc, pageSizes, currentPage, onSelectPag
       <nav
         ref={setList}
         aria-label="Pages"
-        className="absolute inset-y-0 left-0 z-30 w-[180px] flex-shrink-0 overflow-y-auto border-r border-gray-200 bg-white px-5 py-4 shadow-lg md:relative md:inset-auto md:z-auto md:shadow-none"
+        className="absolute inset-y-0 left-0 z-30 w-[180px] flex-shrink-0 overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-white px-5 py-4 shadow-lg md:relative md:inset-auto md:z-auto md:shadow-none"
       >
         <ol className="flex flex-col gap-4">
           {pageSizes.map((size, i) => (
