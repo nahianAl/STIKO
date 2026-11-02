@@ -43,7 +43,7 @@ interface PdfScrollViewProps {
   onCommentPlace: (x: number, y: number, pageNumber: number) => void;
   onCurrentPageChange: (page: number) => void;
   onScaleChange: (scale: number) => void;
-  /** Once, when the first page has been drawn (drives the viewer's onReady). */
+  /** Once, when the first page has settled — drawn or failed (drives the viewer's onReady). */
   onFirstPageDrawn: () => void;
   handleRef?: Ref<PdfScrollViewHandle>;
 }
@@ -61,6 +61,7 @@ export default function PdfScrollView({
 
   const scaleRef = useRef<number | null>(null);
   const fitModeRef = useRef(true);
+  const committedScaleRef = useRef<number | null>(null);
   const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
   const initialPageRef = useRef(initialPage);
 
@@ -95,7 +96,11 @@ export default function PdfScrollView({
       setScale(clamped);
       return;
     }
-    if (clamped === prev) return;
+    if (clamped === prev) {
+      // Net-zero zoom: if nothing is left to commit, no render will consume a stale pending scroll.
+      if (committedScaleRef.current === clamped) pendingScrollRef.current = null;
+      return;
+    }
     const from = pendingScrollRef.current ?? { left: el.scrollLeft, top: el.scrollTop };
     const s = anchoredScroll({
       before: layoutPages(pageSizes, prev, GAP, PADDING),
@@ -147,6 +152,10 @@ export default function PdfScrollView({
     setRenderScale((prev) => (prev === null ? scale : prev));
     const t = setTimeout(() => setRenderScale(scale), SETTLE_MS);
     return () => clearTimeout(t);
+  }, [scale]);
+
+  useLayoutEffect(() => {
+    committedScaleRef.current = scale;
   }, [scale]);
 
   const layout = useMemo(() => (scale === null ? null : layoutPages(pageSizes, scale, GAP, PADDING)), [pageSizes, scale]);
@@ -236,7 +245,7 @@ export default function PdfScrollView({
   const colWidth = layout ? Math.max(layout.contentWidth, viewport.width) : 0;
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="relative min-w-0 flex-1 overflow-auto bg-gray-100">
+    <div ref={scrollRef} onScroll={onScroll} style={{ scrollbarGutter: 'stable' }} className="relative min-w-0 flex-1 overflow-auto bg-gray-100">
       {!layout ? (
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
@@ -306,6 +315,7 @@ const ScrollPage = memo(function ScrollPage({
     }
     let cancelled = false;
     let job: PageRenderJob | null = null;
+    setFailed(false);
     pdfDoc
       .getPage(page)
       .then((pg) => {
@@ -313,7 +323,6 @@ const ScrollPage = memo(function ScrollPage({
         job = renderPageToCanvas(pg, canvas, renderWidth, window.devicePixelRatio || 1);
         return job.promise.then(() => {
           if (cancelled) return;
-          setFailed(false);
           onDrawn();
         });
       })
@@ -321,6 +330,7 @@ const ScrollPage = memo(function ScrollPage({
         if (cancelled || isRenderCancelled(err)) return;
         console.error(`Failed to render PDF page ${page}:`, err);
         setFailed(true);
+        onDrawn(); // a failed first page still settles, so onReady never hangs
       });
     return () => {
       cancelled = true;
@@ -353,12 +363,14 @@ const ScrollPage = memo(function ScrollPage({
           Couldn&apos;t render page {page}
         </div>
       )}
-      {comments.map((c, idx) => {
+      {comments.map((c) => {
+        const n = tagNumbers.get(c.id);
+        if (n === undefined) return null;
         const pal = paletteForComment(c);
         return (
           <CommentPin
             key={c.id}
-            index={tagNumbers.get(c.id) ?? idx + 1}
+            index={n}
             x={c.xPosition!}
             y={c.yPosition!}
             isActive={activeCommentId === c.id}
