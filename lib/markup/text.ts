@@ -10,27 +10,8 @@
  */
 export const TEXT_FONT_FAMILY = 'Arial';
 
-/** A text box narrower than this is not worth typing in, whatever the content width says. */
-export const MIN_WRAP_WIDTH = 120;
-
 /** A resize handle dragged to nothing must still leave something selectable. */
 export const MIN_FONT_SIZE = 6;
-
-/** Fraction of the content width a fresh text box wraps at. */
-const WRAP_FRACTION = 0.4;
-
-/**
- * Wrap width for a fresh text box, in the content's own coordinate space.
- *
- * The caller passes the *content* width — the fitted background region on AnnotationCanvas,
- * the page width on PDFKonvaViewer — never the stage width. On a zoomable surface the stage
- * width changes with the zoom, and deriving the wrap from it would reflow already-committed
- * text on every zoom step.
- */
-export function wrapWidthForContent(contentWidth: number): number {
-  if (!Number.isFinite(contentWidth) || contentWidth <= 0) return MIN_WRAP_WIDTH;
-  return Math.min(contentWidth, Math.max(Math.round(contentWidth * WRAP_FRACTION), MIN_WRAP_WIDTH));
-}
 
 /** True when committing this text should discard the object instead of keeping it. */
 export function isBlank(text: string): boolean {
