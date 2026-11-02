@@ -512,7 +512,9 @@ export default function AnnotationCanvas({
               draft={ann.draft}
               selectedIds={ann.selectedIds}
               activeTool={activeTool as AnnTool}
-              onSelect={ann.pick}
+              // A press on an object never reaches the stage's mousedown (AnnotationObjects cancels the
+              // bubble), so the stage's measurement clear cannot cover it: clear it here instead.
+              onSelect={(id, additive) => { onSelectMeasurement?.(null); ann.pick(id, additive); }}
               marquee={marquee.box}
               onErase={ann.deleteObject}
               onChange={ann.updateObject}
