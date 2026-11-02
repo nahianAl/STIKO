@@ -1,60 +1,72 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { TEXT_FONT_FAMILY } from '@/lib/markup/text';
+import { MARKUP_ACCENT, TEXT_BORDER_WIDTH, TEXT_FONT_FAMILY, fontStepFromKey, textPadding } from '@/lib/markup/text';
+import type { AnnotationObject } from './useAnnotationObjects';
 
-// An empty box still needs somewhere to put the caret.
-const MIN_EDITOR_WIDTH = 24;
+/** Caret room on an auto-width box, so a caret after the last glyph is neither clipped nor scrolled into view by a pixel. */
+const CARET_ROOM = 2;
 
 /**
- * A borderless textarea sitting exactly where the Konva text node is, so markup text is typed
- * where it will land rather than in a popup somewhere else.
+ * A textarea standing exactly where the Konva text node is, so markup text is typed where it
+ * will land rather than in a popup somewhere else.
  *
  * Konva has no text input primitive, and rendering a caret onto the canvas would mean
  * reimplementing caret movement, selection, wrapping, clipboard and IME composition. Overlaying
  * a real form control gets all of that from the browser. The cost is that the overlay has to
- * mirror the stage transform, which is what `scale` is for — 1 on the unscaled AnnotationCanvas,
- * the current zoom on PDFKonvaViewer.
+ * mirror the Konva box exactly, or the text jumps at the moment it is committed:
  *
- * The marquee is drawn with `outline`, not `border`: outlines sit outside the box model, so the
- * dashed edge cannot shift the text by a pixel relative to the Konva node it is standing in for.
+ * - The outer div is the BOX: as wide as the Konva Text (padding included), as tall as its lines
+ *   plus padding, with the same fill. The border is drawn as box-shadows centred on the edge —
+ *   what Konva's 1.5px stroke does — so it never enters the box model and cannot shift a glyph.
+ * - The textarea is the CONTENT: inset by the padding, padding 0 itself, lineHeight 1, and the
+ *   same family, weight, style and alignment. Fixed width wraps at width minus padding, as Konva
+ *   does; auto-width never wraps and is measured to the widest line with a hidden mirror span.
+ * - Everything scales by `scale` (the stage zoom; 1 on the unscaled AnnotationCanvas) and rotates
+ *   about the top-left, which is the Konva Group's origin.
+ *
+ * The accent frame is an `outline`, which also sits outside the box model.
  */
 export default function CanvasTextEditor({
+  object,
   x,
   y,
   scale,
-  color,
-  fontSize,
-  wrapWidth,
-  value,
   onChange,
   onCommit,
+  onStepFontSize,
 }: {
+  object: AnnotationObject;
   x: number;
   y: number;
   scale: number;
-  color: string;
-  fontSize: number;
-  wrapWidth: number;
-  value: string;
   onChange: (text: string) => void;
   onCommit: () => void;
+  onStepFontSize: (dir: 1 | -1) => void;
 }) {
+  const { text: value, color, fontSize, bold, italic, align, fill, border, autoWidth, width, rotation } = object;
   const ref = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   // Hidden span used only to measure the widest rendered line — never shown, never focusable.
   const mirrorRef = useRef<HTMLSpanElement>(null);
-  // Measured display width. Starts at wrapWidth * scale so the first paint (before the
-  // measuring effect runs) matches the old, unconditional sizing rather than flashing at
-  // MIN_EDITOR_WIDTH.
-  const [editorWidth, setEditorWidth] = useState(() => wrapWidth * scale);
+  // Widest line in screen px (auto-width only), and the textarea's content height.
+  const [contentWidth, setContentWidth] = useState(0);
+  const [contentHeight, setContentHeight] = useState(fontSize * scale);
 
-  // Commit stays in a ref so the listeners below can be bound once, on mount. Re-binding a
-  // document-level pointerdown handler on every keystroke risks the handler that closes the
-  // editor being attached during the very click that is supposed to close it.
+  // Handlers stay in refs so the document listener below can be bound once, on mount.
+  // Re-binding a document-level pointerdown handler on every keystroke risks the handler that
+  // closes the editor being attached during the very click that is supposed to close it.
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
+  const stepRef = useRef(onStepFontSize);
+  stepRef.current = onStepFontSize;
 
-  // Focus with the caret at the end — the re-edit path opens on existing text, and landing the
+  const pad = textPadding(object) * scale;
+  const displayFontSize = fontSize * scale;
+  const fontWeight = bold ? 'bold' : 'normal';
+  const fontStyle = italic ? 'italic' : 'normal';
+
+  // Focus with the caret at the end — the re-edit paths open on existing text, and landing the
   // caret at the start there would make appending feel broken.
   useEffect(() => {
     const el = ref.current;
@@ -63,60 +75,63 @@ export default function CanvasTextEditor({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
 
-  // Grow to fit. Height is reset to auto first, or scrollHeight only ever ratchets upward and
-  // the box never shrinks back when text is deleted.
+  // Auto-width: the box hugs the widest line. getBoundingClientRect rather than offsetWidth,
+  // which rounds to whole pixels and would make the box disagree with Konva's fractional width.
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, [value, fontSize, wrapWidth, scale]);
-
-  // Measure the widest line with a hidden mirror span, so the box hugs the text instead of
-  // being born at full wrap width. Safe by construction: the measured width is always at
-  // least as wide as the longest rendered line (mirror uses the exact same font metrics) and
-  // is capped at wrapWidth * scale — the width the committed Konva node wraps at. So the
-  // textarea never wraps earlier than the Konva node would, and once the cap is hit both wrap
-  // at exactly the same width. The committed text can therefore never reflow relative to what
-  // was on screen while editing.
-  useLayoutEffect(() => {
+    if (!autoWidth) return;
     const mirror = mirrorRef.current;
     if (!mirror) return;
     let widest = 0;
     for (const line of value.split('\n')) {
       mirror.textContent = line;
-      widest = Math.max(widest, mirror.offsetWidth);
+      widest = Math.max(widest, mirror.getBoundingClientRect().width);
     }
-    // +2 is caret room, so the caret itself doesn't sit flush against the wrap edge.
-    setEditorWidth(Math.min(wrapWidth * scale, Math.max(MIN_EDITOR_WIDTH, widest + 2)));
-  }, [value, fontSize, wrapWidth, scale]);
+    setContentWidth(widest);
+  }, [value, displayFontSize, fontWeight, fontStyle, autoWidth]);
+
+  const textWidth = autoWidth ? contentWidth + CARET_ROOM : Math.max(1, width * scale - pad * 2);
+
+  // Grow to fit. Height is reset to auto first, or scrollHeight only ever ratchets upward and
+  // the box never shrinks back when text is deleted. After the width measure, since wrapping
+  // depends on it.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const h = el.scrollHeight;
+    el.style.height = `${h}px`;
+    setContentHeight(h);
+  }, [value, displayFontSize, fontWeight, fontStyle, textWidth]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) commitRef.current();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        commitRef.current();
-      }
+      const t = e.target;
+      // The box itself, and the floating text bar, are inside.
+      if (t instanceof Element && t.closest('[data-markup-text-chrome]')) return;
+      // A press on THIS surface's canvas finishes the edit and must do nothing else: not
+      // deselect the text (it stays selected), not start a selection box, not create another
+      // text. Konva acts on the compatibility mousedown/mouseup, and cancelling pointerdown
+      // suppresses those without touching any other click on the page.
+      const host = boxRef.current?.parentElement;
+      if (t instanceof HTMLCanvasElement && host?.contains(t)) e.preventDefault();
+      commitRef.current();
     };
     // Capture phase: the surface's own stage handlers must not act on the click that closed the
     // editor before the editor has seen it.
     document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
   }, []);
 
-  const displayFontSize = fontSize * scale;
+  const boxWidth = autoWidth ? contentWidth + pad * 2 : width * scale;
+  const boxHeight = contentHeight + pad * 2;
+  // The auto-width textarea is CARET_ROOM wider than its text, and Konva aligns lines inside the
+  // text's own width. Pull the extra out of whichever side the alignment pushes the text away from.
+  const shift = autoWidth ? (align === 'center' ? CARET_ROOM / 2 : align === 'right' ? CARET_ROOM : 0) : 0;
+  const halfBorder = (TEXT_BORDER_WIDTH / 2) * scale;
 
   return (
     <>
-      {/* Hidden mirror used only to measure the widest line, so the box can hug the text
-          instead of being born at the full wrap width. Same font metrics as the textarea —
+      {/* Hidden mirror used only to measure the widest line. Same font metrics as the textarea —
           any divergence here would make the measurement lie. */}
       <span
         ref={mirrorRef}
@@ -129,40 +144,75 @@ export default function CanvasTextEditor({
           pointerEvents: 'none',
           whiteSpace: 'pre',
           fontFamily: TEXT_FONT_FAMILY,
-          fontWeight: 'bold',
+          fontWeight,
+          fontStyle,
           fontSize: displayFontSize,
           lineHeight: 1,
         }}
       />
-      <textarea
-        ref={ref}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        // Enter inserts a newline. Nothing here commits — that is clicking away or Escape.
-        onKeyDown={(e) => e.stopPropagation()}
-        spellCheck={false}
-        className="absolute z-40 resize-none overflow-hidden"
+      <div
+        ref={boxRef}
+        data-markup-text-chrome=""
+        className="absolute z-40"
         style={{
           left: x,
           top: y,
-          width: editorWidth,
-          color,
-          // Matched to the Konva Text node: same family, same weight, lineHeight 1, no padding.
-          // Any divergence here and the text jumps at the moment it is committed.
-          fontFamily: TEXT_FONT_FAMILY,
-          fontWeight: 'bold',
-          fontSize: displayFontSize,
-          lineHeight: 1,
-          padding: 0,
-          margin: 0,
-          border: 'none',
-          background: 'rgba(255,255,255,0.10)',
-          outline: `1px dashed ${color}`,
-          outlineOffset: 3,
-          whiteSpace: 'pre-wrap',
-          overflowWrap: 'break-word',
+          width: boxWidth,
+          height: boxHeight,
+          transform: rotation ? `rotate(${rotation}deg)` : undefined,
+          transformOrigin: '0 0',
+          background: fill || 'transparent',
+          boxShadow: border ? `inset 0 0 0 ${halfBorder}px ${color}, 0 0 0 ${halfBorder}px ${color}` : undefined,
+          outline: `1px solid ${MARKUP_ACCENT}`,
+          outlineOffset: border ? halfBorder + 2 : 2,
         }}
-      />
+      >
+        <textarea
+          ref={ref}
+          data-markup-text-editor=""
+          value={value}
+          rows={1}
+          wrap={autoWidth ? 'off' : 'soft'}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            // Keys typed here are text, never canvas shortcuts (Delete, Enter-to-edit, page turns).
+            e.stopPropagation();
+            if (e.nativeEvent.isComposing) return;
+            // Plain Enter inserts a newline. Esc and Ctrl/Cmd+Enter finish.
+            if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
+              e.preventDefault();
+              commitRef.current();
+              return;
+            }
+            const step = fontStepFromKey(e);
+            if (step) {
+              e.preventDefault();
+              stepRef.current(step);
+            }
+          }}
+          spellCheck={false}
+          className="absolute resize-none overflow-hidden"
+          style={{
+            left: pad - shift,
+            top: pad,
+            width: textWidth,
+            color,
+            fontFamily: TEXT_FONT_FAMILY,
+            fontWeight,
+            fontStyle,
+            fontSize: displayFontSize,
+            lineHeight: 1,
+            textAlign: align,
+            padding: 0,
+            margin: 0,
+            border: 'none',
+            outline: 'none',
+            background: 'transparent',
+            whiteSpace: autoWidth ? 'pre' : 'pre-wrap',
+            overflowWrap: autoWidth ? 'normal' : 'break-word',
+          }}
+        />
+      </div>
     </>
   );
 }

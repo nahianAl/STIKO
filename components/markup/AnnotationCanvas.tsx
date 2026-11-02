@@ -15,7 +15,7 @@ import { naturalPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/spa
 import { UNPAGED } from '@/lib/measure/calibration';
 import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from './CanvasTextEditor';
-import { wrapWidthForContent, isBlank } from '@/lib/markup/text';
+import { stepFontSize, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { CANVAS_MATTE } from '@/lib/markup/matte';
 import { sweepPoints } from '@/lib/markup/eraseSweep';
@@ -615,15 +615,13 @@ export default function AnnotationCanvas({
           // earlier.) Without the key the instance would be reused and open unfocused.
           key={editingObj.id}
           // The stage is untransformed here, so object space is screen space.
+          object={editingObj}
           x={editingObj.x}
           y={editingObj.y}
           scale={1}
-          color={editingObj.color}
-          fontSize={editingObj.fontSize}
-          wrapWidth={editingObj.width}
-          value={editingObj.text}
           onChange={(t) => ann.updateText(editingObj.id, t)}
           onCommit={commitText}
+          onStepFontSize={(dir) => ann.updateTextStyle([editingObj.id], { fontSize: stepFontSize(editingObj.fontSize, dir) })}
         />
       )}
     </div>

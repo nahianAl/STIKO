@@ -17,7 +17,7 @@ import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { PDF_RENDER_SCALE, pointsPerStagePixel } from '@/lib/measure/space';
 import { snapMeasurePoint } from '@/lib/measure/snap';
 import CanvasTextEditor from '@/components/markup/CanvasTextEditor';
-import { wrapWidthForContent, isBlank } from '@/lib/markup/text';
+import { stepFontSize, wrapWidthForContent, isBlank } from '@/lib/markup/text';
 import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
@@ -1039,15 +1039,13 @@ function PDFKonvaViewer(
               key={editingObj.id}
               // Page space -> screen space. The Stage carries the zoom and the pan, so the
               // overlay has to apply them by hand to sit on top of the node it stands in for.
+              object={editingObj}
               x={editingObj.x * stageScale + stagePos.x}
               y={editingObj.y * stageScale + stagePos.y}
               scale={stageScale}
-              color={editingObj.color}
-              fontSize={editingObj.fontSize}
-              wrapWidth={editingObj.width}
-              value={editingObj.text}
               onChange={(t) => ann.updateText(editingObj.id, t)}
               onCommit={commitText}
+              onStepFontSize={(dir) => ann.updateTextStyle([editingObj.id], { fontSize: stepFontSize(editingObj.fontSize, dir) })}
             />
           )}
         </div>
