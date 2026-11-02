@@ -90,8 +90,10 @@ const Thumbnail = memo(function Thumbnail({ pdfDoc, page, size, active, root, on
       .getPage(page)
       .then((pg) => {
         if (cancelled) return;
-        job = renderPageToCanvas(pg, canvas, THUMB_WIDTH, window.devicePixelRatio || 1);
-        return job.promise;
+        job = renderPageToCanvas(pg, canvas, THUMB_WIDTH, Math.min(window.devicePixelRatio || 1, 2));
+        return job.promise.then(() => {
+          try { pg.cleanup(); } catch { /* ignore */ } // the bitmap is kept; free the operator list
+        });
       })
       .catch((err) => {
         if (cancelled || isRenderCancelled(err)) return;
@@ -124,7 +126,7 @@ const Thumbnail = memo(function Thumbnail({ pdfDoc, page, size, active, root, on
           className={`relative block overflow-hidden rounded-sm bg-white shadow-sm transition ${active ? 'ring-2 ring-[#5B60FF]' : 'ring-1 ring-black/10 group-hover:ring-gray-400'}`}
           style={{ width: THUMB_WIDTH, height }}
         >
-          <canvas ref={canvasRef} className="block h-full w-full" />
+          <canvas ref={canvasRef} aria-hidden="true" className="block h-full w-full" />
           {failed && (
             <span className="absolute inset-0 flex items-center justify-center bg-gray-200 px-2 text-center text-[11px] text-gray-500">
               Couldn&apos;t render page {page}

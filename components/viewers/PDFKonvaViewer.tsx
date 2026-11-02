@@ -278,6 +278,13 @@ function PDFKonvaViewer(
       pendingImageRef.current = null;
       placeImage(p.src, p.im);
     }, [pageSize, placeImage]);
+    // A session that ends before the page rendered must not leave the image parked for the next one.
+    useEffect(() => { if (!annotating) pendingImageRef.current = null; }, [annotating]);
+    // Scroll mode: the pin's own page becomes the current page, so the portal's markup session opens there.
+    const placeFromScroll = useCallback((x: number, y: number, page: number) => {
+      setCurrentPage(page);
+      onCommentPlace(x, y, page);
+    }, [onCommentPlace]);
 
     // Ref handle (attached to the `handleRef` prop, not React `ref` — see note on props)
     useImperativeHandle(handleRef, () => ({
@@ -731,7 +738,7 @@ function PDFKonvaViewer(
                 onClick={toggleSidebar}
                 disabled={annotating}
                 aria-pressed={mode === 'scroll'}
-                aria-label={sidebarOpen ? 'Hide pages' : 'Show pages'}
+                aria-label="Pages"
                 title={annotating ? 'Finish markup to show pages' : sidebarOpen ? 'Hide pages' : 'Show pages'}
                 className={`rounded p-1 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent ${mode === 'scroll' ? 'bg-gray-100 text-gray-900' : 'text-gray-700'}`}
               >
@@ -792,7 +799,7 @@ function PDFKonvaViewer(
                 pendingCommentId={pendingCommentId}
                 onCommentPinClick={onCommentPinClick}
                 tagging={tagging}
-                onCommentPlace={onCommentPlace}
+                onCommentPlace={placeFromScroll}
                 onCurrentPageChange={setCurrentPage}
                 onScaleChange={setScrollScale}
                 onFirstPageDrawn={handleFirstScrollDraw}

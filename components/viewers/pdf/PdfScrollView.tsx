@@ -255,7 +255,7 @@ export default function PdfScrollView({
   const colWidth = layout ? Math.max(layout.contentWidth, viewport.width) : 0;
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} style={{ scrollbarGutter: 'stable' }} className="relative min-w-0 flex-1 overflow-auto bg-gray-100">
+    <div ref={scrollRef} onScroll={onScroll} style={{ scrollbarGutter: 'stable' }} className="relative isolate min-w-0 flex-1 overflow-auto bg-gray-100">
       {!layout ? (
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
@@ -330,7 +330,7 @@ const ScrollPage = memo(function ScrollPage({
       .getPage(page)
       .then((pg) => {
         if (cancelled) return;
-        job = renderPageToCanvas(pg, canvas, renderWidth, window.devicePixelRatio || 1);
+        job = renderPageToCanvas(pg, canvas, renderWidth, Math.min(window.devicePixelRatio || 1, 2));
         return job.promise.then(() => {
           if (cancelled) return;
           onDrawn();
@@ -352,6 +352,17 @@ const ScrollPage = memo(function ScrollPage({
     const c = canvasRef.current;
     return () => releaseCanvas(c);
   }, []);
+
+  // Free pdf.js's per-page operator lists/fonts/images when the page leaves the render window
+  // (or unmounts) — not on a mere renderWidth change.
+  useEffect(() => {
+    if (!shouldRender) return;
+    return () => {
+      try {
+        pdfDoc.getPage(page).then((p) => { try { p.cleanup(); } catch { /* ignore */ } }).catch(() => {});
+      } catch { /* ignore */ }
+    };
+  }, [pdfDoc, page, shouldRender]);
 
   return (
     <div
