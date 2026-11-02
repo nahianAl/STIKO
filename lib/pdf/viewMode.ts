@@ -4,8 +4,11 @@
 export type PdfViewMode = 'scroll' | 'single';
 
 export const MODE_STORAGE_KEY = 'stiko.pdfViewer.mode';
-/** Same bounds as PDFKonvaViewer's single-page adjustZoom. */
-export const MIN_ZOOM = 0.25;
+/**
+ * Scroll-view zoom bounds. MAX matches PDFKonvaViewer's single-page adjustZoom; the floor is lower
+ * so fit-to-width can fit large drawing sheets (A1 on a laptop, tabloid on a phone).
+ */
+export const MIN_ZOOM = 0.05;
 export const MAX_ZOOM = 5;
 /** iOS Safari refuses canvases over ~16.7M pixels; Chrome caps a side at 16384 (some GPUs lower). */
 export const MAX_CANVAS_PIXELS = 16_000_000;

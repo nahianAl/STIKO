@@ -64,8 +64,9 @@ test('effectiveMode: the sidebar decides; 1 page and a session force single; 0 (
   assert.equal(effectiveMode({ sidebarOpen: true, numPages: 0, annotating: false }), 'scroll');
 });
 
-test('clampZoom keeps zoom within [0.25, 5]', () => {
-  assert.equal(clampZoom(0.1), 0.25);
+test('clampZoom keeps zoom within [0.05, 5]', () => {
+  assert.equal(clampZoom(0.01), 0.05);
+  assert.equal(clampZoom(0.1), 0.1);
   assert.equal(clampZoom(9), 5);
   assert.equal(clampZoom(1.5), 1.5);
 });
@@ -86,6 +87,9 @@ test('fitWidthScale fits the widest page inside the padding, clamped', () => {
   assert.equal(fitWidthScale([], 800, 24), 1);
   assert.equal(fitWidthScale([{ width: 100, height: 1 }], 0, 24), 1);
   assert.equal(fitWidthScale([{ width: 10, height: 1 }], 10048, 24), 5);
+  // Large drawing sheets need a scale below the old 0.25 floor.
+  assert.equal(fitWidthScale([{ width: 5000, height: 1 }], 1048, 24), 0.2);
+  assert.equal(fitWidthScale([{ width: 100000, height: 1 }], 1048, 24), 0.05);
 });
 
 test('mostVisiblePage picks the page covering most of the viewport', () => {

@@ -54,7 +54,10 @@ export default function PdfScrollView({
 }: PdfScrollViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [scrollTop, setScrollTop] = useState(0);
+  // scrollTop is stamped with the scale it was measured at: after a zoom commit `layout` is new while
+  // the position is still the old one until the layout effect applies the pending scroll.
+  const [scrollPos, setScrollPos] = useState<{ top: number; scale: number | null }>({ top: 0, scale: null });
+  const scrollTop = scrollPos.top;
   const [scale, setScale] = useState<number | null>(null);
   const [renderScale, setRenderScale] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
@@ -170,17 +173,21 @@ export default function PdfScrollView({
     if (!el || !layout) return;
     if (!ready) {
       el.scrollTop = scrollTopForPage(layout, initialPageRef.current, GAP);
-      setScrollTop(el.scrollTop);
+      setScrollPos({ top: el.scrollTop, scale });
       setReady(true);
       return;
     }
     const p = pendingScrollRef.current;
-    if (!p) return;
+    if (!p) {
+      // No pending scroll after a scale change: re-stamp, or currentPage would stay null.
+      setScrollPos((prev) => (prev.scale === scale ? prev : { top: el.scrollTop, scale }));
+      return;
+    }
     pendingScrollRef.current = null;
     el.scrollLeft = p.left;
     el.scrollTop = p.top;
-    setScrollTop(el.scrollTop);
-  }, [layout, ready]);
+    setScrollPos({ top: el.scrollTop, scale });
+  }, [layout, ready, scale]);
 
   // Scroll position, at most once per frame.
   const rafRef = useRef(0);
@@ -189,16 +196,16 @@ export default function PdfScrollView({
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0;
       const el = scrollRef.current;
-      if (el) setScrollTop(el.scrollTop);
+      if (el) setScrollPos({ top: el.scrollTop, scale: committedScaleRef.current });
     });
   }, []);
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   const currentPage = useMemo(() => {
-    if (!layout || !ready || !viewport.height) return null;
+    if (!layout || !ready || !viewport.height || scrollPos.scale !== scale) return null;
     const end = scrollTop > 0 && scrollTop + viewport.height >= layout.contentHeight - 2;
     return mostVisiblePage(layout.pages, scrollTop, scrollTop + viewport.height, end);
-  }, [layout, ready, scrollTop, viewport.height]);
+  }, [layout, ready, scrollTop, scrollPos.scale, scale, viewport.height]);
 
   useEffect(() => {
     if (currentPage !== null) cbs.current.onCurrentPageChange(currentPage);
