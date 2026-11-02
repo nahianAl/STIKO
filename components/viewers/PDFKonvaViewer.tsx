@@ -20,6 +20,11 @@ import { paletteForComment } from '@/lib/commentColors';
 import { ERASER_CURSOR } from '@/lib/cursors';
 import { matteRectForStage, PDF_MATTE } from '@/lib/markup/matte';
 import { sweepPoints } from '@/lib/markup/eraseSweep';
+import PageArrows from './pdf/PageArrows';
+import PdfScrollView, { type PdfScrollViewHandle } from './pdf/PdfScrollView';
+import PdfSidebar from './pdf/PdfSidebar';
+import { usePageSizes } from './pdf/usePageSizes';
+import { browserStorage, effectiveMode, readStoredMode, writeStoredMode } from '@/lib/pdf/viewMode';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -124,6 +129,16 @@ function PDFKonvaViewer(
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [loading, setLoading] = useState(true);
+    // Sidebar open = scroll mode, closed = single-page (lib/pdf/viewMode.ts). Seeded from the
+    // remembered choice; this component is client-only (ssr:false in ViewerContainer), so storage
+    // can be read in the initializer.
+    const [sidebarOpen, setSidebarOpen] = useState(() => readStoredMode(browserStorage()) === 'scroll');
+    // A markup or measure session always runs single-page — a markup snapshot is one page — and the
+    // view returns to scroll mode on its own when the session ends.
+    const mode = effectiveMode({ sidebarOpen, numPages, annotating });
+    const pageSizes = usePageSizes(pdfDoc);
+    const scrollViewRef = useRef<PdfScrollViewHandle>(null);
+    const [scrollScale, setScrollScale] = useState(1);
     // onReady is a one-shot, and announceReady must be stable: the effects that
     // call it also load the document and render the page, so anything that
     // changed its identity would re-run those. Holding the callback in a ref
@@ -244,6 +259,33 @@ function PDFKonvaViewer(
       );
     }, [selType, selColor, selStroke, onSelectionChange]);
 
+    // insertImage can arrive before the page it lands on has rendered (the portal starts the
+    // session and inserts in one tick, and from scroll mode that tick is also the switch to
+    // single-page): park the image until `pageSize` is known.
+    const pageSizeRef = useRef(pageSize);
+    pageSizeRef.current = pageSize;
+    const pendingImageRef = useRef<{ src: string; im: HTMLImageElement } | null>(null);
+    const placeImage = useCallback((src: string, im: HTMLImageElement) => {
+      const { width: pw, height: ph } = pageSizeRef.current;
+      const scale = Math.min((pw * 0.5) / im.width, (ph * 0.5) / im.height, 1);
+      const w = im.width * scale;
+      const h = im.height * scale;
+      ann.addImage({ x: (pw - w) / 2, y: (ph - h) / 2 }, src, w, h);
+    }, [ann]);
+    useEffect(() => {
+      const p = pendingImageRef.current;
+      if (!p || !pageSize.width) return;
+      pendingImageRef.current = null;
+      placeImage(p.src, p.im);
+    }, [pageSize, placeImage]);
+    // A session that ends before the page rendered must not leave the image parked for the next one.
+    useEffect(() => { if (!annotating) pendingImageRef.current = null; }, [annotating]);
+    // Scroll mode: the pin's own page becomes the current page, so the portal's markup session opens there.
+    const placeFromScroll = useCallback((x: number, y: number, page: number) => {
+      setCurrentPage(page);
+      onCommentPlace(x, y, page);
+    }, [onCommentPlace]);
+
     // Ref handle (attached to the `handleRef` prop, not React `ref` — see note on props)
     useImperativeHandle(handleRef, () => ({
       captureSnapshot: () => {
@@ -268,12 +310,11 @@ function PDFKonvaViewer(
           const src = reader.result as string;
           const im = new window.Image();
           im.onload = () => {
-            const maxW = pageSize.width * 0.5;
-            const maxH = pageSize.height * 0.5;
-            const scale = Math.min(maxW / im.width, maxH / im.height, 1);
-            const w = im.width * scale;
-            const h = im.height * scale;
-            ann.addImage({ x: (pageSize.width - w) / 2, y: (pageSize.height - h) / 2 }, src, w, h);
+            if (!pageSizeRef.current.width) {
+              pendingImageRef.current = { src, im };
+              return;
+            }
+            placeImage(src, im);
           };
           im.src = src;
         };
@@ -312,7 +353,9 @@ function PDFKonvaViewer(
 
     // Render current page to image
     useEffect(() => {
-      if (!pdfDoc) return;
+      // Scroll mode draws its own pages; rendering this one too would redo a 2× page on every
+      // page the scroll passes.
+      if (!pdfDoc || mode !== 'single') return;
       let cancelled = false;
       setLoading(true);
 
@@ -352,7 +395,15 @@ function PDFKonvaViewer(
       };
       renderPage();
       return () => { cancelled = true; };
-    }, [pdfDoc, currentPage, announceReady]);
+    }, [pdfDoc, currentPage, announceReady, mode]);
+
+    // Leaving single-page mode drops the rendered page, so coming back never flashes a stale sheet
+    // and nothing sized from `pageSize` (insertImage, the fit) can use another page's dimensions.
+    useEffect(() => {
+      if (mode !== 'scroll') return;
+      setPageImage(null);
+      setPageSize({ width: 0, height: 0 });
+    }, [mode]);
 
     // Fit page to container when page or container changes
     useEffect(() => {
@@ -608,6 +659,21 @@ function PDFKonvaViewer(
       });
     }, [pageSize, containerSize]);
 
+    const toggleSidebar = useCallback(() => {
+      const next = !sidebarOpen;
+      setSidebarOpen(next);
+      writeStoredMode(browserStorage(), next ? 'scroll' : 'single');
+    }, [sidebarOpen]);
+    const selectPage = useCallback((page: number) => scrollViewRef.current?.scrollToPage(page), []);
+    const handleFirstScrollDraw = useCallback(() => {
+      setLoading(false);
+      announceReady();
+    }, [announceReady]);
+    const zoomOut = () => (mode === 'scroll' ? scrollViewRef.current?.zoomStep(-0.25) : adjustZoom(-0.25));
+    const zoomIn = () => (mode === 'scroll' ? scrollViewRef.current?.zoomStep(0.25) : adjustZoom(0.25));
+    const fitZoom = () => (mode === 'scroll' ? scrollViewRef.current?.fitWidth() : resetZoom());
+    const zoomPercent = Math.round((mode === 'scroll' ? scrollScale : stageScale) * 100);
+
     // Comment pins for current page
     const pageComments = comments.filter(c =>
       c.pageNumber === currentPage && c.xPosition !== null && c.yPosition !== null
@@ -633,6 +699,28 @@ function PDFKonvaViewer(
     // by construction, which is exactly the case the unlock is for.
     const pageNavLocked = annotating && !(isMeasureTool(activeTool) && !ann.hasObjects());
 
+    const goPrev = useCallback(() => setCurrentPage((p) => Math.max(1, p - 1)), []);
+    const goNext = useCallback(() => setCurrentPage((p) => Math.min(numPages, p + 1)), [numPages]);
+
+    // ←/→ turn pages, under the same lock as the arrows. Skipped while typing, with a modifier held,
+    // and when a handler nearer the target already used the key (the colour picker uses arrows;
+    // React's root listener runs before this window listener, so its preventDefault is visible).
+    useEffect(() => {
+      if (mode !== 'single' || numPages <= 1) return;
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const el = document.activeElement as HTMLElement | null;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+        if (pageNavLocked) return;
+        e.preventDefault();
+        if (e.key === 'ArrowLeft') goPrev();
+        else goNext();
+      };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }, [mode, numPages, pageNavLocked, goPrev, goNext]);
+
     // The zoom and pan live on the Stage, so every layer inherits them — the fill has to be
     // expressed in page space or it scrolls away from the viewport with the page.
     const matte = matteRectForStage({ stagePos, stageScale, containerSize });
@@ -641,50 +729,49 @@ function PDFKonvaViewer(
       <div className="flex h-full w-full flex-col">
         {/* Toolbar */}
         <div className="flex items-center justify-between px-3 py-1.5 bg-white border-b border-gray-200 flex-shrink-0">
-          {/* Page navigation */}
+          {/* Sidebar toggle + page counter. Pages turn with the side arrows / ←→ (single-page) or by
+              scrolling (scroll mode). */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage <= 1 || pageNavLocked}
-              className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
+            {numPages > 1 && (
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                disabled={annotating}
+                aria-pressed={mode === 'scroll'}
+                aria-label="Pages"
+                title={annotating ? 'Finish markup to show pages' : sidebarOpen ? 'Hide pages' : 'Show pages'}
+                className={`rounded p-1 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent ${mode === 'scroll' ? 'bg-gray-100 text-gray-900' : 'text-gray-700'}`}
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path strokeLinecap="round" d="M9 4v16" />
+                </svg>
+              </button>
+            )}
             <span className="text-sm text-gray-600 min-w-[60px] text-center">
               {currentPage} / {numPages || '...'}
             </span>
-            <button
-              onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-              disabled={currentPage >= numPages || pageNavLocked}
-              className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
           </div>
 
           {/* Zoom controls */}
           <div className="flex items-center gap-1">
             <button
-              onClick={() => adjustZoom(-0.25)}
+              onClick={zoomOut}
               className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100"
             >
               −
             </button>
             <span className="text-sm text-gray-600 min-w-[50px] text-center">
-              {Math.round(stageScale * 100)}%
+              {zoomPercent}%
             </span>
             <button
-              onClick={() => adjustZoom(0.25)}
+              onClick={zoomIn}
               className="rounded px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-100"
             >
               +
             </button>
             <button
-              onClick={resetZoom}
+              onClick={fitZoom}
               className="rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-100 ml-1"
             >
               Fit
@@ -692,10 +779,45 @@ function PDFKonvaViewer(
           </div>
         </div>
 
-        {/* Canvas container */}
+        <div className="relative flex min-h-0 flex-1">
+          {mode === 'scroll' && pdfDoc && pageSizes && (
+            <>
+              <PdfSidebar
+                pdfDoc={pdfDoc}
+                pageSizes={pageSizes}
+                currentPage={currentPage}
+                onSelectPage={selectPage}
+                onClose={toggleSidebar}
+              />
+              <PdfScrollView
+                handleRef={scrollViewRef}
+                pdfDoc={pdfDoc}
+                pageSizes={pageSizes}
+                initialPage={currentPage}
+                comments={comments}
+                activeCommentId={activeCommentId}
+                pendingCommentId={pendingCommentId}
+                onCommentPinClick={onCommentPinClick}
+                tagging={tagging}
+                onCommentPlace={placeFromScroll}
+                onCurrentPageChange={setCurrentPage}
+                onScaleChange={setScrollScale}
+                onFirstPageDrawn={handleFirstScrollDraw}
+              />
+            </>
+          )}
+          {mode === 'scroll' && (!pdfDoc || !pageSizes) && loading && (
+            <div className="flex flex-1 items-center justify-center bg-gray-100">
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+            </div>
+          )}
+
+        {/* Canvas container (single-page mode). Hidden — never unmounted — in scroll mode: its
+            ResizeObserver is attached once on mount, and while hidden it measures 0×0, which is
+            what unmounts the Konva stage inside it. */}
         <div
           ref={containerRef}
-          className="flex-1 overflow-hidden bg-gray-100 relative"
+          className={`min-w-0 flex-1 overflow-hidden bg-gray-100 relative ${mode === 'scroll' ? 'hidden' : ''}`}
           style={{ cursor: cursorStyle }}
         >
           {loading && (
@@ -874,6 +996,16 @@ function PDFKonvaViewer(
             </Stage>
           )}
 
+          {numPages > 1 && (
+            <PageArrows
+              canPrev={currentPage > 1}
+              canNext={currentPage < numPages}
+              disabled={pageNavLocked}
+              onPrev={goPrev}
+              onNext={goNext}
+            />
+          )}
+
           {editingObj && (
             <CanvasTextEditor
               // Keyed by the object — see the note on the same line in AnnotationCanvas. The
@@ -894,6 +1026,7 @@ function PDFKonvaViewer(
               onCommit={commitText}
             />
           )}
+        </div>
         </div>
       </div>
     );
