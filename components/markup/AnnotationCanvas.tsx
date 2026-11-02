@@ -6,6 +6,7 @@ import type Konva from 'konva';
 import { useMarqueeSelect } from './useMarqueeSelect';
 import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from './useAnnotationObjects';
 import AnnotationObjects from './AnnotationObjects';
+import { hitObjectId } from './textNode';
 import MeasureObjects from './MeasureObjects';
 import type { Measurement } from './useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
@@ -150,7 +151,8 @@ export default function AnnotationCanvas({
   const eraseAt = (stage: Konva.Stage, p: { x: number; y: number }) => {
     // The LEAF shape under the cursor, never the Group wrapping it — which is why every
     // erasable measurement shape carries its own id and not just its Group (see MeasureObjects).
-    const id = stage.getIntersection(p)?.id();
+    // A markup text is the one exception: its id is on its Group, and hitObjectId borrows it.
+    const id = hitObjectId(stage.getIntersection(p));
     // Konva returns the Transformer's own handles and any unnamed node too; only our objects
     // carry an id.
     if (!id) return;
@@ -528,6 +530,7 @@ export default function AnnotationCanvas({
               editingId={editingId}
               onEditText={setEditingId}
               onBakeText={ann.bakeTextTransform}
+              onSetTextWidth={ann.setTextWidth}
             />
           </Layer>
 

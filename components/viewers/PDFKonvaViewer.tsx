@@ -9,6 +9,7 @@ import { buildTagNumbers } from '@/lib/tagNumbers';
 import { useMarqueeSelect } from '@/components/markup/useMarqueeSelect';
 import { useAnnotationObjects, isMeasureTool, type AnnTool, type MarkupSelection, type ToolType } from '@/components/markup/useAnnotationObjects';
 import AnnotationObjects from '@/components/markup/AnnotationObjects';
+import { hitObjectId } from '@/components/markup/textNode';
 import MeasureObjects from '@/components/markup/MeasureObjects';
 import type { Measurement } from '@/components/markup/useMeasurements';
 import type { PendingGesture } from '@/lib/measure/gesture';
@@ -201,8 +202,9 @@ function PDFKonvaViewer(
     const eraseAt = useCallback((stage: Konva.Stage, p: { x: number; y: number }) => {
       // The LEAF shape under the cursor, never the Group wrapping it — which is why every
       // erasable measurement shape carries its own id and not just its Group (see
-      // MeasureObjects).
-      const id = stage.getIntersection(p)?.id();
+      // MeasureObjects). A markup text is the one exception: its id is on its Group, and
+      // hitObjectId borrows it.
+      const id = hitObjectId(stage.getIntersection(p));
       // Konva returns the Transformer's own handles, a comment pin's circle and any other
       // unnamed node too; only our objects carry an id at all.
       if (!id) return;
@@ -884,6 +886,7 @@ function PDFKonvaViewer(
                   editingId={editingId}
                   onEditText={setEditingId}
                   onBakeText={ann.bakeTextTransform}
+                  onSetTextWidth={ann.setTextWidth}
                 />
               </Layer>
 
