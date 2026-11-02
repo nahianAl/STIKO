@@ -69,6 +69,13 @@ const FreehandIcon = (
   </svg>
 );
 
+const ArrowIcon = (
+  <svg {...ICON} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="3" y1="13" x2="13" y2="3" />
+    <polyline points="7.5,3 13,3 13,8.5" />
+  </svg>
+);
+
 const ShapesIcon = (
   <svg {...px(19)} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="11.5" cy="11.5" r="8.5" />
@@ -146,16 +153,6 @@ const SHAPE_TOOLS: { id: ToolType; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg {...ICON} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
         <line x1="3" y1="13" x2="13" y2="3" />
-      </svg>
-    ),
-  },
-  {
-    id: 'arrow',
-    label: 'Arrow',
-    icon: (
-      <svg {...ICON} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="3" y1="13" x2="13" y2="3" />
-        <polyline points="7.5,3 13,3 13,8.5" />
       </svg>
     ),
   },
@@ -239,7 +236,7 @@ function ToolButton({
 
 /**
  * The markup toolbar, floating over the top of the viewport rather than stealing a row
- * above it. Line/arrow/rect fold into a Shapes button and stroke width into a picker, so
+ * above it. Line/rect/ellipse/cloud fold into a Shapes button and stroke width into a picker, so
  * the bar stays short enough to leave the file itself the room.
  */
 export default function DrawingTools({
@@ -324,8 +321,9 @@ export default function DrawingTools({
 
         {pickTool('pointer', 'Pointer', PointerIcon)}
         {pickTool('freehand', 'Freehand', FreehandIcon)}
+        {pickTool('arrow', 'Arrow', ArrowIcon)}
 
-        {/* Shapes — folds line/arrow/rect into one slot */}
+        {/* Shapes — folds line/rect/ellipse/cloud into one slot */}
         <div className="relative flex">
           <ToolButton
             label="Shapes"
