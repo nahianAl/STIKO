@@ -99,11 +99,14 @@ export default function CanvasTextEditor({
     if (!el) return;
     el.style.height = 'auto';
     // scrollHeight is an integer; Konva's height is lines x fontSize x scale, fractional at PDF
-    // zoom. Auto-width never wraps, so its line count is exact and the box can use Konva's own
-    // formula. Fixed-width wrapping is only known to the browser, so it keeps scrollHeight (the
-    // fill/border can then differ from Konva's by under half a pixel).
-    const h = autoWidth ? value.split('\n').length * displayFontSize : el.scrollHeight;
-    el.style.height = `${autoWidth ? Math.ceil(h) : h}px`;
+    // zoom, and scrollHeight rounds that sum UP — by over 2px at 5 lines on a 2x PDF, enough to
+    // see the fill/border's bottom edge jump on commit. So the box always uses Konva's formula,
+    // lines x font size. Auto-width never wraps, so its line count is exact; fixed-width wrapping
+    // is only known to the browser, so its line count is read back from scrollHeight (lineHeight
+    // is 1, so each line is one font size tall and the rounding is far under half a line).
+    const lines = autoWidth ? value.split('\n').length : Math.max(1, Math.round(el.scrollHeight / displayFontSize));
+    const h = lines * displayFontSize;
+    el.style.height = `${Math.ceil(h)}px`;
     setContentHeight(h);
   }, [value, displayFontSize, fontWeight, fontStyle, textWidth, autoWidth]);
 
@@ -117,7 +120,14 @@ export default function CanvasTextEditor({
       // text. Konva acts on the compatibility mousedown/mouseup, and cancelling pointerdown
       // suppresses those without touching any other click on the page.
       const host = boxRef.current?.parentElement;
-      if (t instanceof HTMLCanvasElement && host?.contains(t)) e.preventDefault();
+      if (t instanceof HTMLCanvasElement && host?.contains(t)) {
+        e.preventDefault();
+        // That also cancels the focus change this press would have made. If the bar's size field
+        // has focus it would keep it, and its typed-but-uncommitted size, past the end of the
+        // edit. Blur it as the press would have, which commits the draft first.
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused.closest('[data-markup-text-chrome]')) focused.blur();
+      }
       commitRef.current();
     };
     // Capture phase: the surface's own stage handlers must not act on the click that closed the
