@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { fontSizeForStrokeWidth, strokeWidthForFontSize, MIN_FONT_SIZE } from '@/lib/markup/text';
 import { startGeometry, updateGeometry, isBoxTool, type DraftTool } from '@/lib/markup/draft';
+import { pickId, mergeSelection } from '@/lib/markup/selection';
 
 export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'image';
 export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'eraser';
@@ -52,7 +53,16 @@ const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'line', 'arrow', 'rect', 'el
 export function useAnnotationObjects() {
   const [objects, setObjects] = useState<AnnotationObject[]>([]);
   const [draft, setDraft] = useState<AnnotationObject | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Ordered; the first id is the "primary" the toolbar reflects. A list rather than one id so
+  // Shift+click and the selection box can hold several objects at once.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedId = selectedIds[0] ?? null;
+  /** Replace the selection with one object, or clear it. The single-object API every caller had. */
+  const setSelectedId = useCallback((id: string | null) => setSelectedIds(id ? [id] : []), []);
+  /** A press on an object with the Pointer: see pickId. */
+  const pick = useCallback((id: string, additive: boolean) => setSelectedIds((ids) => pickId(ids, id, additive)), []);
+  /** The selection box's hits: see mergeSelection. */
+  const selectMany = useCallback((ids: string[], additive: boolean) => setSelectedIds((cur) => mergeSelection(cur, ids, additive)), []);
   const idRef = useRef(0);
   const draftRef = useRef<AnnotationObject | null>(null);
 
@@ -95,7 +105,7 @@ export function useAnnotationObjects() {
       obj = { ...d, x: Math.min(d.x, d.x + d.width), y: Math.min(d.y, d.y + d.height), width: Math.abs(d.width), height: Math.abs(d.height) };
     }
     setObjects((prev) => [...prev, obj]);
-    setSelectedId(obj.id);
+    setSelectedIds([obj.id]);
     return obj.id;
   }, []);
 
@@ -114,7 +124,7 @@ export function useAnnotationObjects() {
       o.fontSize = opts.fontSize;
       o.width = opts.width;
       setObjects((prev) => [...prev, o]);
-      setSelectedId(o.id);
+      setSelectedIds([o.id]);
       return o.id;
     },
     []
@@ -124,7 +134,7 @@ export function useAnnotationObjects() {
     const o = base('image', '#000000', 0);
     o.x = p.x; o.y = p.y; o.src = src; o.width = width; o.height = height;
     setObjects((prev) => [...prev, o]);
-    setSelectedId(o.id);
+    setSelectedIds([o.id]);
     return o.id;
   }, []);
 
@@ -166,6 +176,11 @@ export function useAnnotationObjects() {
    * keeps the presets absolute. strokeWidth follows the new size so the toolbar highlights the
    * right chip after a manual resize.
    */
+  /** Restyle every selected object (images ignore it; on text a width is a font size — see applyStyle). */
+  const applyStyleToSelected = useCallback((patch: { color?: string; strokeWidth?: number }) => {
+    for (const id of selectedIds) applyStyle(id, patch);
+  }, [selectedIds, applyStyle]);
+
   const bakeTextTransform = useCallback(
     (id: string, t: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }) => {
       setObjects((prev) =>
@@ -191,11 +206,19 @@ export function useAnnotationObjects() {
 
   const deleteObject = useCallback((id: string) => {
     setObjects((prev) => prev.filter((o) => o.id !== id));
-    setSelectedId((s) => (s === id ? null : s));
+    setSelectedIds((ids) => ids.filter((i) => i !== id));
   }, []);
 
+  /** Delete every selected object. */
+  const deleteSelected = useCallback(() => {
+    if (!selectedIds.length) return;
+    const drop = new Set(selectedIds);
+    setObjects((prev) => prev.filter((o) => !drop.has(o.id)));
+    setSelectedIds([]);
+  }, [selectedIds]);
+
   const clear = useCallback(() => {
-    setObjects([]); setDraft(null); setSelectedId(null); draftRef.current = null;
+    setObjects([]); setDraft(null); setSelectedIds([]); draftRef.current = null;
   }, []);
 
   const hasObjects = useCallback(() => objects.length > 0, [objects]);
@@ -205,9 +228,9 @@ export function useAnnotationObjects() {
   const selectedObject = objects.find((o) => o.id === selectedId) ?? null;
 
   return {
-    objects, draft, selectedId, setSelectedId, selectedObject,
+    objects, draft, selectedIds, selectedId, setSelectedId, pick, selectMany, selectedObject,
     startDraw, moveDraw, endDraw, addText, addImage,
-    updateObject, updateText, applyStyle, bakeTextTransform,
-    deleteObject, clear, hasObjects,
+    updateObject, updateText, applyStyle, applyStyleToSelected, bakeTextTransform,
+    deleteObject, deleteSelected, clear, hasObjects,
   };
 }
