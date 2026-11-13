@@ -131,7 +131,25 @@ async function findOrCreateWebhook() {
   console.log('');
 }
 
-console.log(`Stripe ${mode} mode`);
+// Customers must only ever see "Stiko". Ergonic Design Inc. owns the money, but
+// its own Stripe account shows "Ergonic" on checkout, receipts and card
+// statements, so Stiko runs on a separate account. Refuse the wrong key here,
+// before anything is created.
+const ERGONIC_ACCOUNT = 'acct_1NJkflBxwRWYUCnP';
+const account = await stripe.accounts.retrieve();
+const publicName = account.business_profile?.name ?? '(not set)';
+const descriptor = account.settings?.payments?.statement_descriptor ?? '(not set)';
+console.log(`Stripe ${mode} mode — account ${account.id}`);
+console.log(`  customers see:     ${publicName}`);
+console.log(`  card statements:   ${descriptor}`);
+console.log(`  website:           ${account.business_profile?.url ?? '(not set)'}`);
+console.log(`  can take payments: ${account.charges_enabled ? 'yes' : 'NO — finish activation in the dashboard'}`);
+console.log('');
+if (account.id === ERGONIC_ACCOUNT || /ergonic/i.test(`${publicName} ${descriptor}`)) {
+  console.error('STOP: this key belongs to an account customers would see as "Ergonic".');
+  console.error('Use the secret key from the Stiko account instead. Nothing was changed.');
+  process.exit(1);
+}
 const product = await findOrCreateProduct();
 const prices = [];
 for (const spec of PRICES) prices.push(await findOrCreatePrice(product, spec));
