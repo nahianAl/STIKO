@@ -8,7 +8,7 @@ import { PRICE_DISPLAY, type BillingInterval } from '@/lib/billing';
 import type { PlanLimitPayload } from '@/lib/planLimits';
 import { UPGRADE_EVENT } from '@/lib/planLimitClient';
 import { headline } from '@/lib/upgradeCopy';
-import { startCheckout } from './checkout';
+import { startCheckout, useResetOnPageShow } from './checkout';
 
 /** Mounted once in the root layout; opened by openUpgradeDialog(). */
 export default function UpgradeDialogHost() {
@@ -16,6 +16,9 @@ export default function UpgradeDialogHost() {
   const [payload, setPayload] = useState<PlanLimitPayload | null>(null);
   const [busy, setBusy] = useState<BillingInterval | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Back from Stripe restores this dialog mid-"Opening…".
+  useResetOnPageShow(() => setBusy(null));
 
   useEffect(() => {
     const onOpen = (e: Event) => {

@@ -6,7 +6,7 @@ import { SettingsShell, SettingsCard } from '@/components/settings/SettingsShell
 import { ACCOUNT_RAIL } from '@/components/settings/accountRail';
 import UsageMeters, { type UsagePayload } from '@/components/shell/UsageMeters';
 import Button from '@/components/ui/Button';
-import { openPortal, startCheckout } from '@/components/billing/checkout';
+import { openPortal, startCheckout, useResetOnPageShow } from '@/components/billing/checkout';
 import { renewalLine, type BillingInterval, type BillingStatusPayload } from '@/lib/billing';
 import { PLANS } from '@/lib/plans';
 
@@ -22,6 +22,9 @@ export default function BillingSettings() {
   const [usageFailed, setUsageFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Back from Stripe restores the page mid-"Opening…".
+  useResetOnPageShow(() => setBusy(null));
 
   useEffect(() => {
     // This is the one surface that asks for renewal facts; the others skip the

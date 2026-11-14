@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import type { BillingStatusPayload } from '@/lib/billing';
-import { startCheckout, openPortal } from '@/components/billing/checkout';
+import { startCheckout, openPortal, useResetOnPageShow } from '@/components/billing/checkout';
 import { formatBytes } from '@/lib/design';
 import { PLANS } from '@/lib/plans';
 
@@ -16,6 +16,9 @@ export type { BillingStatusPayload } from '@/lib/billing';
 export default function BillingActions({ status }: { status: BillingStatusPayload | null }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Back from Stripe restores the page mid-"Opening…".
+  useResetOnPageShow(() => setBusy(null));
 
   if (!status || status.action === 'none') return null;
 

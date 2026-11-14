@@ -3,9 +3,9 @@
 import React from 'react';
 
 // Variants and their exact values come from 02-design-system.md.
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 // 'lg' is the first-run CTA scale (15px / 14px 30px / radius 12).
-type ButtonSize = 'sm' | 'md' | 'lg';
+export type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
   variant?: ButtonVariant;
@@ -43,6 +43,30 @@ const secondarySize: Record<ButtonSize, string> = {
   lg: 'px-[28px] py-[13px] text-[14px] rounded-[12px]',
 };
 
+/**
+ * The look of a Button as a class string, so a link can wear it too. A
+ * <button> inside an <a> is invalid HTML, so call sites that navigate render
+ * the anchor and borrow these classes.
+ */
+export function buttonClasses(
+  variant: ButtonVariant = 'primary',
+  size: ButtonSize = 'md',
+  disabled = false,
+): string {
+  const sizing =
+    variant === 'secondary' || variant === 'danger'
+      ? secondarySize[size]
+      : sizeStyles[size];
+
+  // The disabled treatment is its own thing, not an opacity fade: 02
+  // specifies a flat #EFEFF4 fill with #A2A7B8 text and no shadow.
+  return `inline-flex items-center justify-center whitespace-nowrap outline-none transition duration-150 focus-visible:shadow-stiko-focus ${
+    disabled
+      ? 'cursor-not-allowed border-0 bg-stiko-idle font-bold text-stiko-faint shadow-none'
+      : variantStyles[variant]
+  } ${sizing}`;
+}
+
 export default function Button({
   variant = 'primary',
   size = 'md',
@@ -54,24 +78,13 @@ export default function Button({
   fullWidth = false,
   title,
 }: ButtonProps) {
-  const sizing =
-    variant === 'secondary' || variant === 'danger'
-      ? secondarySize[size]
-      : sizeStyles[size];
-
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
       title={title}
-      // The disabled treatment is its own thing, not an opacity fade: 02
-      // specifies a flat #EFEFF4 fill with #A2A7B8 text and no shadow.
-      className={`inline-flex items-center justify-center whitespace-nowrap outline-none transition duration-150 focus-visible:shadow-stiko-focus ${
-        disabled
-          ? 'cursor-not-allowed border-0 bg-stiko-idle font-bold text-stiko-faint shadow-none'
-          : variantStyles[variant]
-      } ${sizing} ${fullWidth ? 'w-full' : ''} ${className}`}
+      className={`${buttonClasses(variant, size, disabled)} ${fullWidth ? 'w-full' : ''} ${className}`}
     >
       {children}
     </button>
