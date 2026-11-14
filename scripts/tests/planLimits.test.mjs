@@ -7,6 +7,7 @@ import {
   isPlanLimitPayload,
   isDeclaredFileSize,
 } from '../../lib/planLimits.ts';
+import { billingEnabled } from '../../lib/billing.ts';
 
 const GIB = 1024 ** 3;
 const FREE = { maxProjects: 2, storageBytes: 2 * GIB };
@@ -16,6 +17,24 @@ test('limits follow the billing kill switch', () => {
   assert.equal(limitsEnforced({}), false);
   assert.equal(limitsEnforced({ BILLING_ENABLED: 'true' }), false);
   assert.equal(limitsEnforced({ BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_x' }), true);
+});
+
+// limitsEnforced duplicates billingEnabled rather than importing it (to keep
+// lib/planLimits.ts free of value imports). If the two ever disagree, limits
+// could be on while nobody can pay to lift them, or off while billing charges.
+test('limitsEnforced never drifts from billingEnabled', () => {
+  for (const BILLING_ENABLED of ['true', undefined]) {
+    for (const STRIPE_SECRET_KEY of ['sk_test_x', undefined]) {
+      const env = {};
+      if (BILLING_ENABLED !== undefined) env.BILLING_ENABLED = BILLING_ENABLED;
+      if (STRIPE_SECRET_KEY !== undefined) env.STRIPE_SECRET_KEY = STRIPE_SECRET_KEY;
+      assert.equal(
+        limitsEnforced(env),
+        billingEnabled(env),
+        `BILLING_ENABLED=${BILLING_ENABLED} STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY ? 'set' : 'absent'}`
+      );
+    }
+  }
 });
 
 test('Free allows a 1st and 2nd project, refuses the 3rd', () => {
