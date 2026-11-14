@@ -9,6 +9,7 @@ import {
   TESSELLATABLE_EXTENSIONS,
   uploadStorageKey,
   isAllowedCommentKey,
+  isCommentStorageKey,
   drawingPdfKey,
   cadGlbKey,
 } from '../../lib/storageKeys.ts';
@@ -159,6 +160,18 @@ test('a comment may NOT name an upload key', () => {
 test('a comment may not name an arbitrary key', () => {
   assert.equal(isAllowedCommentKey('anything/else'), false);
   assert.equal(isAllowedCommentKey(''), false);
+});
+
+test('only a stored snapshot or attachment is a comment storage key', () => {
+  // The route HEADs these to learn their real size; a URL or data URI has no
+  // object in the bucket to ask about.
+  assert.equal(isCommentStorageKey('snapshots/abc.jpg'), true);
+  assert.equal(isCommentStorageKey('comment-attachments/abc.pdf'), true);
+  assert.equal(isCommentStorageKey('https://example.com/x.png'), false);
+  assert.equal(isCommentStorageKey('http://example.com/x.png'), false);
+  assert.equal(isCommentStorageKey('data:image/png;base64,AAAA'), false);
+  assert.equal(isCommentStorageKey('uploads/p1/k1/v1/f1.step'), false);
+  assert.equal(isCommentStorageKey(''), false);
 });
 
 test('a drawing PDF sits beside its original with a .drawing.pdf suffix', () => {

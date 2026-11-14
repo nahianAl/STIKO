@@ -11,6 +11,8 @@
  * (`node --test scripts/tests/*.mjs`) cannot exercise a Next.js route handler.
  */
 
+import { isCommentStorageKey } from './storageKeys.ts';
+
 /**
  * Types refused because a browser RENDERS them, which would make a stored file
  * an XSS payload on whatever origin serves it.
@@ -30,6 +32,16 @@ export const BLOCKED_CONTENT_TYPES: ReadonlySet<string> = new Set([
 
 /** 25 MB. Comfortably above a large drawing PDF or a phone photo. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** Snapshots are canvas JPEGs from dataUrlToFile; 10 MiB is generous for those. */
+export const MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Per comment. The composers do not limit how many files can be added, so this
+ * is the only bound; it also bounds how many HEADs one POST /api/comments fans
+ * out into.
+ */
+export const MAX_ATTACHMENTS_PER_COMMENT = 10;
 
 export type AttachmentValidation =
   | {
@@ -78,4 +90,40 @@ export function validateAttachmentRequest(input: unknown): AttachmentValidation 
   const extension = /[/\\ ]/.test(raw) ? '' : raw;
 
   return { ok: true, filename, contentType, size, extension, fileId };
+}
+
+export type CommentAttachmentListValidation =
+  | { ok: true; list: Array<Record<string, unknown> & { storageKey: string }> }
+  | { ok: false; reason: 'too_many' | 'invalid_key' | 'duplicate' };
+
+/**
+ * The attachments array of a POST /api/comments body, checked before any of it
+ * is acted on (the route HEADs every entry against R2 afterwards).
+ *
+ * Count first, so an oversized list is refused without being walked. Each entry
+ * must name a stored comment object — a data:/http string has nothing in the
+ * bucket to HEAD, and would otherwise surface as a 503 — and no key may appear
+ * twice, or one object's bytes would be counted once per mention.
+ *
+ * Anything that is not a list is the empty list, as the route always treated it.
+ */
+export function validateCommentAttachmentList(input: unknown): CommentAttachmentListValidation {
+  if (!Array.isArray(input)) return { ok: true, list: [] };
+  if (input.length > MAX_ATTACHMENTS_PER_COMMENT) return { ok: false, reason: 'too_many' };
+
+  const seen = new Set<string>();
+  const list: Array<Record<string, unknown> & { storageKey: string }> = [];
+  for (const entry of input) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return { ok: false, reason: 'invalid_key' };
+    }
+    const { storageKey } = entry as Record<string, unknown>;
+    if (typeof storageKey !== 'string' || !isCommentStorageKey(storageKey)) {
+      return { ok: false, reason: 'invalid_key' };
+    }
+    if (seen.has(storageKey)) return { ok: false, reason: 'duplicate' };
+    seen.add(storageKey);
+    list.push(entry as Record<string, unknown> & { storageKey: string });
+  }
+  return { ok: true, list };
 }

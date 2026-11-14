@@ -374,7 +374,10 @@ export interface AccountUsage {
  *   - Converted derivatives (files.converted_storage_key) do NOT. No byte size
  *     is recorded for them anywhere, and they are bytes the product generated
  *     rather than bytes the user uploaded.
- *   - Markup snapshots (comments.snapshot_url) do NOT, same reason.
+ *   - Markup snapshots (comments.snapshot_url) do NOT, same reason. POST
+ *     /api/comments does HEAD a snapshot key and cap it at MAX_SNAPSHOT_BYTES,
+ *     so it cannot park an attachment's worth of uncounted bytes, but what a
+ *     capped snapshot holds is still not summed here.
  *
  * So the figure is smaller than the true S3 footprint, on purpose: the number
  * on screen should be one the user can act on by deleting their own content.
@@ -393,8 +396,8 @@ export interface AccountUsage {
  * not just a display. Both sizes are recorded from a HEAD on the object, never
  * from the request body:
  *   - files.file_size: app/api/files/complete/route.ts (headObjectSize). The
- *     upload route signed the approved length into the PUT URL, so if the HEAD
- *     itself fails the claimed size is a bounded stand-in, not a free choice.
+ *     upload route signed the approved length into the PUT URL, which bounds
+ *     the stored object; the claim is trusted only when the HEAD itself fails.
  *   - comments.attachments[].size: app/api/comments/route.ts POST
  *     (headObjectSize on each attachment; a missing object is a 400, a failed
  *     HEAD a 503). Without that, a caller could presign 25 MiB, PUT 25 MiB and

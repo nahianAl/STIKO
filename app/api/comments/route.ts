@@ -4,7 +4,12 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getCommentAssetPresignedUrl, headObjectSize } from '@/lib/s3';
 import { getFileAccess } from '@/lib/access';
-import { isAllowedCommentKey } from '@/lib/storageKeys';
+import { isAllowedCommentKey, isCommentStorageKey } from '@/lib/storageKeys';
+import {
+  MAX_ATTACHMENTS_PER_COMMENT,
+  MAX_SNAPSHOT_BYTES,
+  validateCommentAttachmentList,
+} from '@/lib/attachmentUpload';
 import { ensureCommentColumns } from '@/lib/commentColumns';
 import { mentionableUsers } from '@/lib/mentionable';
 import { notifyMentions } from '@/lib/mentionNotify';
@@ -136,14 +141,20 @@ export async function POST(request: NextRequest) {
   if (snapshotUrl != null && !isAllowedCommentKey(String(snapshotUrl))) {
     return NextResponse.json({ error: 'Invalid snapshot reference' }, { status: 400 });
   }
-  const attachmentList = Array.isArray(attachments) ? attachments : [];
-  if (
-    attachmentList.some(
-      (att) => !att?.storageKey || !isAllowedCommentKey(String(att.storageKey))
-    )
-  ) {
-    return NextResponse.json({ error: 'Invalid attachment reference' }, { status: 400 });
+  // Count, shape and duplicates are settled here, before anything touches R2:
+  // the HEADs below fan out once per entry. Every entry must name a stored
+  // comment object: isAllowedCommentKey lets a data:/http string through (right
+  // for a snapshot), but one has nothing in the bucket to HEAD.
+  const listCheck = validateCommentAttachmentList(attachments);
+  if (!listCheck.ok) {
+    const message = {
+      too_many: `A comment can have at most ${MAX_ATTACHMENTS_PER_COMMENT} attachments`,
+      duplicate: 'The same attachment is listed more than once',
+      invalid_key: 'Invalid attachment reference',
+    }[listCheck.reason];
+    return NextResponse.json({ error: message }, { status: 400 });
   }
+  const attachmentList = listCheck.list;
 
   // `size` is what getAccountUsage sums into the OWNER's storage, and the body
   // is the one place a caller could still set it freely: presign 25 MiB, PUT
@@ -155,13 +166,29 @@ export async function POST(request: NextRequest) {
   // /api/files/complete, nothing bounds it any more): 503, and the client may
   // retry. The HEADs run in parallel.
   //
-  // Snapshots (snapshot_url) are not touched: they live in their own column,
-  // are not counted by getAccountUsage, and record no size anywhere.
+  // A snapshot stored as a key is HEADed in the same round, for a different
+  // reason: getAccountUsage never counts snapshot_url, and /api/comments/attachments
+  // presigns up to 25 MiB under the SAME comment-attachments/ prefix. Without
+  // this, a caller could presign an attachment (which passes the storage gate),
+  // PUT it, and post the key as the snapshot: stored, downloadable, uncounted.
+  // The cap keeps a snapshot at what a canvas JPEG actually is. (The portal
+  // composers send markup as attachments and never set snapshotUrl at all.)
+  const snapshotKey =
+    snapshotUrl != null && isCommentStorageKey(String(snapshotUrl)) ? String(snapshotUrl) : null;
   let verifiedAttachments: unknown[];
   try {
-    const sizes = await Promise.all(
-      attachmentList.map((att) => headObjectSize(String(att.storageKey)))
-    );
+    const [snapshotSize, sizes] = await Promise.all([
+      snapshotKey ? headObjectSize(snapshotKey) : Promise.resolve(undefined),
+      Promise.all(attachmentList.map((att) => headObjectSize(att.storageKey))),
+    ]);
+    if (snapshotKey) {
+      if (snapshotSize == null) {
+        return NextResponse.json({ error: 'The snapshot was not found in storage' }, { status: 400 });
+      }
+      if (snapshotSize > MAX_SNAPSHOT_BYTES) {
+        return NextResponse.json({ error: 'Snapshot is too large' }, { status: 400 });
+      }
+    }
     if (sizes.some((size) => size === null)) {
       return NextResponse.json(
         { error: 'An attachment was not found in storage' },
@@ -170,7 +197,7 @@ export async function POST(request: NextRequest) {
     }
     verifiedAttachments = attachmentList.map((att, i) => ({ ...att, size: sizes[i] }));
   } catch (err) {
-    console.error('[comments] could not verify attachment sizes against storage', err);
+    console.error('[comments] could not verify attachment or snapshot sizes against storage', err);
     return NextResponse.json(
       { error: 'Could not verify the attachments. Please try again.' },
       { status: 503 }
