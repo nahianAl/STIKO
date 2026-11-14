@@ -178,6 +178,8 @@ export function useUpload() {
             portalId: ctx.portalId,
             filename: entry.file.name,
             contentType: entry.file.type || 'application/octet-stream',
+            // Signed into the PUT URL; must equal the body putOnce sends.
+            fileSize: entry.file.size,
           }),
         });
         if (!presignRes.ok) throw new Error('Could not get an upload URL');

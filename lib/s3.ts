@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { URL_WINDOW_MS, signingWindowStart } from './urlWindow.ts';
 
@@ -193,4 +193,21 @@ export async function deleteObjects(
       }
     })
   );
+}
+
+/**
+ * The stored size of an object, or null if it does not exist.
+ *
+ * What /api/files/complete records, so the storage meter and the plan limit
+ * count bytes R2 actually holds rather than whatever the client claimed.
+ */
+export async function headObjectSize(storageKey: string): Promise<number | null> {
+  try {
+    const out = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: storageKey }));
+    return typeof out.ContentLength === 'number' ? out.ContentLength : null;
+  } catch (err) {
+    const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 404) return null;
+    throw err;
+  }
 }

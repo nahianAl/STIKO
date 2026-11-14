@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
 import { optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
+import { headObjectSize } from '@/lib/s3';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
@@ -61,6 +62,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid storage key' }, { status: 400 });
   }
 
+  // Record what R2 holds, not what the client says. The PUT URL was signed
+  // with the approved length, so these normally agree; when the HEAD itself
+  // fails (not a 404), fall back to the claim rather than failing an upload
+  // that has already landed — the signed length still bounds the real size.
+  let storedSize: number | null;
+  try {
+    storedSize = await headObjectSize(storageKey);
+  } catch (err) {
+    console.error('[files/complete] HEAD failed, using the declared size', err);
+    storedSize = Number.isFinite(Number(fileSize)) ? Number(fileSize) : null;
+  }
+  if (storedSize === null) {
+    return NextResponse.json({ error: 'The upload was not found in storage' }, { status: 400 });
+  }
+
   // Derived, never accepted from the caller — see the security note in this task.
   //
   // This is the other place in the codebase that assigns converted_storage_key (the other is
@@ -80,7 +96,7 @@ export async function POST(request: NextRequest) {
   // delete this file, so a caller must not be able to name someone else.
   const rows = await sql`
     INSERT INTO files (id, version_id, filename, storage_key, file_size, file_type, folder_path, converted_storage_key, uploaded_by)
-    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${fileSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey}, ${session.user.id})
+    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${storedSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey}, ${session.user.id})
     RETURNING id, version_id AS "versionId", filename, storage_key AS "storageKey",
               file_size AS "fileSize", file_type AS "fileType",
               conversion_status AS "conversionStatus",

@@ -4,6 +4,8 @@ import { auth } from '@/lib/auth';
 import { getUploadPresignedUrl } from '@/lib/s3';
 import { validateAttachmentRequest } from '@/lib/attachmentUpload';
 import { getFileAccess } from '@/lib/access';
+import { sql } from '@/lib/db';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 
 export async function POST(request: NextRequest) {
   // This route had no auth() call at all, and middleware does not cover it:
@@ -48,6 +50,22 @@ export async function POST(request: NextRequest) {
       { error: 'Your role on this package is view-only' },
       { status: 403 }
     );
+  }
+
+  // Attachments live in the file's project and count toward its OWNER's storage
+  // (getAccountUsage sums comments.attachments sizes under owned files).
+  const ownerRows = await sql`
+    SELECT pr.owner_id AS "ownerId"
+    FROM files f
+    JOIN versions v ON v.id = f.version_id
+    JOIN portals po ON po.id = v.portal_id
+    JOIN projects pr ON pr.id = po.project_id
+    WHERE f.id = ${validated.fileId}
+  `;
+  const ownerId = ownerRows[0]?.ownerId as string | undefined;
+  if (ownerId) {
+    const refusal = await storageLimitRefusal(ownerId, session.user.id, validated.size);
+    if (refusal) return planLimitResponse(refusal);
   }
 
   const storageKey = `comment-attachments/${uuidv4()}${validated.extension}`;
