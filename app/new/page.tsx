@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { useUpload } from '@/lib/useUpload';
+import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { derivePackageName } from '@/lib/design';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
@@ -116,6 +117,13 @@ function NewPackage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: effectiveProjectName.trim() }),
         });
+        const limit = await readPlanLimit(res);
+        if (limit) {
+          // Nothing was created yet, so compose is the right place to land.
+          openUpgradeDialog(limit);
+          setPhase('compose');
+          return;
+        }
         if (!res.ok) throw new Error('Could not create the project');
         targetProject = (await res.json()).id;
       }

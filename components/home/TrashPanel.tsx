@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import { SectionLabel, SkeletonBar } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { formatBytes, relativeTime } from '@/lib/design';
+import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { TRASH_RETENTION_DAYS } from '@/lib/trash';
 import type { TrashItem } from '@/lib/trashQueries';
 
@@ -105,6 +106,12 @@ export default function TrashPanel({
       next.delete(key);
       return next;
     });
+
+    const limit = await readPlanLimit(res);
+    if (limit) {
+      openUpgradeDialog(limit);
+      return;
+    }
 
     if (!res.ok) {
       // The likeliest cause is expiry while the panel sat open, so reload

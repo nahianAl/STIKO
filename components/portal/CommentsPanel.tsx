@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthSession } from '@/lib/authClient';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
+import { PlanLimitError } from '@/lib/planLimitClient';
 import { messageForStatus } from '@/lib/submitErrors';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
@@ -168,6 +169,10 @@ function CommentForm({
       setPendingFiles([]);
       onSubmitted();
     } catch (err) {
+      // The upgrade dialog has already explained a plan-limit refusal, so no
+      // second message here. Text and pendingFiles stay as they are (see below):
+      // the person can remove the attachment and send, or upgrade and retry.
+      if (err instanceof PlanLimitError) return;
       console.error('Failed to post comment:', err);
       // Deliberately does NOT clear text or pendingFiles: whatever the user wrote
       // stays on screen so they can send it again.

@@ -5,6 +5,7 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
+import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 
 /**
  * Creating a project without going through the package flow.
@@ -52,6 +53,13 @@ export default function NewProjectModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed }),
       });
+      const limit = await readPlanLimit(res);
+      if (limit) {
+        setSaving(false);
+        onClose();
+        openUpgradeDialog(limit);
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       onCreated();
       onClose();

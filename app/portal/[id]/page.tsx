@@ -12,6 +12,7 @@ import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { usePortalActivity } from '@/components/portal/usePortalActivity';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
+import { PlanLimitError } from '@/lib/planLimitClient';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
@@ -2035,6 +2036,10 @@ export default function PortalPage() {
       setCommentsRefreshKey((k) => k + 1);
       await fetchComments();
     } catch (err) {
+      // The upgrade dialog has already explained a plan-limit refusal, so no
+      // second message here. Nothing is cleared (see below): the markup
+      // snapshot in composerFiles, the text and the pin all survive.
+      if (err instanceof PlanLimitError) return;
       console.error('Failed to post comment:', err);
       // Deliberately clears nothing: the text, the attachments and the pin all
       // survive so the user can send again without redoing the markup.
