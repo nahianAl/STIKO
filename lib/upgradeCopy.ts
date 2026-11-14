@@ -8,6 +8,7 @@ import { formatBytes } from './design.ts';
 import { PLANS } from './plans.ts';
 import type { Plan, PlanId } from './plans.ts';
 import type { PlanLimitPayload } from './planLimits.ts';
+import type { AccountUsage } from './queries.ts';
 
 /** The Standard pitch, derived from the catalogue so it cannot drift from it. */
 export function standardPerks(): string {
@@ -108,4 +109,29 @@ export function checkoutReturnToast(plan: PlanId | null | undefined): string {
   return plan === 'standard'
     ? "You're on Standard"
     : 'Payment received — your plan will update in a moment.';
+}
+
+/** Storage used, as a fraction of the plan, at which the dashboard banner appears. */
+export const NEAR_LIMIT_FRACTION = 0.8;
+
+/**
+ * The dashboard PlanBanner's line, or null for no banner.
+ *
+ * Free only: the banner's whole point is the Upgrade button, and Standard has
+ * nothing to upgrade to. Projects are checked first, at or over the limit;
+ * storage from NEAR_LIMIT_FRACTION of the plan upward.
+ */
+export function planBannerMessage(
+  usage: Pick<AccountUsage, 'plan' | 'storage' | 'projects'>,
+  format: (bytes: number) => string = formatBytes
+): string | null {
+  const { plan, storage, projects } = usage;
+  if (plan.id !== 'free') return null;
+  if (projects.max !== null && projects.count >= projects.max) {
+    return `You're using ${projects.count} of ${projects.max} ${plan.label} projects.`;
+  }
+  if (storage.totalBytes >= plan.storageBytes * NEAR_LIMIT_FRACTION) {
+    return `You've used ${format(storage.totalBytes)} of ${format(plan.storageBytes)} storage.`;
+  }
+  return null;
 }

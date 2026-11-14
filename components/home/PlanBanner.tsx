@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { openUpgradeDialog } from '@/lib/planLimitClient';
-import { formatBytes } from '@/lib/design';
+import { planBannerMessage } from '@/lib/upgradeCopy';
 import type { AccountUsage } from '@/lib/queries';
 import type { BillingStatusPayload } from '@/lib/billing';
 
@@ -33,12 +33,8 @@ export default function PlanBanner() {
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
       if (!usage || cancelled) return;
-      const { plan, storage, projects } = usage;
-      if (projects.max !== null && projects.count >= projects.max) {
-        setMessage(`You're using ${projects.count} of ${projects.max} Free projects.`);
-      } else if (storage.totalBytes >= plan.storageBytes * 0.8) {
-        setMessage(`You've used ${formatBytes(storage.totalBytes)} of ${formatBytes(plan.storageBytes)} storage.`);
-      }
+      // Thresholds (NEAR_LIMIT_FRACTION) and wording live in lib/upgradeCopy.ts.
+      setMessage(planBannerMessage(usage));
     })();
     return () => {
       cancelled = true;
@@ -55,7 +51,11 @@ export default function PlanBanner() {
   };
 
   return (
-    <div className="flex shrink-0 items-center gap-3 rounded-panel bg-stiko-tint px-4 py-[10px] text-[12.5px] text-stiko-ink">
+    // border-strong: tint alone on the app background is all but invisible.
+    <div
+      role="status"
+      className="flex shrink-0 items-center gap-3 rounded-panel border border-stiko-border-strong bg-stiko-tint px-4 py-[10px] text-[12.5px] text-stiko-ink"
+    >
       <span className="flex-1">{message}</span>
       <button
         type="button"
@@ -71,7 +71,7 @@ export default function PlanBanner() {
         type="button"
         onClick={dismiss}
         aria-label="Dismiss"
-        className="text-stiko-muted hover:text-stiko-ink"
+        className="-m-1 rounded p-1 leading-none text-stiko-muted hover:text-stiko-ink"
       >
         ×
       </button>
