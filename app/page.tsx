@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import EmptyState from '@/components/ui/EmptyState';
 import { Column, Shell, TopBar } from '@/components/ui/Shell';
@@ -13,6 +13,7 @@ import { HomeError, HomeSkeleton } from '@/components/home/HomeStates';
 import type { NotificationRow } from '@/components/shell/NotificationTray';
 import ActivityRail from '@/components/home/ActivityRail';
 import ProjectSummaryPanel from '@/components/home/ProjectSummaryPanel';
+import PlanBanner from '@/components/home/PlanBanner';
 import RailToggle from '@/components/shell/RailToggle';
 import AvatarMenu from '@/components/shell/AvatarMenu';
 import CommandPalette from '@/components/shell/CommandPalette';
@@ -30,6 +31,7 @@ import {
 } from '@/lib/home';
 import type { PackageCard, ProjectSummary } from '@/lib/queries';
 import { useAuthSession } from '@/lib/authClient';
+import { useToast } from '@/components/ui/Toast';
 
 /**
  * Owner home. Two states: first run, and the project cards.
@@ -42,6 +44,7 @@ import { useAuthSession } from '@/lib/authClient';
 export default function Home() {
   const router = useRouter();
   const { data: session } = useAuthSession();
+  const { toast } = useToast();
 
   const [packages, setPackages] = useState<PackageCard[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -179,6 +182,22 @@ export default function Home() {
     load();
   }, [load]);
 
+  // Stripe Checkout lands here as /?billing=success (via /api/billing/return,
+  // which has already synced the plan) or /?billing=cancelled. This page reads
+  // no other query param, so the whole query is dropped once handled and a
+  // refresh does not repeat the toast. The ref makes the toast fire once under
+  // StrictMode's double-invoked dev effects, which would otherwise run it
+  // twice before the replace takes effect.
+  const billingHandled = useRef(false);
+  useEffect(() => {
+    if (billingHandled.current) return;
+    const result = new URLSearchParams(window.location.search).get('billing');
+    if (!result) return;
+    billingHandled.current = true;
+    if (result === 'success') toast("You're on Standard");
+    router.replace('/');
+  }, [router, toast]);
+
   const reloadActivity = useCallback(() => {
     load();
     setActivityVersion((v) => v + 1);
@@ -311,6 +330,7 @@ export default function Home() {
     return (
       <Shell>
         <TopBar right={<AvatarMenu />} />
+        <PlanBanner />
         <Column width={900}>
           <EmptyState
             size="lg"
@@ -383,6 +403,13 @@ export default function Home() {
   return (
     <Shell>
       <TopBar right={topBarRight} />
+
+      {/* A sibling between the top bar and the content row, shrink-0, so the
+          row below (flex-1, min-h-0) simply gives up the banner's height and
+          12px gap: the fixed-size cards scroll inside it and the docked
+          Packages panel and rail (h-full of the row) stay inside the viewport.
+          Renders nothing unless a Free owner is near a limit. */}
+      <PlanBanner />
 
       {/* Clicking the page background deselects. Everything that would be
           closing the thing you just clicked inside of — a card, the panels,
