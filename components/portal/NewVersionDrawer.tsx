@@ -14,7 +14,7 @@ import {
   Toggle,
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-import { useUpload } from '@/lib/useUpload';
+import { notUploadedMessage, useUpload } from '@/lib/useUpload';
 import { submissionBadge } from '@/lib/submissionName';
 
 /**
@@ -143,11 +143,7 @@ export function NewVersionDrawer({
         ? await upload.retryFailed()
         : await upload.start(files, { versionId, projectId, portalId });
       if (!ok) {
-        setError(
-          upload.wasBlocked()
-            ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
-            : 'Some files didn’t upload. Retry them — nothing is published until they all land.'
-        );
+        setError(notUploadedMessage(upload.wasBlocked()));
         setBusy(false);
         return;
       }
@@ -223,7 +219,9 @@ export function NewVersionDrawer({
                   // banner and letting the footer button re-render live is what
                   // actually works; the footer reads current state every render.
                   const ok = await upload.retry(path);
-                  if (ok) setError(null);
+                  // Not while other rows are still failed or blocked: this row
+                  // landing must not wipe a storage-full banner that still applies.
+                  if (ok && !upload.hasFailedOrBlocked()) setError(null);
                 }}
               />
             ))}

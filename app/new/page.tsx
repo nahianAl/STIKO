@@ -15,7 +15,7 @@ import {
   Note,
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-import { useUpload } from '@/lib/useUpload';
+import { notUploadedMessage, useUpload } from '@/lib/useUpload';
 import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { derivePackageName } from '@/lib/design';
 
@@ -87,12 +87,6 @@ function NewPackage() {
     .split(/[,\s]+/)
     .map((e) => e.trim())
     .filter((e) => e.includes('@'));
-
-  /** Why the last run left files behind — storage full reads differently to a flaky network. */
-  const notUploadedMessage = () =>
-    upload.wasBlocked()
-      ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
-      : 'Some files didn’t upload. Retry them — nothing is published until they all land.';
 
   const create = async () => {
     setError(null);
@@ -168,7 +162,7 @@ function NewPackage() {
       if (!ok) {
         // Stay on the uploading screen so the failed rows can be retried. The
         // version is still a draft, so reviewers have seen nothing.
-        setError(notUploadedMessage());
+        setError(notUploadedMessage(upload.wasBlocked()));
         return;
       }
 
@@ -231,7 +225,9 @@ function NewPackage() {
 
   const retryFailed = async (path: string) => {
     const ok = await upload.retry(path);
-    if (ok) setError(null);
+    // One row landing says nothing about the rest: a storage-full banner has to
+    // outlive it while any other row is still failed or blocked.
+    if (ok && !upload.hasFailedOrBlocked()) setError(null);
   };
 
   /**
@@ -243,8 +239,12 @@ function NewPackage() {
     setRetrying(true);
     try {
       const ok = await upload.retryFailed();
-      if (!ok) {
-        setError(notUploadedMessage());
+      // `ok` only speaks for the files this call re-ran. Publishing counts rows
+      // (COUNT > 0), not completeness, so before it every file in the batch must
+      // actually be done — allLanded() reads the hook's ref, which is already
+      // current here, where `upload.allDone` would still be last render's value.
+      if (!ok || !upload.allLanded()) {
+        setError(notUploadedMessage(upload.wasBlocked()));
         return;
       }
       setError(null);
@@ -303,9 +303,15 @@ function NewPackage() {
               </Note>
 
               {/* Files left behind (a failure, or storage full): re-run just
-                  those and publish. `retrying` keeps it mounted while the
-                  rows flip to uploading, so it does not flicker away. */}
-              {(upload.anyFailed || upload.anyBlocked || retrying) && draft && (
+                  those and publish. Only once the batch is idle — a row can
+                  fail while its neighbours are still uploading, and publishing
+                  then would leave them out. `retrying` keeps it mounted while
+                  its own rows flip to uploading; allDone hands over to
+                  "Publish and open" below so the two never stack. */}
+              {draft &&
+                !upload.allDone &&
+                (retrying ||
+                  (!upload.busy && (upload.anyFailed || upload.anyBlocked))) && (
                 <div className="flex justify-end">
                   <Button
                     disabled={retrying || publishing}

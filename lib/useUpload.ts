@@ -27,6 +27,17 @@ import {
 /** Enough to saturate a connection without starving the browser's socket pool. */
 const CONCURRENCY = 4;
 
+/**
+ * The banner both upload screens show when a run left files behind. `blocked` is
+ * the hook's `wasBlocked()`: a full plan reads differently to a flaky network, and
+ * only the former is fixed by upgrading rather than by simply trying again.
+ */
+export function notUploadedMessage(blocked: boolean): string {
+  return blocked
+    ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
+    : 'Some files didn’t upload. Retry them — nothing is published until they all land.';
+}
+
 /** A failure carrying the HTTP status, or null when no response ever arrived. */
 interface UploadAttemptError extends Error {
   status: number | null;
@@ -147,22 +158,37 @@ export function useUpload() {
     portalId: string;
   } | null>(null);
 
-  // Mirrors `items` so retryFailed can read the CURRENT states from inside an
-  // async callback, rather than a copy frozen at whatever render created it —
-  // the same reason filesRef exists.
+  // The CURRENT states, readable from inside an async callback rather than a copy
+  // frozen at whatever render created it — the same reason filesRef exists. It is
+  // written eagerly by writeItems (not assigned from `items` at render), so it is
+  // already correct on the line after an `await` that resolved a pool, before the
+  // component has re-rendered. `items` state is only the render-facing mirror.
   const itemsRef = useRef<UploadItem[]>([]);
-  itemsRef.current = items;
+  const writeItems = useCallback(
+    (update: (prev: UploadItem[]) => UploadItem[]) => {
+      itemsRef.current = update(itemsRef.current);
+      setItems(itemsRef.current);
+    },
+    []
+  );
+
+  // How many pools are running. Only a running pool can be un-stopped by a stray
+  // reset of blockedRef, and only a running pool makes "publish now" unsafe.
+  const activePoolsRef = useRef(0);
 
   // Set when a presign comes back 402 (storage full). A ref rather than state so
   // every pool worker sees it the instant it is set, and so a caller can read it
   // straight after `await start()` without waiting a render.
   const blockedRef = useRef(false);
 
-  const patch = useCallback((path: string, next: Partial<UploadItem>) => {
-    setItems((prev) =>
-      prev.map((i) => (i.path === path ? { ...i, ...next } : i))
-    );
-  }, []);
+  const patch = useCallback(
+    (path: string, next: Partial<UploadItem>) => {
+      writeItems((prev) =>
+        prev.map((i) => (i.path === path ? { ...i, ...next } : i))
+      );
+    },
+    [writeItems]
+  );
 
   const uploadOne = useCallback(
     async (entry: FileWithPath): Promise<boolean> => {
@@ -302,31 +328,36 @@ export function useUpload() {
       // A fresh run, so a retry after freeing space is allowed to try again (and to
       // re-open the dialog if it hits the limit again).
       blockedRef.current = false;
-      const queue = [...entries];
-      const results: boolean[] = [];
+      activePoolsRef.current++;
+      try {
+        const queue = [...entries];
+        const results: boolean[] = [];
 
-      const worker = async () => {
-        for (;;) {
-          // Storage is full: every further presign would be refused too, so stop
-          // pulling files instead of sending the rest of the batch to the wall.
-          if (blockedRef.current) return;
-          const next = queue.shift();
-          if (!next) return;
-          results.push(await uploadOne(next));
+        const worker = async () => {
+          for (;;) {
+            // Storage is full: every further presign would be refused too, so stop
+            // pulling files instead of sending the rest of the batch to the wall.
+            if (blockedRef.current) return;
+            const next = queue.shift();
+            if (!next) return;
+            results.push(await uploadOne(next));
+          }
+        };
+
+        await Promise.all(
+          Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker)
+        );
+
+        // Whatever was never started is not a failure, it is just not uploaded.
+        if (blockedRef.current) {
+          for (const left of queue) patch(left.path, { state: 'blocked' });
+          results.push(false);
         }
-      };
 
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker)
-      );
-
-      // Whatever was never started is not a failure, it is just not uploaded.
-      if (blockedRef.current) {
-        for (const left of queue) patch(left.path, { state: 'blocked' });
-        results.push(false);
+        return results.every(Boolean);
+      } finally {
+        activePoolsRef.current--;
       }
-
-      return results.every(Boolean);
     },
     [uploadOne, patch]
   );
@@ -340,7 +371,7 @@ export function useUpload() {
       contextRef.current = context;
       filesRef.current = new Map(files.map((f) => [f.path, f]));
 
-      setItems(
+      writeItems(() =>
         files.map((f) => ({
           path: f.path,
           filename: f.file.name,
@@ -352,7 +383,7 @@ export function useUpload() {
 
       return runPool(files);
     },
-    [runPool]
+    [runPool, writeItems]
   );
 
   /**
@@ -365,6 +396,10 @@ export function useUpload() {
    * SECOND time. Reviewers saw every file twice and the first copies were orphaned.
    */
   const retryFailed = useCallback(async (): Promise<boolean> => {
+    // A second pool beside a running one would restart files the first is still
+    // sending and clear the first's blocked stop. Refuse; the caller reads that as
+    // "not all landed", which is true.
+    if (activePoolsRef.current > 0) return false;
     const failed = itemsRef.current
       .filter((i) => i.state === 'failed' || i.state === 'blocked')
       .map((i) => filesRef.current.get(i.path))
@@ -380,17 +415,19 @@ export function useUpload() {
       if (!entry) return false;
       // A new attempt, like runPool's: if this one hits the limit too, the dialog
       // must open again rather than stay silent behind the previous batch's flag.
-      blockedRef.current = false;
+      // But never while a pool is running — that would un-stop it mid-batch and
+      // let its workers carry on into the wall.
+      if (activePoolsRef.current === 0) blockedRef.current = false;
       return uploadOne(entry);
     },
     [uploadOne]
   );
 
   const reset = useCallback(() => {
-    setItems([]);
+    writeItems(() => []);
     filesRef.current = new Map();
     contextRef.current = null;
-  }, []);
+  }, [writeItems]);
 
   const allDone = items.length > 0 && items.every((i) => i.state === 'done');
   const anyFailed = items.some((i) => i.state === 'failed');
@@ -404,6 +441,29 @@ export function useUpload() {
    */
   const wasBlocked = useCallback(() => blockedRef.current, []);
 
+  // Nothing is still moving: no file is pending, uploading or optimising.
+  const busy = items.some(
+    (i) => i.state === 'pending' || i.state === 'uploading' || i.state === 'optimizing'
+  );
+
+  /**
+   * Whether every file has landed. Reads the ref, so — unlike `allDone` — it is
+   * correct on the line after `await retryFailed()`; use it to decide whether a
+   * draft is safe to publish.
+   */
+  const allLanded = useCallback(
+    () =>
+      itemsRef.current.length > 0 &&
+      itemsRef.current.every((i) => i.state === 'done'),
+    []
+  );
+
+  /** Whether any file is failed or blocked right now (ref-backed, like allLanded). */
+  const hasFailedOrBlocked = useCallback(
+    () => itemsRef.current.some((i) => i.state === 'failed' || i.state === 'blocked'),
+    []
+  );
+
   return {
     items,
     start,
@@ -414,6 +474,9 @@ export function useUpload() {
     anyFailed,
     anyBlocked,
     wasBlocked,
+    busy,
+    allLanded,
+    hasFailedOrBlocked,
     doneCount,
   };
 }
