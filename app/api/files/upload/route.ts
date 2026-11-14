@@ -6,6 +6,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
 import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
+import { isDeclaredFileSize } from '@/lib/planLimits';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
@@ -25,8 +26,9 @@ export async function POST(request: NextRequest) {
 
   // Required, and signed into the PUT below, so the size the plan check
   // approves is the size R2 accepts. Without it the check would be advisory.
-  if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
-    return NextResponse.json({ error: 'fileSize must be a positive integer' }, { status: 400 });
+  // Zero is a real size (an empty file) and is signed as ContentLength: 0.
+  if (!isDeclaredFileSize(fileSize)) {
+    return NextResponse.json({ error: 'fileSize must be a non-negative integer' }, { status: 400 });
   }
 
   // This route used to mint a presigned PUT for anyone who asked, so an

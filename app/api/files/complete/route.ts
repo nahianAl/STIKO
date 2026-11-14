@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
 import { optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
 import { headObjectSize } from '@/lib/s3';
+import { isDeclaredFileSize } from '@/lib/planLimits';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
     // upload route applied when it signed it. Otherwise nothing here can be
     // recorded honestly: this is a failure to verify, not a missing object, so
     // 503 and let the client retry.
-    if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
+    if (!isDeclaredFileSize(fileSize)) {
       return NextResponse.json(
         { error: 'Could not verify the upload. Please try again.' },
         { status: 503 }

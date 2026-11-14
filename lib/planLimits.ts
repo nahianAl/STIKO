@@ -29,6 +29,15 @@ export function canAddBytes(plan: Pick<Plan, 'storageBytes'>, usedBytes: number,
   return usedBytes + addBytes <= plan.storageBytes;
 }
 
+/**
+ * A size the client declared for an upload: a whole number of bytes, zero
+ * included. Zero-byte files uploaded before plan limits existed, and refusing
+ * them would leave one stuck 'failed' in every batch that contains it.
+ */
+export function isDeclaredFileSize(v: unknown): v is number {
+  return Number.isSafeInteger(v) && (v as number) >= 0;
+}
+
 export type PlanLimitKind = 'projects' | 'storage';
 
 /** The body of every 402. The client turns it into the upgrade dialog. */

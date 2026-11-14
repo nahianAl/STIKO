@@ -5,6 +5,7 @@ import {
   canCreateProject,
   canAddBytes,
   isPlanLimitPayload,
+  isDeclaredFileSize,
 } from '../../lib/planLimits.ts';
 
 const GIB = 1024 ** 3;
@@ -55,4 +56,21 @@ test('recognises a 402 body and nothing else', () => {
   assert.equal(isPlanLimitPayload({ code: 'plan_limit', limit: 'seats' }), false);
   assert.equal(isPlanLimitPayload({ error: 'Forbidden' }), false);
   assert.equal(isPlanLimitPayload(null), false);
+});
+
+test('a declared file size may be zero: empty files uploaded before limits and still must', () => {
+  assert.equal(isDeclaredFileSize(0), true);
+  assert.equal(isDeclaredFileSize(1), true);
+  assert.equal(isDeclaredFileSize(Number.MAX_SAFE_INTEGER), true);
+  assert.equal(isDeclaredFileSize(-1), false);
+  assert.equal(isDeclaredFileSize(1.5), false);
+  assert.equal(isDeclaredFileSize(Number.NaN), false);
+  assert.equal(isDeclaredFileSize(Number.MAX_SAFE_INTEGER + 1), false);
+  assert.equal(isDeclaredFileSize('10'), false);
+  assert.equal(isDeclaredFileSize(undefined), false);
+  assert.equal(isDeclaredFileSize(null), false);
+});
+
+test('a zero-byte file passes the storage check even at the limit', () => {
+  assert.equal(canAddBytes(FREE, 2 * GIB, 0), true);
 });
