@@ -491,3 +491,50 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
     },
   };
 }
+
+/**
+ * The bytes getAccountUsage counts for ONE package: its files' sizes plus the
+ * sizes of the attachments on comments under those files, trashed or not (the
+ * meter counts trashed bytes too, so a move must).
+ *
+ * What a move transfers: storage is charged to whoever owns the project a
+ * package currently sits in, so changing project_id hands all of this to the
+ * destination owner. app/api/portals/[id]/route.ts checks it against their plan
+ * first.
+ *
+ * KEEP IN STEP with the owned_files / attachment_bytes CTEs in getAccountUsage:
+ * the attachment-size expression below is a copy of theirs (the tagged `sql`
+ * cannot compose fragments), including the same two guards. A non-array
+ * comments.attachments must be normalised to '[]' BEFORE
+ * jsonb_array_elements() sees it, and a size is read as ::numeric, only when
+ * it is a JSONB number.
+ */
+export async function packageCountedBytes(portalId: string): Promise<number> {
+  const rows = await sql`
+    SELECT
+      COALESCE((
+        SELECT SUM(f.file_size)
+        FROM files f
+        JOIN versions v ON v.id = f.version_id
+        WHERE v.portal_id = ${portalId}
+      ), 0) AS "fileBytes",
+      COALESCE((
+        SELECT SUM(
+          CASE WHEN jsonb_typeof(att->'size') = 'number'
+               THEN (att->>'size')::numeric
+               ELSE 0 END
+        )
+        FROM comments c
+        JOIN files f ON f.id = c.file_id
+        JOIN versions v ON v.id = f.version_id
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(c.attachments) = 'array'
+               THEN c.attachments
+               ELSE '[]'::jsonb END
+        ) AS att
+        WHERE v.portal_id = ${portalId}
+      ), 0) AS "attachmentBytes"
+  `;
+  // BIGINT and NUMERIC aggregates arrive as strings from the HTTP driver.
+  return Number(rows[0]?.fileBytes ?? 0) + Number(rows[0]?.attachmentBytes ?? 0);
+}
