@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
-import { projectOwnerForRestore, restoreFromTrash } from '@/lib/trashQueries';
+import {
+  projectOwnerForRestore,
+  restoreFromTrash,
+  revivedProjectOwnerForPackageRestore,
+} from '@/lib/trashQueries';
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -26,14 +30,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    if (kind === 'project') {
-      const ownerId = await projectOwnerForRestore(session.user.id, id);
-      // null falls through: restoreFromTrash returns 'not-found' and the
-      // existing 404 copy applies, so this cannot be used to probe.
-      if (ownerId) {
-        const refusal = await projectLimitRefusal(ownerId, session.user.id);
-        if (refusal) return planLimitResponse(refusal);
-      }
+    // A package whose project is also trashed brings that project back, so
+    // both kinds can be a project returning from the trash. Restoring into a
+    // live project resolves to null and stays ungated.
+    const ownerId =
+      kind === 'project'
+        ? await projectOwnerForRestore(session.user.id, id)
+        : await revivedProjectOwnerForPackageRestore(session.user.id, id);
+    // null falls through: restoreFromTrash returns 'not-found' (or restores
+    // into a live project) and the existing behaviour applies, so this cannot
+    // be used to probe.
+    if (ownerId) {
+      const refusal = await projectLimitRefusal(ownerId, session.user.id);
+      if (refusal) return planLimitResponse(refusal);
     }
 
     const outcome = await restoreFromTrash(session.user.id, kind, id);

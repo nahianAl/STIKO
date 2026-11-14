@@ -263,3 +263,35 @@ export async function projectOwnerForRestore(userId: string, projectId: string):
   `;
   return (rows[0]?.ownerId as string | undefined) ?? null;
 }
+
+/**
+ * The owner of the trashed project a package restore would bring back, or null.
+ *
+ * restoreFromTrash revives a package's project when it is trashed too, so that
+ * is a project coming back from the trash and must meet the owner's project
+ * limit like any other. Same scope as the package branch: the package and the
+ * project both inside the retention window, caller owner or coordinator. Null
+ * when the project is live (restoring into it stays ungated) or when the caller
+ * cannot restore the package, so restoreFromTrash's own 404 applies.
+ */
+export async function revivedProjectOwnerForPackageRestore(
+  userId: string,
+  packageId: string
+): Promise<string | null> {
+  const cutoff = `${TRASH_RETENTION_DAYS} days`;
+  const rows = await sql`
+    SELECT pr.owner_id AS "ownerId"
+    FROM portals po
+    JOIN projects pr ON pr.id = po.project_id
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE po.id = ${packageId}
+      AND po.deleted_at IS NOT NULL
+      AND po.deleted_at > now() - ${cutoff}::interval
+      AND (pr.deleted_at IS NULL OR pr.deleted_at > now() - ${cutoff}::interval)
+      AND pr.deleted_at IS NOT NULL
+      AND (pr.owner_id = ${userId}
+           OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator'))
+  `;
+  return (rows[0]?.ownerId as string | undefined) ?? null;
+}
