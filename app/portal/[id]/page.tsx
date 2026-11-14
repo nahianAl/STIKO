@@ -13,7 +13,7 @@ import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { usePortalActivity } from '@/components/portal/usePortalActivity';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
 import { MAX_ATTACHMENTS_PER_COMMENT } from '@/lib/attachmentUpload';
-import { PlanLimitError } from '@/lib/planLimitClient';
+import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
@@ -2028,6 +2028,14 @@ export default function PortalPage() {
           mentions: composerMentions,
         }),
       });
+      // A 402 here is the storage check on the comment itself (the presign check
+      // only saw the file it was given). Same handling as a refused presign: the
+      // dialog explains it, the catch below stays silent, nothing is cleared.
+      const limit = await readPlanLimit(res);
+      if (limit) {
+        openUpgradeDialog(limit);
+        throw new PlanLimitError(limit);
+      }
       // fetch only rejects on a NETWORK failure, so without this an expired session
       // (401), a view-only role (403) or a server error all resolved normally and
       // fell through to the clears below — discarding the user's text, their

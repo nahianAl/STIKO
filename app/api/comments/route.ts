@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getCommentAssetPresignedUrl, headObjectSize } from '@/lib/s3';
-import { getFileAccess } from '@/lib/access';
+import { fileOwnerId, getFileAccess } from '@/lib/access';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 import { isAllowedCommentKey, isCommentStorageKey } from '@/lib/storageKeys';
 import {
   MAX_ATTACHMENTS_PER_COMMENT,
@@ -180,6 +181,7 @@ export async function POST(request: NextRequest) {
   // /api/files/complete, nothing bounds it any more): 503, and the client may
   // retry. The HEADs run in parallel.
   let verifiedAttachments: unknown[];
+  let attachedBytes = 0;
   try {
     const sizes = await Promise.all(
       attachmentList.map((att) => headObjectSize(att.storageKey))
@@ -191,12 +193,27 @@ export async function POST(request: NextRequest) {
       );
     }
     verifiedAttachments = attachmentList.map((att, i) => ({ ...att, size: sizes[i] }));
+    attachedBytes = sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0);
   } catch (err) {
     console.error('[comments] could not verify attachment sizes against storage', err);
     return NextResponse.json(
       { error: 'Could not verify the attachments. Please try again.' },
       { status: 503 }
     );
+  }
+
+  // Charge the bytes to the owner of the file THIS comment hangs off. The
+  // presign route checked the owner of the fileId it was given, but the key it
+  // returns is a bare comment-attachments/<uuid> tied to no project, so a caller
+  // could presign through a project with room and attach here, on one without.
+  // Only now are the real sizes known; nothing is counted until the INSERT, so
+  // this is usage + these bytes, the same arithmetic as the presign check.
+  if (attachedBytes > 0) {
+    const ownerId = await fileOwnerId(fileId);
+    // getFileAccess resolved this file above; a missing owner means it vanished.
+    if (!ownerId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const refusal = await storageLimitRefusal(ownerId, session.user.id, attachedBytes);
+    if (refusal) return planLimitResponse(refusal);
   }
 
   // The author is the session, never a client-supplied string.

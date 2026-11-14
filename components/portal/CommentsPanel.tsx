@@ -5,7 +5,7 @@ import { useAuthSession } from '@/lib/authClient';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
 import { MAX_ATTACHMENTS_PER_COMMENT } from '@/lib/attachmentUpload';
-import { PlanLimitError } from '@/lib/planLimitClient';
+import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 import { messageForStatus } from '@/lib/submitErrors';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
@@ -163,6 +163,14 @@ function CommentForm({
           mentions: mentionIds,
         }),
       });
+      // A 402 here is the storage check on the comment itself (the presign check
+      // only saw the file it was given). Same handling as a refused presign: the
+      // dialog explains it, the catch below stays silent, nothing is cleared.
+      const limit = await readPlanLimit(res);
+      if (limit) {
+        openUpgradeDialog(limit);
+        throw new PlanLimitError(limit);
+      }
       // fetch only rejects on a NETWORK failure, so without this an expired
       // session (401), a view-only role (403) or a server error all resolved
       // normally and fell through to the clears below — wiping the user's words

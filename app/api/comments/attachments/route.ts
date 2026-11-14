@@ -3,8 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { auth } from '@/lib/auth';
 import { getUploadPresignedUrl } from '@/lib/s3';
 import { validateAttachmentRequest } from '@/lib/attachmentUpload';
-import { getFileAccess } from '@/lib/access';
-import { sql } from '@/lib/db';
+import { fileOwnerId, getFileAccess } from '@/lib/access';
 import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 
 export async function POST(request: NextRequest) {
@@ -54,17 +53,13 @@ export async function POST(request: NextRequest) {
 
   // Attachments live in the file's project and count toward its OWNER's storage
   // (getAccountUsage sums comments.attachments sizes under owned files).
-  const ownerRows = await sql`
-    SELECT pr.owner_id AS "ownerId"
-    FROM files f
-    JOIN versions v ON v.id = f.version_id
-    JOIN portals po ON po.id = v.portal_id
-    JOIN projects pr ON pr.id = po.project_id
-    WHERE f.id = ${validated.fileId}
-  `;
-  // getFileAccess just resolved this file, so a missing owner row means the file
+  //
+  // This is the early refusal. POST /api/comments checks again against the
+  // owner of the file the comment is actually posted on, because this key is
+  // not tied to a project and could be attached anywhere.
+  const ownerId = await fileOwnerId(validated.fileId);
+  // getFileAccess just resolved this file, so a missing owner means the file
   // vanished underneath us. Never skip the gate on that: refuse instead.
-  const ownerId = ownerRows[0]?.ownerId as string | undefined;
   if (!ownerId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const refusal = await storageLimitRefusal(ownerId, session.user.id, validated.size);
   if (refusal) return planLimitResponse(refusal);
