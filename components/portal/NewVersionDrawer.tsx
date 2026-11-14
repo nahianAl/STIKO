@@ -14,7 +14,8 @@ import {
   Toggle,
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-import { notUploadedMessage, useUpload } from '@/lib/useUpload';
+import { useUpload } from '@/lib/useUpload';
+import { notUploadedMessage } from '@/lib/uploadMessages';
 import { submissionBadge } from '@/lib/submissionName';
 
 /**
@@ -142,7 +143,12 @@ export function NewVersionDrawer({
       const ok = started
         ? await upload.retryFailed()
         : await upload.start(files, { versionId, projectId, portalId });
-      if (!ok) {
+      // `ok` only speaks for the pool this call ran. A per-row retry is not a pool
+      // and does not set `busy`, so one can still be in flight here — publishing
+      // then would leave its file out (publish counts rows, not completeness). So
+      // also require every file to be done; allLanded() reads the hook's ref,
+      // which is current on the line after the await.
+      if (!ok || !upload.allLanded()) {
         setError(notUploadedMessage(upload.wasBlocked()));
         setBusy(false);
         return;

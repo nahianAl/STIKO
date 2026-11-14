@@ -27,17 +27,6 @@ import {
 /** Enough to saturate a connection without starving the browser's socket pool. */
 const CONCURRENCY = 4;
 
-/**
- * The banner both upload screens show when a run left files behind. `blocked` is
- * the hook's `wasBlocked()`: a full plan reads differently to a flaky network, and
- * only the former is fixed by upgrading rather than by simply trying again.
- */
-export function notUploadedMessage(blocked: boolean): string {
-  return blocked
-    ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
-    : 'Some files didn’t upload. Retry them — nothing is published until they all land.';
-}
-
 /** A failure carrying the HTTP status, or null when no response ever arrived. */
 interface UploadAttemptError extends Error {
   status: number | null;
@@ -405,19 +394,33 @@ export function useUpload() {
       .map((i) => filesRef.current.get(i.path))
       .filter((f): f is FileWithPath => Boolean(f));
     if (failed.length === 0) return true;
+    // Claim them now. Rows the pool has not reached yet would otherwise keep
+    // reading 'failed' for as long as it takes four workers to get to them, and
+    // their per-row Retry link would be live — a click starts a second uploadOne
+    // for the same file while the pool later uploads it again, minting two
+    // fileIds: the duplicate registration this function exists to prevent. As
+    // 'pending' they also count as busy, which they are.
+    const claimed = new Set(failed.map((f) => f.path));
+    writeItems((prev) =>
+      prev.map((i) => (claimed.has(i.path) ? { ...i, state: 'pending', progress: 0 } : i))
+    );
     return runPool(failed);
-  }, [runPool]);
+  }, [runPool, writeItems]);
 
   /** Retry one failed file without restarting the batch. */
   const retry = useCallback(
     async (path: string): Promise<boolean> => {
       const entry = filesRef.current.get(path);
       if (!entry) return false;
+      // Only a settled, failed row may be re-run on its own. While a pool is
+      // running it owns every file it has queued or is sending, and a second
+      // uploadOne for one of them would register it twice. Same for a row that is
+      // not 'failed' (done, blocked, or already moving).
+      if (activePoolsRef.current > 0) return false;
+      if (itemsRef.current.find((i) => i.path === path)?.state !== 'failed') return false;
       // A new attempt, like runPool's: if this one hits the limit too, the dialog
       // must open again rather than stay silent behind the previous batch's flag.
-      // But never while a pool is running — that would un-stop it mid-batch and
-      // let its workers carry on into the wall.
-      if (activePoolsRef.current === 0) blockedRef.current = false;
+      blockedRef.current = false;
       return uploadOne(entry);
     },
     [uploadOne]

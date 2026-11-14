@@ -15,7 +15,8 @@ import {
   Note,
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-import { notUploadedMessage, useUpload } from '@/lib/useUpload';
+import { useUpload } from '@/lib/useUpload';
+import { notUploadedMessage } from '@/lib/uploadMessages';
 import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { derivePackageName } from '@/lib/design';
 
