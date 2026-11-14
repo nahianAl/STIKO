@@ -32,6 +32,8 @@ import {
 import type { PackageCard, ProjectSummary } from '@/lib/queries';
 import { useAuthSession } from '@/lib/authClient';
 import { useToast } from '@/components/ui/Toast';
+import type { BillingStatusPayload } from '@/lib/billing';
+import { checkoutReturnToast } from '@/lib/upgradeCopy';
 
 /**
  * Owner home. Two states: first run, and the project cards.
@@ -182,19 +184,27 @@ export default function Home() {
     load();
   }, [load]);
 
-  // Stripe Checkout lands here as /?billing=success (via /api/billing/return,
-  // which has already synced the plan) or /?billing=cancelled. This page reads
-  // no other query param, so the whole query is dropped once handled and a
-  // refresh does not repeat the toast. The ref makes the toast fire once under
-  // StrictMode's double-invoked dev effects, which would otherwise run it
-  // twice before the replace takes effect.
+  // Stripe Checkout lands here as /?billing=success (via /api/billing/return)
+  // or /?billing=cancelled. The return route redirects to ?billing=success on
+  // some failure paths too, so the param is not proof: the plan is read back
+  // from /api/billing/status and "You're on Standard" is said only if the
+  // server agrees (checkoutReturnToast). This page reads no other query param,
+  // so the whole query is dropped once handled and a refresh does not repeat
+  // the toast. The ref makes the toast fire once under StrictMode's
+  // double-invoked dev effects, which would otherwise run it twice before the
+  // replace takes effect.
   const billingHandled = useRef(false);
   useEffect(() => {
     if (billingHandled.current) return;
     const result = new URLSearchParams(window.location.search).get('billing');
     if (!result) return;
     billingHandled.current = true;
-    if (result === 'success') toast("You're on Standard");
+    if (result === 'success') {
+      fetch('/api/billing/status')
+        .then((r) => (r.ok ? (r.json() as Promise<BillingStatusPayload>) : null))
+        .catch(() => null)
+        .then((status) => toast(checkoutReturnToast(status?.plan)));
+    }
     router.replace('/');
   }, [router, toast]);
 

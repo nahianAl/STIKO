@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { headline, offersCheckout } from '../../lib/upgradeCopy.ts';
+import { headline, offersCheckout, checkoutReturnToast } from '../../lib/upgradeCopy.ts';
 
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
@@ -108,4 +108,12 @@ test('an owner whose plan the payload does not name gets no Free or Standard cla
   const h = headline(noPlan);
   assert.equal(h.title, "You've reached your storage limit");
   assert.doesNotMatch(h.title + h.subtitle, /Free plan|Standard/);
+});
+
+test('the post-checkout toast claims Standard only when the plan says so', () => {
+  assert.equal(checkoutReturnToast('standard'), "You're on Standard");
+  const pending = 'Payment received — your plan will update in a moment.';
+  assert.equal(checkoutReturnToast('free'), pending);
+  assert.equal(checkoutReturnToast(undefined), pending);
+  assert.equal(checkoutReturnToast(null), pending);
 });

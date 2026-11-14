@@ -6,7 +6,7 @@
  */
 import { formatBytes } from './design.ts';
 import { PLANS } from './plans.ts';
-import type { Plan } from './plans.ts';
+import type { Plan, PlanId } from './plans.ts';
 import type { PlanLimitPayload } from './planLimits.ts';
 
 /** The Standard pitch, derived from the catalogue so it cannot drift from it. */
@@ -95,4 +95,17 @@ export function headline(p: PlanLimitPayload | null): { title: string; subtitle:
       p.max
     )}. ${perks}`,
   };
+}
+
+/**
+ * The toast after Stripe Checkout sends someone back with ?billing=success.
+ *
+ * /api/billing/return lands on that URL on its failure paths too (a sync that
+ * could not reach Stripe, a webhook not yet processed), so the param alone is
+ * not proof. Only a plan the server confirms as Standard earns the claim.
+ */
+export function checkoutReturnToast(plan: PlanId | null | undefined): string {
+  return plan === 'standard'
+    ? "You're on Standard"
+    : 'Payment received — your plan will update in a moment.';
 }
