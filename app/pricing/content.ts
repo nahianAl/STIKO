@@ -9,6 +9,7 @@
  */
 import { PLANS } from '@/lib/plans';
 import { formatBytes } from '@/lib/design';
+import { TRASH_RETENTION_DAYS } from '@/lib/trash';
 
 const free = PLANS.free;
 const standard = PLANS.standard;
@@ -58,7 +59,7 @@ export const LIMIT_ROWS: CompareRow[] = [
   { label: 'Projects', free: String(free.maxProjects), standard: 'Unlimited' },
   {
     label: 'Storage',
-    detail: 'Files and comment attachments, including the trash until it is emptied.',
+    detail: `Files and comment attachments. Deleted packages and projects keep counting for ${TRASH_RETENTION_DAYS} days, while they can still be restored.`,
     free: formatBytes(free.storageBytes),
     standard: formatBytes(standard.storageBytes),
   },
@@ -90,7 +91,7 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'What counts toward storage?',
-    a: 'The files you upload and the attachments people add to comments. Deleted items keep counting until you empty the trash.',
+    a: `The files you upload and the attachments people add to comments. Deleting a file frees its space straight away. Deleted packages and projects go to the trash, where you can restore them for ${TRASH_RETENTION_DAYS} days — they keep counting until they're removed for good.`,
   },
   {
     q: 'What happens if I go over a Free limit?',
