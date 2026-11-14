@@ -1,0 +1,113 @@
+/* /pricing — the few things Tailwind utilities can't say cleanly: the page's
+   atmosphere, the dark card's glow, and one staggered entrance. */
+
+.page {
+  position: relative;
+  min-height: 100vh;
+  background-color: #f6f8fe;
+  overflow-x: clip;
+}
+
+/* Two soft glows in the brand blues behind the hero, and a faint dot grid that
+   fades out before the cards. Decoration only. */
+.atmosphere {
+  pointer-events: none;
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 760px;
+  background:
+    radial-gradient(520px 340px at 18% 8%, rgba(128, 148, 245, 0.22), transparent 70%),
+    radial-gradient(560px 360px at 86% 18%, rgba(91, 96, 255, 0.14), transparent 70%);
+}
+
+.atmosphere::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(28, 32, 48, 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 78%);
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+/* The Standard card: ink, lit from the top corner, with a thin gradient rim. */
+.darkCard {
+  position: relative;
+  background:
+    radial-gradient(420px 260px at 85% -10%, rgba(128, 148, 245, 0.38), transparent 70%),
+    radial-gradient(300px 220px at 0% 110%, rgba(91, 96, 255, 0.22), transparent 70%),
+    #1c2030;
+  box-shadow:
+    0 40px 80px -30px rgba(66, 71, 214, 0.55),
+    0 2px 6px rgba(28, 32, 48, 0.2);
+}
+
+.darkCard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(140deg, rgba(160, 174, 255, 0.85), rgba(91, 96, 255, 0.15) 45%, rgba(255, 255, 255, 0.06));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.cta {
+  background-image: linear-gradient(135deg, #8094f5, #5b60ff);
+  box-shadow: 0 24px 60px -20px rgba(91, 96, 255, 0.5);
+}
+
+/* Entrance: each [data-rise] block lifts in, staggered by --d. */
+.rise {
+  opacity: 0;
+  transform: translateY(14px);
+  animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* A price that changes with the toggle settles in rather than snapping. */
+.priceSwap {
+  display: inline-block;
+  animation: swap 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes swap {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .priceSwap {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* FAQ disclosure marker. */
+.faq summary {
+  list-style: none;
+}
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+.faq[open] .faqIcon {
+  transform: rotate(45deg);
+}
