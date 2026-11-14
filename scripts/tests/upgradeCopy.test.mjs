@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { headline } from '../../lib/upgradeCopy.ts';
+import { headline, offersCheckout } from '../../lib/upgradeCopy.ts';
 
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
@@ -9,6 +9,7 @@ const payload = (over) => ({
   error: 'x',
   code: 'plan_limit',
   limit: 'projects',
+  plan: 'free',
   isOwner: true,
   used: 2,
   max: 2,
@@ -46,20 +47,65 @@ test('storage left never goes negative when the account is already over', () => 
   assert.doesNotMatch(h.subtitle, /-/);
 });
 
-test('a collaborator out of storage is pointed at the owner, not at a price', () => {
+test('a collaborator out of Free storage is pointed at the owner, not at a price', () => {
   const h = headline(payload({ limit: 'storage', isOwner: false }));
   assert.equal(h.title, 'This project is out of storage');
   assert.equal(
     h.subtitle,
-    "The project's owner is on the Free plan and has used its storage. Ask them to upgrade to Standard."
+    "This project's owner is on the Free plan and has used its storage. Ask them to upgrade to Standard."
   );
 });
 
-test('a collaborator at the project limit is pointed at the owner', () => {
+test('a collaborator at the Free project limit is pointed at the owner', () => {
   const h = headline(payload({ limit: 'projects', isOwner: false }));
   assert.equal(h.title, 'This project is at its limit');
   assert.equal(
     h.subtitle,
-    "The project's owner is on the Free plan and has used its projects. Ask them to upgrade to Standard."
+    "This project's owner is on the Free plan and has used its projects. Ask them to upgrade to Standard."
   );
+});
+
+test('only a Free owner (or the generic pitch) is offered a checkout', () => {
+  assert.equal(offersCheckout(null), true);
+  assert.equal(offersCheckout(payload({ plan: 'free', isOwner: true })), true);
+  assert.equal(offersCheckout(payload({ plan: 'free', isOwner: false })), false);
+  assert.equal(offersCheckout(payload({ limit: 'storage', plan: 'standard', isOwner: true })), false);
+  assert.equal(offersCheckout(payload({ limit: 'storage', plan: 'standard', isOwner: false })), false);
+});
+
+test('a payload without a plan never offers a checkout (cannot tell it is Free)', () => {
+  const { plan, ...noPlan } = payload({ limit: 'storage' });
+  assert.equal(plan, 'free');
+  assert.equal(offersCheckout(noPlan), false);
+});
+
+test('a Standard owner at 100 GB is told the Standard limit and how to free space, not sold Standard', () => {
+  const h = headline(
+    payload({ limit: 'storage', plan: 'standard', used: 100 * GIB - 10 * MIB, max: 100 * GIB, adding: 50 * MIB })
+  );
+  assert.equal(h.title, "You've reached the Standard plan's 100 GB");
+  assert.match(h.subtitle, /needs 50 MB/);
+  assert.match(h.subtitle, /10 MB left/);
+  assert.match(h.subtitle, /emptying the trash/);
+  assert.doesNotMatch(h.title + h.subtitle, /[Uu]pgrade|Free plan/);
+});
+
+test('a collaborator on a Standard owner\'s full project is not told the owner is on Free', () => {
+  const h = headline(payload({ limit: 'storage', plan: 'standard', isOwner: false, max: 100 * GIB }));
+  assert.equal(h.title, 'This project is out of storage');
+  assert.equal(h.subtitle, "This project's owner has reached their storage limit.");
+  assert.doesNotMatch(h.subtitle, /Free|[Uu]pgrade/);
+});
+
+test('a collaborator with an unknown plan is not told which plan the owner is on', () => {
+  const { plan: _p, ...noPlan } = payload({ limit: 'storage', isOwner: false });
+  const h = headline(noPlan);
+  assert.equal(h.subtitle, "This project's owner has reached their storage limit.");
+});
+
+test('an owner whose plan the payload does not name gets no Free or Standard claim', () => {
+  const { plan: _p, ...noPlan } = payload({ limit: 'storage', used: GIB, max: 2 * GIB, adding: 2 * GIB });
+  const h = headline(noPlan);
+  assert.equal(h.title, "You've reached your storage limit");
+  assert.doesNotMatch(h.title + h.subtitle, /Free plan|Standard/);
 });

@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import { PRICE_DISPLAY, type BillingInterval } from '@/lib/billing';
 import type { PlanLimitPayload } from '@/lib/planLimits';
 import { UPGRADE_EVENT } from '@/lib/planLimitClient';
-import { headline } from '@/lib/upgradeCopy';
+import { headline, offersCheckout } from '@/lib/upgradeCopy';
 import { startCheckout, useResetOnPageShow } from './checkout';
 
 /** Mounted once in the root layout; opened by openUpgradeDialog(). */
@@ -51,7 +51,9 @@ export default function UpgradeDialogHost() {
   }, [open, busy]);
 
   const { title, subtitle } = headline(payload);
-  const canPay = !payload || payload.isOwner;
+  // Not just "is the owner": a Standard owner at Standard's cap must not be
+  // sent to a Checkout for the plan they already have.
+  const canPay = offersCheckout(payload);
 
   const pay = async (interval: BillingInterval) => {
     setBusy(interval);

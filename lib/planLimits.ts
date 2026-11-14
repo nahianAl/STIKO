@@ -5,7 +5,7 @@
  * Plan is a type-only import. The server gate (lib/planGate.ts) loads usage and
  * calls these; nothing here knows about the database or HTTP.
  */
-import type { Plan } from './plans';
+import type { Plan, PlanId } from './plans';
 
 /**
  * Limits are on only while billing is on. With the kill switch thrown nobody
@@ -36,6 +36,13 @@ export interface PlanLimitPayload {
   error: string;
   code: 'plan_limit';
   limit: PlanLimitKind;
+  /**
+   * The OWNER's plan at the time of the refusal. Standard's storage is capped
+   * too, so a 402 is not proof the owner is on Free: the dialog must not sell
+   * Standard to someone who already has it. Optional on the wire check below,
+   * and a body without it is treated as "plan unknown", which offers no checkout.
+   */
+  plan: PlanId;
   /** False when the caller is a collaborator on someone else's project. */
   isOwner: boolean;
   /** Projects: active count. Storage: bytes used (trash included). */
@@ -45,6 +52,7 @@ export interface PlanLimitPayload {
   adding: number;
 }
 
+/** Tolerant: `plan` is not required, so a body without it still opens the dialog. */
 export function isPlanLimitPayload(v: unknown): v is PlanLimitPayload {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;

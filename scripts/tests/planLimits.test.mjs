@@ -48,6 +48,10 @@ test('recognises a 402 body and nothing else', () => {
     isPlanLimitPayload({ code: 'plan_limit', limit: 'storage', isOwner: true, used: 1, max: 2, adding: 1, error: 'x' }),
     true
   );
+  assert.equal(
+    isPlanLimitPayload({ code: 'plan_limit', limit: 'storage', plan: 'standard', isOwner: true, used: 1, max: 2, adding: 1, error: 'x' }),
+    true
+  );
   assert.equal(isPlanLimitPayload({ code: 'plan_limit', limit: 'seats' }), false);
   assert.equal(isPlanLimitPayload({ error: 'Forbidden' }), false);
   assert.equal(isPlanLimitPayload(null), false);
