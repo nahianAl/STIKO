@@ -86,7 +86,8 @@ test('a Standard owner at 100 GB is told the Standard limit and how to free spac
   assert.equal(h.title, "You've reached the Standard plan's 100 GB");
   assert.match(h.subtitle, /needs 50 MB/);
   assert.match(h.subtitle, /10 MB left/);
-  assert.match(h.subtitle, /emptying the trash/);
+  assert.match(h.subtitle, /frees space straight away/);
+  assert.doesNotMatch(h.subtitle, /empty/i);
   assert.doesNotMatch(h.title + h.subtitle, /[Uu]pgrade|Free plan/);
 });
 

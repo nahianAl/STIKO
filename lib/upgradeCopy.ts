@@ -7,6 +7,7 @@
 import { formatBytes } from './design.ts';
 import { PLANS } from './plans.ts';
 import type { Plan, PlanId } from './plans.ts';
+import { TRASH_RETENTION_DAYS } from './trash.ts';
 import type { PlanLimitPayload } from './planLimits.ts';
 import type { AccountUsage } from './queries.ts';
 
@@ -83,7 +84,7 @@ export function headline(p: PlanLimitPayload | null): { title: string; subtitle:
         : "You've reached your storage limit",
       subtitle: `This needs ${formatBytes(p.adding)} — you have ${formatBytes(
         left
-      )} left. Free up space by deleting files you no longer need or emptying the trash.`,
+      )} left. Deleting files you no longer need frees space straight away; deleted packages and projects keep counting for ${TRASH_RETENTION_DAYS} days.`,
     };
   }
 
