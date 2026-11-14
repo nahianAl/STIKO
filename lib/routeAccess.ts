@@ -64,6 +64,10 @@ export function routeDecision(pathname: string, isAuthenticated: boolean): Route
   // '/api/cron-something' nobody remembered to check.
   if (pathname === '/api/cron/purge-trash') return 'pass';
 
+  // Stripe calls this with no session; the handler verifies Stripe's signature
+  // and refuses anything unsigned. Exact match for the same reason as above.
+  if (pathname === '/api/billing/webhook') return 'pass';
+
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return 'pass';
 
   // /portal/[id] is public (viewer access) — no auth needed

@@ -6,6 +6,7 @@ import { useAuthActions, useAuthSession } from '@/lib/authClient';
 import Popover from '@/components/ui/Popover';
 import { Avatar } from '@/components/ui/Primitives';
 import UsageMeters, { type UsagePayload } from './UsageMeters';
+import BillingActions, { type BillingStatusPayload } from './BillingActions';
 
 /**
  * The account menu (gap #9 — there was no sign-out anywhere in the product).
@@ -17,6 +18,7 @@ export default function AvatarMenu() {
 
   const [usage, setUsage] = useState<UsagePayload | null>(null);
   const [usageFailed, setUsageFailed] = useState(false);
+  const [billing, setBilling] = useState<BillingStatusPayload | null>(null);
   const requested = useRef(false);
 
   const name = session?.user?.name ?? session?.user?.email ?? '?';
@@ -28,6 +30,12 @@ export default function AvatarMenu() {
   useEffect(() => {
     if (!open || requested.current) return;
     requested.current = true;
+
+    // Independent of usage: if billing fails, its buttons simply stay hidden.
+    fetch('/api/billing/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setBilling(data))
+      .catch(() => {});
 
     fetch('/api/me/usage')
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
@@ -93,6 +101,8 @@ export default function AvatarMenu() {
         <div className="border-t border-stiko-border">
           <UsageMeters usage={usage} failed={usageFailed} />
         </div>
+
+        <BillingActions status={billing} />
 
         <div className="border-t border-stiko-border p-2">
           <MenuLink href="/settings/account" onClick={() => setOpen(false)}>

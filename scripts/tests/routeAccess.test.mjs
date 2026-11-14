@@ -62,3 +62,12 @@ test('the CAD worker callback is public; its handler checks the token itself', (
   assert.equal(routeDecision('/api/conversions/cad-callback', false), 'pass');
   assert.equal(routeDecision('/api/conversions/other', false), 'login');
 });
+
+// Stripe has no session. Only the webhook is exempt — checkout and the billing
+// portal must stay behind sign-in.
+test('the Stripe webhook is public, the rest of billing is not', () => {
+  assert.equal(routeDecision('/api/billing/webhook', false), 'pass');
+  assert.equal(routeDecision('/api/billing/checkout', false), 'login');
+  assert.equal(routeDecision('/api/billing/portal', false), 'login');
+  assert.equal(routeDecision('/api/billing/webhook-other', false), 'login');
+});
