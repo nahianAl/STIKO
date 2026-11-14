@@ -162,7 +162,9 @@ function NewPackage() {
         // Stay on the uploading screen so the failed rows can be retried. The
         // version is still a draft, so reviewers have seen nothing.
         setError(
-          'Some files didn’t upload. Retry them — nothing is published until they all land.'
+          upload.wasBlocked()
+            ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
+            : 'Some files didn’t upload. Retry them — nothing is published until they all land.'
         );
         return;
       }

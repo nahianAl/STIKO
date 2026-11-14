@@ -144,7 +144,9 @@ export function NewVersionDrawer({
         : await upload.start(files, { versionId, projectId, portalId });
       if (!ok) {
         setError(
-          'Some files didn’t upload. Retry them — nothing is published until they all land.'
+          upload.wasBlocked()
+            ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
+            : 'Some files didn’t upload. Retry them — nothing is published until they all land.'
         );
         setBusy(false);
         return;
@@ -197,7 +199,7 @@ export function NewVersionDrawer({
           <Button onClick={publish} disabled={busy}>
             {busy
               ? 'Publishing…'
-              : upload.anyFailed
+              : upload.anyFailed || upload.anyBlocked
                 ? 'Retry failed files'
                 : `Publish submission ${nextVersionNumber}`}
           </Button>

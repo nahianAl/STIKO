@@ -5,7 +5,7 @@ import { FileChip } from './Primitives';
 import { formatBytes } from '@/lib/design';
 import { submissionBadge } from '@/lib/submissionName';
 
-export type UploadState = 'pending' | 'uploading' | 'optimizing' | 'done' | 'failed';
+export type UploadState = 'pending' | 'uploading' | 'optimizing' | 'done' | 'failed' | 'blocked';
 
 export interface UploadItem {
   path: string;
@@ -32,9 +32,11 @@ export function UploadProgressRow({
   const track =
     item.state === 'done'
       ? '#EDFFDA'
-      : item.state === 'failed'
-        ? '#FFE2E2'
-        : '#F1F3FF';
+      : item.state === 'blocked'
+        ? '#F1F1F4'
+        : item.state === 'failed'
+          ? '#FFE2E2'
+          : '#F1F3FF';
 
   return (
     <div className="flex flex-col gap-[6px]">
@@ -71,6 +73,9 @@ export function UploadProgressRow({
               )}
             </span>
           )}
+          {item.state === 'blocked' && (
+            <span className="text-[11.5px] font-semibold text-stiko-muted">Not uploaded — storage full</span>
+          )}
           {item.state === 'optimizing' && (
             <span className="text-stiko-muted">Optimising…</span>
           )}
@@ -90,12 +95,14 @@ export function UploadProgressRow({
           className={`h-full rounded-full transition-[width] duration-200 ${
             item.state === 'done'
               ? 'bg-[#7BC24A]'
-              : item.state === 'failed'
-                ? 'bg-[#FF6B6B]'
-                : 'bg-gradient-to-r from-[#8094F5] to-[#5B60FF]'
+              : item.state === 'blocked'
+                ? 'bg-[#F1F1F4]'
+                : item.state === 'failed'
+                  ? 'bg-[#FF6B6B]'
+                  : 'bg-gradient-to-r from-[#8094F5] to-[#5B60FF]'
           }`}
           style={{
-            width: `${item.state === 'done' || item.state === 'failed' ? 100 : item.progress}%`,
+            width: `${item.state === 'done' || item.state === 'failed' || item.state === 'blocked' ? 100 : item.progress}%`,
           }}
         />
       </div>

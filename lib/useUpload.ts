@@ -7,6 +7,7 @@ import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptim
 import { isDrawingFilename } from '@/lib/drawingConversion';
 import { isSldprtFilename } from '@/lib/cadConversion';
 import { sldprtConversionEnabled } from '@/lib/fileFormats';
+import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 import {
   MAX_UPLOAD_ATTEMPTS,
   REQUEST_TIMEOUT_MS,
@@ -152,6 +153,11 @@ export function useUpload() {
   const itemsRef = useRef<UploadItem[]>([]);
   itemsRef.current = items;
 
+  // Set when a presign comes back 402 (storage full). A ref rather than state so
+  // every pool worker sees it the instant it is set, and so a caller can read it
+  // straight after `await start()` without waiting a render.
+  const blockedRef = useRef(false);
+
   const patch = useCallback((path: string, next: Partial<UploadItem>) => {
     setItems((prev) =>
       prev.map((i) => (i.path === path ? { ...i, ...next } : i))
@@ -182,6 +188,8 @@ export function useUpload() {
             fileSize: entry.file.size,
           }),
         });
+        const limit = await readPlanLimit(presignRes);
+        if (limit) throw new PlanLimitError(limit);
         if (!presignRes.ok) throw new Error('Could not get an upload URL');
         const { fileId, presignedUrl, storageKey, variantPresignedUrl } = await presignRes.json();
 
@@ -271,6 +279,15 @@ export function useUpload() {
         patch(entry.path, { state: 'done', progress: 100 });
         return true;
       } catch (err) {
+        if (err instanceof PlanLimitError) {
+          patch(entry.path, { state: 'blocked' });
+          // One dialog per batch, however many workers hit the wall at once.
+          if (!blockedRef.current) {
+            blockedRef.current = true;
+            openUpgradeDialog(err.payload);
+          }
+          return false;
+        }
         console.error(`Upload failed for ${entry.path}`, err);
         patch(entry.path, { state: 'failed' });
         return false;
@@ -282,11 +299,17 @@ export function useUpload() {
   /** Run entries through the bounded pool. Resolves true only if all succeeded. */
   const runPool = useCallback(
     async (entries: FileWithPath[]): Promise<boolean> => {
+      // A fresh run, so a retry after freeing space is allowed to try again (and to
+      // re-open the dialog if it hits the limit again).
+      blockedRef.current = false;
       const queue = [...entries];
       const results: boolean[] = [];
 
       const worker = async () => {
         for (;;) {
+          // Storage is full: every further presign would be refused too, so stop
+          // pulling files instead of sending the rest of the batch to the wall.
+          if (blockedRef.current) return;
           const next = queue.shift();
           if (!next) return;
           results.push(await uploadOne(next));
@@ -297,9 +320,15 @@ export function useUpload() {
         Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker)
       );
 
+      // Whatever was never started is not a failure, it is just not uploaded.
+      if (blockedRef.current) {
+        for (const left of queue) patch(left.path, { state: 'blocked' });
+        results.push(false);
+      }
+
       return results.every(Boolean);
     },
-    [uploadOne]
+    [uploadOne, patch]
   );
 
   /** Upload everything in a bounded pool. Resolves true only if all succeeded. */
@@ -327,7 +356,7 @@ export function useUpload() {
   );
 
   /**
-   * Re-run ONLY the files that failed.
+   * Re-run ONLY the files that did not land — failed, or blocked by a full plan.
    *
    * The reason this exists rather than calling start() again: start() resets every
    * item to 'pending' and re-uploads the whole array, so recovering from one failure
@@ -337,7 +366,7 @@ export function useUpload() {
    */
   const retryFailed = useCallback(async (): Promise<boolean> => {
     const failed = itemsRef.current
-      .filter((i) => i.state === 'failed')
+      .filter((i) => i.state === 'failed' || i.state === 'blocked')
       .map((i) => filesRef.current.get(i.path))
       .filter((f): f is FileWithPath => Boolean(f));
     if (failed.length === 0) return true;
@@ -362,7 +391,26 @@ export function useUpload() {
 
   const allDone = items.length > 0 && items.every((i) => i.state === 'done');
   const anyFailed = items.some((i) => i.state === 'failed');
+  const anyBlocked = items.some((i) => i.state === 'blocked');
   const doneCount = items.filter((i) => i.state === 'done').length;
 
-  return { items, start, retry, retryFailed, reset, allDone, anyFailed, doneCount };
+  /**
+   * Whether the last run stopped on a plan limit. Reads the ref, not state, so it
+   * is correct immediately after `await start()` / `await retryFailed()` — the
+   * `anyBlocked` above lags a render and is for rendering only.
+   */
+  const wasBlocked = useCallback(() => blockedRef.current, []);
+
+  return {
+    items,
+    start,
+    retry,
+    retryFailed,
+    reset,
+    allDone,
+    anyFailed,
+    anyBlocked,
+    wasBlocked,
+    doneCount,
+  };
 }
