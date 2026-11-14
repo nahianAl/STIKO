@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
-import { optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
-import { headObjectSize } from '@/lib/s3';
+import { isOptimizableFilename, optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
+import { deleteObjects, headObjectSize } from '@/lib/s3';
 import { isDeclaredFileSize } from '@/lib/planLimits';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
@@ -26,9 +27,10 @@ export async function POST(request: NextRequest) {
   // could attach a file row to any version. A version id is an identifier, not
   // a capability — resolve it to a package and check the caller may upload there.
   const versionRows = await sql`
-    SELECT po.id AS "portalId", po.project_id AS "projectId"
+    SELECT po.id AS "portalId", po.project_id AS "projectId", pr.owner_id AS "ownerId"
     FROM versions v
     JOIN portals po ON po.id = v.portal_id
+    JOIN projects pr ON pr.id = po.project_id
     WHERE v.id = ${versionId}
   `;
   if (!versionRows[0]) {
@@ -86,6 +88,26 @@ export async function POST(request: NextRequest) {
   }
   if (storedSize === null) {
     return NextResponse.json({ error: 'The upload was not found in storage' }, { status: 400 });
+  }
+
+  // The plan check again, on the bytes R2 actually holds. The presign check
+  // reserves nothing, so without this a script — or several presigns made
+  // before any of them completed — could each pass against the same free
+  // space and register far more than the plan allows (verified: 6 GiB on a
+  // 2 GiB plan). Checked against the OWNER's plan, as the presign is.
+  //
+  // A refused object is deleted rather than left for the purge: nothing would
+  // ever reference it, and it is bytes the owner was just told they lack. The
+  // variant is deleted whenever the file type has one, whatever the body
+  // claims — deleting a key that does not exist is a no-op. deleteObjects logs
+  // a failed delete and never throws, so the refusal still reaches the client.
+  const refusal = await storageLimitRefusal(versionRows[0].ownerId, session.user.id, storedSize);
+  if (refusal) {
+    await deleteObjects([
+      storageKey,
+      isOptimizableFilename(filename) ? optimizedVariantKey(storageKey) : null,
+    ]);
+    return planLimitResponse(refusal);
   }
 
   // Derived, never accepted from the caller — see the security note in this task.

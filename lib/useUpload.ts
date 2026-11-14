@@ -165,7 +165,7 @@ export function useUpload() {
   // reset of blockedRef, and only a running pool makes "publish now" unsafe.
   const activePoolsRef = useRef(0);
 
-  // Set when a presign comes back 402 (storage full). A ref rather than state so
+  // Set when a presign or a complete comes back 402 (storage full). A ref rather than state so
   // every pool worker sees it the instant it is set, and so a caller can read it
   // straight after `await start()` without waiting a render.
   const blockedRef = useRef(false);
@@ -275,6 +275,13 @@ export function useUpload() {
             hasOptimizedVariant,
           }),
         });
+        // The server re-checks the plan on the stored size and, when it refuses,
+        // has already deleted the object. Same handling as a 402 from the
+        // presign: 'blocked', not 'failed', and one dialog per batch. A retry
+        // re-runs uploadOne from the presign, so it never re-completes a key
+        // that no longer exists.
+        const completeLimit = await readPlanLimit(completeRes);
+        if (completeLimit) throw new PlanLimitError(completeLimit);
         if (!completeRes.ok) throw new Error('Could not register the file');
 
         // DWG/DXF: start the PDF conversion now so it is usually ready before anyone opens
