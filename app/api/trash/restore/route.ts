@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { restoreFromTrash } from '@/lib/trashQueries';
+import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
+import {
+  projectOwnerForRestore,
+  restoreFromTrash,
+  revivedProjectOwnerForPackageRestore,
+} from '@/lib/trashQueries';
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -25,6 +30,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // A package whose project is also trashed brings that project back, so
+    // both kinds can be a project returning from the trash. Restoring into a
+    // live project resolves to null and stays ungated.
+    const ownerId =
+      kind === 'project'
+        ? await projectOwnerForRestore(session.user.id, id)
+        : await revivedProjectOwnerForPackageRestore(session.user.id, id);
+    // null falls through: restoreFromTrash returns 'not-found' (or restores
+    // into a live project) and the existing behaviour applies, so this cannot
+    // be used to probe.
+    if (ownerId) {
+      const refusal = await projectLimitRefusal(ownerId, session.user.id);
+      if (refusal) return planLimitResponse(refusal);
+    }
+
     const outcome = await restoreFromTrash(session.user.id, kind, id);
     if (outcome === 'not-found') {
       // Covers gone, not yours, and expired — kept indistinguishable so this

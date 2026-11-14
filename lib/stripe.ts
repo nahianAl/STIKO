@@ -1,10 +1,13 @@
 import 'server-only';
 import Stripe from 'stripe';
 import { sql } from '@/lib/db';
+import { planFor, type PlanId } from '@/lib/plans';
 import {
   PRICE_LOOKUP_KEYS,
   decideBillingUpdate,
+  summarizeSubscription,
   type BillingInterval,
+  type SubscriptionFacts,
 } from '@/lib/billing';
 
 /**
@@ -77,6 +80,16 @@ export async function getUserBilling(userId: string): Promise<UserBillingRow | n
     FROM users WHERE id = ${userId}
   `;
   return (rows[0] as UserBillingRow | undefined) ?? null;
+}
+
+/**
+ * Just the plan. Reads only users.plan, which predates the billing columns, so
+ * it still works when migration 018 is missing; undefined if there is no such user.
+ */
+export async function getUserPlanId(userId: string): Promise<PlanId | undefined> {
+  const rows = await sql`SELECT plan FROM users WHERE id = ${userId}`;
+  const row = rows[0] as { plan: string } | undefined;
+  return row ? planFor(row.plan).id : undefined;
 }
 
 /**
@@ -160,4 +173,24 @@ export async function syncSubscription(
     WHERE id = ${user.id}
   `;
   console.info(`[stripe] user ${user.id} → ${decision.plan} (${sub.id} ${sub.status})`);
+}
+
+/** Longest the Plan & billing page waits on Stripe before showing the page without renewal facts. */
+const SUBSCRIPTION_LOOKUP_TIMEOUT_MS = 3000;
+
+/**
+ * Renewal facts for the Plan & billing page, read live from Stripe.
+ *
+ * Bounded on purpose: no retries and a short timeout, because the caller
+ * treats failure as "no renewal line" and a slow Stripe must not hold the
+ * page. The mapping itself (period end on the item, cancel flags) is the pure
+ * summarizeSubscription in lib/billing.ts.
+ */
+export async function subscriptionSummary(subscriptionId: string): Promise<SubscriptionFacts> {
+  const sub = await stripe().subscriptions.retrieve(
+    subscriptionId,
+    {},
+    { timeout: SUBSCRIPTION_LOOKUP_TIMEOUT_MS, maxNetworkRetries: 0 }
+  );
+  return summarizeSubscription(sub);
 }

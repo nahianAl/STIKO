@@ -374,7 +374,10 @@ export interface AccountUsage {
  *   - Converted derivatives (files.converted_storage_key) do NOT. No byte size
  *     is recorded for them anywhere, and they are bytes the product generated
  *     rather than bytes the user uploaded.
- *   - Markup snapshots (comments.snapshot_url) do NOT, same reason.
+ *   - Markup snapshots (comments.snapshot_url) do NOT, same reason. POST
+ *     /api/comments refuses a storage-key snapshotUrl outright (snapshots are
+ *     sent as attachments, which ARE counted), so nothing new can park bytes
+ *     there uncounted; only legacy rows can hold one.
  *
  * So the figure is smaller than the true S3 footprint, on purpose: the number
  * on screen should be one the user can act on by deleting their own content.
@@ -388,15 +391,19 @@ export interface AccountUsage {
  * counts here — so its bytes stay counted, just moved into the trash figure
  * instead of the live one.
  *
- * Every byte counted here is client-asserted, not verified. files.file_size
- * is written straight from the request body in app/api/files/complete/route.ts,
- * and comments.attachments[].size is written straight from the POST body in
- * app/api/comments/route.ts (that route validates storageKey, not size). A
- * client can report any figure it likes for either. Harmless for a readout —
- * a user can only mislead themselves — but if this ever feeds ENFORCEMENT
- * (blocking an upload, gating a plan) rather than just a display, whatever
- * does that must verify the bytes against R2 first, or a caller can mint
- * unlimited quota by lying about `size`.
+ * Every byte counted here is verified against R2 at write time, because this
+ * figure feeds ENFORCEMENT (the Free plan's storage limit, lib/planGate.ts),
+ * not just a display. Both sizes are recorded from a HEAD on the object, never
+ * from the request body:
+ *   - files.file_size: app/api/files/complete/route.ts (headObjectSize). The
+ *     upload route signed the approved length into the PUT URL, which bounds
+ *     the stored object; the claim is trusted only when the HEAD itself fails.
+ *   - comments.attachments[].size: app/api/comments/route.ts POST
+ *     (headObjectSize on each attachment; a missing object is a 400, a failed
+ *     HEAD a 503). Without that, a caller could presign 25 MiB, PUT 25 MiB and
+ *     post the comment claiming 1 byte.
+ * Rows written before that verification existed still hold whatever their
+ * client claimed.
  */
 export async function getAccountUsage(userId: string): Promise<AccountUsage> {
   const rows = await sql`
@@ -483,4 +490,51 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
       max: plan.maxProjects,
     },
   };
+}
+
+/**
+ * The bytes getAccountUsage counts for ONE package: its files' sizes plus the
+ * sizes of the attachments on comments under those files, trashed or not (the
+ * meter counts trashed bytes too, so a move must).
+ *
+ * What a move transfers: storage is charged to whoever owns the project a
+ * package currently sits in, so changing project_id hands all of this to the
+ * destination owner. app/api/portals/[id]/route.ts checks it against their plan
+ * first.
+ *
+ * KEEP IN STEP with the owned_files / attachment_bytes CTEs in getAccountUsage:
+ * the attachment-size expression below is a copy of theirs (the tagged `sql`
+ * cannot compose fragments), including the same two guards. A non-array
+ * comments.attachments must be normalised to '[]' BEFORE
+ * jsonb_array_elements() sees it, and a size is read as ::numeric, only when
+ * it is a JSONB number.
+ */
+export async function packageCountedBytes(portalId: string): Promise<number> {
+  const rows = await sql`
+    SELECT
+      COALESCE((
+        SELECT SUM(f.file_size)
+        FROM files f
+        JOIN versions v ON v.id = f.version_id
+        WHERE v.portal_id = ${portalId}
+      ), 0) AS "fileBytes",
+      COALESCE((
+        SELECT SUM(
+          CASE WHEN jsonb_typeof(att->'size') = 'number'
+               THEN (att->>'size')::numeric
+               ELSE 0 END
+        )
+        FROM comments c
+        JOIN files f ON f.id = c.file_id
+        JOIN versions v ON v.id = f.version_id
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(c.attachments) = 'array'
+               THEN c.attachments
+               ELSE '[]'::jsonb END
+        ) AS att
+        WHERE v.portal_id = ${portalId}
+      ), 0) AS "attachmentBytes"
+  `;
+  // BIGINT and NUMERIC aggregates arrive as strings from the HTTP driver.
+  return Number(rows[0]?.fileBytes ?? 0) + Number(rows[0]?.attachmentBytes ?? 0);
 }

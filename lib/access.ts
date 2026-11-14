@@ -158,6 +158,24 @@ export async function portalForFile(
 }
 
 /**
+ * Who owns the project a file lives in (projects.owner_id), or null if there is
+ * no such file. This is whose storage the file's bytes — and any comment
+ * attachment hung off it — are charged to, whoever uploaded them.
+ */
+export async function fileOwnerId(fileId: string): Promise<string | null> {
+  const rows = await sql`
+    SELECT pr.owner_id AS "ownerId"
+    FROM files f
+    JOIN versions v ON v.id = f.version_id
+    JOIN portals po ON po.id = v.portal_id
+    JOIN projects pr ON pr.id = po.project_id
+    WHERE f.id = ${fileId}
+    LIMIT 1
+  `;
+  return (rows[0]?.ownerId as string | undefined) ?? null;
+}
+
+/**
  * The caller's access to the package a file lives in, or null if they may not
  * see it — including when the file's version is outside their scope.
  */

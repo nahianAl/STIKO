@@ -5,6 +5,7 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
+import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 
 /**
  * Creating a project without going through the package flow.
@@ -52,12 +53,21 @@ export default function NewProjectModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed }),
       });
+      const limit = await readPlanLimit(res);
+      if (limit) {
+        setSaving(false);
+        onClose();
+        openUpgradeDialog(limit);
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       onCreated();
       onClose();
     } catch (err) {
-      // Staying open with the text intact is the only way the person can
-      // retry without retyping.
+      // Any failure other than a plan limit: staying open with the text intact
+      // is the only way the person can retry without retyping. (The plan-limit
+      // 402 returns above and closes the modal on purpose: a retry cannot
+      // succeed until they upgrade, and the upgrade dialog takes over.)
       console.error('Failed to create project', err);
       toast('Could not create the project.');
       setSaving(false);

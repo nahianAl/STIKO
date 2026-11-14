@@ -5,6 +5,8 @@ import { isOptimizableFilename, optimizedVariantKey, uploadStorageKey } from '@/
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
+import { isDeclaredFileSize } from '@/lib/planLimits';
 
 // Step 1: Request a presigned URL for direct S3 upload
 export async function POST(request: NextRequest) {
@@ -13,7 +15,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { versionId, filename, contentType } = await request.json();
+  const { versionId, filename, contentType, fileSize } = await request.json();
 
   if (!versionId || !filename) {
     return NextResponse.json(
@@ -22,13 +24,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Required, and signed into the PUT below, so the size the plan check
+  // approves is the size R2 accepts. Without it the check would be advisory.
+  // Zero is a real size (an empty file) and is signed as ContentLength: 0.
+  if (!isDeclaredFileSize(fileSize)) {
+    return NextResponse.json({ error: 'fileSize must be a non-negative integer' }, { status: 400 });
+  }
+
   // This route used to mint a presigned PUT for anyone who asked, so an
   // unauthenticated caller could write arbitrary objects into the bucket.
   // A version id is an identifier, not a capability.
   const versionRows = await sql`
-    SELECT po.id AS "portalId", po.project_id AS "projectId"
+    SELECT po.id AS "portalId", po.project_id AS "projectId", pr.owner_id AS "ownerId"
     FROM versions v
     JOIN portals po ON po.id = v.portal_id
+    JOIN projects pr ON pr.id = po.project_id
     WHERE v.id = ${versionId}
   `;
   if (!versionRows[0]) {
@@ -40,6 +50,11 @@ export async function POST(request: NextRequest) {
   if (!access.canUpload) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+
+  // The OWNER's storage, not the uploader's: collaborators are free, and the
+  // owner is the one who pays for the space.
+  const refusal = await storageLimitRefusal(versionRows[0].ownerId, session.user.id, fileSize);
+  if (refusal) return planLimitResponse(refusal);
 
   const fileId = uuidv4();
   // projectId and portalId come from the version, never from the body. Trusting
@@ -68,7 +83,7 @@ export async function POST(request: NextRequest) {
   // Widening this is not a widening of authority: the key is derived server-side
   // from the version, the caller was already authorized for canUpload above, and
   // the url can write that one object and nothing else.
-  const presignedUrl = await getUploadPresignedUrl(storageKey, contentType, 3600);
+  const presignedUrl = await getUploadPresignedUrl(storageKey, contentType, 3600, fileSize);
 
   // The optimized variant is presigned HERE, in the same call, rather than in a later
   // round trip. The server has just minted the id and built the original key, so it can

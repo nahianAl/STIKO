@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   validateAttachmentRequest,
+  validateCommentAttachmentList,
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_COMMENT,
 } from '../../lib/attachmentUpload.ts';
 
 const ok = (over) => ({
@@ -147,4 +149,77 @@ test('a valid request carries the fileId through for the access check', () => {
   });
   assert.equal(out.ok, true);
   assert.equal(out.fileId, 'file-123');
+});
+
+const att = (storageKey, over) => ({
+  storageKey,
+  filename: 'a.pdf',
+  contentType: 'application/pdf',
+  size: 1,
+  ...over,
+});
+
+test('no attachments, or something that is not a list, is an empty list', () => {
+  for (const input of [undefined, null, [], 'x', 5, {}]) {
+    assert.deepEqual(validateCommentAttachmentList(input), { ok: true, list: [] });
+  }
+});
+
+test('a list of distinct attachment keys is accepted and returned as is', () => {
+  const list = [
+    att('comment-attachments/a.pdf'),
+    att('comment-attachments/b.png', { filename: 'b.png' }),
+    att('snapshots/c.jpg'),
+  ];
+  assert.deepEqual(validateCommentAttachmentList(list), { ok: true, list });
+});
+
+test('exactly the cap is accepted and one more is refused', () => {
+  const make = (n) => Array.from({ length: n }, (_, i) => att(`comment-attachments/${i}.pdf`));
+  assert.equal(validateCommentAttachmentList(make(MAX_ATTACHMENTS_PER_COMMENT)).ok, true);
+  assert.deepEqual(validateCommentAttachmentList(make(MAX_ATTACHMENTS_PER_COMMENT + 1)), {
+    ok: false,
+    reason: 'too_many',
+  });
+});
+
+test('the count is checked before the entries are looked at', () => {
+  // Otherwise a request of thousands of junk entries is walked end to end first.
+  const junk = Array.from({ length: MAX_ATTACHMENTS_PER_COMMENT + 1 }, () => 'not an object');
+  assert.deepEqual(validateCommentAttachmentList(junk), { ok: false, reason: 'too_many' });
+});
+
+test('the same key twice in one comment is refused', () => {
+  assert.deepEqual(
+    validateCommentAttachmentList([
+      att('comment-attachments/a.pdf'),
+      att('comment-attachments/b.pdf'),
+      att('comment-attachments/a.pdf', { filename: 'renamed.pdf' }),
+    ]),
+    { ok: false, reason: 'duplicate' }
+  );
+});
+
+test('an entry that does not name a stored comment object is refused', () => {
+  for (const bad of [
+    att('https://example.com/x.png'),
+    att('http://example.com/x.png'),
+    att('data:image/png;base64,AAAA'),
+    att('uploads/p1/k1/v1/f1.step'),
+    att('anything/else'),
+    att(''),
+    att(undefined),
+    att(42),
+    att(null),
+    null,
+    'comment-attachments/a.pdf',
+    42,
+    [],
+  ]) {
+    assert.deepEqual(
+      validateCommentAttachmentList([att('comment-attachments/ok.pdf'), bad]),
+      { ok: false, reason: 'invalid_key' },
+      JSON.stringify(bad)
+    );
+  }
 });

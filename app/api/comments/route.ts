@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getCommentAssetPresignedUrl } from '@/lib/s3';
-import { getFileAccess } from '@/lib/access';
-import { isAllowedCommentKey } from '@/lib/storageKeys';
+import { getCommentAssetPresignedUrl, headObjectSize } from '@/lib/s3';
+import { fileOwnerId, getFileAccess } from '@/lib/access';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
+import { isAllowedCommentKey, isCommentStorageKey } from '@/lib/storageKeys';
+import {
+  MAX_ATTACHMENTS_PER_COMMENT,
+  validateCommentAttachmentList,
+} from '@/lib/attachmentUpload';
 import { ensureCommentColumns } from '@/lib/commentColumns';
 import { mentionableUsers } from '@/lib/mentionable';
 import { notifyMentions } from '@/lib/mentionNotify';
@@ -133,21 +138,87 @@ export async function POST(request: NextRequest) {
   // Both of these are stored object keys, and deleting a comment's file now
   // deletes what they name. A comment that names a file object could destroy
   // it, so each is held to its own prefix.
+  //
+  // A snapshot may not be a stored key at all. getAccountUsage never counts
+  // snapshot_url, and /api/comments/attachments presigns up to 25 MiB under the
+  // same comment-attachments/ prefix, so a presigned attachment (which passes
+  // the storage gate) could be PUT and then posted as the snapshot: stored,
+  // downloadable, uncounted. No client sends a stored key here — the portal
+  // composers send markup as attachments, which are counted — so it is refused
+  // rather than verified. A data:/http snapshot is not a stored object and is
+  // accepted exactly as before.
+  if (snapshotUrl != null && isCommentStorageKey(String(snapshotUrl))) {
+    return NextResponse.json(
+      { error: 'snapshotUrl must not be a storage key — send snapshots as attachments' },
+      { status: 400 }
+    );
+  }
   if (snapshotUrl != null && !isAllowedCommentKey(String(snapshotUrl))) {
     return NextResponse.json({ error: 'Invalid snapshot reference' }, { status: 400 });
   }
-  const attachmentList = Array.isArray(attachments) ? attachments : [];
-  if (
-    attachmentList.some(
-      (att) => !att?.storageKey || !isAllowedCommentKey(String(att.storageKey))
-    )
-  ) {
-    return NextResponse.json({ error: 'Invalid attachment reference' }, { status: 400 });
+  // Count, shape and duplicates are settled here, before anything touches R2:
+  // the HEADs below fan out once per entry. Every entry must name a stored
+  // comment object: isAllowedCommentKey lets a data:/http string through (right
+  // for a snapshot), but one has nothing in the bucket to HEAD.
+  const listCheck = validateCommentAttachmentList(attachments);
+  if (!listCheck.ok) {
+    const message = {
+      too_many: `A comment can have at most ${MAX_ATTACHMENTS_PER_COMMENT} attachments`,
+      duplicate: 'The same attachment is listed more than once',
+      invalid_key: 'Invalid attachment reference',
+    }[listCheck.reason];
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+  const attachmentList = listCheck.list;
+
+  // `size` is what getAccountUsage sums into the OWNER's storage, and the body
+  // is the one place a caller could still set it freely: presign 25 MiB, PUT
+  // 25 MiB, then post the comment claiming 1 byte. So the stored size is never
+  // the claimed one — each attachment is HEADed and gets the size R2 reports.
+  //
+  // A missing object is the caller's error (400). A HEAD that fails for any
+  // other reason is ours, and the claim is not a safe stand-in here (unlike
+  // /api/files/complete, nothing bounds it any more): 503, and the client may
+  // retry. The HEADs run in parallel.
+  let verifiedAttachments: unknown[];
+  let attachedBytes = 0;
+  try {
+    const sizes = await Promise.all(
+      attachmentList.map((att) => headObjectSize(att.storageKey))
+    );
+    if (sizes.some((size) => size === null)) {
+      return NextResponse.json(
+        { error: 'An attachment was not found in storage' },
+        { status: 400 }
+      );
+    }
+    verifiedAttachments = attachmentList.map((att, i) => ({ ...att, size: sizes[i] }));
+    attachedBytes = sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0);
+  } catch (err) {
+    console.error('[comments] could not verify attachment sizes against storage', err);
+    return NextResponse.json(
+      { error: 'Could not verify the attachments. Please try again.' },
+      { status: 503 }
+    );
+  }
+
+  // Charge the bytes to the owner of the file THIS comment hangs off. The
+  // presign route checked the owner of the fileId it was given, but the key it
+  // returns is a bare comment-attachments/<uuid> tied to no project, so a caller
+  // could presign through a project with room and attach here, on one without.
+  // Only now are the real sizes known; nothing is counted until the INSERT, so
+  // this is usage + these bytes, the same arithmetic as the presign check.
+  if (attachedBytes > 0) {
+    const ownerId = await fileOwnerId(fileId);
+    // getFileAccess resolved this file above; a missing owner means it vanished.
+    if (!ownerId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const refusal = await storageLimitRefusal(ownerId, session.user.id, attachedBytes);
+    if (refusal) return planLimitResponse(refusal);
   }
 
   // The author is the session, never a client-supplied string.
   const resolvedAuthor = session.user.name || session.user.email || 'Someone';
-  const attachmentsJson = JSON.stringify(attachments ?? []);
+  const attachmentsJson = JSON.stringify(verifiedAttachments);
 
   // The ids are a claim, not a fact. Each survives only if the server's own
   // list says that person can open this file AND their @label is in the text.

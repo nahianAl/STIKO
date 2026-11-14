@@ -1,4 +1,5 @@
 import type { CommentAttachment } from '@/lib/types';
+import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 
 /**
  * Presign, PUT to S3, and return the attachment record.
@@ -24,6 +25,11 @@ export async function uploadFile(
     }),
   });
 
+  const limit = await readPlanLimit(res);
+  if (limit) {
+    openUpgradeDialog(limit);
+    throw new PlanLimitError(limit);
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? `Could not prepare the upload (${res.status})`);

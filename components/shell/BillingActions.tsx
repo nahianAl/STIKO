@@ -1,13 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import type { BillingAction, BillingInterval } from '@/lib/billing';
+import type { BillingStatusPayload } from '@/lib/billing';
+import { startCheckout, openPortal, useResetOnPageShow } from '@/components/billing/checkout';
+import { formatBytes } from '@/lib/design';
+import { PLANS } from '@/lib/plans';
 
-export interface BillingStatusPayload {
-  action: BillingAction;
-  hasBillingHistory?: boolean;
-  prices?: Record<BillingInterval, { perMonth: string; note: string }>;
-}
+// The payload now lives in lib/billing.ts; re-exported so AvatarMenu's import keeps working.
+export type { BillingStatusPayload } from '@/lib/billing';
 
 /**
  * Upgrade / Manage billing in the account menu. Both hand off to a Stripe
@@ -17,20 +17,16 @@ export default function BillingActions({ status }: { status: BillingStatusPayloa
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Back from Stripe restores the page mid-"Opening…".
+  useResetOnPageShow(() => setBusy(null));
+
   if (!status || status.action === 'none') return null;
 
-  async function go(endpoint: string, key: string, body?: object) {
+  async function go(key: string, run: () => Promise<void>) {
     setBusy(key);
     setError(null);
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.url) throw new Error(data.error ?? 'Something went wrong.');
-      window.location.assign(data.url);
+      await run();
       // Leave the spinner on: the page is navigating away.
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
@@ -41,7 +37,7 @@ export default function BillingActions({ status }: { status: BillingStatusPayloa
   if (status.action === 'manage') {
     return (
       <div className="border-t border-stiko-border p-2">
-        <MenuButton onClick={() => go('/api/billing/portal', 'portal')} busy={busy === 'portal'}>
+        <MenuButton onClick={() => go('portal', openPortal)} busy={busy === 'portal'}>
           Manage billing
         </MenuButton>
         {error && <ErrorLine text={error} />}
@@ -53,13 +49,13 @@ export default function BillingActions({ status }: { status: BillingStatusPayloa
   return (
     <div className="border-t border-stiko-border px-4 py-3">
       <div className="text-[12.5px] font-bold text-stiko-ink">Upgrade to Standard</div>
-      <div className="mb-[10px] text-[11.5px] text-stiko-muted">100 GB storage, unlimited projects</div>
+      <div className="mb-[10px] text-[11.5px] text-stiko-muted">{formatBytes(PLANS.standard.storageBytes)} storage, unlimited projects</div>
       <div className="grid grid-cols-2 gap-2">
         {(['month', 'year'] as const).map((interval) => (
           <button
             key={interval}
             disabled={busy !== null}
-            onClick={() => go('/api/billing/checkout', interval, { interval })}
+            onClick={() => go(interval, () => startCheckout(interval))}
             className="rounded-[10px] border border-stiko-border px-3 py-[9px] text-left transition hover:border-stiko-primary hover:bg-stiko-tint disabled:opacity-60"
           >
             <div className="text-[10px] font-extrabold uppercase tracking-label text-stiko-primary">
@@ -75,7 +71,7 @@ export default function BillingActions({ status }: { status: BillingStatusPayloa
       {status.hasBillingHistory && (
         <button
           disabled={busy !== null}
-          onClick={() => go('/api/billing/portal', 'portal')}
+          onClick={() => go('portal', openPortal)}
           className="mt-2 text-[11.5px] font-semibold text-stiko-secondary hover:text-stiko-ink"
         >
           {busy === 'portal' ? 'Opening…' : 'Billing history'}

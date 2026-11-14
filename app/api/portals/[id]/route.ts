@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess, isProjectMember } from '@/lib/access';
+import { packageCountedBytes } from '@/lib/queries';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 
 export async function GET(
   _request: NextRequest,
@@ -66,6 +68,30 @@ export async function PATCH(
         { status: 403 }
       );
     }
+
+    // Storage is charged to the OWNER of the project a package sits in, so a move
+    // to a project with a different owner hands that owner every byte of the
+    // package. Without this check a Free user could upload into a helper's
+    // project (their quota, not theirs) and then move the package into their
+    // own. Same owner: nothing changes hands. A move cannot change the
+    // destination's project count (the destination is a live project, which
+    // isProjectMember above requires, and no project is created or revived), so
+    // there is no project limit to check.
+    const owners = await sql`
+      SELECT src.owner_id AS "srcOwnerId", dest.owner_id AS "destOwnerId"
+      FROM portals po
+      JOIN projects src ON src.id = po.project_id
+      JOIN projects dest ON dest.id = ${projectId}
+      WHERE po.id = ${params.id}
+    `;
+    if (!owners[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const { srcOwnerId, destOwnerId } = owners[0] as { srcOwnerId: string; destOwnerId: string };
+    if (destOwnerId !== srcOwnerId) {
+      const packageBytes = await packageCountedBytes(params.id);
+      const refusal = await storageLimitRefusal(destOwnerId, session.user.id, packageBytes);
+      if (refusal) return planLimitResponse(refusal);
+    }
+
     await sql`UPDATE portals SET project_id = ${projectId} WHERE id = ${params.id}`;
   }
   if (linkAccess !== undefined) {

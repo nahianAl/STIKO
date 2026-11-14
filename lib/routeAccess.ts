@@ -68,6 +68,10 @@ export function routeDecision(pathname: string, isAuthenticated: boolean): Route
   // and refuses anything unsigned. Exact match for the same reason as above.
   if (pathname === '/api/billing/webhook') return 'pass';
 
+  // Visitors compare plans before they have an account. Exact, for the same
+  // prefix reason as above.
+  if (pathname === '/pricing') return 'pass';
+
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return 'pass';
 
   // /portal/[id] is public (viewer access) — no auth needed

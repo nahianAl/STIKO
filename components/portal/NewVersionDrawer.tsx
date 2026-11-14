@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { useUpload } from '@/lib/useUpload';
+import { notUploadedMessage } from '@/lib/uploadMessages';
 import { submissionBadge } from '@/lib/submissionName';
 
 /**
@@ -142,10 +143,13 @@ export function NewVersionDrawer({
       const ok = started
         ? await upload.retryFailed()
         : await upload.start(files, { versionId, projectId, portalId });
-      if (!ok) {
-        setError(
-          'Some files didn’t upload. Retry them — nothing is published until they all land.'
-        );
+      // `ok` only speaks for the pool this call ran. A per-row retry is not a pool
+      // and does not set `busy`, so one can still be in flight here — publishing
+      // then would leave its file out (publish counts rows, not completeness). So
+      // also require every file to be done; allLanded() reads the hook's ref,
+      // which is current on the line after the await.
+      if (!ok || !upload.allLanded()) {
+        setError(notUploadedMessage(upload.wasBlocked()));
         setBusy(false);
         return;
       }
@@ -197,7 +201,7 @@ export function NewVersionDrawer({
           <Button onClick={publish} disabled={busy}>
             {busy
               ? 'Publishing…'
-              : upload.anyFailed
+              : upload.anyFailed || upload.anyBlocked
                 ? 'Retry failed files'
                 : `Publish submission ${nextVersionNumber}`}
           </Button>
@@ -221,7 +225,9 @@ export function NewVersionDrawer({
                   // banner and letting the footer button re-render live is what
                   // actually works; the footer reads current state every render.
                   const ok = await upload.retry(path);
-                  if (ok) setError(null);
+                  // Not while other rows are still failed or blocked: this row
+                  // landing must not wipe a storage-full banner that still applies.
+                  if (ok && !upload.hasFailedOrBlocked()) setError(null);
                 }}
               />
             ))}

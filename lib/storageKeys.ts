@@ -114,6 +114,16 @@ export function uploadStorageKey(parts: {
  */
 export function isAllowedCommentKey(value: string): boolean {
   if (value.startsWith('http') || value.startsWith('data:')) return true;
+  return isCommentStorageKey(value);
+}
+
+/**
+ * A key that names a stored comment object (as opposed to an external URL or an
+ * inline data URI, which isAllowedCommentKey also lets through). These are the
+ * ones with bytes in the bucket, so they are the ones the server must HEAD to
+ * learn a real size rather than trust a claimed one.
+ */
+export function isCommentStorageKey(value: string): boolean {
   return (
     value.startsWith(SNAPSHOT_PREFIX) ||
     value.startsWith(COMMENT_ATTACHMENT_PREFIX)

@@ -4,6 +4,7 @@ import Providers from "./providers";
 import { manrope } from "@/lib/fonts";
 import { ToastProvider } from "@/components/ui/Toast";
 import { authProvider } from "@/lib/authProvider";
+import UpgradeDialogHost from "@/components/billing/UpgradeDialog";
 
 export const metadata: Metadata = {
   title: "stiko",
@@ -20,7 +21,10 @@ export default function RootLayout({
     <html lang="en" className={manrope.variable}>
       <body className="antialiased min-h-screen font-manrope">
         <Providers provider={authProvider()}>
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            {children}
+            <UpgradeDialogHost />
+          </ToastProvider>
         </Providers>
       </body>
     </html>

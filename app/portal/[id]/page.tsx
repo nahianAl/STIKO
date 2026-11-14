@@ -12,6 +12,8 @@ import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { usePortalActivity } from '@/components/portal/usePortalActivity';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
+import { MAX_ATTACHMENTS_PER_COMMENT } from '@/lib/attachmentUpload';
+import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
 import FocalLengthControl from '@/components/viewers/FocalLengthControl';
@@ -1989,6 +1991,13 @@ export default function PortalPage() {
   const handleComposerSubmit = async () => {
     if (!selectedFileId) return;
     if (!composerText.trim() && composerFiles.length === 0 && !pendingTag) return;
+    // The server refuses more than this, but only after every file had been
+    // uploaded; say so before any upload starts. Counts a markup snapshot too,
+    // which Done appends to composerFiles.
+    if (composerFiles.length > MAX_ATTACHMENTS_PER_COMMENT) {
+      setComposerError(`You can attach up to ${MAX_ATTACHMENTS_PER_COMMENT} files to a comment.`);
+      return;
+    }
     setSubmittingComposer(true);
     setComposerError(null);
     try {
@@ -2019,6 +2028,14 @@ export default function PortalPage() {
           mentions: composerMentions,
         }),
       });
+      // A 402 here is the storage check on the comment itself (the presign check
+      // only saw the file it was given). Same handling as a refused presign: the
+      // dialog explains it, the catch below stays silent, nothing is cleared.
+      const limit = await readPlanLimit(res);
+      if (limit) {
+        openUpgradeDialog(limit);
+        throw new PlanLimitError(limit);
+      }
       // fetch only rejects on a NETWORK failure, so without this an expired session
       // (401), a view-only role (403) or a server error all resolved normally and
       // fell through to the clears below — discarding the user's text, their
@@ -2035,6 +2052,10 @@ export default function PortalPage() {
       setCommentsRefreshKey((k) => k + 1);
       await fetchComments();
     } catch (err) {
+      // The upgrade dialog has already explained a plan-limit refusal, so no
+      // second message here. Nothing is cleared (see below): the markup
+      // snapshot in composerFiles, the text and the pin all survive.
+      if (err instanceof PlanLimitError) return;
       console.error('Failed to post comment:', err);
       // Deliberately clears nothing: the text, the attachments and the pin all
       // survive so the user can send again without redoing the markup.

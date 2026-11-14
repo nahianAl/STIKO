@@ -4,6 +4,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthSession } from '@/lib/authClient';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
+import { MAX_ATTACHMENTS_PER_COMMENT } from '@/lib/attachmentUpload';
+import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 import { messageForStatus } from '@/lib/submitErrors';
 import { buildTagNumbers } from '@/lib/tagNumbers';
 import { paletteForComment } from '@/lib/commentColors';
@@ -128,6 +130,12 @@ function CommentForm({
 
   const handleSubmit = async () => {
     if (!text.trim() && pendingFiles.length === 0) return;
+    // The server refuses more than this, but only after every file had been
+    // uploaded; say so before any upload starts.
+    if (pendingFiles.length > MAX_ATTACHMENTS_PER_COMMENT) {
+      setError(`You can attach up to ${MAX_ATTACHMENTS_PER_COMMENT} files to a comment.`);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -155,6 +163,14 @@ function CommentForm({
           mentions: mentionIds,
         }),
       });
+      // A 402 here is the storage check on the comment itself (the presign check
+      // only saw the file it was given). Same handling as a refused presign: the
+      // dialog explains it, the catch below stays silent, nothing is cleared.
+      const limit = await readPlanLimit(res);
+      if (limit) {
+        openUpgradeDialog(limit);
+        throw new PlanLimitError(limit);
+      }
       // fetch only rejects on a NETWORK failure, so without this an expired
       // session (401), a view-only role (403) or a server error all resolved
       // normally and fell through to the clears below — wiping the user's words
@@ -168,6 +184,10 @@ function CommentForm({
       setPendingFiles([]);
       onSubmitted();
     } catch (err) {
+      // The upgrade dialog has already explained a plan-limit refusal, so no
+      // second message here. Text and pendingFiles stay as they are (see below):
+      // the person can remove the attachment and send, or upgrade and retry.
+      if (err instanceof PlanLimitError) return;
       console.error('Failed to post comment:', err);
       // Deliberately does NOT clear text or pendingFiles: whatever the user wrote
       // stays on screen so they can send it again.

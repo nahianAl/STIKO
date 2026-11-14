@@ -71,3 +71,9 @@ test('the Stripe webhook is public, the rest of billing is not', () => {
   assert.equal(routeDecision('/api/billing/portal', false), 'login');
   assert.equal(routeDecision('/api/billing/webhook-other', false), 'login');
 });
+
+test('/pricing is public, exactly', () => {
+  assert.equal(routeDecision('/pricing', false), 'pass');
+  assert.equal(routeDecision('/pricing-admin', false), 'login');
+  assert.equal(routeDecision('/pricingx', false), 'login');
+});

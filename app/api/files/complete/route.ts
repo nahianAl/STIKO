@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
-import { optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
+import { isOptimizableFilename, optimizedVariantKey, uploadStorageKey } from '@/lib/storageKeys';
+import { deleteObjects, headObjectSize } from '@/lib/s3';
+import { isDeclaredFileSize } from '@/lib/planLimits';
+import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
@@ -24,9 +27,10 @@ export async function POST(request: NextRequest) {
   // could attach a file row to any version. A version id is an identifier, not
   // a capability — resolve it to a package and check the caller may upload there.
   const versionRows = await sql`
-    SELECT po.id AS "portalId", po.project_id AS "projectId"
+    SELECT po.id AS "portalId", po.project_id AS "projectId", pr.owner_id AS "ownerId"
     FROM versions v
     JOIN portals po ON po.id = v.portal_id
+    JOIN projects pr ON pr.id = po.project_id
     WHERE v.id = ${versionId}
   `;
   if (!versionRows[0]) {
@@ -61,6 +65,68 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid storage key' }, { status: 400 });
   }
 
+  // A complete is for a file that is NOT registered yet. A replay for one that
+  // is (its fileId and storageKey are visible in GET /api/files) must stop here,
+  // before the plan check and long before any delete: the plan check would
+  // count that file twice — getAccountUsage already includes its row — refuse,
+  // and the refusal branch below would delete the LIVE object, leaving a listed
+  // row with no bytes. That would let anyone with canUpload destroy files
+  // without the delete route's permission check or its row-before-bytes order.
+  if (await isRegistered(fileId, storageKey)) {
+    return NextResponse.json({ error: 'This file is already registered' }, { status: 409 });
+  }
+
+  // Record what R2 holds, not what the client says. The PUT URL was signed
+  // with the approved length, so these normally agree; when the HEAD itself
+  // fails (not a 404), fall back to the claim rather than failing an upload
+  // that has already landed — the signed length still bounds the real size.
+  let storedSize: number | null;
+  try {
+    storedSize = await headObjectSize(storageKey);
+  } catch (err) {
+    console.error('[files/complete] HEAD failed, using the declared size', err);
+    // The claim is only a stand-in if it is a usable size, by the same rule the
+    // upload route applied when it signed it. Otherwise nothing here can be
+    // recorded honestly: this is a failure to verify, not a missing object, so
+    // 503 and let the client retry.
+    if (!isDeclaredFileSize(fileSize)) {
+      return NextResponse.json(
+        { error: 'Could not verify the upload. Please try again.' },
+        { status: 503 }
+      );
+    }
+    storedSize = fileSize;
+  }
+  if (storedSize === null) {
+    return NextResponse.json({ error: 'The upload was not found in storage' }, { status: 400 });
+  }
+
+  // The plan check again, on the bytes R2 actually holds. The presign check
+  // reserves nothing, so without this a script — or several presigns made
+  // before any of them completed — could each pass against the same free
+  // space and register far more than the plan allows (verified: 6 GiB on a
+  // 2 GiB plan). Checked against the OWNER's plan, as the presign is.
+  //
+  // A refused object is deleted rather than left for the purge: nothing would
+  // ever reference it, and it is bytes the owner was just told they lack. The
+  // variant is deleted whenever the file type has one, whatever the body
+  // claims — deleting a key that does not exist is a no-op. deleteObjects logs
+  // a failed delete and never throws, so the refusal still reaches the client.
+  const refusal = await storageLimitRefusal(versionRows[0].ownerId, session.user.id, storedSize);
+  if (refusal) {
+    // Again, just before deleting: a concurrent complete for the same file may
+    // have registered it since the check above. Narrows that window; the
+    // object is never deleted once a row points at it as far as this can see.
+    if (await isRegistered(fileId, storageKey)) {
+      return NextResponse.json({ error: 'This file is already registered' }, { status: 409 });
+    }
+    await deleteObjects([
+      storageKey,
+      isOptimizableFilename(filename) ? optimizedVariantKey(storageKey) : null,
+    ]);
+    return planLimitResponse(refusal);
+  }
+
   // Derived, never accepted from the caller — see the security note in this task.
   //
   // This is the other place in the codebase that assigns converted_storage_key (the other is
@@ -80,7 +146,7 @@ export async function POST(request: NextRequest) {
   // delete this file, so a caller must not be able to name someone else.
   const rows = await sql`
     INSERT INTO files (id, version_id, filename, storage_key, file_size, file_type, folder_path, converted_storage_key, uploaded_by)
-    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${fileSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey}, ${session.user.id})
+    VALUES (${fileId}, ${versionId}, ${filename}, ${storageKey}, ${storedSize}, ${fileType}, ${folderPath || null}, ${convertedStorageKey}, ${session.user.id})
     RETURNING id, version_id AS "versionId", filename, storage_key AS "storageKey",
               file_size AS "fileSize", file_type AS "fileType",
               conversion_status AS "conversionStatus",
@@ -94,4 +160,12 @@ export async function POST(request: NextRequest) {
   // file_size is BIGINT; pg-types parses it as a string (see the note in
   // app/api/files/route.ts), so it must be coerced to a number here too.
   return NextResponse.json({ ...file, fileSize: Number(file.fileSize) }, { status: 201 });
+}
+
+/** Whether a files row already claims this id or this object. */
+async function isRegistered(fileId: string, storageKey: string): Promise<boolean> {
+  const rows = await sql`
+    SELECT 1 FROM files WHERE id = ${fileId} OR storage_key = ${storageKey} LIMIT 1
+  `;
+  return rows.length > 0;
 }
