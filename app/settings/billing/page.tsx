@@ -7,7 +7,7 @@ import { ACCOUNT_RAIL } from '@/components/settings/accountRail';
 import UsageMeters, { type UsagePayload } from '@/components/shell/UsageMeters';
 import Button from '@/components/ui/Button';
 import { openPortal, startCheckout } from '@/components/billing/checkout';
-import type { BillingInterval, BillingStatusPayload } from '@/lib/billing';
+import { renewalLine, type BillingInterval, type BillingStatusPayload } from '@/lib/billing';
 import { PLANS } from '@/lib/plans';
 
 function formatDate(iso: string): string {
@@ -17,18 +17,23 @@ function formatDate(iso: string): string {
 /** Settings → Plan & billing. */
 export default function BillingSettings() {
   const [status, setStatus] = useState<BillingStatusPayload | null>(null);
+  const [statusFailed, setStatusFailed] = useState(false);
   const [usage, setUsage] = useState<UsagePayload | null>(null);
   const [usageFailed, setUsageFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // A failed status call is billing "off" as far as this page goes: the plan
-    // badge and meters still render, just without buttons.
-    fetch('/api/billing/status')
-      .then((r) => (r.ok ? r.json() : { action: 'none' }))
+    // This is the one surface that asks for renewal facts; the others skip the
+    // live Stripe call. A failed status call is billing "off" as far as this
+    // page goes: the plan badge and meters still render, just without buttons.
+    fetch('/api/billing/status?include=renewal')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then(setStatus)
-      .catch(() => setStatus({ action: 'none' }));
+      .catch(() => {
+        setStatus({ action: 'none' });
+        setStatusFailed(true);
+      });
     fetch('/api/me/usage')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then(setUsage)
@@ -52,13 +57,7 @@ export default function BillingSettings() {
   // then flips to Standard looks like a bug (AvatarMenu holds back the same way).
   const planLabel = usage?.plan.label ?? (status?.plan ? PLANS[status.plan].label : null);
 
-  let renewal: string | null = null;
-  if (sub?.renewsAt) {
-    const cadence = sub.interval === 'year' ? 'Yearly' : sub.interval === 'month' ? 'Monthly' : null;
-    renewal = sub.cancelAtPeriodEnd
-      ? `Cancels on ${formatDate(sub.renewsAt)}`
-      : `Renews on ${formatDate(sub.renewsAt)}${cadence ? ` · ${cadence}` : ''}`;
-  }
+  const renewal = renewalLine(sub, formatDate);
 
   return (
     <SettingsShell
@@ -92,18 +91,20 @@ export default function BillingSettings() {
         {status?.action === 'upgrade' && (
           <div className="flex flex-wrap gap-2">
             {(['month', 'year'] as BillingInterval[]).map((interval) => {
-              const perMonth = status.prices?.[interval].perMonth;
+              const price = status.prices?.[interval];
               return (
-                <Button
-                  key={interval}
-                  variant={interval === 'year' ? 'primary' : 'secondary'}
-                  disabled={busy !== null}
-                  onClick={() => run(interval, () => startCheckout(interval))}
-                >
-                  {busy === interval
-                    ? 'Opening…'
-                    : `Upgrade ${interval === 'month' ? 'monthly' : 'yearly'}${perMonth ? ` · ${perMonth}/mo` : ''}`}
-                </Button>
+                <div key={interval} className="flex flex-col items-start gap-1">
+                  <Button
+                    variant={interval === 'year' ? 'primary' : 'secondary'}
+                    disabled={busy !== null}
+                    onClick={() => run(interval, () => startCheckout(interval))}
+                  >
+                    {busy === interval
+                      ? 'Opening…'
+                      : `Upgrade ${interval === 'month' ? 'monthly' : 'yearly'}${price ? ` · ${price.perMonth}/mo` : ''}`}
+                  </Button>
+                  {price && <span className="px-1 text-[11.5px] text-stiko-muted">{price.note}</span>}
+                </div>
               );
             })}
             {status.hasBillingHistory && (
@@ -121,6 +122,10 @@ export default function BillingSettings() {
             </Button>
             <p className="mt-2 text-[11.5px] text-stiko-muted">Change plan, update your card, see invoices or cancel.</p>
           </div>
+        )}
+
+        {statusFailed && (
+          <p className="text-[12px] text-stiko-muted">Billing details are unavailable right now. Try again in a moment.</p>
         )}
 
         {error && <p className="text-[12px] text-red-600">{error}</p>}

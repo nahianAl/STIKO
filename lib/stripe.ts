@@ -1,12 +1,13 @@
 import 'server-only';
 import Stripe from 'stripe';
 import { sql } from '@/lib/db';
+import { planFor, type PlanId } from '@/lib/plans';
 import {
   PRICE_LOOKUP_KEYS,
   decideBillingUpdate,
-  isBillingInterval,
+  summarizeSubscription,
   type BillingInterval,
-  type BillingStatusPayload,
+  type SubscriptionFacts,
 } from '@/lib/billing';
 
 /**
@@ -79,6 +80,16 @@ export async function getUserBilling(userId: string): Promise<UserBillingRow | n
     FROM users WHERE id = ${userId}
   `;
   return (rows[0] as UserBillingRow | undefined) ?? null;
+}
+
+/**
+ * Just the plan. Reads only users.plan, which predates the billing columns, so
+ * it still works when migration 018 is missing; undefined if there is no such user.
+ */
+export async function getUserPlanId(userId: string): Promise<PlanId | undefined> {
+  const rows = await sql`SELECT plan FROM users WHERE id = ${userId}`;
+  const row = rows[0] as { plan: string } | undefined;
+  return row ? planFor(row.plan).id : undefined;
 }
 
 /**
@@ -164,28 +175,22 @@ export async function syncSubscription(
   console.info(`[stripe] user ${user.id} → ${decision.plan} (${sub.id} ${sub.status})`);
 }
 
+/** Longest the Plan & billing page waits on Stripe before showing the page without renewal facts. */
+const SUBSCRIPTION_LOOKUP_TIMEOUT_MS = 3000;
+
 /**
  * Renewal facts for the Plan & billing page, read live from Stripe.
  *
- * In API 2026-09-30 the period end lives on the subscription ITEM
- * (SubscriptionItem.current_period_end), not on the subscription: the
- * Subscription type in stripe-node v23 has no such field. A subscription with
- * no items has no period, so renewsAt is null rather than guessed.
+ * Bounded on purpose: no retries and a short timeout, because the caller
+ * treats failure as "no renewal line" and a slow Stripe must not hold the
+ * page. The mapping itself (period end on the item, cancel flags) is the pure
+ * summarizeSubscription in lib/billing.ts.
  */
-export async function subscriptionSummary(
-  subscriptionId: string
-): Promise<BillingStatusPayload['subscription']> {
-  const sub = await stripe().subscriptions.retrieve(subscriptionId);
-  const item = sub.items.data[0];
-  const periodEnd = item?.current_period_end ?? null;
-  const recurring = item?.price?.recurring?.interval;
-  return {
-    status: sub.status,
-    // Stripe types the interval as 'month' | 'year' | (string & {}); the guard narrows it.
-    interval: isBillingInterval(recurring) ? recurring : null,
-    renewsAt: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
-    // Either flag means the subscription ends: the portal sets one, a dashboard
-    // cancellation scheduled for a date sets the other.
-    cancelAtPeriodEnd: !!sub.cancel_at_period_end || sub.cancel_at != null,
-  };
+export async function subscriptionSummary(subscriptionId: string): Promise<SubscriptionFacts> {
+  const sub = await stripe().subscriptions.retrieve(
+    subscriptionId,
+    {},
+    { timeout: SUBSCRIPTION_LOOKUP_TIMEOUT_MS, maxNetworkRetries: 0 }
+  );
+  return summarizeSubscription(sub);
 }
