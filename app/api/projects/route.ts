@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
 
 export async function GET() {
   const session = await auth();
@@ -26,6 +27,10 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // The creator is always the owner, so owner and caller are the same person.
+  const refusal = await projectLimitRefusal(session.user.id, session.user.id);
+  if (refusal) return planLimitResponse(refusal);
 
   const { name } = await request.json();
   const id = uuidv4();

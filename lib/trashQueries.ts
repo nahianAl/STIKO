@@ -239,3 +239,27 @@ export async function restoreFromTrash(
   ]);
   return 'ok';
 }
+
+/**
+ * The owner of a trashed project the caller may restore, or null.
+ *
+ * Same scope as restoreFromTrash's project branch (still inside the retention
+ * window; owner or coordinator), so the plan gate never reveals a project the
+ * restore itself would 404 on. Restoring counts against the OWNER's project
+ * limit, not the coordinator's.
+ */
+export async function projectOwnerForRestore(userId: string, projectId: string): Promise<string | null> {
+  const cutoff = `${TRASH_RETENTION_DAYS} days`;
+  const rows = await sql`
+    SELECT pr.owner_id AS "ownerId"
+    FROM projects pr
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE pr.id = ${projectId}
+      AND pr.deleted_at IS NOT NULL
+      AND pr.deleted_at > now() - ${cutoff}::interval
+      AND (pr.owner_id = ${userId}
+           OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator'))
+  `;
+  return (rows[0]?.ownerId as string | undefined) ?? null;
+}

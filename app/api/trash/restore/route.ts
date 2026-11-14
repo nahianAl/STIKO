@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { restoreFromTrash } from '@/lib/trashQueries';
+import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
+import { projectOwnerForRestore, restoreFromTrash } from '@/lib/trashQueries';
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -25,6 +26,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (kind === 'project') {
+      const ownerId = await projectOwnerForRestore(session.user.id, id);
+      // null falls through: restoreFromTrash returns 'not-found' and the
+      // existing 404 copy applies, so this cannot be used to probe.
+      if (ownerId) {
+        const refusal = await projectLimitRefusal(ownerId, session.user.id);
+        if (refusal) return planLimitResponse(refusal);
+      }
+    }
+
     const outcome = await restoreFromTrash(session.user.id, kind, id);
     if (outcome === 'not-found') {
       // Covers gone, not yours, and expired — kept indistinguishable so this
