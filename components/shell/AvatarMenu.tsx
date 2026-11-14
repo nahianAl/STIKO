@@ -25,8 +25,10 @@ export default function AvatarMenu() {
   const id = session?.user?.id ?? 'me';
 
   // Fetched on first open, not on mount: this scans the user's files and
-  // comments, and most dashboard visits never open this menu. Held for the life
-  // of the mount afterwards — usage does not move fast enough to refetch.
+  // comments, and most dashboard visits never open this menu. (The dashboard's
+  // PlanBanner fetches it separately on load, but only for Free owners with
+  // limits on; this menu does not share that copy.) Held for the life of the
+  // mount afterwards — usage does not move fast enough to refetch.
   useEffect(() => {
     if (!open || requested.current) return;
     requested.current = true;

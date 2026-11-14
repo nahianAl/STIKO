@@ -6,8 +6,11 @@ import { getAccountUsage } from '@/lib/queries';
  * Storage and project usage for the signed-in account, with their plan.
  *
  * Kept out of /api/home deliberately: this scans the user's files and comments,
- * and the dashboard should not pay for it on every paint to populate something
- * only visible after a click. The account menu fetches this lazily on open.
+ * and most dashboard paints do not need it. Two callers: the account menu
+ * fetches it lazily on open, and the dashboard PlanBanner fetches it on load,
+ * but only for a Free account with limits on (it checks /api/billing/status
+ * first, so Standard accounts and billing-off deploys never run this query
+ * from the dashboard).
  */
 export async function GET() {
   const session = await auth();
