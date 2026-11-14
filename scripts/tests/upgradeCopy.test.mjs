@@ -112,7 +112,7 @@ test('an owner whose plan the payload does not name gets no Free or Standard cla
 
 test('the post-checkout toast claims Standard only when the plan says so', () => {
   assert.equal(checkoutReturnToast('standard'), "You're on Standard");
-  const pending = 'Payment received — your plan will update in a moment.';
+  const pending = 'Payment received — refresh in a moment to see Standard.';
   assert.equal(checkoutReturnToast('free'), pending);
   assert.equal(checkoutReturnToast(undefined), pending);
   assert.equal(checkoutReturnToast(null), pending);

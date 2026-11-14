@@ -65,6 +65,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid storage key' }, { status: 400 });
   }
 
+  // A complete is for a file that is NOT registered yet. A replay for one that
+  // is (its fileId and storageKey are visible in GET /api/files) must stop here,
+  // before the plan check and long before any delete: the plan check would
+  // count that file twice — getAccountUsage already includes its row — refuse,
+  // and the refusal branch below would delete the LIVE object, leaving a listed
+  // row with no bytes. That would let anyone with canUpload destroy files
+  // without the delete route's permission check or its row-before-bytes order.
+  if (await isRegistered(fileId, storageKey)) {
+    return NextResponse.json({ error: 'This file is already registered' }, { status: 409 });
+  }
+
   // Record what R2 holds, not what the client says. The PUT URL was signed
   // with the approved length, so these normally agree; when the HEAD itself
   // fails (not a 404), fall back to the claim rather than failing an upload
@@ -103,6 +114,12 @@ export async function POST(request: NextRequest) {
   // a failed delete and never throws, so the refusal still reaches the client.
   const refusal = await storageLimitRefusal(versionRows[0].ownerId, session.user.id, storedSize);
   if (refusal) {
+    // Again, just before deleting: a concurrent complete for the same file may
+    // have registered it since the check above. Narrows that window; the
+    // object is never deleted once a row points at it as far as this can see.
+    if (await isRegistered(fileId, storageKey)) {
+      return NextResponse.json({ error: 'This file is already registered' }, { status: 409 });
+    }
     await deleteObjects([
       storageKey,
       isOptimizableFilename(filename) ? optimizedVariantKey(storageKey) : null,
@@ -143,4 +160,12 @@ export async function POST(request: NextRequest) {
   // file_size is BIGINT; pg-types parses it as a string (see the note in
   // app/api/files/route.ts), so it must be coerced to a number here too.
   return NextResponse.json({ ...file, fileSize: Number(file.fileSize) }, { status: 201 });
+}
+
+/** Whether a files row already claims this id or this object. */
+async function isRegistered(fileId: string, storageKey: string): Promise<boolean> {
+  const rows = await sql`
+    SELECT 1 FROM files WHERE id = ${fileId} OR storage_key = ${storageKey} LIMIT 1
+  `;
+  return rows.length > 0;
 }

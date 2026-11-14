@@ -104,11 +104,12 @@ export function headline(p: PlanLimitPayload | null): { title: string; subtitle:
  * /api/billing/return lands on that URL on its failure paths too (a sync that
  * could not reach Stripe, a webhook not yet processed), so the param alone is
  * not proof. Only a plan the server confirms as Standard earns the claim.
+ * Nothing refetches the plan afterwards, so the fallback asks for a refresh.
  */
 export function checkoutReturnToast(plan: PlanId | null | undefined): string {
   return plan === 'standard'
     ? "You're on Standard"
-    : 'Payment received — your plan will update in a moment.';
+    : 'Payment received — refresh in a moment to see Standard.';
 }
 
 /** Storage used, as a fraction of the plan, at which the dashboard banner appears. */

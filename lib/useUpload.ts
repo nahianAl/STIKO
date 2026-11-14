@@ -282,6 +282,8 @@ export function useUpload() {
         // that no longer exists.
         const completeLimit = await readPlanLimit(completeRes);
         if (completeLimit) throw new PlanLimitError(completeLimit);
+        // Anything else, including a 409 "already registered" (never sent to this
+        // client, which mints a fresh fileId per attempt), is a plain failure.
         if (!completeRes.ok) throw new Error('Could not register the file');
 
         // DWG/DXF: start the PDF conversion now so it is usually ready before anyone opens
