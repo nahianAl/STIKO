@@ -71,7 +71,17 @@ export async function POST(request: NextRequest) {
     storedSize = await headObjectSize(storageKey);
   } catch (err) {
     console.error('[files/complete] HEAD failed, using the declared size', err);
-    storedSize = Number.isFinite(Number(fileSize)) ? Number(fileSize) : null;
+    // The claim is only a stand-in if it is a usable size, by the same rule the
+    // upload route applied when it signed it. Otherwise nothing here can be
+    // recorded honestly: this is a failure to verify, not a missing object, so
+    // 503 and let the client retry.
+    if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
+      return NextResponse.json(
+        { error: 'Could not verify the upload. Please try again.' },
+        { status: 503 }
+      );
+    }
+    storedSize = fileSize;
   }
   if (storedSize === null) {
     return NextResponse.json({ error: 'The upload was not found in storage' }, { status: 400 });

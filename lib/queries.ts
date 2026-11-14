@@ -388,15 +388,19 @@ export interface AccountUsage {
  * counts here — so its bytes stay counted, just moved into the trash figure
  * instead of the live one.
  *
- * Every byte counted here is client-asserted, not verified. files.file_size
- * is written straight from the request body in app/api/files/complete/route.ts,
- * and comments.attachments[].size is written straight from the POST body in
- * app/api/comments/route.ts (that route validates storageKey, not size). A
- * client can report any figure it likes for either. Harmless for a readout —
- * a user can only mislead themselves — but if this ever feeds ENFORCEMENT
- * (blocking an upload, gating a plan) rather than just a display, whatever
- * does that must verify the bytes against R2 first, or a caller can mint
- * unlimited quota by lying about `size`.
+ * Every byte counted here is verified against R2 at write time, because this
+ * figure feeds ENFORCEMENT (the Free plan's storage limit, lib/planGate.ts),
+ * not just a display. Both sizes are recorded from a HEAD on the object, never
+ * from the request body:
+ *   - files.file_size: app/api/files/complete/route.ts (headObjectSize). The
+ *     upload route signed the approved length into the PUT URL, so if the HEAD
+ *     itself fails the claimed size is a bounded stand-in, not a free choice.
+ *   - comments.attachments[].size: app/api/comments/route.ts POST
+ *     (headObjectSize on each attachment; a missing object is a 400, a failed
+ *     HEAD a 503). Without that, a caller could presign 25 MiB, PUT 25 MiB and
+ *     post the comment claiming 1 byte.
+ * Rows written before that verification existed still hold whatever their
+ * client claimed.
  */
 export async function getAccountUsage(userId: string): Promise<AccountUsage> {
   const rows = await sql`

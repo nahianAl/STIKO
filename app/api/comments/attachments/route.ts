@@ -62,11 +62,12 @@ export async function POST(request: NextRequest) {
     JOIN projects pr ON pr.id = po.project_id
     WHERE f.id = ${validated.fileId}
   `;
+  // getFileAccess just resolved this file, so a missing owner row means the file
+  // vanished underneath us. Never skip the gate on that: refuse instead.
   const ownerId = ownerRows[0]?.ownerId as string | undefined;
-  if (ownerId) {
-    const refusal = await storageLimitRefusal(ownerId, session.user.id, validated.size);
-    if (refusal) return planLimitResponse(refusal);
-  }
+  if (!ownerId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const refusal = await storageLimitRefusal(ownerId, session.user.id, validated.size);
+  if (refusal) return planLimitResponse(refusal);
 
   const storageKey = `comment-attachments/${uuidv4()}${validated.extension}`;
 

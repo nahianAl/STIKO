@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { getCommentAssetPresignedUrl } from '@/lib/s3';
+import { getCommentAssetPresignedUrl, headObjectSize } from '@/lib/s3';
 import { getFileAccess } from '@/lib/access';
 import { isAllowedCommentKey } from '@/lib/storageKeys';
 import { ensureCommentColumns } from '@/lib/commentColumns';
@@ -145,9 +145,41 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid attachment reference' }, { status: 400 });
   }
 
+  // `size` is what getAccountUsage sums into the OWNER's storage, and the body
+  // is the one place a caller could still set it freely: presign 25 MiB, PUT
+  // 25 MiB, then post the comment claiming 1 byte. So the stored size is never
+  // the claimed one — each attachment is HEADed and gets the size R2 reports.
+  //
+  // A missing object is the caller's error (400). A HEAD that fails for any
+  // other reason is ours, and the claim is not a safe stand-in here (unlike
+  // /api/files/complete, nothing bounds it any more): 503, and the client may
+  // retry. The HEADs run in parallel.
+  //
+  // Snapshots (snapshot_url) are not touched: they live in their own column,
+  // are not counted by getAccountUsage, and record no size anywhere.
+  let verifiedAttachments: unknown[];
+  try {
+    const sizes = await Promise.all(
+      attachmentList.map((att) => headObjectSize(String(att.storageKey)))
+    );
+    if (sizes.some((size) => size === null)) {
+      return NextResponse.json(
+        { error: 'An attachment was not found in storage' },
+        { status: 400 }
+      );
+    }
+    verifiedAttachments = attachmentList.map((att, i) => ({ ...att, size: sizes[i] }));
+  } catch (err) {
+    console.error('[comments] could not verify attachment sizes against storage', err);
+    return NextResponse.json(
+      { error: 'Could not verify the attachments. Please try again.' },
+      { status: 503 }
+    );
+  }
+
   // The author is the session, never a client-supplied string.
   const resolvedAuthor = session.user.name || session.user.email || 'Someone';
-  const attachmentsJson = JSON.stringify(attachments ?? []);
+  const attachmentsJson = JSON.stringify(verifiedAttachments);
 
   // The ids are a claim, not a fact. Each survives only if the server's own
   // list says that person can open this file AND their @label is in the text.
