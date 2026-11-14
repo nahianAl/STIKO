@@ -64,8 +64,10 @@ export default function NewProjectModal({
       onCreated();
       onClose();
     } catch (err) {
-      // Staying open with the text intact is the only way the person can
-      // retry without retyping.
+      // Any failure other than a plan limit: staying open with the text intact
+      // is the only way the person can retry without retyping. (The plan-limit
+      // 402 returns above and closes the modal on purpose: a retry cannot
+      // succeed until they upgrade, and the upgrade dialog takes over.)
       console.error('Failed to create project', err);
       toast('Could not create the project.');
       setSaving(false);

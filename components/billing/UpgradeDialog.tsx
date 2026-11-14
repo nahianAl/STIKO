@@ -4,37 +4,11 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
-import { formatBytes } from '@/lib/design';
 import { PRICE_DISPLAY, type BillingInterval } from '@/lib/billing';
-import { PLANS } from '@/lib/plans';
 import type { PlanLimitPayload } from '@/lib/planLimits';
 import { UPGRADE_EVENT } from '@/lib/planLimitClient';
+import { headline } from '@/lib/upgradeCopy';
 import { startCheckout } from './checkout';
-
-function headline(p: PlanLimitPayload | null): { title: string; subtitle: string } {
-  const standard = PLANS.standard;
-  const perks = `Standard gives you ${formatBytes(standard.storageBytes)} and unlimited projects.`;
-  if (!p) return { title: 'Upgrade to Standard', subtitle: perks };
-  if (!p.isOwner) {
-    return {
-      title: p.limit === 'storage' ? 'This project is out of storage' : 'This project is at its limit',
-      subtitle:
-        p.limit === 'storage'
-          ? "The project's owner is on the Free plan and has used its storage. Ask them to upgrade to Standard."
-          : "The project's owner is on the Free plan and has used its projects. Ask them to upgrade to Standard.",
-    };
-  }
-  if (p.limit === 'projects') {
-    return { title: `You've used your ${p.max} Free projects`, subtitle: perks };
-  }
-  const left = Math.max(0, p.max - p.used);
-  return {
-    title: 'Not enough storage',
-    subtitle: `This needs ${formatBytes(p.adding)} — you have ${formatBytes(left)} left of ${formatBytes(
-      p.max
-    )}. ${perks}`,
-  };
-}
 
 /** Mounted once in the root layout; opened by openUpgradeDialog(). */
 export default function UpgradeDialogHost() {
@@ -53,6 +27,25 @@ export default function UpgradeDialogHost() {
     window.addEventListener(UPGRADE_EVENT, onOpen);
     return () => window.removeEventListener(UPGRADE_EVENT, onOpen);
   }, []);
+
+  // This dialog is global, so it can open on top of anything that also closes on
+  // Escape. Modal and Drawer both listen on `document` in the bubble phase, in
+  // mount order, so one Escape would close this dialog AND the drawer behind it
+  // (the documented Drawer-Escape trap). Capture on `window` runs before every
+  // `document` listener, so claiming Escape there, and stopping it, means nothing
+  // underneath ever sees it. Only Escape is claimed: Tab still reaches Modal's
+  // focus trap. While a checkout is opening, Escape is swallowed but the dialog
+  // stays, matching the busy guard on the scrim, the X and "Not now".
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (busy === null) setOpen(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open, busy]);
 
   const { title, subtitle } = headline(payload);
   const canPay = !payload || payload.isOwner;
@@ -76,11 +69,22 @@ export default function UpgradeDialogHost() {
       subtitle={subtitle}
       width={460}
       footer={
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex w-full items-center justify-between gap-2">
           <Link
             href="/pricing"
-            onClick={() => setOpen(false)}
-            className="text-[12.5px] font-semibold !text-stiko-secondary hover:!text-stiko-ink"
+            aria-disabled={busy !== null}
+            tabIndex={busy !== null ? -1 : undefined}
+            onClick={(e) => {
+              // A checkout is already opening; leaving now would strand it.
+              if (busy !== null) {
+                e.preventDefault();
+                return;
+              }
+              setOpen(false);
+            }}
+            className={`text-[12.5px] font-semibold !text-stiko-secondary hover:!text-stiko-ink ${
+              busy !== null ? 'pointer-events-none opacity-60' : ''
+            }`}
           >
             See plans
           </Link>

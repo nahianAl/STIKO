@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import type { BillingAction, BillingInterval } from '@/lib/billing';
 import { startCheckout, openPortal } from '@/components/billing/checkout';
+import { formatBytes } from '@/lib/design';
+import { PLANS } from '@/lib/plans';
 
 export interface BillingStatusPayload {
   action: BillingAction;
@@ -47,7 +49,7 @@ export default function BillingActions({ status }: { status: BillingStatusPayloa
   return (
     <div className="border-t border-stiko-border px-4 py-3">
       <div className="text-[12.5px] font-bold text-stiko-ink">Upgrade to Standard</div>
-      <div className="mb-[10px] text-[11.5px] text-stiko-muted">100 GB storage, unlimited projects</div>
+      <div className="mb-[10px] text-[11.5px] text-stiko-muted">{formatBytes(PLANS.standard.storageBytes)} storage, unlimited projects</div>
       <div className="grid grid-cols-2 gap-2">
         {(['month', 'year'] as const).map((interval) => (
           <button
