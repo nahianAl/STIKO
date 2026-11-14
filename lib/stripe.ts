@@ -4,7 +4,9 @@ import { sql } from '@/lib/db';
 import {
   PRICE_LOOKUP_KEYS,
   decideBillingUpdate,
+  isBillingInterval,
   type BillingInterval,
+  type BillingStatusPayload,
 } from '@/lib/billing';
 
 /**
@@ -160,4 +162,30 @@ export async function syncSubscription(
     WHERE id = ${user.id}
   `;
   console.info(`[stripe] user ${user.id} → ${decision.plan} (${sub.id} ${sub.status})`);
+}
+
+/**
+ * Renewal facts for the Plan & billing page, read live from Stripe.
+ *
+ * In API 2026-09-30 the period end lives on the subscription ITEM
+ * (SubscriptionItem.current_period_end), not on the subscription: the
+ * Subscription type in stripe-node v23 has no such field. A subscription with
+ * no items has no period, so renewsAt is null rather than guessed.
+ */
+export async function subscriptionSummary(
+  subscriptionId: string
+): Promise<BillingStatusPayload['subscription']> {
+  const sub = await stripe().subscriptions.retrieve(subscriptionId);
+  const item = sub.items.data[0];
+  const periodEnd = item?.current_period_end ?? null;
+  const recurring = item?.price?.recurring?.interval;
+  return {
+    status: sub.status,
+    // Stripe types the interval as 'month' | 'year' | (string & {}); the guard narrows it.
+    interval: isBillingInterval(recurring) ? recurring : null,
+    renewsAt: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+    // Either flag means the subscription ends: the portal sets one, a dashboard
+    // cancellation scheduled for a date sets the other.
+    cancelAtPeriodEnd: !!sub.cancel_at_period_end || sub.cancel_at != null,
+  };
 }

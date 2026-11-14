@@ -108,6 +108,12 @@ export default function AvatarMenu() {
           <MenuLink href="/settings/account" onClick={() => setOpen(false)}>
             Account settings
           </MenuLink>
+          <MenuLink href="/settings/billing" onClick={() => setOpen(false)}>
+            Plan & billing
+          </MenuLink>
+          <MenuLink href="/pricing" onClick={() => setOpen(false)}>
+            Compare plans
+          </MenuLink>
           <MenuLink href="/settings/notifications" onClick={() => setOpen(false)}>
             Notifications
           </MenuLink>

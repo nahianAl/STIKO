@@ -1,16 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import type { BillingAction, BillingInterval } from '@/lib/billing';
+import type { BillingStatusPayload } from '@/lib/billing';
 import { startCheckout, openPortal } from '@/components/billing/checkout';
 import { formatBytes } from '@/lib/design';
 import { PLANS } from '@/lib/plans';
 
-export interface BillingStatusPayload {
-  action: BillingAction;
-  hasBillingHistory?: boolean;
-  prices?: Record<BillingInterval, { perMonth: string; note: string }>;
-}
+// The payload now lives in lib/billing.ts; re-exported so AvatarMenu's import keeps working.
+export type { BillingStatusPayload } from '@/lib/billing';
 
 /**
  * Upgrade / Manage billing in the account menu. Both hand off to a Stripe

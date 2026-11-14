@@ -107,3 +107,24 @@ export function billingActionFor(input: {
   if (input.plan === 'standard') return 'none';
   return 'upgrade';
 }
+
+/**
+ * What GET /api/billing/status returns. Shared by the route that builds it and
+ * the account menu and Plan & billing page that read it.
+ *
+ * Only `action` is guaranteed: with billing off, or when the lookup fails, the
+ * rest is absent and the UI simply shows no billing controls.
+ */
+export interface BillingStatusPayload {
+  action: BillingAction;
+  plan?: PlanId;
+  limitsEnforced?: boolean;
+  hasBillingHistory?: boolean;
+  prices?: Record<BillingInterval, { perMonth: string; note: string }>;
+  subscription?: {
+    status: string;
+    interval: BillingInterval | null;
+    renewsAt: string | null;
+    cancelAtPeriodEnd: boolean;
+  };
+}

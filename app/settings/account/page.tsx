@@ -8,6 +8,7 @@ import {
   DangerCard,
 } from '@/components/settings/SettingsShell';
 import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
+import { ACCOUNT_RAIL } from '@/components/settings/accountRail';
 import Button from '@/components/ui/Button';
 import {
   Avatar,
@@ -16,16 +17,6 @@ import {
   readOnlyInputClass,
 } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-
-const RAIL = [
-  { key: 'profile', label: 'Profile', href: '/settings/account' },
-  { key: 'password', label: 'Password', href: '/settings/password' },
-  {
-    key: 'notifications',
-    label: 'Notifications',
-    href: '/settings/notifications',
-  },
-];
 
 /** 3j — Account · Profile. */
 export default function AccountSettings() {
@@ -68,7 +59,7 @@ export default function AccountSettings() {
     <SettingsShell
       crumbs={[{ label: 'Settings' }, { label: 'Account' }]}
       railLabel="Account"
-      items={RAIL}
+      items={ACCOUNT_RAIL}
       active="profile"
     >
       <SettingsCard

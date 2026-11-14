@@ -5,18 +5,9 @@ import {
   SettingsShell,
   SettingsCard,
 } from '@/components/settings/SettingsShell';
+import { ACCOUNT_RAIL } from '@/components/settings/accountRail';
 import { SectionLabel, Toggle } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
-
-const RAIL = [
-  { key: 'profile', label: 'Profile', href: '/settings/account' },
-  { key: 'password', label: 'Password', href: '/settings/password' },
-  {
-    key: 'notifications',
-    label: 'Notifications',
-    href: '/settings/notifications',
-  },
-];
 
 interface Pref {
   key: string;
@@ -86,7 +77,7 @@ export default function NotificationSettings() {
     <SettingsShell
       crumbs={[{ label: 'Settings' }, { label: 'Notifications' }]}
       railLabel="Account"
-      items={RAIL}
+      items={ACCOUNT_RAIL}
       active="notifications"
     >
       <SettingsCard
