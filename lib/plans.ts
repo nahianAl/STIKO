@@ -7,8 +7,12 @@
  * every time a tier is added or renamed. planFor() is the cost of that —
  * anything unrecognised degrades to Free and warns.
  *
- * Nothing in the product ENFORCES these limits. They are displayed, not
- * applied, so an account can legitimately sit over either one.
+ * The limits are ENFORCED server-side by lib/planGate.ts (rules in
+ * lib/planLimits.ts), but only while billing is on: with the kill switch
+ * thrown nobody could pay to lift one, so they are displayed, not applied.
+ * Enforcement refuses new projects and new bytes; it never removes anything,
+ * so an account can still legitimately sit over either limit (hand-granted
+ * changes, usage from before enforcement, a downgrade).
  */
 
 export type PlanId = 'free' | 'standard';
