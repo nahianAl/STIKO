@@ -96,7 +96,7 @@ export function UploadProgressRow({
             item.state === 'done'
               ? 'bg-[#7BC24A]'
               : item.state === 'blocked'
-                ? 'bg-[#F1F1F4]'
+                ? 'bg-stiko-faint'
                 : item.state === 'failed'
                   ? 'bg-[#FF6B6B]'
                   : 'bg-gradient-to-r from-[#8094F5] to-[#5B60FF]'

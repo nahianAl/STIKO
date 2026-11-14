@@ -378,6 +378,9 @@ export function useUpload() {
     async (path: string): Promise<boolean> => {
       const entry = filesRef.current.get(path);
       if (!entry) return false;
+      // A new attempt, like runPool's: if this one hits the limit too, the dialog
+      // must open again rather than stay silent behind the previous batch's flag.
+      blockedRef.current = false;
       return uploadOne(entry);
     },
     [uploadOne]

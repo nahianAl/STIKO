@@ -59,6 +59,7 @@ function NewPackage() {
     versionId: string;
   } | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     fetch('/api/projects')
@@ -86,6 +87,12 @@ function NewPackage() {
     .split(/[,\s]+/)
     .map((e) => e.trim())
     .filter((e) => e.includes('@'));
+
+  /** Why the last run left files behind — storage full reads differently to a flaky network. */
+  const notUploadedMessage = () =>
+    upload.wasBlocked()
+      ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
+      : 'Some files didn’t upload. Retry them — nothing is published until they all land.';
 
   const create = async () => {
     setError(null);
@@ -161,11 +168,7 @@ function NewPackage() {
       if (!ok) {
         // Stay on the uploading screen so the failed rows can be retried. The
         // version is still a draft, so reviewers have seen nothing.
-        setError(
-          upload.wasBlocked()
-            ? 'Storage is full, so some files weren’t uploaded. Upgrade or free up space, then retry them.'
-            : 'Some files didn’t upload. Retry them — nothing is published until they all land.'
-        );
+        setError(notUploadedMessage());
         return;
       }
 
@@ -231,6 +234,30 @@ function NewPackage() {
     if (ok) setError(null);
   };
 
+  /**
+   * Re-run every file that did not land (failed or blocked), then publish the
+   * draft exactly as the first attempt would have. Only the unlanded files are
+   * re-sent, so the ones already registered are not registered a second time.
+   */
+  const retryRemaining = async (portalId: string, versionId: string) => {
+    setRetrying(true);
+    try {
+      const ok = await upload.retryFailed();
+      if (!ok) {
+        setError(notUploadedMessage());
+        return;
+      }
+      setError(null);
+      await finish(portalId, versionId);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setPublishing(false);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   return (
     <Shell>
       <TopBar
@@ -274,6 +301,20 @@ function NewPackage() {
                 The submission is published only when every file lands — a failure
                 here never leaves a half-empty S1 for your reviewers.
               </Note>
+
+              {/* Files left behind (a failure, or storage full): re-run just
+                  those and publish. `retrying` keeps it mounted while the
+                  rows flip to uploading, so it does not flicker away. */}
+              {(upload.anyFailed || upload.anyBlocked || retrying) && draft && (
+                <div className="flex justify-end">
+                  <Button
+                    disabled={retrying || publishing}
+                    onClick={() => retryRemaining(draft.portalId, draft.versionId)}
+                  >
+                    {publishing ? 'Publishing…' : retrying ? 'Retrying…' : 'Retry remaining files'}
+                  </Button>
+                </div>
+              )}
 
               {/* Once every retry has landed, the draft still needs
                   publishing — the automatic path already returned. */}
