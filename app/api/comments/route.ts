@@ -7,7 +7,6 @@ import { getFileAccess } from '@/lib/access';
 import { isAllowedCommentKey, isCommentStorageKey } from '@/lib/storageKeys';
 import {
   MAX_ATTACHMENTS_PER_COMMENT,
-  MAX_SNAPSHOT_BYTES,
   validateCommentAttachmentList,
 } from '@/lib/attachmentUpload';
 import { ensureCommentColumns } from '@/lib/commentColumns';
@@ -138,6 +137,21 @@ export async function POST(request: NextRequest) {
   // Both of these are stored object keys, and deleting a comment's file now
   // deletes what they name. A comment that names a file object could destroy
   // it, so each is held to its own prefix.
+  //
+  // A snapshot may not be a stored key at all. getAccountUsage never counts
+  // snapshot_url, and /api/comments/attachments presigns up to 25 MiB under the
+  // same comment-attachments/ prefix, so a presigned attachment (which passes
+  // the storage gate) could be PUT and then posted as the snapshot: stored,
+  // downloadable, uncounted. No client sends a stored key here — the portal
+  // composers send markup as attachments, which are counted — so it is refused
+  // rather than verified. A data:/http snapshot is not a stored object and is
+  // accepted exactly as before.
+  if (snapshotUrl != null && isCommentStorageKey(String(snapshotUrl))) {
+    return NextResponse.json(
+      { error: 'snapshotUrl must not be a storage key — send snapshots as attachments' },
+      { status: 400 }
+    );
+  }
   if (snapshotUrl != null && !isAllowedCommentKey(String(snapshotUrl))) {
     return NextResponse.json({ error: 'Invalid snapshot reference' }, { status: 400 });
   }
@@ -165,30 +179,11 @@ export async function POST(request: NextRequest) {
   // other reason is ours, and the claim is not a safe stand-in here (unlike
   // /api/files/complete, nothing bounds it any more): 503, and the client may
   // retry. The HEADs run in parallel.
-  //
-  // A snapshot stored as a key is HEADed in the same round, for a different
-  // reason: getAccountUsage never counts snapshot_url, and /api/comments/attachments
-  // presigns up to 25 MiB under the SAME comment-attachments/ prefix. Without
-  // this, a caller could presign an attachment (which passes the storage gate),
-  // PUT it, and post the key as the snapshot: stored, downloadable, uncounted.
-  // The cap keeps a snapshot at what a canvas JPEG actually is. (The portal
-  // composers send markup as attachments and never set snapshotUrl at all.)
-  const snapshotKey =
-    snapshotUrl != null && isCommentStorageKey(String(snapshotUrl)) ? String(snapshotUrl) : null;
   let verifiedAttachments: unknown[];
   try {
-    const [snapshotSize, sizes] = await Promise.all([
-      snapshotKey ? headObjectSize(snapshotKey) : Promise.resolve(undefined),
-      Promise.all(attachmentList.map((att) => headObjectSize(att.storageKey))),
-    ]);
-    if (snapshotKey) {
-      if (snapshotSize == null) {
-        return NextResponse.json({ error: 'The snapshot was not found in storage' }, { status: 400 });
-      }
-      if (snapshotSize > MAX_SNAPSHOT_BYTES) {
-        return NextResponse.json({ error: 'Snapshot is too large' }, { status: 400 });
-      }
-    }
+    const sizes = await Promise.all(
+      attachmentList.map((att) => headObjectSize(att.storageKey))
+    );
     if (sizes.some((size) => size === null)) {
       return NextResponse.json(
         { error: 'An attachment was not found in storage' },
@@ -197,7 +192,7 @@ export async function POST(request: NextRequest) {
     }
     verifiedAttachments = attachmentList.map((att, i) => ({ ...att, size: sizes[i] }));
   } catch (err) {
-    console.error('[comments] could not verify attachment or snapshot sizes against storage', err);
+    console.error('[comments] could not verify attachment sizes against storage', err);
     return NextResponse.json(
       { error: 'Could not verify the attachments. Please try again.' },
       { status: 503 }

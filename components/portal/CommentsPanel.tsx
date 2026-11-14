@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthSession } from '@/lib/authClient';
 import type { Comment, CommentAttachment } from '@/lib/types';
 import { uploadFile } from '@/lib/uploadAttachment';
+import { MAX_ATTACHMENTS_PER_COMMENT } from '@/lib/attachmentUpload';
 import { PlanLimitError } from '@/lib/planLimitClient';
 import { messageForStatus } from '@/lib/submitErrors';
 import { buildTagNumbers } from '@/lib/tagNumbers';
@@ -129,6 +130,12 @@ function CommentForm({
 
   const handleSubmit = async () => {
     if (!text.trim() && pendingFiles.length === 0) return;
+    // The server refuses more than this, but only after every file had been
+    // uploaded; say so before any upload starts.
+    if (pendingFiles.length > MAX_ATTACHMENTS_PER_COMMENT) {
+      setError(`You can attach up to ${MAX_ATTACHMENTS_PER_COMMENT} files to a comment.`);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {

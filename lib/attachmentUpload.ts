@@ -33,9 +33,6 @@ export const BLOCKED_CONTENT_TYPES: ReadonlySet<string> = new Set([
 /** 25 MB. Comfortably above a large drawing PDF or a phone photo. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
-/** Snapshots are canvas JPEGs from dataUrlToFile; 10 MiB is generous for those. */
-export const MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024;
-
 /**
  * Per comment. The composers do not limit how many files can be added, so this
  * is the only bound; it also bounds how many HEADs one POST /api/comments fans

@@ -375,9 +375,9 @@ export interface AccountUsage {
  *     is recorded for them anywhere, and they are bytes the product generated
  *     rather than bytes the user uploaded.
  *   - Markup snapshots (comments.snapshot_url) do NOT, same reason. POST
- *     /api/comments does HEAD a snapshot key and cap it at MAX_SNAPSHOT_BYTES,
- *     so it cannot park an attachment's worth of uncounted bytes, but what a
- *     capped snapshot holds is still not summed here.
+ *     /api/comments refuses a storage-key snapshotUrl outright (snapshots are
+ *     sent as attachments, which ARE counted), so nothing new can park bytes
+ *     there uncounted; only legacy rows can hold one.
  *
  * So the figure is smaller than the true S3 footprint, on purpose: the number
  * on screen should be one the user can act on by deleting their own content.

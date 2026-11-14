@@ -12,6 +12,7 @@ import { NewVersionDrawer } from '@/components/portal/NewVersionDrawer';
 import VersionDetailDrawer from '@/components/portal/VersionDetailDrawer';
 import { usePortalActivity } from '@/components/portal/usePortalActivity';
 import { uploadFile, dataUrlToFile } from '@/lib/uploadAttachment';
+import { MAX_ATTACHMENTS_PER_COMMENT } from '@/lib/attachmentUpload';
 import { PlanLimitError } from '@/lib/planLimitClient';
 import { manrope } from '@/lib/fonts';
 import ViewerContainer, { IMAGE_EXTENSIONS, type WorldPin, type PinScreenPosition, type ContentTransform, type PDFKonvaViewerHandle, type ModelViewerHandle } from '@/components/viewers/ViewerContainer';
@@ -1990,6 +1991,13 @@ export default function PortalPage() {
   const handleComposerSubmit = async () => {
     if (!selectedFileId) return;
     if (!composerText.trim() && composerFiles.length === 0 && !pendingTag) return;
+    // The server refuses more than this, but only after every file had been
+    // uploaded; say so before any upload starts. Counts a markup snapshot too,
+    // which Done appends to composerFiles.
+    if (composerFiles.length > MAX_ATTACHMENTS_PER_COMMENT) {
+      setComposerError(`You can attach up to ${MAX_ATTACHMENTS_PER_COMMENT} files to a comment.`);
+      return;
+    }
     setSubmittingComposer(true);
     setComposerError(null);
     try {

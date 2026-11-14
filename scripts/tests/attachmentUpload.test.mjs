@@ -4,7 +4,6 @@ import {
   validateAttachmentRequest,
   validateCommentAttachmentList,
   MAX_ATTACHMENT_BYTES,
-  MAX_SNAPSHOT_BYTES,
   MAX_ATTACHMENTS_PER_COMMENT,
 } from '../../lib/attachmentUpload.ts';
 
@@ -150,14 +149,6 @@ test('a valid request carries the fileId through for the access check', () => {
   });
   assert.equal(out.ok, true);
   assert.equal(out.fileId, 'file-123');
-});
-
-test('a snapshot is held to a tighter cap than an attachment', () => {
-  // A snapshot is a canvas JPEG; letting one be as big as a 25 MiB attachment is
-  // what made re-posting an attachment as a snapshot a way round the counted
-  // storage. Bytes, not megabytes: the route compares against this directly.
-  assert.equal(MAX_SNAPSHOT_BYTES, 10 * 1024 * 1024);
-  assert.ok(MAX_SNAPSHOT_BYTES < MAX_ATTACHMENT_BYTES);
 });
 
 const att = (storageKey, over) => ({
