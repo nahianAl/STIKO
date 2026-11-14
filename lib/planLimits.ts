@@ -1,0 +1,52 @@
+/**
+ * What the Free plan refuses, as pure rules.
+ *
+ * Pure and dependency-free so node --test can import it: no `@/` alias, and
+ * Plan is a type-only import. The server gate (lib/planGate.ts) loads usage and
+ * calls these; nothing here knows about the database or HTTP.
+ */
+import type { Plan } from './plans';
+
+/**
+ * Limits are on only while billing is on. With the kill switch thrown nobody
+ * can lift a limit by paying, so enforcing one would trap people. Mirrors
+ * billingEnabled() in lib/billing.ts; duplicated rather than imported so this
+ * module stays free of value imports.
+ */
+export function limitsEnforced(env: Record<string, string | undefined> = process.env): boolean {
+  return env.BILLING_ENABLED === 'true' && !!env.STRIPE_SECRET_KEY;
+}
+
+/** Trashed projects are not counted; the caller passes the active count. */
+export function canCreateProject(plan: Pick<Plan, 'maxProjects'>, activeProjectCount: number): boolean {
+  if (plan.maxProjects === null) return true;
+  return activeProjectCount < plan.maxProjects;
+}
+
+/** Exactly at the limit is allowed. A nonsense claim is refused, not waved through. */
+export function canAddBytes(plan: Pick<Plan, 'storageBytes'>, usedBytes: number, addBytes: number): boolean {
+  if (!Number.isFinite(addBytes) || addBytes < 0) return false;
+  return usedBytes + addBytes <= plan.storageBytes;
+}
+
+export type PlanLimitKind = 'projects' | 'storage';
+
+/** The body of every 402. The client turns it into the upgrade dialog. */
+export interface PlanLimitPayload {
+  error: string;
+  code: 'plan_limit';
+  limit: PlanLimitKind;
+  /** False when the caller is a collaborator on someone else's project. */
+  isOwner: boolean;
+  /** Projects: active count. Storage: bytes used (trash included). */
+  used: number;
+  max: number;
+  /** Storage: bytes this request wanted to add. Projects: 1. */
+  adding: number;
+}
+
+export function isPlanLimitPayload(v: unknown): v is PlanLimitPayload {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return o.code === 'plan_limit' && (o.limit === 'projects' || o.limit === 'storage');
+}
