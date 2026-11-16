@@ -72,3 +72,39 @@ test('click ids merge last touch over first touch, plus Meta and GA cookies', ()
   assert.deepEqual(ids, { gclid: 'g2', fbclid: 'f1', fbc: 'fb.1.123.f1', fbp: 'fb.1.456', ga: 'GA1.1.111.222' });
   assert.deepEqual(clickIds({ first: null, last: null }), {});
 });
+
+test('a touch cookie already decoded by Next keeps "%" and escape-like values intact', () => {
+  const decoded = JSON.stringify({
+    utm_content: '50% off',
+    referrer: 'https://x.com/?q=a%20b',
+  });
+  const t = parseTouchCookie(decoded);
+  assert.notEqual(t, null);
+  assert.equal(t.utm_content, '50% off');
+  assert.equal(t.referrer, 'https://x.com/?q=a%20b');
+});
+
+test('a percent-encoded touch cookie still parses (the encoded form is accepted too)', () => {
+  const t = parseTouchCookie(encodeURIComponent(JSON.stringify({ utm_source: 'meta', utm_content: '50% off' })));
+  assert.equal(t.utm_source, 'meta');
+  assert.equal(t.utm_content, '50% off');
+});
+
+test('a percent-encoded non-whitelisted touch cookie still returns null', () => {
+  assert.equal(parseTouchCookie(encodeURIComponent(JSON.stringify({ evil: 'x' }))), null);
+});
+
+test('a whitespace-only country fails closed', () => {
+  assert.equal(consentRequired(' '), true);
+  assert.equal(consentRequired('\t'), true);
+});
+
+test('every ISO code in the consent set is recognised', () => {
+  const codes = [
+    'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE',
+    'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE',
+    'IS', 'LI', 'NO', 'GB', 'CH',
+  ];
+  assert.equal(codes.length, 32);
+  for (const c of codes) assert.equal(consentRequired(c), true, c);
+});

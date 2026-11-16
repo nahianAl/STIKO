@@ -17,13 +17,22 @@ const MAX_VALUE = 200;
 
 export type Touch = Partial<Record<(typeof TOUCH_FIELDS)[number], string>>;
 
+/**
+ * Next's request.cookies hands over the value already decoded, so try it as
+ * JSON first. Only a percent-encoded value (raw JSON fails to parse) is decoded.
+ * Never throws.
+ */
 export function parseTouchCookie(raw: string | undefined): Touch | null {
   if (!raw) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decodeURIComponent(raw));
+    parsed = JSON.parse(raw);
   } catch {
-    return null;
+    try {
+      parsed = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      return null;
+    }
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const out: Touch = {};

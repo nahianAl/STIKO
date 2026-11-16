@@ -15,8 +15,9 @@ const CONSENT_COUNTRIES = new Set([
 
 /** Unknown country fails closed: better a banner too many than tracking without consent. */
 export function consentRequired(country: string | null | undefined): boolean {
-  if (!country) return true;
-  return CONSENT_COUNTRIES.has(country.toUpperCase());
+  const c = country?.trim();
+  if (!c) return true;
+  return CONSENT_COUNTRIES.has(c.toUpperCase());
 }
 
 export function consentValue(raw: string | undefined): 'granted' | 'denied' | null {
