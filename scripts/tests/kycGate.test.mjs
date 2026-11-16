@@ -37,6 +37,11 @@ test('the welcome page, APIs, auth pages, invites, pricing and static files are 
   }
 });
 
+test('the welcome match is exact or a path segment, not a prefix', () => {
+  assert.equal(isGatedPage('/welcomes'), true);
+  assert.equal(isGatedPage('/welcome/x'), false);
+});
+
 test('the redirect keeps the full destination, query included', () => {
   assert.equal(welcomeRedirectPath('/portal/abc', '?file=f1'), '/welcome?callbackUrl=%2Fportal%2Fabc%3Ffile%3Df1');
   assert.equal(welcomeRedirectPath('/', ''), '/welcome?callbackUrl=%2F');

@@ -18,7 +18,7 @@ async function hmac(secret: string, message: string): Promise<string> {
   );
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(message)));
   let bin = '';
-  for (const b of sig) bin += String.fromCharCode(b);
+  for (let i = 0; i < sig.length; i++) bin += String.fromCharCode(sig[i]);
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
