@@ -22,6 +22,7 @@ export default function StepFrame({
   headingId,
   headingRef,
   onBack,
+  backDisabled = false,
   primaryLabel,
   primaryHint,
   primaryDisabled,
@@ -39,6 +40,7 @@ export default function StepFrame({
   headingRef: React.Ref<HTMLHeadingElement>;
   /** Omit on the first step: there is nothing to go back to. */
   onBack?: () => void;
+  backDisabled?: boolean;
   primaryLabel: string;
   /** A keyboard glyph shown after the label; hidden from assistive tech. */
   primaryHint?: string;
@@ -88,14 +90,15 @@ export default function StepFrame({
         </StepBody>
 
         {/* Sticky so Continue stays in reach on a long list (step 2 on a phone). */}
-        <div className="sticky bottom-0 z-10 mt-auto flex flex-col gap-3 bg-stiko-app pb-1 pt-5">
+        <div className="sticky bottom-0 z-10 mt-auto flex flex-col gap-3 bg-stiko-app pb-1 pt-5 before:pointer-events-none before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-stiko-app before:to-transparent">
           {error && <ErrorBanner>{error}</ErrorBanner>}
           <div className="flex items-center justify-between gap-3">
             {onBack ? (
               <button
                 type="button"
                 onClick={onBack}
-                className="rounded-[8px] py-1 pr-2 text-[13px] font-bold text-stiko-muted outline-none transition hover:text-stiko-ink focus-visible:shadow-stiko-focus"
+                disabled={backDisabled}
+                className="rounded-[8px] py-1 pr-2 text-[13px] font-bold text-stiko-muted outline-none transition hover:text-stiko-ink focus-visible:shadow-stiko-focus disabled:opacity-50 disabled:hover:text-stiko-muted"
               >
                 <span aria-hidden="true">← </span>Back
               </button>
@@ -129,7 +132,7 @@ function StepBody({ children }: { children: React.ReactNode }) {
 
   return (
     <div
-      className={`transition duration-200 ease-out motion-reduce:translate-y-0 motion-reduce:opacity-100 motion-reduce:transition-none ${
+      className={`pb-4 transition duration-200 ease-out motion-reduce:translate-y-0 motion-reduce:opacity-100 motion-reduce:transition-none ${
         shown ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
       }`}
     >

@@ -211,6 +211,7 @@ function WelcomeWizard() {
       headingId={HEADING_ID}
       headingRef={headingRef}
       onBack={step > 0 ? back : undefined}
+      backDisabled={saving}
       primaryLabel={saving ? 'Saving…' : step === LAST ? 'Finish' : 'Continue'}
       primaryHint={saving ? undefined : '↵'}
       primaryDisabled={!ready || saving}
@@ -241,6 +242,7 @@ function WelcomeWizard() {
                 isOtherSegment(id) && id === answers.segmentId ? (
                   <div className="mt-2">
                     <Input
+                      className="scroll-mb-28"
                       aria-label="What does your business do?"
                       placeholder="What does your business do?"
                       value={answers.businessTypeOther}
