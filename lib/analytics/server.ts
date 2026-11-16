@@ -38,8 +38,13 @@ function scheduleFlush(): void {
  * alive after the response; outside a request context (tests, scripts) the
  * promise simply runs. The *Now functions already swallow their own errors, so
  * the catch is a backstop that keeps a stray rejection from ever surfacing.
+ *
+ * Exported for a route whose analytics needs more than one call (several
+ * lookups feeding an event): it wraps them in one async function and hands that
+ * to this. Anything read from the request (cookies, session) must be read
+ * BEFORE calling it, because the request is not usable once the response is out.
  */
-function runInBackground(work: Promise<void>): void {
+export function runInBackground(work: Promise<void>): void {
   const p = work.catch((err) => console.error('[analytics] background task failed', err));
   try {
     waitUntil(p);

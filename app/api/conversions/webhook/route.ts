@@ -69,7 +69,6 @@ export async function POST(request: NextRequest) {
         SET conversion_status = 'completed', converted_storage_key = ${convertedKey}
         WHERE id = ${fileId}
       `;
-      await trackFileEvent('file_processed', fileId, { conversion: 'cloudconvert' });
 
       // part_colors.part_key is an index path into a specific node hierarchy, stable only
       // because an uploaded file's bytes never change (see the invariant note in
@@ -120,6 +119,11 @@ export async function POST(request: NextRequest) {
           calibrationErr instanceof Error ? calibrationErr.message : String(calibrationErr)
         );
       }
+
+      // Last, after both cleanups, so the event adds nothing to the window between the completed
+      // UPDATE and the deletes of the stale colours and calibrations. It runs in the background
+      // and cannot throw, so it can never send a completed conversion down the catch below.
+      await trackFileEvent('file_processed', fileId, { conversion: 'cloudconvert' });
     } catch (err) {
       console.error('Failed to process conversion result for', fileId, err);
       await sql`

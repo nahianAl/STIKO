@@ -3,7 +3,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { canRedeemInvite } from '@/lib/inviteBinding';
-import { identifyWorkspace, posthogAnonymousId, posthogCookieName, track } from '@/lib/analytics/server';
+import {
+  identifyWorkspace,
+  posthogAnonymousId,
+  posthogCookieName,
+  runInBackground,
+  track,
+} from '@/lib/analytics/server';
 import { ensureWorkspace, markActivation } from '@/lib/workspaces';
 
 /**
@@ -113,23 +119,8 @@ export async function GET(
     WHERE p.portal_id = ${invite.portalId}
   `;
 
-  try {
-    const viewer = await auth();
-    const viewerId = viewer?.user?.id ?? null;
-    const cookieName = posthogCookieName();
-    const anonymousId = cookieName ? posthogAnonymousId(request.cookies.get(cookieName)?.value) : null;
-    const inviterWorkspaceId = invite.inviterId ? await ensureWorkspace(invite.inviterId as string) : null;
-    await track('review_link_opened', {
-      userId: viewerId,
-      anonymousId,
-      properties: { invite_id: invite.id, inviter_workspace_id: inviterWorkspaceId, signed_in: Boolean(viewerId) },
-    });
-    if (invite.inviterId && (await markActivation(invite.inviterId as string, viewerId))) {
-      await identifyWorkspace(invite.inviterId as string);
-    }
-  } catch (err) {
-    console.error('[analytics] review_link_opened failed', err);
-  }
+  // After the response: the page never waits on analytics (see lib/analytics/server.ts).
+  await scheduleReviewLinkOpened(request, invite.id as string, (invite.inviterId as string | null) ?? null);
 
   return NextResponse.json({
     inviteId: invite.id,
@@ -156,6 +147,53 @@ export async function GET(
     files: files.map((f) => ({ id: f.id, filename: f.filename })),
     others: others.map((o) => ({ id: o.id, name: o.name ?? 'Someone' })),
   });
+}
+
+/**
+ * Analytics for one view of the public invite page: review_link_opened, and the
+ * inviter workspace's activation. None of it may delay the page, so it runs in
+ * the background (runInBackground → waitUntil) and every failure stays here.
+ *
+ * What needs the live request is read first, while it is still usable: the
+ * session and the PostHog cookie. The background job gets plain values. If that
+ * read itself fails nothing is sent, rather than sending the event as a
+ * stranger's. The job's own lookups (the inviter's workspace, the activation
+ * write) are what used to sit on the response path.
+ */
+async function scheduleReviewLinkOpened(
+  request: NextRequest,
+  inviteId: string,
+  inviterId: string | null
+): Promise<void> {
+  try {
+    const viewerId = (await auth())?.user?.id ?? null;
+    const cookieName = posthogCookieName();
+    const anonymousId = cookieName ? posthogAnonymousId(request.cookies.get(cookieName)?.value) : null;
+    runInBackground(recordReviewLinkOpened(inviteId, inviterId, viewerId, anonymousId));
+  } catch (err) {
+    console.error('[analytics] review_link_opened failed', err);
+  }
+}
+
+async function recordReviewLinkOpened(
+  inviteId: string,
+  inviterId: string | null,
+  viewerId: string | null,
+  anonymousId: string | null
+): Promise<void> {
+  try {
+    const inviterWorkspaceId = inviterId ? await ensureWorkspace(inviterId) : null;
+    await track('review_link_opened', {
+      userId: viewerId,
+      anonymousId,
+      properties: { invite_id: inviteId, inviter_workspace_id: inviterWorkspaceId, signed_in: Boolean(viewerId) },
+    });
+    if (inviterId && (await markActivation(inviterId, viewerId))) {
+      await identifyWorkspace(inviterId);
+    }
+  } catch (err) {
+    console.error('[analytics] review_link_opened failed', err);
+  }
 }
 
 /** POST — consume the token and add the signed-in user to the package. */

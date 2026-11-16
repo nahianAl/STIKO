@@ -165,8 +165,6 @@ export async function POST(request: NextRequest) {
   `;
 
   const file = rows[0];
-  // file_size is BIGINT; pg-types parses it as a string (see the note in
-  // app/api/files/route.ts), so it must be coerced to a number here too.
   const ext = extensionOf(filename);
   await track('file_uploaded', {
     userId: session.user.id,
@@ -181,6 +179,8 @@ export async function POST(request: NextRequest) {
       properties: { file_id: file.id, extension: ext, conversion: 'none' },
     });
   }
+  // file_size is BIGINT; pg-types parses it as a string (see the note in
+  // app/api/files/route.ts), so it must be coerced to a number here too.
   return NextResponse.json({ ...file, fileSize: Number(file.fileSize) }, { status: 201 });
 }
 
