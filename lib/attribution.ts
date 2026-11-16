@@ -4,7 +4,10 @@
  *
  * First touch (stiko_ft) is written once and never overwritten; last touch
  * (stiko_lt) on every visit that carries UTMs or click IDs.
+ *
+ * Relative import with the .ts extension: this module is run by node --test.
  */
+import { scrubUrl } from './analytics/scrub.ts';
 
 export const FIRST_TOUCH_COOKIE = 'stiko_ft';
 export const LAST_TOUCH_COOKIE = 'stiko_lt';
@@ -18,19 +21,18 @@ const MAX_VALUE = 200;
 export type Touch = Partial<Record<(typeof TOUCH_FIELDS)[number], string>>;
 
 /**
- * An invite token is a credential and must never reach PostHog. A shared invite
- * link opened from a social app (?fbclid=… appended) is recorded verbatim as the
- * landing page, and an app URL can show up as the referrer; the /login redirect
- * carries the path percent-encoded (callbackUrl=%2Finvite%2F<token>). Replace the
- * token segment in both spellings.
+ * landing_page and referrer are URLs, and a URL can carry a credential or
+ * personal data: /invite/<token>, /reset-password/<token>, /verify-email?email=…,
+ * /login?callbackUrl=%2Finvite%2F<token>. A shared invite link opened from a
+ * social app (?fbclid=… appended) is recorded verbatim as the landing page, and
+ * an app URL can show up as the referrer. Both go through the same allowlist
+ * scrubber PostHog events use (lib/analytics/scrub.ts): token segments become
+ * "[token]", only UTM / click-id / billing / tab query keys survive, fragments and
+ * user:password@ are dropped. public/stiko-tracking.js applies the same rules
+ * before it writes the cookie; this is the second line, for cookies written by
+ * an older copy of that script or set by hand.
  */
 const URL_FIELDS: ReadonlySet<string> = new Set(['landing_page', 'referrer']);
-const INVITE_PATH = /(\/invite\/)[^/?#]+/g;
-const INVITE_PATH_ENCODED = /(%2Finvite%2F)(?:(?!%2F)[^/?#&])+/gi;
-
-export function redactInviteTokens(value: string): string {
-  return value.replace(INVITE_PATH, '$1[token]').replace(INVITE_PATH_ENCODED, '$1[token]');
-}
 
 /**
  * Next's request.cookies hands over the value already decoded, so try it as
@@ -54,8 +56,8 @@ export function parseTouchCookie(raw: string | undefined): Touch | null {
   for (const key of TOUCH_FIELDS) {
     const v = (parsed as Record<string, unknown>)[key];
     if (typeof v === 'string' && v) {
-      // Redact before the length cap, so a long URL cannot leave half a token behind.
-      out[key] = (URL_FIELDS.has(key) ? redactInviteTokens(v) : v).slice(0, MAX_VALUE);
+      // Scrub before the length cap, so a long URL cannot leave half a token behind.
+      out[key] = (URL_FIELDS.has(key) ? scrubUrl(v) : v).slice(0, MAX_VALUE);
     }
   }
   return Object.keys(out).length ? out : null;

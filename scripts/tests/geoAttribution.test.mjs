@@ -76,12 +76,14 @@ test('click ids merge last touch over first touch, plus Meta and GA cookies', ()
 test('a touch cookie already decoded by Next keeps "%" and escape-like values intact', () => {
   const decoded = JSON.stringify({
     utm_content: '50% off',
-    referrer: 'https://x.com/?q=a%20b',
+    referrer: 'https://x.com/a%20b',
   });
   const t = parseTouchCookie(decoded);
   assert.notEqual(t, null);
   assert.equal(t.utm_content, '50% off');
-  assert.equal(t.referrer, 'https://x.com/?q=a%20b');
+  // A path keeps its escapes (query strings are re-serialised by the URL scrubber, so the
+  // check is on the path: the cookie value must not be percent-decoded a second time).
+  assert.equal(t.referrer, 'https://x.com/a%20b');
 });
 
 test('a percent-encoded touch cookie still parses (the encoded form is accepted too)', () => {
@@ -109,17 +111,20 @@ test('every ISO code in the consent set is recognised', () => {
   for (const c of codes) assert.equal(consentRequired(c), true, c);
 });
 
-// ---- invite tokens never ride along in attribution values ----
+// ---- credentials and personal data never ride along in attribution values ----
+// landing_page and referrer go through the same allowlist scrubber as PostHog events
+// (lib/analytics/scrub.ts): token segments become [token], only UTM / click-id / billing / tab
+// query keys survive, fragments and user:password@ are dropped.
 
 const TOKEN = '7c9e2b1a4d5f60718293a4b5c6d7e8f9';
 const touchWith = (fields) => parseTouchCookie(JSON.stringify(fields));
 
-test('an invite link a social app appended ?fbclid to keeps its query but loses the token', () => {
+test('an invite link a social app appended ?fbclid to keeps its click id but loses the token', () => {
   const t = touchWith({ landing_page: `/invite/${TOKEN}?x=1`, utm_source: 'meta' });
-  assert.equal(t.landing_page, '/invite/[token]?x=1');
+  assert.equal(t.landing_page, '/invite/[token]');
   assert.equal(t.utm_source, 'meta');
   const full = touchWith({ landing_page: `https://app.stiko.design/invite/${TOKEN}?fbclid=IwAR0abc#top` });
-  assert.equal(full.landing_page, 'https://app.stiko.design/invite/[token]?fbclid=IwAR0abc#top');
+  assert.equal(full.landing_page, 'https://app.stiko.design/invite/[token]?fbclid=IwAR0abc');
 });
 
 test('an app invite URL in the referrer loses the token', () => {
@@ -127,42 +132,78 @@ test('an app invite URL in the referrer loses the token', () => {
   assert.equal(t.referrer, 'https://app.stiko.design/invite/[token]');
 });
 
-test('a percent-encoded invite path (the /login?callbackUrl=… redirect) loses the token too', () => {
+test('/verify-email?email=… loses the email address', () => {
+  const t = touchWith({ landing_page: '/verify-email?email=a@b.co', referrer: 'https://app.stiko.design/verify-email?email=a%40b.co&callbackUrl=%2Fdashboard' });
+  assert.equal(t.landing_page, '/verify-email');
+  assert.equal(t.referrer, 'https://app.stiko.design/verify-email');
+  assert.ok(!JSON.stringify(t).includes('a@b.co') && !JSON.stringify(t).includes('a%40b.co'));
+});
+
+test('/reset-password/<token> loses the token', () => {
+  const t = touchWith({ landing_page: '/reset-password/abc', referrer: 'https://app.stiko.design/reset-password/abc123?x=1' });
+  assert.equal(t.landing_page, '/reset-password/[token]');
+  assert.equal(t.referrer, 'https://app.stiko.design/reset-password/[token]');
+});
+
+test('a percent-encoded invite path (the /login?callbackUrl=… redirect) loses the token: the whole callbackUrl goes', () => {
   const t = touchWith({ landing_page: `https://app.stiko.design/login?callbackUrl=%2Finvite%2F${TOKEN}&x=1` });
-  assert.equal(t.landing_page, 'https://app.stiko.design/login?callbackUrl=%2Finvite%2F[token]&x=1');
+  assert.equal(t.landing_page, 'https://app.stiko.design/login');
   const lower = touchWith({ landing_page: `/login?callbackUrl=%2finvite%2f${TOKEN}` });
-  assert.equal(lower.landing_page, '/login?callbackUrl=%2finvite%2f[token]');
+  assert.equal(lower.landing_page, '/login');
+});
+
+test('a token route inside an allowed query value is still redacted', () => {
+  const t = touchWith({ landing_page: `/pricing?utm_content=%2Finvite%2F${TOKEN}&utm_source=x` });
+  assert.ok(!t.landing_page.includes(TOKEN), t.landing_page);
+  assert.equal(t.landing_page, '/pricing?utm_content=%2Finvite%2F%5Btoken%5D&utm_source=x');
 });
 
 test('every invite path in a value is redacted, not just the first', () => {
-  const t = touchWith({ landing_page: `/invite/${TOKEN}?next=/invite/other` });
-  assert.equal(t.landing_page, '/invite/[token]?next=/invite/[token]');
+  const t = touchWith({ landing_page: `/invite/${TOKEN}?utm_content=/invite/other` });
+  assert.equal(t.landing_page, '/invite/[token]?utm_content=%2Finvite%2F%5Btoken%5D');
 });
 
-test('other paths, other fields and near-miss paths are left alone', () => {
+test('fragments and user:password@ are dropped from both URL fields', () => {
+  const t = touchWith({ landing_page: 'https://user:pw@www.stiko.design/pricing#access_token=xyz', referrer: 'https://www.stiko.design/#frag' });
+  assert.equal(t.landing_page, 'https://www.stiko.design/pricing');
+  assert.equal(t.referrer, 'https://www.stiko.design/');
+});
+
+test('allowlisted campaign keys survive in a URL field; everything else goes', () => {
+  const t = touchWith({ referrer: 'https://www.google.com/search?q=secret+plan&utm_source=news&gclid=G1&email=a@b.co' });
+  assert.equal(t.referrer, 'https://www.google.com/search?utm_source=news&gclid=G1');
+});
+
+test('clean paths, other fields and near-miss paths are left alone', () => {
   const same = [
     'https://www.stiko.design/',
-    '/pricing?utm_source=x&ref=/invite',
+    '/pricing?utm_source=x',
     'https://www.stiko.design/invite-friends',
     'https://www.stiko.design/invitees/abc',
     '/invite',
     '/invite/',
-    '/signup?callbackUrl=/portal/p1',
+    '/signup',
+    'android-app://com.google.android.gm/',
   ];
   for (const v of same) {
     const t = touchWith({ landing_page: v, referrer: v });
     assert.equal(t.landing_page, v, v);
     assert.equal(t.referrer, v, v);
   }
-  const other = touchWith({ utm_content: '/invite/abc', utm_campaign: 'invite' });
+  // Only landing_page and referrer are URLs. Campaign labels are stored as typed.
+  const other = touchWith({ utm_content: '/invite/abc', utm_campaign: 'invite', utm_term: '/verify-email?email=a@b.co' });
   assert.equal(other.utm_content, '/invite/abc');
   assert.equal(other.utm_campaign, 'invite');
+  assert.equal(other.utm_term, '/verify-email?email=a@b.co');
 });
 
-test('the token is redacted before the length cap, so a long URL cannot leave a half token behind', () => {
+test('the URL is scrubbed before the length cap, so a long URL cannot leave a half token behind', () => {
   const t = touchWith({ landing_page: `https://app.stiko.design/${'a'.repeat(170)}/invite/${'f'.repeat(64)}` });
   assert.ok(!t.landing_page.includes('ffff'), t.landing_page);
   assert.ok(t.landing_page.length <= 200);
   const near = touchWith({ landing_page: `https://app.stiko.design/${'a'.repeat(150)}/invite/${'f'.repeat(64)}` });
   assert.ok(near.landing_page.endsWith('/invite/[token]'), near.landing_page);
+  // A long query of non-allowlisted keys is dropped whole, not truncated into the output.
+  const q = touchWith({ referrer: `https://www.stiko.design/verify-email?email=${'x'.repeat(300)}@b.co` });
+  assert.equal(q.referrer, 'https://www.stiko.design/verify-email');
 });

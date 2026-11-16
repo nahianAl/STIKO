@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { parseTouchCookie } from '../../lib/attribution.ts';
+import { ALLOWED_QUERY_KEYS, scrubUrl } from '../../lib/analytics/scrub.ts';
 
 const SRC = readFileSync(new URL('../../public/stiko-tracking.js', import.meta.url), 'utf8');
 
@@ -311,16 +312,37 @@ test('a referrer that is an app invite URL is redacted', async () => {
   assert.ok(!r.jar.stiko_ft.includes(TOKEN));
 });
 
-test('the percent-encoded /login?callbackUrl= form is redacted, keeping the rest of the URL', async () => {
+test('the percent-encoded /login?callbackUrl= form is redacted: only allowlisted query keys survive', async () => {
   const r = run({
     href: 'https://www.stiko.design/?utm_source=meta',
     referrer: `https://app.stiko.design/login?callbackUrl=%2Finvite%2F${TOKEN}&x=1`,
   });
   await r.flush();
-  assert.equal(
-    decode(r.jar.stiko_ft).referrer,
-    'https://app.stiko.design/login?callbackUrl=%2Finvite%2F[token]&x=1',
-  );
+  assert.equal(decode(r.jar.stiko_ft).referrer, 'https://app.stiko.design/login');
+  assert.ok(!r.jar.stiko_ft.includes(TOKEN));
+});
+
+test('a /verify-email referrer loses the email address; a /reset-password landing page loses its token', async () => {
+  const a = run({
+    href: 'https://www.stiko.design/?utm_source=meta',
+    referrer: 'https://app.stiko.design/verify-email?email=a%40b.co&callbackUrl=%2Fdashboard',
+  });
+  await a.flush();
+  assert.equal(decode(a.jar.stiko_ft).referrer, 'https://app.stiko.design/verify-email');
+  assert.ok(!decodeURIComponent(a.jar.stiko_ft).includes('b.co'));
+  const b = run({ href: 'https://app.stiko.design/reset-password/abc123?utm_source=meta' });
+  await b.flush();
+  assert.equal(decode(b.jar.stiko_ft).landing_page, '/reset-password/[token]');
+  assert.ok(!b.jar.stiko_ft.includes('abc123'));
+});
+
+test('fragments, user:password@ and non-allowlisted query keys are dropped from the referrer', async () => {
+  const r = run({
+    href: 'https://www.stiko.design/?utm_source=meta',
+    referrer: 'https://user:pw@www.google.com/search?q=secret+plan&gclid=G1#frag',
+  });
+  await r.flush();
+  assert.equal(decode(r.jar.stiko_ft).referrer, 'https://www.google.com/search?gclid=G1');
 });
 
 test('an encoded invite path in the landing page is redacted too', async () => {
@@ -349,7 +371,7 @@ test('a referrer with no invite in it is stored as is', async () => {
   assert.equal(decode(r.jar.stiko_ft).referrer, 'https://www.google.com/');
 });
 
-test('the script redacts exactly what the server-side parser redacts', async () => {
+test('the script scrubs referrers exactly like the server-side parser (and both match scrubUrl)', async () => {
   const referrers = [
     `https://app.stiko.design/invite/${TOKEN}`,
     `https://app.stiko.design/invite/${TOKEN}?fbclid=IwAR0abc#top`,
@@ -360,6 +382,15 @@ test('the script redacts exactly what the server-side parser redacts', async () 
     `https://app.stiko.design/portal/abc?next=/invite/${TOKEN}`,
     'https://www.google.com/search?q=invite',
     'https://app.stiko.design/invites/list',
+    'https://app.stiko.design/verify-email?email=a%40b.co&callbackUrl=%2Fdashboard',
+    'https://app.stiko.design/reset-password/abc123',
+    'https://app.stiko.design/reset-password/abc123?utm_source=x#frag',
+    `https://app.stiko.design/login?callbackUrl=%2Freset-password%2Fabc123&utm_medium=email`,
+    `https://app.stiko.design/pricing?utm_content=%252Finvite%252F${TOKEN}`,
+    'https://user:pw@www.google.com/search?q=a&gclid=G1#top',
+    '//app.stiko.design/reset-password/abc123?email=a@b.co',
+    'android-app://com.google.android.gm/',
+    `https://app.stiko.design/${'a'.repeat(300)}/reset-password/abc123`,
   ];
   for (const referrer of referrers) {
     const r = run({ href: 'https://www.stiko.design/?utm_source=meta', referrer });
@@ -367,7 +398,45 @@ test('the script redacts exactly what the server-side parser redacts', async () 
     const mine = decode(r.jar.stiko_ft).referrer;
     const server = parseTouchCookie(JSON.stringify({ referrer })).referrer;
     assert.equal(mine, server, referrer);
+    assert.equal(mine, scrubUrl(referrer).slice(0, 200), referrer);
     assert.ok(!mine.includes(TOKEN), referrer);
+  }
+});
+
+test('the script keeps exactly the query keys the server-side allowlist keeps', async () => {
+  const keys = [...ALLOWED_QUERY_KEYS, 'q', 'email', 'callbackUrl', 'token', 'constructor', 'hasOwnProperty', 'UTM_SOURCE'];
+  for (const key of keys) {
+    const referrer = `https://www.google.com/search?${key}=v1`;
+    const r = run({ href: 'https://www.stiko.design/?utm_source=meta', referrer });
+    await r.flush();
+    const mine = decode(r.jar.stiko_ft).referrer;
+    assert.equal(mine, scrubUrl(referrer), key);
+    assert.equal(mine.includes('v1'), ALLOWED_QUERY_KEYS.has(key), key);
+  }
+});
+
+test('the script scrubs the landing page exactly like the server-side parser', async () => {
+  const pages = [
+    '/',
+    '/pricing',
+    `/invite/${TOKEN}`,
+    '/reset-password/abc123',
+    '/verify-email',
+    `/go%2Finvite%2F${TOKEN}`,
+    `/go%252Freset-password%252Fabc123`,
+    '/Invite/abc123',
+    '/invite-friends/abc123',
+    `/${'a'.repeat(300)}/reset-password/abc123`,
+  ];
+  for (const page of pages) {
+    const r = run({ href: `https://app.stiko.design${page}?utm_source=meta` });
+    await r.flush();
+    const mine = decode(r.jar.stiko_ft).landing_page;
+    const server = parseTouchCookie(JSON.stringify({ landing_page: new URL(`https://app.stiko.design${page}`).pathname })).landing_page;
+    assert.equal(mine, server, page);
+    assert.ok(!mine.includes(TOKEN), page);
+    // /invite-friends/<x> is an ordinary route, not a token route: it keeps its segment.
+    if (!page.includes('invite-friends')) assert.ok(!mine.includes('abc123'), page);
   }
 });
 

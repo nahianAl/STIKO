@@ -47,16 +47,66 @@
   }
 
   /*
-   * An invite token is a credential. A shared invite link opened from a social
-   * app arrives with ?fbclid=… appended, so the landing page is /invite/<token>;
-   * an app URL can be the referrer; and the /login redirect carries the path
-   * percent-encoded (callbackUrl=%2Finvite%2F<token>). Neither may reach the
-   * cookie, which is later forwarded to analytics. Mirrors lib/attribution.ts.
+   * landing_page and referrer are URLs, and a URL can carry a credential or
+   * personal data: /invite/<token>, /reset-password/<token>,
+   * /verify-email?email=<address>, /login?callbackUrl=%2Finvite%2F<token>. A
+   * shared invite link opened from a social app arrives with ?fbclid=… appended,
+   * and an app URL can be the referrer. None of it may reach the cookie, which
+   * is later forwarded to analytics. So the cookie gets the same allowlist
+   * scrub PostHog events get: token segments become "[token]", only UTM,
+   * click-id, billing and tab query keys survive, and the fragment and any
+   * user:password@ are dropped.
+   *
+   * KEEP IN SYNC with scrubUrl() in lib/analytics/scrub.ts (and the allowlist
+   * there). scripts/tests/stikoTracking.test.mjs runs both on the same inputs
+   * and fails if they diverge.
    */
-  var INVITE_PATH = /(\/invite\/)[^\/?#]+/g;
-  var INVITE_PATH_ENCODED = /(%2Finvite%2F)(?:(?!%2F)[^\/?#&])+/gi;
-  function redactInviteTokens(value) {
-    return value.replace(INVITE_PATH, '$1[token]').replace(INVITE_PATH_ENCODED, '$1[token]');
+  var ALLOWED_QUERY_KEYS = {
+    utm_source: 1, utm_medium: 1, utm_campaign: 1, utm_content: 1, utm_term: 1,
+    gclid: 1, fbclid: 1, ttclid: 1, billing: 1, tab: 1
+  };
+  var TOKEN_SEGMENTS = { 'invite': 1, 'reset-password': 1 };
+  var TOKEN_ROUTE = /((?:^|\/|%(?:25)*2F)(?:invite|reset-password)(?:\/|%(?:25)*2F))(?:(?!%(?:25)*2F)[^\/?#&\s])+/gi;
+  var ABSOLUTE_URL = /^https?:\/\/\S*$/i;
+  var PROTOCOL_RELATIVE_URL = /^\/\/\S*$/;
+  var PATH_URL = /^\/\S*$/;
+  function redactTokenRoutes(value) {
+    return value.replace(TOKEN_ROUTE, '$1[token]');
+  }
+  function decodeSegment(segment) {
+    try { return decodeURIComponent(segment); } catch (e) { return segment; }
+  }
+  function scrubPath(pathname) {
+    var segments = pathname.split('/');
+    for (var i = 1; i < segments.length; i++) {
+      if (segments[i] && TOKEN_SEGMENTS.hasOwnProperty(decodeSegment(segments[i - 1]).toLowerCase())) segments[i] = '[token]';
+    }
+    return redactTokenRoutes(segments.join('/'));
+  }
+  function scrubQuery(params) {
+    var kept = new URLSearchParams();
+    params.forEach(function (value, key) {
+      if (ALLOWED_QUERY_KEYS.hasOwnProperty(key)) kept.append(key, redactTokenRoutes(value));
+    });
+    var query = kept.toString();
+    return query ? '?' + query : '';
+  }
+  function scrubUrl(value) {
+    var absolute = ABSOLUTE_URL.test(value);
+    var protocolRelative = !absolute && PROTOCOL_RELATIVE_URL.test(value);
+    if (!absolute && !protocolRelative && !PATH_URL.test(value)) return redactTokenRoutes(value);
+    try {
+      var url = protocolRelative
+        ? new URL('https:' + value)
+        : absolute
+          ? new URL(value)
+          : new URL(value, 'https://placeholder.invalid');
+      var origin = absolute ? url.protocol + '//' + url.host : protocolRelative ? '//' + url.host : '';
+      return origin + scrubPath(url.pathname) + scrubQuery(url.searchParams);
+    } catch (e) {
+      // Unparseable: keep only what precedes the query and the fragment.
+      return redactTokenRoutes(value.split(/[?#]/)[0]);
+    }
   }
 
   function captureTouch() {
@@ -73,9 +123,9 @@
       }
     }
     if (!found) return;
-    // Redact first, then cap the length.
-    touch.landing_page = redactInviteTokens(window.location.pathname).slice(0, MAX);
-    touch.referrer = redactInviteTokens(document.referrer || '').slice(0, MAX);
+    // Scrub first, then cap the length.
+    touch.landing_page = scrubUrl(window.location.pathname).slice(0, MAX);
+    touch.referrer = scrubUrl(document.referrer || '').slice(0, MAX);
     touch.ts = new Date().toISOString();
     var value = encodeURIComponent(JSON.stringify(touch));
     if (value.length > 2000) return;
