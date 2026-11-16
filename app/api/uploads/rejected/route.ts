@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { normalizeRejectedExtensions } from '@/lib/rejectedUploads';
 import { track } from '@/lib/analytics/server';
+import { reportableExtension } from '@/lib/analytics/events';
 
 /**
  * Counts refused uploads by extension. Fire-and-forget from FileDropzone: nothing waits on
@@ -37,13 +38,14 @@ export async function POST(request: NextRequest) {
       console.warn('Could not record refused uploads', error);
     }
   }
-  // At most MAX_REJECTED_PER_REPORT (20) entries, run together so a big drop
-  // does not serialise 20 round trips. track() never throws.
+  // At most MAX_REJECTED_PER_REPORT (20) entries, one background event each. track() never
+  // throws. The count above keeps the raw extension (it stays in our own database); PostHog
+  // gets a known format, '(none)' or 'other', never a fragment of someone's file name.
   await Promise.all(
     extensions.map((extension) =>
       track('file_upload_failed', {
         userId: session.user.id,
-        properties: { extension, reason_code: 'unsupported_format' },
+        properties: { extension: reportableExtension(extension), reason_code: 'unsupported_format' },
       })
     )
   );

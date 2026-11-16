@@ -183,6 +183,11 @@ export function billingTransitionEvents(
   return [];
 }
 
+/** True for an extension Stiko accepts or can advise on. Own keys only, so 'constructor' is not one. */
+function isKnownExtension(ext: string): boolean {
+  return SUPPORTED_EXTENSIONS.has(ext) || Object.prototype.hasOwnProperty.call(NATIVE_CAD_ADVICE, ext);
+}
+
 /**
  * The file extension when it is a type Stiko accepts, '' when there is none, and
  * 'other' for any extension it does not know. An unknown extension is never
@@ -191,7 +196,17 @@ export function billingTransitionEvents(
 export function extensionOf(filename: string): string {
   const ext = rawExtensionOf(filename);
   if (!ext) return '';
-  // Own keys only, so 'x.constructor' cannot resolve through Object.prototype.
-  const known = SUPPORTED_EXTENSIONS.has(ext) || Object.prototype.hasOwnProperty.call(NATIVE_CAD_ADVICE, ext);
-  return known ? ext : 'other';
+  return isKnownExtension(ext) ? ext : 'other';
+}
+
+/**
+ * For the rejected-upload event, where the extension arrives from the browser
+ * already split off (and already shaped [a-z0-9_]{1,10}, which still lets
+ * "Rev 2.Dana" through as 'dana'). A format Stiko knows is kept — that is the
+ * demand signal the event exists for — and so is the '(none)' marker; anything
+ * else is 'other'.
+ */
+export function reportableExtension(ext: string): string {
+  if (ext === '(none)') return ext;
+  return isKnownExtension(ext) ? ext : 'other';
 }

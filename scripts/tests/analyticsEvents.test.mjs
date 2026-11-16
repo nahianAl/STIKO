@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildCapture, buildGroupIdentify, stripForbidden, toBatchPayload, billingTransitionEvents,
-  ANONYMOUS_CONTEXT, extensionOf,
+  ANONYMOUS_CONTEXT, extensionOf, reportableExtension,
 } from '../../lib/analytics/events.ts';
 
 const CTX = { workspaceId: 'ws_1', segmentId: 'PD-07', track: 'mid_team', analyticsConsent: null };
@@ -204,4 +204,19 @@ test('stripForbidden does not mutate its input and tolerates a __proto__ key', (
 test('$group_set passes through the same stripping', () => {
   const row = buildGroupIdentify('ws_1', 'u1', { pillar: 'PD', workspace_name: 'Acme', $groups: {}, meta: { email: 'a@b.c' } }, 'u');
   assert.deepEqual(row.properties.$group_set, { pillar: 'PD', meta: {} });
+});
+
+test('a rejected upload reports a known extension, the no-extension marker, or "other"', () => {
+  // Unsupported but recognised CAD formats are exactly what the rejected-upload event is for.
+  for (const ext of ['sldasm', 'ipt', 'catpart', 'f3d']) assert.equal(reportableExtension(ext), ext, ext);
+  // A supported type that was refused for another reason keeps its extension too.
+  for (const ext of ['step', 'glb', 'pdf', 'png']) assert.equal(reportableExtension(ext), ext, ext);
+  assert.equal(reportableExtension('(none)'), '(none)');
+});
+
+test('a rejected upload never echoes a client-supplied extension Stiko does not know', () => {
+  // "Rev 2.Dana" is a fragment of a filename, not a file type.
+  for (const ext of ['dana', 'v2', 'final', 'x_1', 'zzzzzzzzzz', '']) assert.equal(reportableExtension(ext), 'other', ext);
+  // Own keys only: Object.prototype names must not resolve as formats.
+  for (const ext of ['constructor', 'tostring', '__proto__', 'hasownproperty']) assert.equal(reportableExtension(ext), 'other', ext);
 });
