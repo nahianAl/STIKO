@@ -9,6 +9,13 @@
  * sites compile unchanged, but the await no longer waits for any database
  * round trip.
  *
+ * trackNow() and identifyWorkspaceNow() are the same work as awaitable
+ * functions, flush included. A route that already runs its analytics inside ONE
+ * runInBackground job (several lookups feeding an event) awaits these instead of
+ * the wrappers, so that one waitUntil covers everything: a wrapper called from
+ * inside a background job would register a second, nested waitUntil after the
+ * response is out, which the platform need not honour.
+ *
  * Ordering: because the work is not awaited, a caller whose event depends on a
  * database write (a consent flag, a row the event reads) must complete that
  * write BEFORE calling track(). All current callers already do.
@@ -24,12 +31,12 @@ export function serverAnalyticsEnabled(): boolean {
   return Boolean(process.env.POSTHOG_PROJECT_KEY);
 }
 
-function scheduleFlush(): void {
-  const p = flushOutbox().catch((err) => console.error('[analytics] flush threw', err));
+/** Sends what is waiting. Awaited by the caller's background job; never throws. */
+async function flushQuietly(): Promise<void> {
   try {
-    waitUntil(p);
-  } catch {
-    // Outside a Vercel request context (tests, scripts) the promise still runs.
+    await flushOutbox();
+  } catch (err) {
+    console.error('[analytics] flush threw', err);
   }
 }
 
@@ -66,7 +73,11 @@ export async function track(event: string, opts: TrackOptions): Promise<void> {
   runInBackground(trackNow(event, opts));
 }
 
-async function trackNow(event: string, opts: TrackOptions): Promise<void> {
+/**
+ * track() as an awaitable: resolves after the outbox INSERT and the flush.
+ * Swallows its own errors. For code already inside runInBackground.
+ */
+export async function trackNow(event: string, opts: TrackOptions): Promise<void> {
   try {
     if (!serverAnalyticsEnabled()) return;
     const userId = opts.userId ?? null;
@@ -79,7 +90,7 @@ async function trackNow(event: string, opts: TrackOptions): Promise<void> {
     );
     if (!row) return;
     await enqueue([row]);
-    scheduleFlush();
+    await flushQuietly();
   } catch (err) {
     console.error(`[analytics] track(${event}) failed`, err);
   }
@@ -90,7 +101,8 @@ export async function identifyWorkspace(userId: string): Promise<void> {
   runInBackground(identifyWorkspaceNow(userId));
 }
 
-async function identifyWorkspaceNow(userId: string): Promise<void> {
+/** identifyWorkspace() as an awaitable, flush included. Swallows its own errors. For code already inside runInBackground. */
+export async function identifyWorkspaceNow(userId: string): Promise<void> {
   try {
     if (!serverAnalyticsEnabled()) return;
     const context = await workspaceContext(userId);
@@ -112,7 +124,7 @@ async function identifyWorkspaceNow(userId: string): Promise<void> {
       first_utm_campaign: utm.utm_campaign ?? null,
     };
     await enqueue([buildGroupIdentify(context.workspaceId, userId, groupSet, randomUUID())]);
-    scheduleFlush();
+    await flushQuietly();
   } catch (err) {
     console.error('[analytics] identifyWorkspace failed', err);
   }

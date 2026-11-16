@@ -4,11 +4,11 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { canRedeemInvite } from '@/lib/inviteBinding';
 import {
-  identifyWorkspace,
+  identifyWorkspaceNow,
   posthogAnonymousId,
   posthogCookieName,
   runInBackground,
-  track,
+  trackNow,
 } from '@/lib/analytics/server';
 import { ensureWorkspace, markActivation } from '@/lib/workspaces';
 
@@ -153,6 +153,9 @@ export async function GET(
  * Analytics for one view of the public invite page: review_link_opened, and the
  * inviter workspace's activation. None of it may delay the page, so it runs in
  * the background (runInBackground → waitUntil) and every failure stays here.
+ * That is ONE waitUntil: the job awaits trackNow / identifyWorkspaceNow (which
+ * flush before they resolve), never the fire-and-forget wrappers, so nothing is
+ * registered from inside the job after the response has gone out.
  *
  * What needs the live request is read first, while it is still usable: the
  * session and the PostHog cookie. The background job gets plain values. If that
@@ -183,13 +186,13 @@ async function recordReviewLinkOpened(
 ): Promise<void> {
   try {
     const inviterWorkspaceId = inviterId ? await ensureWorkspace(inviterId) : null;
-    await track('review_link_opened', {
+    await trackNow('review_link_opened', {
       userId: viewerId,
       anonymousId,
       properties: { invite_id: inviteId, inviter_workspace_id: inviterWorkspaceId, signed_in: Boolean(viewerId) },
     });
     if (inviterId && (await markActivation(inviterId, viewerId))) {
-      await identifyWorkspace(inviterId);
+      await identifyWorkspaceNow(inviterId);
     }
   } catch (err) {
     console.error('[analytics] review_link_opened failed', err);
