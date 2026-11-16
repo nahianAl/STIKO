@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clientIp, proxyRequestHeaders, proxyResponseHeaders, upstreamUrl } from '../../lib/analytics/ingestProxy.ts';
+import { clientIp, proxyRequestHeaders, proxyResponseHeaders, upstreamSearch, upstreamUrl } from '../../lib/analytics/ingestProxy.ts';
 
 // ---- where a request goes ----
 
@@ -31,6 +31,15 @@ test('anything outside /ingest is not proxied', () => {
   assert.equal(upstreamUrl('/ingestx/e/', ''), null);
   assert.equal(upstreamUrl('/api/me', ''), null);
   assert.equal(upstreamUrl('/ingest', ''), 'https://us.i.posthog.com/');
+});
+
+test("Next's injected catch-all param is removed from the query; the rest is kept verbatim", () => {
+  assert.equal(upstreamSearch('?ip=0&_=1&ver=1.450.0&path=e'), '?ip=0&_=1&ver=1.450.0');
+  assert.equal(upstreamSearch('?v=1&path=static&path=1.450.0&path=recorder.js'), '?v=1');
+  assert.equal(upstreamSearch('?path=e'), '');
+  assert.equal(upstreamSearch(''), '');
+  assert.equal(upstreamSearch('?a=%2F%20b&compression=gzip-js'), '?a=%2F%20b&compression=gzip-js');
+  assert.equal(upstreamSearch('?pathx=1&xpath=2'), '?pathx=1&xpath=2');
 });
 
 // ---- what goes with it ----

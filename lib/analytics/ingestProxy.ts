@@ -21,6 +21,20 @@ export function upstreamUrl(pathname: string, search: string): string | null {
   return `${host}${rest}${search}`;
 }
 
+/**
+ * The query string as the browser sent it, minus `path`: Next hands the
+ * app/ingest/[...path] catch-all to the handler as extra `path=` entries in
+ * nextUrl.search. Other entries are kept byte for byte (posthog-js sends
+ * ip, _, ver, compression; nothing named `path`).
+ */
+export function upstreamSearch(search: string): string {
+  const kept = search
+    .replace(/^\?/, '')
+    .split('&')
+    .filter((part) => part !== '' && part.split('=')[0] !== 'path');
+  return kept.length ? `?${kept.join('&')}` : '';
+}
+
 /** Headers PostHog needs to read the body and answer CORS. Nothing else. */
 const FORWARDED_REQUEST_HEADERS = [
   'accept',

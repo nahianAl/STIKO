@@ -13,13 +13,13 @@
  * next.config.mjs. middleware.ts excludes /ingest from its matcher.
  */
 import type { NextRequest } from 'next/server';
-import { clientIp, proxyRequestHeaders, proxyResponseHeaders, upstreamUrl } from '@/lib/analytics/ingestProxy';
+import { clientIp, proxyRequestHeaders, proxyResponseHeaders, upstreamSearch, upstreamUrl } from '@/lib/analytics/ingestProxy';
 
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
 
 async function proxy(request: NextRequest): Promise<Response> {
-  const target = upstreamUrl(request.nextUrl.pathname, request.nextUrl.search);
+  const target = upstreamUrl(request.nextUrl.pathname, upstreamSearch(request.nextUrl.search));
   if (!target) return new Response(null, { status: 404 });
 
   const method = request.method;
