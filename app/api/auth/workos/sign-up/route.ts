@@ -5,6 +5,7 @@ import { inviteVouchesForEmail } from '@/lib/inviteBinding';
 import { splitName } from '@/lib/workosIdentity';
 import { workos, type WorkosUser } from '@/lib/workos';
 import { linkLocalUser } from '@/lib/workosLink';
+import { recordSignup } from '@/lib/analytics/signup';
 import {
   failureResponse,
   handleAuthError,
@@ -81,6 +82,8 @@ export async function POST(request: NextRequest) {
     passwordHash: await hashPassword(password),
   });
   if (!linked.ok) return failureResponse({ ok: false, error: 'account_conflict' });
+
+  await recordSignup(request, linked.userId, email, typeof inviteToken === 'string' ? inviteToken : null);
 
   return passwordSignIn(request, email, password);
 }

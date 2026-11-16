@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { sql } from '@/lib/db';
 import { workos, workosClientId, type WorkosAuthResponse } from '@/lib/workos';
 import { requestMeta } from '@/lib/requestMeta';
+import { track } from '@/lib/analytics/server';
 import { classifyWorkosError } from '@/lib/workosErrors';
 import { PENDING_AUTH_COOKIE, decodePendingAuth } from '@/lib/pendingAuth';
 import {
@@ -45,10 +46,12 @@ export async function POST(request: NextRequest) {
   const done = await completeSignIn(request, response);
   if (done.status === 200) {
     clearPendingAuth();
-    await sql`
+    const verified = await sql`
       UPDATE users SET email_verified = COALESCE(email_verified, NOW())
       WHERE workos_user_id = ${response.user.id}
+      RETURNING id
     `;
+    if (verified[0]) await track('email_verified', { userId: verified[0].id as string });
   }
   return done;
 }

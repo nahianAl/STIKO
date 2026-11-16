@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { useAuthActions } from '@/lib/authClient';
 import { authErrorMessage } from '@/lib/authMessages';
 import { safeCallbackUrl } from '@/lib/callbackUrl';
+import { inviteTokenFromCallback } from '@/lib/attribution';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import AuthShell, { PasswordStrength } from '@/components/auth/AuthShell';
@@ -31,7 +32,8 @@ function SignupForm() {
     setError(null);
     setLoading(true);
 
-    const result = await signUp({ name, email, password });
+    const inviteToken = inviteTokenFromCallback(callbackUrl) ?? undefined;
+    const result = await signUp({ name, email, password, inviteToken });
 
     if (result.ok) {
       router.push(callbackUrl);
@@ -65,6 +67,9 @@ function SignupForm() {
           >
             Sign in
           </Link>
+          <span className="mt-2 block text-[11.5px]">
+            <a href="https://www.stiko.design/privacy" target="_blank" rel="noreferrer" className="underline">Privacy policy</a>
+          </span>
         </>
       }
     >
