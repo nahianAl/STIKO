@@ -17,7 +17,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import type { PostHog, PostHogConfig } from 'posthog-js';
 import { useAuthSession } from '@/lib/authClient';
 import { loadPostHog, releasePendingCaptures } from '@/lib/analytics/client';
-import { scrubEvent } from '@/lib/analytics/scrub';
+import { sanitizeEvent } from '@/lib/analytics/scrub';
 
 const KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
@@ -102,8 +102,9 @@ const CONFIG: Partial<PostHogConfig> = {
   disable_conversations: true,
   disable_product_tours: true,
   disable_web_experiments: true,
-  // Credentials and personal data in a URL never leave the browser (lib/analytics/scrub.ts).
-  before_send: scrubEvent,
+  // Credentials and personal data in a URL never leave the browser, and neither
+  // does the page title (lib/analytics/scrub.ts).
+  before_send: sanitizeEvent,
   // No /flags request, ever. Its body carries $initial_current_url and
   // $initial_referrer as person_properties, which before_send never sees, and
   // identify()/group() re-send it. Stiko uses no feature flags. NOT

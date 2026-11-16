@@ -114,3 +114,25 @@ export function scrubEvent<T extends { properties?: unknown; $set?: unknown; $se
   scrub(event.$set_once, 0);
   return event;
 }
+
+/**
+ * posthog-js puts document.title on every $pageview as `title`. Stiko's titles
+ * are static today; the day a page sets a dynamic one (a package or project
+ * name) it would ride along on every pageview. Nothing in analytics needs it
+ * (the path says where the person is), so it is removed at the source.
+ * Edits the event in place and returns it.
+ */
+export function dropPageTitle<T extends { properties?: unknown }>(event: T): T {
+  const props = event.properties;
+  if (props !== null && typeof props === 'object' && !Array.isArray(props)) {
+    const record = props as Record<string, unknown>;
+    delete record.title;
+    delete record.$title;
+  }
+  return event;
+}
+
+/** The before_send hook: no page title, no credentials or personal data in any URL. */
+export function sanitizeEvent<T extends { properties?: unknown; $set?: unknown; $set_once?: unknown }>(event: T): T {
+  return scrubEvent(dropPageTitle(event));
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubEvent, scrubUrl } from '../../lib/analytics/scrub.ts';
+import { dropPageTitle, sanitizeEvent, scrubEvent, scrubUrl } from '../../lib/analytics/scrub.ts';
 
 const TOKEN = 'k3J9xQ2mZpLw8RtYv1NaBcDe';
 const APP = 'https://app.stiko.design';
@@ -192,4 +192,42 @@ test('gzip-compressed replay payloads are not rewritten', () => {
 
 test('an event with no properties does not throw', () => {
   assert.doesNotThrow(() => scrubEvent({ event: '$pageview' }));
+});
+
+// ---- the page title: today static, but a package name the day a page sets a dynamic one ----
+
+test('the $pageview title (document.title) is removed, as is $title', () => {
+  const event = sanitizeEvent({
+    event: '$pageview',
+    properties: {
+      title: 'Bracket assembly rev C - Acme package',
+      $title: 'Bracket assembly rev C',
+      $current_url: `${APP}/portal/p1`,
+      $pathname: '/portal/p1',
+    },
+  });
+  assert.equal('title' in event.properties, false);
+  assert.equal('$title' in event.properties, false);
+  assert.equal(event.properties.$current_url, `${APP}/portal/p1`);
+  assert.equal(event.properties.$pathname, '/portal/p1');
+});
+
+test('sanitizeEvent still scrubs URLs, in the same pass', () => {
+  const event = sanitizeEvent({
+    event: '$pageview',
+    properties: { title: 'x', $current_url: `${APP}/invite/${TOKEN}`, $referrer: `${APP}/verify-email?email=a%40b.co` },
+  });
+  assert.deepEqual(event.properties, { $current_url: `${APP}/invite/[token]`, $referrer: `${APP}/verify-email` });
+});
+
+test('dropPageTitle edits in place, leaves other events alone, and tolerates a missing or odd properties', () => {
+  const event = { event: '$pageview', properties: { title: 'x', keep: 1 } };
+  assert.equal(dropPageTitle(event), event);
+  assert.deepEqual(event.properties, { keep: 1 });
+  const custom = dropPageTitle({ event: 'plan_viewed', properties: { plan: 'standard' } });
+  assert.deepEqual(custom.properties, { plan: 'standard' });
+  assert.doesNotThrow(() => dropPageTitle({ event: '$pageview' }));
+  assert.doesNotThrow(() => dropPageTitle({ event: '$pageview', properties: null }));
+  assert.doesNotThrow(() => dropPageTitle({ event: '$pageview', properties: 'str' }));
+  assert.doesNotThrow(() => sanitizeEvent({ event: '$pageview' }));
 });
