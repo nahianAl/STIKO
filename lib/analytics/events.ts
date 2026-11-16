@@ -5,6 +5,9 @@
  * track. The spec's rule: no names, emails, filenames, comment text or tokens.
  */
 import { analyticsAllowed } from '../geo.ts';
+import {
+  extensionOf as rawExtensionOf, SUPPORTED_EXTENSIONS, NATIVE_CAD_ADVICE,
+} from '../fileFormats.ts';
 
 export interface WorkspaceContext {
   workspaceId: string | null;
@@ -181,13 +184,14 @@ export function billingTransitionEvents(
 }
 
 /**
- * The file extension, lowercased and dotless, or '' when the text after the
- * last dot is not extension-shaped. Never returns free filename text:
- * 'Rev 2. Dana Smith final' → ''.
+ * The file extension when it is a type Stiko accepts, '' when there is none, and
+ * 'other' for any extension it does not know. An unknown extension is never
+ * echoed back: 'Rev 2.Dana' is a fragment of a filename, not a file type.
  */
 export function extensionOf(filename: string): string {
-  const dot = filename.lastIndexOf('.');
-  if (dot < 0) return '';
-  const ext = filename.slice(dot + 1).toLowerCase();
-  return /^[a-z0-9]{1,10}$/.test(ext) ? ext : '';
+  const ext = rawExtensionOf(filename);
+  if (!ext) return '';
+  // Own keys only, so 'x.constructor' cannot resolve through Object.prototype.
+  const known = SUPPORTED_EXTENSIONS.has(ext) || Object.prototype.hasOwnProperty.call(NATIVE_CAD_ADVICE, ext);
+  return known ? ext : 'other';
 }

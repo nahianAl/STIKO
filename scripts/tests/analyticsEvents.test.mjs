@@ -76,24 +76,28 @@ test('billing events fire on entering trialing or active, never on repeats', () 
   assert.deepEqual(billingTransitionEvents('active', 'canceled'), []);
 });
 
-test('extension is lowercased and dotless', () => {
+test('a known file type comes out lowercased and dotless', () => {
   assert.equal(extensionOf('Part.STEP'), 'step');
+  assert.equal(extensionOf('drawing.DWG'), 'dwg');
+  assert.equal(extensionOf('part.sldprt'), 'sldprt');
   assert.equal(extensionOf('noext'), '');
-  assert.equal(extensionOf('archive.tar.gz'), 'gz');
-  // dotfile: the text after the only dot is returned (a deliberate, tested choice)
-  assert.equal(extensionOf('.gitignore'), 'gitignore');
+  assert.equal(extensionOf('.gitignore'), '');
   assert.equal(extensionOf('trailing.'), '');
   assert.equal(extensionOf(''), '');
 });
 
-test('extension never leaks filename text that merely follows a dot', () => {
-  assert.equal(extensionOf('Rev 2. Dana Smith final'), '');
-  assert.equal(extensionOf('Acme Pump v1.2 draft'), '');
-  assert.equal(extensionOf('Client X (confidential).step v2'), '');
-  assert.equal(extensionOf('name.with-dash'), '');
-  assert.equal(extensionOf('weird.verylongextension'), '');
-  assert.equal(extensionOf('name.ünï'), '');
-  assert.equal(extensionOf('Part.STEP'), 'step');
+test('an unknown extension is "other", never the text itself', () => {
+  assert.equal(extensionOf('archive.tar.gz'), 'other');
+  assert.equal(extensionOf('Rev 2.Dana'), 'other');
+  assert.equal(extensionOf('Rev 2. Dana Smith final'), 'other');
+  assert.equal(extensionOf('Acme v1.2'), 'other');
+  assert.equal(extensionOf('Acme Pump v1.2 draft'), 'other');
+  assert.equal(extensionOf('Client X (confidential).step v2'), 'other');
+  assert.equal(extensionOf('name.with-dash'), 'other');
+  assert.equal(extensionOf('weird.verylongextension'), 'other');
+  assert.equal(extensionOf('name.ünï'), 'other');
+  assert.equal(extensionOf('x.constructor'), 'other');
+  assert.equal(extensionOf('x.toString'), 'other');
 });
 
 test('billing recoveries (past_due, unpaid, paused to active) are not new subscriptions', () => {
