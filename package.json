@@ -35,6 +35,7 @@
     "next": "14.2.35",
     "next-auth": "^5.0.0-beta.30",
     "occt-import-js": "^0.0.23",
+    "posthog-js": "1.450.0",
     "react": "^18",
     "react-dom": "^18",
     "react-konva": "^18.2.14",

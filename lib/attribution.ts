@@ -28,7 +28,7 @@ const URL_FIELDS: ReadonlySet<string> = new Set(['landing_page', 'referrer']);
 const INVITE_PATH = /(\/invite\/)[^/?#]+/g;
 const INVITE_PATH_ENCODED = /(%2Finvite%2F)(?:(?!%2F)[^/?#&])+/gi;
 
-function redactInviteTokens(value: string): string {
+export function redactInviteTokens(value: string): string {
   return value.replace(INVITE_PATH, '$1[token]').replace(INVITE_PATH_ENCODED, '$1[token]');
 }
 
