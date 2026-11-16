@@ -1,5 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  async rewrites() {
+    // PostHog reverse proxy, so ad blockers do not drop events. US Cloud.
+    // Order matters: static and array before the catch-all. No
+    // skipTrailingSlashRedirect: it changes trailing-slash handling for the whole
+    // app, and without it PostHog requests cost one extra 308 round trip.
+    return [
+      { source: '/ingest/static/:path*', destination: 'https://us-assets.i.posthog.com/static/:path*' },
+      { source: '/ingest/array/:path*', destination: 'https://us-assets.i.posthog.com/array/:path*' },
+      { source: '/ingest/:path*', destination: 'https://us.i.posthog.com/:path*' },
+    ];
+  },
   webpack: (config, { isServer, webpack }) => {
     config.resolve.alias.canvas = false;
 

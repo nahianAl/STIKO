@@ -38,3 +38,23 @@ export async function profileCookieValid(
   for (let i = 0; i < value.length; i++) diff |= value.charCodeAt(i) ^ expected.charCodeAt(i);
   return diff === 0;
 }
+
+/**
+ * The Set-Cookie header value for stiko_profile.
+ *
+ * A raw header string, not NextResponse.cookies.set(): authkit appends its
+ * refreshed session cookie to the response headers after the NextResponse is
+ * built, and .cookies.set() rewrites Set-Cookie from a snapshot taken at
+ * construction, which drops that session cookie. Appending this string leaves
+ * every existing Set-Cookie alone.
+ */
+export function profileCookieHeader(value: string, secure: boolean): string {
+  return [
+    `${PROFILE_COOKIE}=${encodeURIComponent(value)}`,
+    'Path=/',
+    `Max-Age=${PROFILE_COOKIE_MAX_AGE}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+}
