@@ -27,15 +27,72 @@ export const ANONYMOUS_CONTEXT: WorkspaceContext = {
   analyticsConsent: null,
 };
 
+/** Keys that are forbidden by name (compared lowercased, camelCase split to snake_case). */
 const FORBIDDEN_KEYS = new Set([
   'filename', 'file_name', 'name', 'email', 'project_name', 'package_name',
   'token', 'invite_token', 'body', 'comment', 'note',
+  'first_name', 'last_name', 'full_name', 'display_name', 'text', 'message', 'title',
 ]);
 
-export function stripForbidden(props: Record<string, unknown>): Record<string, unknown> {
+/** A key ending in email / name / filename / token is a person, file or secret value. */
+const FORBIDDEN_KEY_PATTERN = /(^|_)(email|name|filename|token)$/;
+
+/**
+ * PostHog-reserved keys. Callers must not inject them; buildCapture and
+ * buildGroupIdentify add their own AFTER stripping. __proto__ is here so a
+ * JSON-parsed payload cannot swap the prototype of the stripped copy.
+ */
+const RESERVED_KEYS = new Set([
+  '$set', '$set_once', '$groups', '$lib', 'distinct_id', '$group_type', '$group_key', '$group_set',
+  '__proto__',
+]);
+
+function isForbiddenKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  if (RESERVED_KEYS.has(lower)) return true;
+  // is_* flags (e.g. is_business_email) are booleans Stiko sends on purpose.
+  if (lower.startsWith('is_')) return false;
+  // fileName / userEmail / project-name → file_name / user_email / project_name
+  const snake = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_');
+  return FORBIDDEN_KEYS.has(snake) || FORBIDDEN_KEY_PATTERN.test(snake);
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== 'object' || v === null) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function isScalar(v: unknown): boolean {
+  return v === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof v) || v instanceof Date;
+}
+
+/** A value with no nested object in it: a scalar, or an array of scalars. */
+function isFlat(v: unknown): boolean {
+  return isScalar(v) || (Array.isArray(v) && v.every(isScalar));
+}
+
+function stripLevel(props: Record<string, unknown>, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(props)) if (!FORBIDDEN_KEYS.has(k)) out[k] = v;
+  for (const [k, v] of Object.entries(props)) {
+    if (isForbiddenKey(k)) continue;
+    if (isFlat(v)) out[k] = v;
+    // One level of nesting is stripped and kept; anything deeper is dropped whole.
+    else if (depth === 0 && isPlainObject(v)) out[k] = stripLevel(v, depth + 1);
+  }
   return out;
+}
+
+/**
+ * Removes PII-bearing and PostHog-reserved keys. Matching is case-insensitive
+ * and by pattern, not only by list. Recurses one level into plain objects;
+ * deeper objects, objects inside arrays and non-plain objects are dropped.
+ */
+export function stripForbidden(props: Record<string, unknown>): Record<string, unknown> {
+  return stripLevel(props, 0);
 }
 
 export function buildCapture(
@@ -68,6 +125,10 @@ export function buildCapture(
   return { uuid, event: input.event, distinctId: input.distinctId, properties };
 }
 
+/**
+ * Carries no consent check: callers must skip it for users whose consent is
+ * denied or pending (lib/analytics/server.ts does).
+ */
 export function buildGroupIdentify(
   workspaceId: string,
   distinctId: string,
@@ -100,10 +161,14 @@ export function toBatchPayload(apiKey: string, rows: Array<CaptureRow & { create
   };
 }
 
+/** Entering active from one of these is a recovered payment or a resume. */
+const RECOVERY_STATUSES = new Set(['past_due', 'unpaid', 'paused']);
+
 /**
  * Stripe status transitions that are funnel events. Stripe redelivers and
  * reorders webhooks; firing only on ENTERING a state is what makes it safe.
- * past_due → active is a recovered payment, not a new subscription.
+ * past_due / unpaid / paused → active is a recovered payment or a resume, not
+ * a new subscription. incomplete, incomplete_expired, canceled and null → active are.
  */
 export function billingTransitionEvents(
   prev: string | null,
@@ -111,11 +176,18 @@ export function billingTransitionEvents(
 ): Array<'trial_started' | 'subscription_started'> {
   if (next === prev) return [];
   if (next === 'trialing') return ['trial_started'];
-  if (next === 'active' && prev !== 'past_due') return ['subscription_started'];
+  if (next === 'active' && !(prev && RECOVERY_STATUSES.has(prev))) return ['subscription_started'];
   return [];
 }
 
+/**
+ * The file extension, lowercased and dotless, or '' when the text after the
+ * last dot is not extension-shaped. Never returns free filename text:
+ * 'Rev 2. Dana Smith final' → ''.
+ */
 export function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf('.');
-  return dot < 0 ? '' : filename.slice(dot + 1).toLowerCase();
+  if (dot < 0) return '';
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return /^[a-z0-9]{1,10}$/.test(ext) ? ext : '';
 }
