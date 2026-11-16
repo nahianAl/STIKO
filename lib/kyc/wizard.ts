@@ -41,7 +41,7 @@ const FIELD_STEP: Record<string, number> = {
 };
 
 export function stepForField(field: string): number | null {
-  return field in FIELD_STEP ? FIELD_STEP[field] : null;
+  return Object.prototype.hasOwnProperty.call(FIELD_STEP, field) ? FIELD_STEP[field] : null;
 }
 
 export function letterFor(index: number): string {

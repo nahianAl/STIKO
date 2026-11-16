@@ -39,6 +39,8 @@ test('server field errors map to their step', () => {
   assert.equal(stepForField('companySizeBand'), 3);
   assert.equal(stepForField('role'), 4);
   assert.equal(stepForField('nope'), null);
+  assert.equal(stepForField('constructor'), null);
+  assert.equal(stepForField('__proto__'), null);
 });
 
 test('letters A.. and key lookup within the option count', () => {

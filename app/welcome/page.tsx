@@ -151,7 +151,8 @@ function WelcomeWizard() {
   // The listener is bound once and always calls the latest closure.
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
   onKey.current = (e) => {
-    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    // keyCode 229: Safari fires the Enter that commits an IME composition with isComposing false.
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.keyCode === 229) return;
     const target = e.target instanceof HTMLElement ? e.target : null;
 
     if (e.key === 'Enter') {
@@ -266,7 +267,7 @@ function WelcomeWizard() {
             type="checkbox"
             checked={marketingConsent}
             onChange={(e) => setMarketingConsent(e.target.checked)}
-            className="mt-[2px] h-4 w-4 shrink-0 accent-stiko-primary"
+            className="mt-[2px] h-4 w-4 shrink-0 scroll-mb-28 accent-stiko-primary"
           />
           <span>Send me product news and tips from stiko. You can unsubscribe at any time.</span>
         </label>

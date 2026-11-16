@@ -49,7 +49,7 @@ export default function LetteredChoices({
               role="radio"
               aria-checked={selected}
               onClick={() => onChange(o.id)}
-              className={`flex w-full scroll-mb-28 items-center rounded-[12px] border-[1.5px] text-left outline-none transition focus-visible:border-stiko-primary focus-visible:shadow-stiko-focus ${
+              className={`flex w-full scroll-mb-28 items-center rounded-[12px] border-[1.5px] text-left outline-none transition focus-visible:border-stiko-primary focus-visible:ring-2 focus-visible:ring-stiko-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-stiko-app ${
                 dense ? 'h-full gap-[10px] px-3 py-[9px]' : 'gap-3 px-[14px] py-[11px]'
               } ${
                 selected
