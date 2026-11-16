@@ -1,16 +1,22 @@
 'use client';
 
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import AuthShell from '@/components/auth/AuthShell';
-import Button from '@/components/ui/Button';
-import { ErrorBanner, Field, Input, inputClass } from '@/components/ui/Primitives';
-import { CLIENT_MODELS, OTHER_TEXT_MAX, PILLARS, ROLES, SIZE_BANDS, type PillarId } from '@/lib/kyc/catalog';
+import LetteredChoices, { type Choice } from '@/components/welcome/LetteredChoices';
+import StepFrame from '@/components/welcome/StepFrame';
+import { Input } from '@/components/ui/Primitives';
+import { CLIENT_MODELS, OTHER_TEXT_MAX, PILLARS, ROLES, SIZE_BANDS } from '@/lib/kyc/catalog';
 import { businessTypesFor, isOtherSegment } from '@/lib/kyc/profile';
+import {
+  STEPS, canContinue, indexForKey, stepForField, stepValue, type WizardAnswers,
+} from '@/lib/kyc/wizard';
+import { captureClient } from '@/lib/analytics/client';
 import { safeCallbackUrl } from '@/lib/callbackUrl';
 import { useAuthActions } from '@/lib/authClient';
 
 const PRIVACY_URL = 'https://www.stiko.design/privacy';
+const HEADING_ID = 'welcome-question';
+const LAST = STEPS.length - 1;
 
 const FIELD_ERRORS: Record<string, string> = {
   pillar: 'Pick what best describes your work.',
@@ -21,47 +27,64 @@ const FIELD_ERRORS: Record<string, string> = {
   role: 'Pick your role.',
 };
 
-function chip(selected: boolean) {
-  return `rounded-[10px] border-[1.5px] px-3 py-[9px] text-left text-[13px] transition ${
-    selected
-      ? 'border-stiko-primary bg-stiko-tint font-bold text-stiko-ink'
-      : 'border-stiko-divider bg-white text-stiko-secondary hover:border-stiko-primary'
-  }`;
-}
+const QUESTIONS = [
+  'What best describes your work?',
+  'Which best describes your business?',
+  'Who do you design or build for?',
+  'How many people work at your company?',
+  "What's your role?",
+];
 
-function WelcomeForm() {
+const EMPTY: WizardAnswers = {
+  pillar: '', segmentId: '', businessTypeOther: '', clientModel: '', companySizeBand: '', role: '',
+};
+
+const linkClass = 'font-bold text-stiko-primary';
+
+function WelcomeWizard() {
   const router = useRouter();
   const callbackUrl = safeCallbackUrl(useSearchParams().get('callbackUrl'));
   const { signOutTo } = useAuthActions();
   // Switching account must not lose where the person was headed (an invitation, a package).
   const signedOutLanding = callbackUrl === '/' ? '/login' : `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
 
-  const [pillar, setPillar] = useState<PillarId | ''>('');
-  const [segmentId, setSegmentId] = useState('');
-  const [other, setOther] = useState('');
-  const [clientModel, setClientModel] = useState('');
-  const [size, setSize] = useState('');
-  const [role, setRole] = useState('');
+  const [answers, setAnswers] = useState<WizardAnswers>(EMPTY);
   const [marketingConsent, setMarketingConsent] = useState(false);
+  const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
-  const types = useMemo(() => (pillar ? businessTypesFor(pillar) : []), [pillar]);
-  const needsOther = isOtherSegment(segmentId);
-  const complete =
-    pillar && segmentId && clientModel && size && role && (!needsOther || other.trim().length > 0);
-
-  const choosePillar = (id: PillarId) => {
-    if (id !== pillar) {
-      setPillar(id);
-      setSegmentId('');
-      setOther('');
+  const needsOther = isOtherSegment(answers.segmentId);
+  const options: Choice[] = useMemo(() => {
+    switch (STEPS[step]) {
+      case 'pillar': return PILLARS.map((p) => ({ id: p.id, label: p.label }));
+      case 'business_type': return businessTypesFor(answers.pillar).map((t) => ({ id: t.id, label: t.label, helper: t.helper }));
+      case 'client_model': return CLIENT_MODELS.map((c) => ({ id: c.id, label: c.label }));
+      case 'company_size': return SIZE_BANDS.map((s) => ({ id: s.id, label: s.label }));
+      default: return ROLES.map((r) => ({ id: r.id, label: r.label }));
     }
+  }, [step, answers.pillar]);
+
+  const value = stepValue(step, answers);
+  const ready = canContinue(step, answers);
+
+  const choose = (id: string) => {
+    if (saving) return;
+    setError(null);
+    setAnswers((a) => {
+      switch (STEPS[step]) {
+        // Changing the pillar invalidates the business type that belonged to the old one.
+        case 'pillar': return id === a.pillar ? a : { ...a, pillar: id, segmentId: '', businessTypeOther: '' };
+        case 'business_type': return { ...a, segmentId: id };
+        case 'client_model': return { ...a, clientModel: id };
+        case 'company_size': return { ...a, companySizeBand: id };
+        default: return { ...a, role: id };
+      }
+    });
   };
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!complete || saving) return;
+  const submit = async () => {
     setSaving(true);
     setError(null);
     try {
@@ -69,8 +92,14 @@ function WelcomeForm() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pillar, segmentId, businessTypeOther: needsOther ? other : undefined,
-          clientModel, companySizeBand: size, role, marketingConsent, callbackUrl,
+          pillar: answers.pillar,
+          segmentId: answers.segmentId,
+          businessTypeOther: needsOther ? answers.businessTypeOther : undefined,
+          clientModel: answers.clientModel,
+          companySizeBand: answers.companySizeBand,
+          role: answers.role,
+          marketingConsent,
+          callbackUrl,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -85,6 +114,9 @@ function WelcomeForm() {
         router.push(`/login?callbackUrl=${encodeURIComponent(`/welcome?callbackUrl=${encodeURIComponent(callbackUrl)}`)}`);
         return;
       }
+      // Take the person to the question the server objected to.
+      const target = typeof data.field === 'string' ? stepForField(data.field) : null;
+      if (target !== null) setStep(target);
       setError(FIELD_ERRORS[data.field] ?? 'Could not save your answers. Try again.');
     } catch {
       // Network failure: fetch rejects instead of returning a status.
@@ -93,106 +125,158 @@ function WelcomeForm() {
     }
   };
 
+  const primary = () => {
+    if (!ready || saving) return;
+    captureClient('onboarding_step_completed', { step: step + 1, step_name: STEPS[step], value });
+    if (step === LAST) {
+      void submit();
+      return;
+    }
+    setError(null);
+    setStep(step + 1);
+  };
+
+  const back = () => {
+    if (step === 0 || saving) return;
+    setError(null);
+    setStep(step - 1);
+  };
+
+  // Each step starts at the top with its question focused (and announced).
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+    window.scrollTo(0, 0);
+  }, [step]);
+
+  // The listener is bound once and always calls the latest closure.
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKey.current = (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    const target = e.target instanceof HTMLElement ? e.target : null;
+
+    if (e.key === 'Enter') {
+      if (e.repeat) return;
+      // A focused button or link keeps its own Enter (Back, Continue, Sign out,
+      // Privacy policy). The exception is an already-chosen answer, where Enter
+      // means "Continue".
+      const control = target?.closest('button, a');
+      if (control && !(control.getAttribute('role') === 'radio' && control.getAttribute('aria-checked') === 'true')) return;
+      if (!ready || saving) return;
+      e.preventDefault();
+      primary();
+      return;
+    }
+
+    // In a text field letters are text.
+    if (target && target.closest('input, textarea, select')) return;
+    const i = indexForKey(e.key, options.length);
+    if (i === null || saving) return;
+    // Without this the keystroke would also land in the Other input that
+    // choosing "Other" is about to focus.
+    e.preventDefault();
+    choose(options[i].id);
+  };
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => onKey.current(e);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const pillarLabel = PILLARS.find((p) => p.id === answers.pillar)?.label;
+  const subtitle =
+    step === 0 ? 'So we can set stiko up for the files you review.'
+    : step === 1 ? pillarLabel
+    : undefined;
+
+  const signOut = (
+    <>
+      Not you?{' '}
+      <button
+        type="button"
+        disabled={saving}
+        onClick={() => void signOutTo(signedOutLanding)}
+        className={`${linkClass} disabled:opacity-50`}
+      >
+        Sign out
+      </button>
+    </>
+  );
+
   return (
-    <AuthShell
-      title="Tell us about your work"
-      subtitle="Five quick questions so stiko fits how you review."
-      width={560}
-      below={
-        <>
-          Not you?{' '}
-          <button type="button" disabled={saving} onClick={() => void signOutTo(signedOutLanding)} className="font-bold disabled:opacity-50">
-            Sign out
-          </button>
-        </>
+    <StepFrame
+      step={step}
+      total={STEPS.length}
+      title={QUESTIONS[step]}
+      subtitle={subtitle}
+      headingId={HEADING_ID}
+      headingRef={headingRef}
+      onBack={step > 0 ? back : undefined}
+      primaryLabel={saving ? 'Saving…' : step === LAST ? 'Finish' : 'Continue'}
+      primaryHint={saving ? undefined : '↵'}
+      primaryDisabled={!ready || saving}
+      onPrimary={primary}
+      error={error}
+      smallPrint={
+        step === LAST ? (
+          <>
+            How we use your answers:{' '}
+            <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className={linkClass}>Privacy policy</a>
+            {' · '}
+            {signOut}
+          </>
+        ) : (
+          signOut
+        )
       }
     >
-      <form onSubmit={submit} className="flex flex-col gap-[22px]">
-        {error && <ErrorBanner>{error}</ErrorBanner>}
+      <LetteredChoices
+        labelledBy={HEADING_ID}
+        options={options}
+        value={value}
+        onChange={choose}
+        columns={step >= 3 ? 2 : 1}
+        renderAfter={
+          STEPS[step] === 'business_type'
+            ? (id) =>
+                isOtherSegment(id) && id === answers.segmentId ? (
+                  <div className="mt-2">
+                    <Input
+                      aria-label="What does your business do?"
+                      placeholder="What does your business do?"
+                      value={answers.businessTypeOther}
+                      maxLength={OTHER_TEXT_MAX}
+                      onChange={(e) => {
+                        const text = e.target.value;
+                        setError(null);
+                        setAnswers((a) => ({ ...a, businessTypeOther: text }));
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                ) : null
+            : undefined
+        }
+      />
 
-        <fieldset className="min-w-0">
-          <legend className="mb-[8px] text-[12px] font-bold text-stiko-secondary">What best describes your work?</legend>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {PILLARS.map((p) => (
-              <button key={p.id} type="button" aria-pressed={pillar === p.id} onClick={() => choosePillar(p.id)} className={chip(pillar === p.id)}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        {pillar && (
-          <fieldset className="min-w-0">
-            <legend className="mb-[8px] text-[12px] font-bold text-stiko-secondary">Which best describes your business?</legend>
-            <div className="flex max-h-[300px] flex-col gap-[6px] overflow-y-auto pr-1">
-              {types.map((t) => (
-                <button key={t.id} type="button" aria-pressed={segmentId === t.id} onClick={() => setSegmentId(t.id)} className={chip(segmentId === t.id)}>
-                  <span className="block">{t.label}</span>
-                  <span className="block text-[11.5px] font-medium text-stiko-faint">{t.helper}</span>
-                </button>
-              ))}
-            </div>
-            {needsOther && (
-              <div className="mt-[10px]">
-                <Field label="What does your business do?">
-                  <Input value={other} maxLength={OTHER_TEXT_MAX} onChange={(e) => setOther(e.target.value)} autoFocus />
-                </Field>
-              </div>
-            )}
-          </fieldset>
-        )}
-
-        <fieldset className="min-w-0">
-          <legend className="mb-[8px] text-[12px] font-bold text-stiko-secondary">Who do you design or build for?</legend>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {CLIENT_MODELS.map((c) => (
-              <button key={c.id} type="button" aria-pressed={clientModel === c.id} onClick={() => setClientModel(c.id)} className={chip(clientModel === c.id)}>
-                {c.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <fieldset className="min-w-0">
-          <legend className="mb-[8px] text-[12px] font-bold text-stiko-secondary">How many people work at your company?</legend>
-          <div className="flex flex-wrap gap-2">
-            {SIZE_BANDS.map((s) => (
-              <button key={s.id} type="button" aria-pressed={size === s.id} onClick={() => setSize(s.id)} className={chip(size === s.id)}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <Field label="What is your role?">
-          <select value={role} onChange={(e) => setRole(e.target.value)} required className={inputClass}>
-            <option value="" disabled>Choose…</option>
-            {ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-          </select>
-        </Field>
-
-        <label className="flex items-start gap-[10px] text-[12.5px] text-stiko-secondary">
-          <input type="checkbox" checked={marketingConsent} onChange={(e) => setMarketingConsent(e.target.checked)} className="mt-[2px]" />
+      {step === LAST && (
+        <label className="mt-4 flex items-start gap-[9px] text-[12.5px] text-stiko-secondary">
+          <input
+            type="checkbox"
+            checked={marketingConsent}
+            onChange={(e) => setMarketingConsent(e.target.checked)}
+            className="mt-[2px] h-4 w-4 shrink-0 accent-stiko-primary"
+          />
           <span>Send me product news and tips from stiko. You can unsubscribe at any time.</span>
         </label>
-
-        <Button type="submit" fullWidth disabled={!complete || saving} className="!py-3">
-          {saving ? 'Saving…' : 'Continue'}
-        </Button>
-
-        <p className="text-center text-[11.5px] text-stiko-faint">
-          We use your answers to tailor stiko and our emails.{' '}
-          <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className="font-bold underline">Privacy policy</a>
-        </p>
-      </form>
-    </AuthShell>
+      )}
+    </StepFrame>
   );
 }
 
 export default function WelcomePage() {
   return (
     <Suspense fallback={null}>
-      <WelcomeForm />
+      <WelcomeWizard />
     </Suspense>
   );
 }
