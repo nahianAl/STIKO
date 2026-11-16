@@ -42,12 +42,14 @@ const FORBIDDEN_KEY_PATTERN = /(^|_)(email|name|filename|token)$/;
 
 /**
  * PostHog-reserved keys. Callers must not inject them; buildCapture and
- * buildGroupIdentify add their own AFTER stripping. __proto__ is here so a
+ * buildGroupIdentify add their own AFTER stripping. $geoip_disable is one: every
+ * server event sets it, because the request comes from a Vercel data centre and
+ * PostHog would otherwise file the person under that location. __proto__ is here so a
  * JSON-parsed payload cannot swap the prototype of the stripped copy.
  */
 const RESERVED_KEYS = new Set([
   '$set', '$set_once', '$groups', '$lib', 'distinct_id', '$group_type', '$group_key', '$group_set',
-  '__proto__',
+  '$geoip_disable', '__proto__',
 ]);
 
 function isForbiddenKey(key: string): boolean {
@@ -124,6 +126,7 @@ export function buildCapture(
   if (input.set) properties.$set = stripForbidden(input.set);
   if (input.setOnce) properties.$set_once = stripForbidden(input.setOnce);
   properties.$lib = 'stiko-server';
+  properties.$geoip_disable = true;
 
   return { uuid, event: input.event, distinctId: input.distinctId, properties };
 }
@@ -147,6 +150,7 @@ export function buildGroupIdentify(
       $group_key: workspaceId,
       $group_set: stripForbidden(groupSet),
       $lib: 'stiko-server',
+      $geoip_disable: true,
     },
   };
 }

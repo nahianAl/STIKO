@@ -326,7 +326,7 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.local | cut -d= -f2- | sed -e 's/
 
 `unsent: 0` means everything was delivered, so look at PostHog's filters (date range, project). A growing `unsent` with a `last_error` means PostHog is rejecting the key: check `POSTHOG_PROJECT_KEY` in Vercel (no spaces, the same value as the public key) and that the deploy happened **after** you added it. The daily 04:00 UTC job also retries unsent events. If you see `Could not connect (details hidden)`, the database address in `.env.local` is not in the usual form; tell Claude (do not paste the file anywhere).
 
-Two things that are normal, not bugs: server events show a United States data-centre as their "location" in PostHog (use the `country` property from the onboarding answers instead), and the browser events from a visitor who declined cookies simply do not exist.
+Two things that are normal, not bugs: server events carry no location at all (the app switches PostHog's location lookup off for them, because the request would otherwise be filed under a Vercel data centre in the United States; for where a customer is, use the `country` property from the onboarding answers, or the location on their browser events), and the browser events from a visitor who declined cookies simply do not exist.
 
 ## Rollback
 

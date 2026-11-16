@@ -13,7 +13,7 @@ test('every event carries the four standard properties and the workspace group',
     uuid: 'uuid-1', event: 'project_created', distinctId: 'u1',
     properties: {
       project_id: 'p1', user_id: 'u1', workspace_id: 'ws_1', segment_id: 'PD-07', track: 'mid_team',
-      $groups: { workspace: 'ws_1' }, $lib: 'stiko-server',
+      $groups: { workspace: 'ws_1' }, $lib: 'stiko-server', $geoip_disable: true,
     },
   });
 });
@@ -57,8 +57,34 @@ test('names, emails, filenames and tokens are stripped from properties', () => {
 test('$groupidentify names the workspace group and its properties', () => {
   assert.deepEqual(buildGroupIdentify('ws_1', 'u1', { pillar: 'PD' }, 'u'), {
     uuid: 'u', event: '$groupidentify', distinctId: 'u1',
-    properties: { $group_type: 'workspace', $group_key: 'ws_1', $group_set: { pillar: 'PD' }, $lib: 'stiko-server' },
+    properties: { $group_type: 'workspace', $group_key: 'ws_1', $group_set: { pillar: 'PD' }, $lib: 'stiko-server', $geoip_disable: true },
   });
+});
+
+test('server events switch GeoIP off: the request comes from a Vercel data centre, not the person', () => {
+  for (const context of [CTX, ANONYMOUS_CONTEXT]) {
+    const row = buildCapture({ event: 'x', distinctId: 'd', userId: null, context }, 'u');
+    assert.equal(row.properties.$geoip_disable, true);
+  }
+  assert.equal(buildGroupIdentify('ws_1', 'u1', {}, 'u').properties.$geoip_disable, true);
+});
+
+test('a caller cannot turn GeoIP back on, or smuggle $geoip_disable into a person or group property', () => {
+  const row = buildCapture({
+    event: 'x', distinctId: 'u1', userId: 'u1', context: CTX,
+    properties: { $geoip_disable: false }, set: { $geoip_disable: false, role: 'engineer' }, setOnce: { $geoip_disable: false },
+  }, 'u');
+  assert.equal(row.properties.$geoip_disable, true);
+  assert.deepEqual(row.properties.$set, { role: 'engineer' });
+  assert.deepEqual(row.properties.$set_once, {});
+  assert.deepEqual(stripForbidden({ $geoip_disable: false, file_id: 'f' }), { file_id: 'f' });
+  assert.deepEqual(buildGroupIdentify('ws_1', 'u1', { $geoip_disable: false, pillar: 'PD' }, 'u').properties.$group_set, { pillar: 'PD' });
+});
+
+test('the batch payload keeps $geoip_disable on every event', () => {
+  const row = buildCapture({ event: 'x', distinctId: 'u1', userId: 'u1', context: CTX }, 'u');
+  const p = toBatchPayload('phc_x', [{ ...row, createdAt: '2026-11-15T00:00:00.000Z' }]);
+  assert.equal(p.batch[0].properties.$geoip_disable, true);
 });
 
 test('the batch payload carries uuid and timestamp for dedupe', () => {
