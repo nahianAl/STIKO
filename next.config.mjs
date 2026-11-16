@@ -1,10 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Required by the PostHog proxy below. posthog-js calls slash-ended paths
+  // (/ingest/e/, /ingest/flags/, /ingest/s/); without this, Next answers them
+  // with a 308 to the slashless path BEFORE rewrites run, and that 308 has no
+  // CORS headers, so cross-origin calls from www.stiko.design fail in the browser.
+  // It also disables Next's built-in `/x/` -> `/x` redirect for the whole app;
+  // middleware.ts redoes that for app paths (lib/trailingSlash.ts).
+  skipTrailingSlashRedirect: true,
   async rewrites() {
     // PostHog reverse proxy, so ad blockers do not drop events. US Cloud.
-    // Order matters: static and array before the catch-all. No
-    // skipTrailingSlashRedirect: it changes trailing-slash handling for the whole
-    // app, and without it PostHog requests cost one extra 308 round trip.
+    // Order matters: static and array before the catch-all.
     return [
       { source: '/ingest/static/:path*', destination: 'https://us-assets.i.posthog.com/static/:path*' },
       { source: '/ingest/array/:path*', destination: 'https://us-assets.i.posthog.com/array/:path*' },

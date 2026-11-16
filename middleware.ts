@@ -5,6 +5,7 @@ import { loginRedirectPath, routeDecision } from '@/lib/routeAccess';
 import { isGatedPage, kycGateEnabled, welcomeRedirectPath } from '@/lib/kyc/gate';
 import { PROFILE_COOKIE, profileCookieHeader, profileCookieValid, signProfileCookie } from '@/lib/kyc/profileCookie';
 import { profileCompletedFor } from '@/lib/kyc/gateLookup';
+import { trailingSlashRedirectTarget } from '@/lib/trailingSlash';
 
 // There was a PROTECTED_PATHS list here. Nothing ever read it, and it claimed
 // /api/invite was protected — exactly the invite bug documented in
@@ -98,6 +99,13 @@ async function workosMiddleware(request: NextRequest) {
 }
 
 export default function middleware(request: NextRequest, event: NextFetchEvent) {
+  // next.config.mjs sets skipTrailingSlashRedirect (so PostHog's slash-ended
+  // /ingest/e/ is proxied, not 308'd without CORS headers), which also turns off
+  // Next's own `/x/` -> `/x`. Keep that for app paths here, before any auth work.
+  // Paths outside the matcher (/ingest, static files, _next) never get here.
+  const slashless = trailingSlashRedirectTarget(request.url);
+  if (slashless !== null) return NextResponse.redirect(slashless, 308);
+
   if (authProvider() === 'workos') return workosMiddleware(request);
   // NextAuth's wrapper is typed for its own request shape; at runtime it is a
   // standard (request, event) middleware.
