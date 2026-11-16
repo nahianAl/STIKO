@@ -108,3 +108,61 @@ test('every ISO code in the consent set is recognised', () => {
   assert.equal(codes.length, 32);
   for (const c of codes) assert.equal(consentRequired(c), true, c);
 });
+
+// ---- invite tokens never ride along in attribution values ----
+
+const TOKEN = '7c9e2b1a4d5f60718293a4b5c6d7e8f9';
+const touchWith = (fields) => parseTouchCookie(JSON.stringify(fields));
+
+test('an invite link a social app appended ?fbclid to keeps its query but loses the token', () => {
+  const t = touchWith({ landing_page: `/invite/${TOKEN}?x=1`, utm_source: 'meta' });
+  assert.equal(t.landing_page, '/invite/[token]?x=1');
+  assert.equal(t.utm_source, 'meta');
+  const full = touchWith({ landing_page: `https://app.stiko.design/invite/${TOKEN}?fbclid=IwAR0abc#top` });
+  assert.equal(full.landing_page, 'https://app.stiko.design/invite/[token]?fbclid=IwAR0abc#top');
+});
+
+test('an app invite URL in the referrer loses the token', () => {
+  const t = touchWith({ referrer: 'https://app.stiko.design/invite/abc' });
+  assert.equal(t.referrer, 'https://app.stiko.design/invite/[token]');
+});
+
+test('a percent-encoded invite path (the /login?callbackUrl=… redirect) loses the token too', () => {
+  const t = touchWith({ landing_page: `https://app.stiko.design/login?callbackUrl=%2Finvite%2F${TOKEN}&x=1` });
+  assert.equal(t.landing_page, 'https://app.stiko.design/login?callbackUrl=%2Finvite%2F[token]&x=1');
+  const lower = touchWith({ landing_page: `/login?callbackUrl=%2finvite%2f${TOKEN}` });
+  assert.equal(lower.landing_page, '/login?callbackUrl=%2finvite%2f[token]');
+});
+
+test('every invite path in a value is redacted, not just the first', () => {
+  const t = touchWith({ landing_page: `/invite/${TOKEN}?next=/invite/other` });
+  assert.equal(t.landing_page, '/invite/[token]?next=/invite/[token]');
+});
+
+test('other paths, other fields and near-miss paths are left alone', () => {
+  const same = [
+    'https://www.stiko.design/',
+    '/pricing?utm_source=x&ref=/invite',
+    'https://www.stiko.design/invite-friends',
+    'https://www.stiko.design/invitees/abc',
+    '/invite',
+    '/invite/',
+    '/signup?callbackUrl=/portal/p1',
+  ];
+  for (const v of same) {
+    const t = touchWith({ landing_page: v, referrer: v });
+    assert.equal(t.landing_page, v, v);
+    assert.equal(t.referrer, v, v);
+  }
+  const other = touchWith({ utm_content: '/invite/abc', utm_campaign: 'invite' });
+  assert.equal(other.utm_content, '/invite/abc');
+  assert.equal(other.utm_campaign, 'invite');
+});
+
+test('the token is redacted before the length cap, so a long URL cannot leave a half token behind', () => {
+  const t = touchWith({ landing_page: `https://app.stiko.design/${'a'.repeat(170)}/invite/${'f'.repeat(64)}` });
+  assert.ok(!t.landing_page.includes('ffff'), t.landing_page);
+  assert.ok(t.landing_page.length <= 200);
+  const near = touchWith({ landing_page: `https://app.stiko.design/${'a'.repeat(150)}/invite/${'f'.repeat(64)}` });
+  assert.ok(near.landing_page.endsWith('/invite/[token]'), near.landing_page);
+});
