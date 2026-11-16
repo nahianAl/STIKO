@@ -13,7 +13,7 @@ import Script from 'next/script';
 import { usePathname, useSearchParams } from 'next/navigation';
 import posthog from 'posthog-js';
 import { useAuthSession } from '@/lib/authClient';
-import { flushPendingCaptures } from '@/lib/analytics/client';
+import { releasePendingCaptures } from '@/lib/analytics/client';
 import { scrubEvent } from '@/lib/analytics/scrub';
 
 const KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
@@ -122,9 +122,15 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
       // The per-session $referrer is a full URL from another page of the app.
       save_referrer: false,
     });
-    flushPendingCaptures();
+    // Events raised so far are NOT sent here: identity is not settled yet, and
+    // this browser may still carry the previous person (see below).
     setReady(true);
   }, [tracking, ready]);
+
+  // Held client events go out only once identity is settled.
+  useEffect(() => {
+    if (ready && identityKnown) releasePendingCaptures();
+  }, [ready, identityKnown]);
 
   // A signed-in user who answers the banner: server events follow the answer.
   useEffect(() => {
@@ -152,17 +158,31 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
 
     if (identified.current) return;
     let cancelled = false;
+    // Who is signed in could not be established (/api/me failed or said no):
+    // treat it as unknown, and never let the previous person's identity carry
+    // what is sent next.
+    const forgetStaleIdentity = () => {
+      if (browserIsIdentified()) posthog.reset();
+    };
     fetch('/api/me')
       .then((r) => (r.ok ? r.json() : null))
       .then((me: { id: string; workspaceId: string | null } | null) => {
-        if (cancelled || !me) return;
+        if (cancelled) return;
+        if (!me) return forgetStaleIdentity();
         // A different person's identity left in this browser must not carry over.
         if (browserIsIdentified() && posthog.get_distinct_id() !== me.id) posthog.reset();
         posthog.identify(me.id);
         if (me.workspaceId) posthog.group('workspace', me.workspaceId);
         identified.current = me.id;
       })
-      .catch(() => {})
+      .catch(() => {
+        if (cancelled) return;
+        try {
+          forgetStaleIdentity();
+        } catch {
+          // analytics never breaks the page
+        }
+      })
       .finally(() => {
         if (!cancelled) setIdentityKnown(true);
       });
