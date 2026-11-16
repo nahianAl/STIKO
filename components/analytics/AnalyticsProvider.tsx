@@ -112,6 +112,20 @@ const CONFIG: Partial<PostHogConfig> = {
   advanced_disable_feature_flags: true,
   // The per-session $referrer is a full URL from another page of the app.
   save_referrer: false,
+  // Together with save_referrer: false, this stops posthog-js writing
+  // $initial_person_info (the RAW first location.href and document.referrer)
+  // to its persistence. In 1.450 capture() calls set_initial_person_info()
+  // only when save_campaign_params || save_referrer is on, and nothing else
+  // writes it, so neither the first capture nor reset() can restore it. That
+  // value must not be stored: with cross_subdomain_cookie it lives in the
+  // ph_<key>_posthog cookie scoped to .stiko.design, which the PostHog instance
+  // on www.stiko.design (Webflow) reads and sends to PostHog, outside our
+  // before_send scrub. For an invited reviewer the first URL is
+  // /invite/<token> (also /reset-password/<token>, /verify-email?email=...).
+  // Cost: the app side sends no $initial_utm_* / $initial_referrer person
+  // properties. First-touch campaign attribution comes from the stiko_ft and
+  // stiko_lt cookies (public/stiko-tracking.js), not from PostHog persistence.
+  save_campaign_params: false,
 };
 
 export default function AnalyticsProvider({ children }: { children: React.ReactNode }) {
