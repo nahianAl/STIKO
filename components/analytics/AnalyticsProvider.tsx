@@ -14,7 +14,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import posthog from 'posthog-js';
 import { useAuthSession } from '@/lib/authClient';
 import { flushPendingCaptures } from '@/lib/analytics/client';
-import { scrubInviteTokens } from '@/lib/analytics/scrub';
+import { scrubEvent } from '@/lib/analytics/scrub';
 
 const KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
@@ -92,8 +92,8 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
       capture_dead_clicks: false,
       capture_exceptions: false,
       capture_performance: false,
-      // An invite token in the page URL must never leave the browser.
-      before_send: scrubInviteTokens,
+      // Credentials and personal data in a URL never leave the browser (lib/analytics/scrub.ts).
+      before_send: scrubEvent,
     });
     flushPendingCaptures();
     setReady(true);
