@@ -12,10 +12,11 @@ export async function GET(request: NextRequest) {
     consentRequired: consentRequired(request.headers.get('x-vercel-ip-country')),
   });
   res.headers.set('Cache-Control', 'private, no-store');
+  // The reply differs by Origin (CORS header present or absent), so caches must key on it always.
+  res.headers.set('Vary', 'Origin');
   const origin = request.headers.get('origin');
   if (origin && ALLOWED_ORIGINS.has(origin)) {
     res.headers.set('Access-Control-Allow-Origin', origin);
-    res.headers.set('Vary', 'Origin');
   }
   return res;
 }

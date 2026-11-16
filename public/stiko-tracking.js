@@ -11,26 +11,39 @@
  * afterwards reads window.stikoTracking.state first and then subscribes.
  */
 (function () {
+  // A page can embed this twice (Webflow site + custom-code, a re-run). A second
+  // instance would stack a second banner and announce contradictory decisions.
+  if (window.stikoTracking) return;
+
   var KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'ttclid'];
   var MAX = 200;
   var DAY = 86400;
   var PRIVACY_URL = 'https://www.stiko.design/privacy';
+  var APP_ORIGIN = 'https://app.stiko.design';
+  var GEO_MEMO_KEY = 'stiko_geo';
   var scriptSrc = (document.currentScript && document.currentScript.src) || '';
-  var GEO_URL = (scriptSrc ? new URL(scriptSrc).origin : '') + '/api/geo';
+  // Hidden currentScript (dynamic injection): never a relative URL, it would hit the host page.
+  var GEO_URL = (scriptSrc ? new URL(scriptSrc).origin : APP_ORIGIN) + '/api/geo';
   var host = window.location.hostname;
   var domain = /(^|\.)stiko\.design$/.test(host) ? '; Domain=.stiko.design' : '';
   var secure = window.location.protocol === 'https:' ? '; Secure' : '';
 
+  // Cookie access can throw (sandboxed iframe, blocked storage). That must never
+  // stop the decision being made or the banner being closed.
   function readCookie(name) {
-    var parts = document.cookie ? document.cookie.split('; ') : [];
-    for (var i = 0; i < parts.length; i++) {
-      var j = parts[i].indexOf('=');
-      if (parts[i].slice(0, j) === name) return parts[i].slice(j + 1);
-    }
+    try {
+      var parts = document.cookie ? document.cookie.split('; ') : [];
+      for (var i = 0; i < parts.length; i++) {
+        var j = parts[i].indexOf('=');
+        if (parts[i].slice(0, j) === name) return parts[i].slice(j + 1);
+      }
+    } catch (e) { /* treated as no cookie */ }
     return undefined;
   }
   function writeCookie(name, value, days) {
-    document.cookie = name + '=' + value + '; Path=/; Max-Age=' + days * DAY + '; SameSite=Lax' + domain + secure;
+    try {
+      document.cookie = name + '=' + value + '; Path=/; Max-Age=' + days * DAY + '; SameSite=Lax' + domain + secure;
+    } catch (e) { /* the answer just is not remembered */ }
   }
 
   /*
@@ -99,12 +112,14 @@
     settle('denied');
   }
 
-  function button(label, primary, onClick) {
+  // Decline must be as easy to choose as Accept (UK/EU guidance): one shared style.
+  var BUTTON_STYLE = 'font:inherit;font-weight:700;border-radius:9px;padding:8px 14px;min-height:40px;cursor:pointer;' +
+    'background:#111;color:#fff;border:1.5px solid #111;';
+  function button(label, onClick) {
     var b = document.createElement('button');
     b.setAttribute('type', 'button');
     b.textContent = label;
-    b.style.cssText = 'font:inherit;font-weight:700;border-radius:9px;padding:8px 14px;cursor:pointer;' +
-      (primary ? 'background:#111;color:#fff;border:0;' : 'background:#fff;color:#111;border:1.5px solid #ddd;');
+    b.style.cssText = BUTTON_STYLE;
     b.addEventListener('click', onClick);
     return b;
   }
@@ -131,8 +146,8 @@
     link.style.cssText = 'color:inherit;text-decoration:underline;';
     text.appendChild(link);
     banner.appendChild(text);
-    banner.appendChild(button('Decline', false, decline));
-    banner.appendChild(button('Accept', true, accept));
+    banner.appendChild(button('Decline', decline));
+    banner.appendChild(button('Accept', accept));
     document.body.appendChild(banner);
   }
 
@@ -145,12 +160,33 @@
     }
   }
 
+  // The geo answer is remembered for the tab's session ('1' = consent required,
+  // '0' = not), so a visitor outside the consent countries (who never gets a
+  // cookie) does not re-ask on every pageview. Only an explicit answer is kept.
+  function readGeoMemo() {
+    try {
+      var v = window.sessionStorage.getItem(GEO_MEMO_KEY);
+      return v === '1' || v === '0' ? v : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function writeGeoMemo(value) {
+    try { window.sessionStorage.setItem(GEO_MEMO_KEY, value); } catch (e) { /* asked again next time */ }
+  }
+
   // true only when /api/geo positively says "not required"; anything else fails closed.
   function geoSaysNotRequired() {
+    var memo = readGeoMemo();
+    if (memo !== null) return Promise.resolve(memo === '0');
     try {
       return fetch(GEO_URL, { credentials: 'omit' })
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) { return !!d && d.consentRequired === false; }, function () { return false; });
+        .then(function (d) {
+          if (d && d.consentRequired === false) { writeGeoMemo('0'); return true; }
+          if (d && d.consentRequired === true) writeGeoMemo('1');
+          return false;
+        }, function () { return false; });
     } catch (e) {
       return Promise.resolve(false);
     }
