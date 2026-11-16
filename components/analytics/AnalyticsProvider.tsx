@@ -85,6 +85,12 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
         maskTextSelector: '*',
         // Local setting beats the project's canvas-recording setting.
         captureCanvas: { recordCanvas: false },
+        // alt, title, aria-label, href, src: attributes are not text, so
+        // maskTextSelector leaves them; this masks every one of them.
+        maskAllElementAttributes: true,
+        // Network headers/bodies in replay: an explicit false beats the project.
+        recordHeaders: false,
+        recordBody: false,
       },
       // These follow the PostHog project's settings unless pinned here. Each can
       // carry a file name, a presigned URL or an invite link out of the app.
@@ -92,6 +98,19 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
       capture_dead_clicks: false,
       capture_exceptions: false,
       capture_performance: false,
+      // Console output in replay; local false beats the project's setting.
+      enable_recording_console_log: false,
+      // PostHog Logs. captureConsoleLogs: false is NOT a veto in 1.450 (the
+      // project's setting still switches console capture on), and log records
+      // bypass before_send and carry the full page URL. Dropping every record
+      // in the logs beforeSend is the veto.
+      logs: { captureConsoleLogs: false, beforeSend: () => null },
+      // Each of these, if switched on in the project, loads a widget and calls
+      // PostHog from the page.
+      disable_surveys: true,
+      disable_conversations: true,
+      disable_product_tours: true,
+      disable_web_experiments: true,
       // Credentials and personal data in a URL never leave the browser (lib/analytics/scrub.ts).
       before_send: scrubEvent,
       // No /flags request, ever. Its body carries $initial_current_url and
