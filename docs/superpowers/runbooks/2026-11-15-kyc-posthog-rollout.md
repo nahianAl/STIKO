@@ -21,12 +21,13 @@ There is no staging site: **production is the only environment**. Do the steps i
 | 3 | Add the environment variables | Vercel (browser) + Terminal |
 | 4 | Publish the privacy page | Webflow (browser) |
 | 5 | Apply the database migration | Terminal |
-| 6 | Merge and push (this deploys) | Terminal |
-| 7 | Check the deploy and the replay masking | Terminal + browser |
-| 8 | Add the tracking scripts to Webflow | Webflow (browser) |
-| 9 | Acceptance walk and clean-up | Browser |
+| 6 | Back up the branch (does not deploy) | Terminal |
+| 7 | Merge and push (this deploys) | Terminal |
+| 8 | Check the deploy and the replay masking | Terminal + browser |
+| 9 | Add the tracking scripts to Webflow | Webflow (browser) |
+| 10 | Acceptance walk and clean-up | Browser |
 
-Why the migration is step 5 and not later: the new code reads new database columns on every page. If the code goes live before the migration, every signed-in page can break with no visible error. This has happened twice before in this project. Why the privacy page is step 4 and not later: the moment the code deploys, `/signup`, `/welcome` and the cookie banner all link to `https://www.stiko.design/privacy`. That link must not 404.
+Why the migration is step 5 and not later: the new code reads new database columns on every page. If the code goes live before the migration, every signed-in page can break with no visible error. This has happened twice before in this project. Why the privacy page is step 4 and not later: the moment the code deploys, `/signup`, `/welcome` and the cookie banner all link to `https://www.stiko.design/privacy`. That link must not 404. Why the backup is step 6: until now all of this work exists only on your computer, in a branch that has never been copied to GitHub, and the merge step is the first one that can go wrong in a way that touches git history.
 
 **Time:** about 1.5 hours, plus however long the lawyer review of the privacy policy takes (the only step you cannot do in one sitting).
 
@@ -77,7 +78,7 @@ Do **not** add `KYC_GATE`. Leave it unset (that means the gate is on). Do not ad
 
 **Why `PROFILE_COOKIE_SECRET` matters:** without it the app still works, but every page view makes a database lookup to check whether you have done the onboarding questions.
 
-**You should see:** three new rows in the list. Nothing deploys yet; these values are picked up by the deploy in Step 6.
+**You should see:** three new rows in the list. Nothing deploys yet; these values are picked up by the deploy in Step 7.
 
 ## Step 4. Publish the privacy page (Webflow, browser)
 
@@ -135,11 +136,26 @@ Paste the same block as 5a again.
 
 **You should see:** `019-kyc-analytics.sql` as the **first** line. That is the confirmation. Do not go to Step 6 without it.
 
-## Step 6. Merge and push (Terminal): this deploys to production
+## Step 6. Back up the branch (Terminal)
+
+All of this work lives on one branch, `feature/kyc-posthog`, on your computer only. It has never been copied to GitHub. Copy it there now, before the merge in Step 7. This does **not** deploy anything: only `main` deploys, and this is not `main`.
+
+In **Terminal**:
+
+```bash
+cd ~/Desktop/STIKO-main
+git push -u origin feature/kyc-posthog
+```
+
+**You should see:** a few progress lines, then a line that contains `* [new branch]      feature/kyc-posthog -> feature/kyc-posthog`, and a last line saying the branch is set up to track `origin/feature/kyc-posthog` (the exact wording differs between git versions). If you see `Everything up-to-date` instead, that is fine too: it was already copied. **If you see `rejected`, `error:` or `fatal:`, or you are asked for a password, stop and tell Claude.** Nothing has been changed.
+
+Vercel may list a **Preview** deployment for this branch. Ignore it: the Step 3 variables are Production-only, so it sends no analytics, and only `main` reaches the live site.
+
+## Step 7. Merge and push (Terminal): this deploys to production
 
 `main` deploys to production automatically the moment it is pushed.
 
-### 6a. Check your folder first
+### 7a. Check your folder first
 
 In **Terminal**:
 
@@ -150,7 +166,7 @@ git status
 
 **You should see:** `On branch feature/kyc-posthog`, then a list of **untracked** folders, exactly these five and nothing else: `design_handoff_brief_section/`, `design_handoff_dashboard_redesign/`, `design_handoff_portal_view/`, `logo/` and `stiko_handoff/`, ending with `nothing added to commit but untracked files present`. (A line saying the branch is up to date with, or ahead of, `origin` is fine.) **If you see anything else, especially a line with `modified:` or a heading `Changes not staged`, stop and tell Claude.** Do not go on: the merge would take that unsaved work along.
 
-### 6b. Merge, test, push
+### 7b. Merge, test, push
 
 Paste in **Terminal** (one block):
 
@@ -162,19 +178,20 @@ git fetch origin && git checkout main && git pull --ff-only && git merge --no-ff
 **You should see:** the merge summary, the test run finishing with `fail 0`, and a final line like `main -> main`. The chain stops at the first thing that fails, and the push is the last link, so **a failure before the push means production is untouched.**
 
 - **`git pull --ff-only` complains:** someone else pushed to `main`. Tell Claude; do not force anything.
-- **The merge reports a `CONFLICT`, or `npm test` shows any failure:** nothing has been pushed. Put your folder back the way it was with this block, then tell Claude what the screen said (or just ask Claude to take it from here):
+- **`git fetch` or `git checkout main` fails** (for example "Could not read from remote repository", or a message that local changes would be overwritten): nothing has been merged and you are still on the feature branch. Do **not** run the reset block in the next bullet. Tell Claude what the screen said.
+- **The merge reports a `CONFLICT`, or `npm test` shows any failure:** nothing has been pushed. First check where you are: in **Terminal** run `git branch --show-current` and confirm it prints `main`. If it prints anything else (such as `feature/kyc-posthog`), **stop and do not run the block below**; tell Claude what the screen said. If it prints `main`, put your folder back the way it was with this block, then tell Claude what the screen said (or just ask Claude to take it from here):
 
   ```bash
   cd ~/Desktop/STIKO-main
-  git merge --abort 2>/dev/null; git reset --hard origin/main && git status
+  if [ "$(git branch --show-current)" = "main" ]; then git merge --abort 2>/dev/null; git reset --hard origin/main && git status; else echo "You are not on main, so nothing was changed. Tell Claude what the screen said."; fi
   ```
 
-  `git merge --abort` only does something if the merge stopped half-way (a conflict); `git reset --hard origin/main` then sets your local `main` back to exactly what is on the server. The five untracked folders are not touched. You should see `On branch main` and `Your branch is up to date with 'origin/main'`.
+  The block checks for `main` itself and does nothing anywhere else. On `main`, `git merge --abort` only does something if the merge stopped half-way (a conflict); `git reset --hard origin/main` then sets your local `main` back to exactly what is on the server. The feature branch and the five untracked folders are not touched. You should see `On branch main` and `Your branch is up to date with 'origin/main'`.
 - **The final `git push` is rejected:** tell Claude; do not force it.
 
 Then open Vercel, your stiko project, **Deployments**. The newest deployment builds for a few minutes and turns **Ready**. **If it shows Error or Build Failed instead, visitors are not affected:** Vercel keeps serving the previous production deployment until a new build succeeds, and the migration only added things, so the old version is happy with the new database. Do not roll anything back; copy the red error message from the build log to Claude.
 
-## Step 7. Check the deploy and the replay masking (Terminal, then browser)
+## Step 8. Check the deploy and the replay masking (Terminal, then browser)
 
 1. In **Terminal**:
 
@@ -192,7 +209,7 @@ Then open Vercel, your stiko project, **Deployments**. The newest deployment bui
 
 If the app is broken for everyone, go straight to **Rollback** at the bottom and use **Instant Rollback**.
 
-## Step 8. Tracking scripts on Webflow (browser)
+## Step 9. Tracking scripts on Webflow (browser)
 
 The privacy page is already live (Step 4), which the banner links to.
 
@@ -257,7 +274,7 @@ The privacy page is already live (Step 4), which the banner links to.
 
 **You should see (non-EU visitor):** open `https://www.stiko.design` in a private/incognito window, open the browser's developer tools (right-click, Inspect), **Network** tab, type `ingest` in the filter, reload. Requests to `app.stiko.design/ingest/...` appear, none of them with `flags` in its name, and `stiko-tracking.js` shows status 200. No banner appears for you in North America.
 
-## Step 9. Acceptance walk and clean-up (browser)
+## Step 10. Acceptance walk and clean-up (browser)
 
 Do this on production, with two **throwaway** email addresses you can read (`A` = the owner, `B` = a reviewer). Never use a customer's address or your main one, because the walk creates real accounts that you will clean up at the end. Easy ways to get throwaways: `yourname+stiko-a@gmail.com` and `yourname+stiko-b@gmail.com` (Gmail delivers both to your normal inbox), or two aliases at your own company domain. Use a work-domain alias for at least one, because free mail like Gmail is recorded as "not a business email". Use a private/incognito window for each person so the sessions stay separate. For campaign tracking, start A's journey at this address, which carries test labels:
 `https://www.stiko.design/?utm_source=runbook&utm_medium=test&utm_campaign=rollout`
@@ -287,7 +304,7 @@ Do this on production, with two **throwaway** email addresses you can read (`A` 
 7. **Web addresses are scrubbed (no email, no invite link).** In a private window, signed out, open this address (the email in it is made up):
    `https://app.stiko.design/verify-email?email=someone@example.com`
    Wait a minute or two, then in PostHog **Activity** open the newest `$pageview` and look at `$current_url`. It must end in `/verify-email` and contain **no `email=`** and no address. Do the same check on B's `$pageview` for the invite link: its `$current_url` must read `/invite/[token]` (the literal word `[token]`), never the real long code. **If you see `email=` or a real token anywhere, stop and tell Claude.**
-8. **Replay:** A's and B's `/welcome` visits appear in **Replay** too. They should look like yours from Step 7 (masked text, ending when they reach the dashboard).
+8. **Replay:** A's and B's `/welcome` visits appear in **Replay** too. They should look like yours from Step 8 (masked text, ending when they reach the dashboard).
 
 **Consent banner check.**
 - From North America, `https://app.stiko.design/api/geo` (open it in the browser) shows `{"consentRequired":false}`. That is the "no banner" case. You cannot fake Germany with a header in production.
@@ -330,6 +347,6 @@ cd ~/Desktop/STIKO-main
 git checkout main && git pull --ff-only && git revert -m 1 HEAD && git push origin main
 ```
 
-(Only if the very last commit on `main` is the merge from Step 6. Check with `git log --oneline -3` first.) Rolling back leaves the database columns and tables in place; the old code ignores them. Answers people already gave on `/welcome` are kept. **Also remove the Webflow scripts, exactly as in B** (Site settings, Custom code, Head code: delete the two `<script>` blocks, Save, **Publish**): after the revert the app no longer serves `stiko-tracking.js` or `/ingest`, and the marketing site would keep asking for them.
+(Only if the very last commit on `main` is the merge from Step 7. Check with `git log --oneline -3` first.) Rolling back leaves the database columns and tables in place; the old code ignores them. Answers people already gave on `/welcome` are kept. **Also remove the Webflow scripts, exactly as in B** (Site settings, Custom code, Head code: delete the two `<script>` blocks, Save, **Publish**): after the revert the app no longer serves `stiko-tracking.js` or `/ingest`, and the marketing site would keep asking for them.
 
 The environment variables, in short: `NEXT_PUBLIC_POSTHOG_KEY` + `POSTHOG_PROJECT_KEY` (analytics on/off), `PROFILE_COOKIE_SECRET` (a cache secret; keep it set), `KYC_GATE=off` (the gate's kill switch), `POSTHOG_HOST` (optional, default US Cloud).
