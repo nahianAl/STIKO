@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { storageKeysForFiles } from '@/lib/access';
 import { deleteObjects } from '@/lib/s3';
 import { TRASH_RETENTION_DAYS } from '@/lib/trash';
+import { flushOutbox, pruneOutbox } from '@/lib/analytics/outbox';
 
 // The default Vercel maxDuration is not enough headroom for a batch of
 // PURGE_BATCH_SIZE ids plus their cascades plus a chunked deleteObjects walk.
@@ -60,6 +61,16 @@ export async function GET(request: NextRequest) {
   }
   if (request.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Analytics backstop: events whose post-response flush failed. Independent of
+  // the purge, and never allowed to stop it.
+  let analytics: { sent: number; failed: number; pruned: number } | { error: string };
+  try {
+    const flushed = await flushOutbox(500);
+    analytics = { ...flushed, pruned: await pruneOutbox() };
+  } catch (err) {
+    analytics = { error: err instanceof Error ? err.message : String(err) };
   }
 
   const cutoff = `${TRASH_RETENTION_DAYS} days`;
@@ -170,6 +181,7 @@ export async function GET(request: NextRequest) {
   }
 
   const summary = {
+    analytics,
     purgedProjects: projects.length,
     purgedPackages: packages.length,
     // Keys ATTEMPTED, not confirmed deleted. deleteObjects swallows every
