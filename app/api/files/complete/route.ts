@@ -6,6 +6,10 @@ import { isOptimizableFilename, optimizedVariantKey, uploadStorageKey } from '@/
 import { deleteObjects, headObjectSize } from '@/lib/s3';
 import { isDeclaredFileSize } from '@/lib/planLimits';
 import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
+import { track } from '@/lib/analytics/server';
+import { extensionOf } from '@/lib/analytics/events';
+import { isDrawingFilename } from '@/lib/drawingConversion';
+import { isPendingCad } from '@/lib/cadConversion';
 
 // Step 2: After the client has uploaded to S3, register the file in the DB
 export async function POST(request: NextRequest) {
@@ -124,6 +128,10 @@ export async function POST(request: NextRequest) {
       storageKey,
       isOptimizableFilename(filename) ? optimizedVariantKey(storageKey) : null,
     ]);
+    await track('file_upload_failed', {
+      userId: session.user.id,
+      properties: { extension: extensionOf(filename), reason_code: 'storage_limit' },
+    });
     return planLimitResponse(refusal);
   }
 
@@ -159,6 +167,20 @@ export async function POST(request: NextRequest) {
   const file = rows[0];
   // file_size is BIGINT; pg-types parses it as a string (see the note in
   // app/api/files/route.ts), so it must be coerced to a number here too.
+  const ext = extensionOf(filename);
+  await track('file_uploaded', {
+    userId: session.user.id,
+    properties: { file_id: file.id, extension: ext, size_bytes: Number(file.fileSize) },
+  });
+  // Viewable now unless a server conversion still has to run (DWG/DXF → PDF,
+  // SolidWorks → GLB); those fire file_processed when the conversion lands.
+  // STEP converts in the viewer, so it counts as processed here.
+  if (!isDrawingFilename(filename) && !isPendingCad(filename, convertedStorageKey)) {
+    await track('file_processed', {
+      userId: session.user.id,
+      properties: { file_id: file.id, extension: ext, conversion: 'none' },
+    });
+  }
   return NextResponse.json({ ...file, fileSize: Number(file.fileSize) }, { status: 201 });
 }
 

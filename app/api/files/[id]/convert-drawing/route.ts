@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getFileAccess } from '@/lib/access';
 import { getUploadPresignedUrl, getViewerPresignedUrl } from '@/lib/s3';
+import { trackFileEvent } from '@/lib/analytics/server';
 import { drawingPdfKey } from '@/lib/storageKeys';
 import {
   converterEndpoint,
@@ -169,6 +170,7 @@ export async function POST(
       UPDATE files SET conversion_status = 'failed'
       WHERE id = ${params.id} AND conversion_job_id = ${claimId}
     `;
+    await trackFileEvent('file_upload_failed', params.id, { reason_code: 'conversion_failed', converter: 'drawing' });
     return NextResponse.json({ conversionStatus: 'failed', convertedStorageKey: null });
   }
 
@@ -198,6 +200,7 @@ export async function POST(
     UPDATE files SET conversion_status = 'completed', converted_storage_key = ${targetKey}
     WHERE id = ${params.id} AND conversion_job_id = ${claimId}
   `;
+  await trackFileEvent('file_processed', params.id, { conversion: 'drawing' });
 
   // Every place that assigns converted_storage_key must clear this file's calibrations (see
   // lib/schema.sql, file_calibrations). Its own statement, tolerant of its own failure, for

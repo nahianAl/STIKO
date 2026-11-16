@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { verifyWebhookSignature, CloudConvertTask } from '@/lib/cloudconvert';
 import { uploadFromUrl } from '@/lib/s3';
+import { trackFileEvent } from '@/lib/analytics/server';
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
     await sql`
       UPDATE files SET conversion_status = 'failed' WHERE id = ${fileId}
     `;
+    await trackFileEvent('file_upload_failed', fileId, { reason_code: 'conversion_failed', converter: 'cloudconvert' });
     return NextResponse.json({ ok: true });
   }
 
@@ -67,6 +69,7 @@ export async function POST(request: NextRequest) {
         SET conversion_status = 'completed', converted_storage_key = ${convertedKey}
         WHERE id = ${fileId}
       `;
+      await trackFileEvent('file_processed', fileId, { conversion: 'cloudconvert' });
 
       // part_colors.part_key is an index path into a specific node hierarchy, stable only
       // because an uploaded file's bytes never change (see the invariant note in
@@ -122,6 +125,7 @@ export async function POST(request: NextRequest) {
       await sql`
         UPDATE files SET conversion_status = 'failed' WHERE id = ${fileId}
       `;
+      await trackFileEvent('file_upload_failed', fileId, { reason_code: 'conversion_failed', converter: 'cloudconvert' });
     }
   }
 

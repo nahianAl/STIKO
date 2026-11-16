@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { canRedeemInvite } from '@/lib/inviteBinding';
+import { identifyWorkspace, posthogAnonymousId, posthogCookieName, track } from '@/lib/analytics/server';
+import { ensureWorkspace, markActivation } from '@/lib/workspaces';
 
 /**
  * GET — validate a token and return everything screen 2a needs to show the
@@ -12,7 +14,7 @@ import { canRedeemInvite } from '@/lib/inviteBinding';
  * Distinguishes expired from revoked so 3n can adjust its copy.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { token: string } }
 ) {
   const rows = await sql`
@@ -111,7 +113,26 @@ export async function GET(
     WHERE p.portal_id = ${invite.portalId}
   `;
 
+  try {
+    const viewer = await auth();
+    const viewerId = viewer?.user?.id ?? null;
+    const cookieName = posthogCookieName();
+    const anonymousId = cookieName ? posthogAnonymousId(request.cookies.get(cookieName)?.value) : null;
+    const inviterWorkspaceId = invite.inviterId ? await ensureWorkspace(invite.inviterId as string) : null;
+    await track('review_link_opened', {
+      userId: viewerId,
+      anonymousId,
+      properties: { invite_id: invite.id, inviter_workspace_id: inviterWorkspaceId, signed_in: Boolean(viewerId) },
+    });
+    if (invite.inviterId && (await markActivation(invite.inviterId as string, viewerId))) {
+      await identifyWorkspace(invite.inviterId as string);
+    }
+  } catch (err) {
+    console.error('[analytics] review_link_opened failed', err);
+  }
+
   return NextResponse.json({
+    inviteId: invite.id,
     token: invite.token,
     portalId: invite.portalId,
     role: invite.role,

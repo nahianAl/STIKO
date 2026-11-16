@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
+import { track } from '@/lib/analytics/server';
 
 export async function GET() {
   const session = await auth();
@@ -39,5 +40,6 @@ export async function POST(request: NextRequest) {
     VALUES (${id}, ${session.user.id}, ${name})
     RETURNING id, owner_id AS "ownerId", name, created_at AS "createdAt"
   `;
+  await track('project_created', { userId: session.user.id, properties: { project_id: id } });
   return NextResponse.json(rows[0], { status: 201 });
 }
