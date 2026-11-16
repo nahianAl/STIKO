@@ -1,6 +1,17 @@
 /**
  * The only analytics API route handlers call. Every function here swallows its
  * own errors: analytics must never fail, block or slow a user action.
+ *
+ * track(), identifyWorkspace() and trackFileEvent() are fire-and-forget: each
+ * starts its work (workspace lookup, outbox INSERT, flush) in the background,
+ * handed to waitUntil so Vercel keeps the invocation alive after the response,
+ * and returns at once. They stay `Promise<void>` so `await track(...)` call
+ * sites compile unchanged, but the await no longer waits for any database
+ * round trip.
+ *
+ * Ordering: because the work is not awaited, a caller whose event depends on a
+ * database write (a consent flag, a row the event reads) must complete that
+ * write BEFORE calling track(). All current callers already do.
  */
 import { randomUUID } from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
@@ -22,16 +33,35 @@ function scheduleFlush(): void {
   }
 }
 
-export async function track(
-  event: string,
-  opts: {
-    userId?: string | null;
-    anonymousId?: string | null;
-    properties?: Record<string, unknown>;
-    set?: Record<string, unknown>;
-    setOnce?: Record<string, unknown>;
+/**
+ * Starts `work` without making the caller wait: waitUntil keeps the invocation
+ * alive after the response; outside a request context (tests, scripts) the
+ * promise simply runs. The *Now functions already swallow their own errors, so
+ * the catch is a backstop that keeps a stray rejection from ever surfacing.
+ */
+function runInBackground(work: Promise<void>): void {
+  const p = work.catch((err) => console.error('[analytics] background task failed', err));
+  try {
+    waitUntil(p);
+  } catch {
+    // Outside a Vercel request context the promise still runs.
   }
-): Promise<void> {
+}
+
+type TrackOptions = {
+  userId?: string | null;
+  anonymousId?: string | null;
+  properties?: Record<string, unknown>;
+  set?: Record<string, unknown>;
+  setOnce?: Record<string, unknown>;
+};
+
+/** Fire-and-forget: returns immediately; the outbox INSERT happens in the background. */
+export async function track(event: string, opts: TrackOptions): Promise<void> {
+  runInBackground(trackNow(event, opts));
+}
+
+async function trackNow(event: string, opts: TrackOptions): Promise<void> {
   try {
     if (!serverAnalyticsEnabled()) return;
     const userId = opts.userId ?? null;
@@ -50,8 +80,12 @@ export async function track(
   }
 }
 
-/** Sends the workspace's firm properties as a PostHog group. */
+/** Sends the workspace's firm properties as a PostHog group. Fire-and-forget. */
 export async function identifyWorkspace(userId: string): Promise<void> {
+  runInBackground(identifyWorkspaceNow(userId));
+}
+
+async function identifyWorkspaceNow(userId: string): Promise<void> {
   try {
     if (!serverAnalyticsEnabled()) return;
     const context = await workspaceContext(userId);
@@ -79,18 +113,26 @@ export async function identifyWorkspace(userId: string): Promise<void> {
   }
 }
 
-/** For routes with no session (conversion callbacks): the uploader is the actor. */
+/** For routes with no session (conversion callbacks): the uploader is the actor. Fire-and-forget. */
 export async function trackFileEvent(
   event: string,
   fileId: string,
   properties: Record<string, unknown> = {}
+): Promise<void> {
+  runInBackground(trackFileEventNow(event, fileId, properties));
+}
+
+async function trackFileEventNow(
+  event: string,
+  fileId: string,
+  properties: Record<string, unknown>
 ): Promise<void> {
   try {
     if (!serverAnalyticsEnabled()) return;
     const rows = await sql`SELECT uploaded_by AS "userId", filename FROM files WHERE id = ${fileId}`;
     const r = rows[0] as { userId: string | null; filename: string } | undefined;
     if (!r?.userId) return;
-    await track(event, {
+    await trackNow(event, {
       userId: r.userId,
       properties: { file_id: fileId, extension: extensionOf(r.filename), ...properties },
     });
