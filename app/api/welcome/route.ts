@@ -6,7 +6,7 @@ import { authProvider } from '@/lib/authProvider';
 import { safeCallbackUrl } from '@/lib/callbackUrl';
 import { isBusinessEmail, trackForSize, validateProfile } from '@/lib/kyc/profile';
 import { profileCookieHeader, signProfileCookie } from '@/lib/kyc/profileCookie';
-import { CONSENT_COOKIE, consentValue } from '@/lib/geo';
+import { CONSENT_COOKIE, consentRequired, consentValue } from '@/lib/geo';
 import { ensureWorkspace } from '@/lib/workspaces';
 import { identifyWorkspace, track } from '@/lib/analytics/server';
 
@@ -24,6 +24,11 @@ export async function POST(request: NextRequest) {
   const country = request.headers.get('x-vercel-ip-country');
   const region = request.headers.get('x-vercel-ip-country-region');
   const consent = consentValue(cookies().get(CONSENT_COOKIE)?.value);
+  // A user imported before this feature has analytics_consent NULL, which means
+  // "never asked, allowed". In a consent country that is wrong: until they
+  // answer the banner they are 'pending' (no server events), exactly as at
+  // signup. COALESCE keeps any answer they already gave.
+  const pendingIfRequired = consentRequired(country) ? 'pending' : null;
 
   const workspaceId = await ensureWorkspace(userId);
   const users = await sql`
@@ -61,14 +66,17 @@ export async function POST(request: NextRequest) {
         marketing_consent = ${a.marketingConsent},
         marketing_consent_at = CASE WHEN ${a.marketingConsent} THEN now() ELSE NULL END,
         marketing_consent_method = CASE WHEN ${a.marketingConsent} THEN 'welcome_checkbox' ELSE NULL END,
-        analytics_consent = COALESCE(${consent}, analytics_consent)
+        analytics_consent = COALESCE(${consent}, analytics_consent, ${pendingIfRequired})
       WHERE id = ${userId}
     `,
   ]);
 
-  // track() reads the workspace context after the transaction, so the event
-  // already carries the new segment_id and track. The explicit `track` property
-  // here is overwritten by the standard property with the same value.
+  // track() and identifyWorkspace() read the workspace context (segment, track
+  // and analytics_consent) in the background, but they START after the
+  // transaction above has been awaited, so they see the new segment_id and
+  // track, and the consent written above (a 'pending' user sends nothing).
+  // The explicit `track` property here is overwritten by the standard property
+  // with the same value.
   await track('company_profile_completed', {
     userId,
     properties: {
