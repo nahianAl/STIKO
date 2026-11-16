@@ -138,6 +138,6 @@ export const config = {
   // nobody is signed in yet. Without the exemption they 307 to /login and the
   // browser is handed the login page's HTML where it asked for an icon.
   //
-  // ingest: the PostHog reverse proxy (next.config.mjs rewrites). stiko-tracking.js: the consent + UTM script, loaded signed-out by www.stiko.design.
+  // ingest: the PostHog reverse proxy (app/ingest/[...path]/route.ts). stiko-tracking.js: the consent + UTM script, loaded signed-out by www.stiko.design.
   matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|uploads|occt-import-js.wasm|rhino3dm/|ingest|stiko-tracking.js).*)'],
 };
