@@ -8,6 +8,7 @@ import { ErrorBanner, Field, Input, inputClass } from '@/components/ui/Primitive
 import { CLIENT_MODELS, OTHER_TEXT_MAX, PILLARS, ROLES, SIZE_BANDS, type PillarId } from '@/lib/kyc/catalog';
 import { businessTypesFor, isOtherSegment } from '@/lib/kyc/profile';
 import { safeCallbackUrl } from '@/lib/callbackUrl';
+import { useAuthActions } from '@/lib/authClient';
 
 const PRIVACY_URL = 'https://www.stiko.design/privacy';
 
@@ -31,6 +32,9 @@ function chip(selected: boolean) {
 function WelcomeForm() {
   const router = useRouter();
   const callbackUrl = safeCallbackUrl(useSearchParams().get('callbackUrl'));
+  const { signOutTo } = useAuthActions();
+  // Switching account must not lose where the person was headed (an invitation, a package).
+  const signedOutLanding = callbackUrl === '/' ? '/login' : `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
 
   const [pillar, setPillar] = useState<PillarId | ''>('');
   const [segmentId, setSegmentId] = useState('');
@@ -90,7 +94,19 @@ function WelcomeForm() {
   };
 
   return (
-    <AuthShell title="Tell us about your work" subtitle="Five quick questions so stiko fits how you review." width={560}>
+    <AuthShell
+      title="Tell us about your work"
+      subtitle="Five quick questions so stiko fits how you review."
+      width={560}
+      below={
+        <>
+          Not you?{' '}
+          <button type="button" disabled={saving} onClick={() => void signOutTo(signedOutLanding)} className="font-bold disabled:opacity-50">
+            Sign out
+          </button>
+        </>
+      }
+    >
       <form onSubmit={submit} className="flex flex-col gap-[22px]">
         {error && <ErrorBanner>{error}</ErrorBanner>}
 
