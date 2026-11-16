@@ -26,6 +26,7 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@types/bcryptjs": "^2.4.6",
+    "@vercel/functions": "3.11.3",
     "@workos-inc/authkit-nextjs": "4.3.2",
     "@workos-inc/node": "^10.14.0",
     "bcryptjs": "^3.0.3",

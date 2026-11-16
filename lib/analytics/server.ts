@@ -1,0 +1,136 @@
+/**
+ * The only analytics API route handlers call. Every function here swallows its
+ * own errors: analytics must never fail, block or slow a user action.
+ */
+import { randomUUID } from 'node:crypto';
+import { waitUntil } from '@vercel/functions';
+import { sql } from '@/lib/db';
+import { ANONYMOUS_CONTEXT, buildCapture, buildGroupIdentify, extensionOf } from '@/lib/analytics/events';
+import { enqueue, flushOutbox } from '@/lib/analytics/outbox';
+import { workspaceContext } from '@/lib/workspaces';
+
+export function serverAnalyticsEnabled(): boolean {
+  return Boolean(process.env.POSTHOG_PROJECT_KEY);
+}
+
+function scheduleFlush(): void {
+  const p = flushOutbox().catch((err) => console.error('[analytics] flush threw', err));
+  try {
+    waitUntil(p);
+  } catch {
+    // Outside a Vercel request context (tests, scripts) the promise still runs.
+  }
+}
+
+export async function track(
+  event: string,
+  opts: {
+    userId?: string | null;
+    anonymousId?: string | null;
+    properties?: Record<string, unknown>;
+    set?: Record<string, unknown>;
+    setOnce?: Record<string, unknown>;
+  }
+): Promise<void> {
+  try {
+    if (!serverAnalyticsEnabled()) return;
+    const userId = opts.userId ?? null;
+    const distinctId = userId ?? opts.anonymousId ?? null;
+    if (!distinctId) return;
+    const context = userId ? await workspaceContext(userId) : ANONYMOUS_CONTEXT;
+    const row = buildCapture(
+      { event, distinctId, userId, context, properties: opts.properties, set: opts.set, setOnce: opts.setOnce },
+      randomUUID()
+    );
+    if (!row) return;
+    await enqueue([row]);
+    scheduleFlush();
+  } catch (err) {
+    console.error(`[analytics] track(${event}) failed`, err);
+  }
+}
+
+/** Sends the workspace's firm properties as a PostHog group. */
+export async function identifyWorkspace(userId: string): Promise<void> {
+  try {
+    if (!serverAnalyticsEnabled()) return;
+    const context = await workspaceContext(userId);
+    if (!context.workspaceId || context.analyticsConsent === 'denied' || context.analyticsConsent === 'pending') return;
+    const rows = await sql`
+      SELECT pillar, segment_id, client_model, company_size_band, track, country, region,
+             is_business_email, activated_at, utm_first
+      FROM workspaces WHERE id = ${context.workspaceId}
+    `;
+    const w = rows[0] as Record<string, unknown> | undefined;
+    if (!w) return;
+    const utm = (w.utm_first ?? {}) as Record<string, string>;
+    const groupSet: Record<string, unknown> = {
+      pillar: w.pillar, segment_id: w.segment_id, client_model: w.client_model,
+      company_size_band: w.company_size_band, track: w.track, country: w.country, region: w.region,
+      is_business_email: w.is_business_email,
+      activated_at: w.activated_at ? new Date(w.activated_at as string).toISOString() : null,
+      first_utm_source: utm.utm_source ?? null, first_utm_medium: utm.utm_medium ?? null,
+      first_utm_campaign: utm.utm_campaign ?? null,
+    };
+    await enqueue([buildGroupIdentify(context.workspaceId, userId, groupSet, randomUUID())]);
+    scheduleFlush();
+  } catch (err) {
+    console.error('[analytics] identifyWorkspace failed', err);
+  }
+}
+
+/** For routes with no session (conversion callbacks): the uploader is the actor. */
+export async function trackFileEvent(
+  event: string,
+  fileId: string,
+  properties: Record<string, unknown> = {}
+): Promise<void> {
+  try {
+    if (!serverAnalyticsEnabled()) return;
+    const rows = await sql`SELECT uploaded_by AS "userId", filename FROM files WHERE id = ${fileId}`;
+    const r = rows[0] as { userId: string | null; filename: string } | undefined;
+    if (!r?.userId) return;
+    await track(event, {
+      userId: r.userId,
+      properties: { file_id: fileId, extension: extensionOf(r.filename), ...properties },
+    });
+  } catch (err) {
+    console.error(`[analytics] trackFileEvent(${event}) failed`, err);
+  }
+}
+
+/** The distinct_id out of a parsed posthog-js cookie, or null. */
+function distinctIdOf(json: string): string | null {
+  const parsed = JSON.parse(json) as { distinct_id?: unknown } | null;
+  const id = parsed?.distinct_id;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * posthog-js stores {"distinct_id": …} in the ph_<key>_posthog cookie. Reading
+ * it lets an anonymous server event join the visitor's browser history.
+ * Absent (declined, blocked, first request) → no anonymous event.
+ *
+ * Next.js's request.cookies.get() hands back the value ALREADY percent-decoded,
+ * while a raw Cookie header is still encoded. Try the value as-is first and
+ * decode only on failure, so both shapes work (and a distinct_id containing a
+ * literal '%' is never decoded twice). Never throws.
+ */
+export function posthogAnonymousId(cookieValue: string | undefined): string | null {
+  if (!cookieValue) return null;
+  try {
+    return distinctIdOf(cookieValue);
+  } catch {
+    // Not raw JSON: it is probably still percent-encoded.
+  }
+  try {
+    return distinctIdOf(decodeURIComponent(cookieValue));
+  } catch {
+    return null;
+  }
+}
+
+export function posthogCookieName(): string | null {
+  const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+  return key ? `ph_${key}_posthog` : null;
+}
