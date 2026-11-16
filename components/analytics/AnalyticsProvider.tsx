@@ -94,6 +94,14 @@ export default function AnalyticsProvider({ children }: { children: React.ReactN
       capture_performance: false,
       // Credentials and personal data in a URL never leave the browser (lib/analytics/scrub.ts).
       before_send: scrubEvent,
+      // No /flags request, ever. Its body carries $initial_current_url and
+      // $initial_referrer as person_properties, which before_send never sees, and
+      // identify()/group() re-send it. Stiko uses no feature flags. NOT
+      // advanced_disable_flags: that also stops the remote config (/array/<key>/config)
+      // that session replay on /welcome needs.
+      advanced_disable_feature_flags: true,
+      // The per-session $referrer is a full URL from another page of the app.
+      save_referrer: false,
     });
     flushPendingCaptures();
     setReady(true);
