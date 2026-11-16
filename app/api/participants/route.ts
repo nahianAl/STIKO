@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth';
 import { getPackageAccess } from '@/lib/access';
 import { sendEmail, inviteEmail } from '@/lib/email';
 import { appBaseUrl } from '@/lib/appUrl';
+import { track } from '@/lib/analytics/server';
 
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -171,6 +172,11 @@ export async function POST(request: NextRequest) {
       `;
     }
   }
+
+  await track('sent_for_review', {
+    userId: session.user.id,
+    properties: { invite_id: rows[0].id, kind: isShareLink ? 'share_link' : 'invite', role },
+  });
 
   const context = await sql`
     SELECT po.name AS "packageName", pr.name AS "projectName"

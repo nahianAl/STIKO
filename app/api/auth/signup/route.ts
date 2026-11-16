@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { hashPassword } from '@/lib/password';
 import { authProvider } from '@/lib/authProvider';
+import { recordSignup } from '@/lib/analytics/signup';
 
 export async function POST(request: NextRequest) {
   // Under WorkOS, accounts are created by /api/auth/workos/sign-up. A local
@@ -47,6 +48,8 @@ export async function POST(request: NextRequest) {
     INSERT INTO users (id, name, email, password_hash)
     VALUES (${id}, ${name}, ${email}, ${passwordHash})
   `;
+
+  await recordSignup(request, id, email, null);
 
   return NextResponse.json({ success: true }, { status: 201 });
 }

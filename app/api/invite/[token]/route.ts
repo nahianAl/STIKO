@@ -3,6 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { canRedeemInvite } from '@/lib/inviteBinding';
+import {
+  identifyWorkspaceNow,
+  posthogAnonymousId,
+  posthogCookieName,
+  runInBackground,
+  trackNow,
+} from '@/lib/analytics/server';
+import { ensureWorkspace, markActivation } from '@/lib/workspaces';
 
 /**
  * GET — validate a token and return everything screen 2a needs to show the
@@ -12,7 +20,7 @@ import { canRedeemInvite } from '@/lib/inviteBinding';
  * Distinguishes expired from revoked so 3n can adjust its copy.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { token: string } }
 ) {
   const rows = await sql`
@@ -111,7 +119,11 @@ export async function GET(
     WHERE p.portal_id = ${invite.portalId}
   `;
 
+  // After the response: the page never waits on analytics (see lib/analytics/server.ts).
+  await scheduleReviewLinkOpened(request, invite.id as string, (invite.inviterId as string | null) ?? null);
+
   return NextResponse.json({
+    inviteId: invite.id,
     token: invite.token,
     portalId: invite.portalId,
     role: invite.role,
@@ -135,6 +147,56 @@ export async function GET(
     files: files.map((f) => ({ id: f.id, filename: f.filename })),
     others: others.map((o) => ({ id: o.id, name: o.name ?? 'Someone' })),
   });
+}
+
+/**
+ * Analytics for one view of the public invite page: review_link_opened, and the
+ * inviter workspace's activation. None of it may delay the page, so it runs in
+ * the background (runInBackground → waitUntil) and every failure stays here.
+ * That is ONE waitUntil: the job awaits trackNow / identifyWorkspaceNow (which
+ * flush before they resolve), never the fire-and-forget wrappers, so nothing is
+ * registered from inside the job after the response has gone out.
+ *
+ * What needs the live request is read first, while it is still usable: the
+ * session and the PostHog cookie. The background job gets plain values. If that
+ * read itself fails nothing is sent, rather than sending the event as a
+ * stranger's. The job's own lookups (the inviter's workspace, the activation
+ * write) are what used to sit on the response path.
+ */
+async function scheduleReviewLinkOpened(
+  request: NextRequest,
+  inviteId: string,
+  inviterId: string | null
+): Promise<void> {
+  try {
+    const viewerId = (await auth())?.user?.id ?? null;
+    const cookieName = posthogCookieName();
+    const anonymousId = cookieName ? posthogAnonymousId(request.cookies.get(cookieName)?.value) : null;
+    runInBackground(recordReviewLinkOpened(inviteId, inviterId, viewerId, anonymousId));
+  } catch (err) {
+    console.error('[analytics] review_link_opened failed', err);
+  }
+}
+
+async function recordReviewLinkOpened(
+  inviteId: string,
+  inviterId: string | null,
+  viewerId: string | null,
+  anonymousId: string | null
+): Promise<void> {
+  try {
+    const inviterWorkspaceId = inviterId ? await ensureWorkspace(inviterId) : null;
+    await trackNow('review_link_opened', {
+      userId: viewerId,
+      anonymousId,
+      properties: { invite_id: inviteId, inviter_workspace_id: inviterWorkspaceId, signed_in: Boolean(viewerId) },
+    });
+    if (inviterId && (await markActivation(inviterId, viewerId))) {
+      await identifyWorkspaceNow(inviterId);
+    }
+  } catch (err) {
+    console.error('[analytics] review_link_opened failed', err);
+  }
 }
 
 /** POST — consume the token and add the signed-in user to the package. */

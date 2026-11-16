@@ -72,6 +72,10 @@ export function routeDecision(pathname: string, isAuthenticated: boolean): Route
   // prefix reason as above.
   if (pathname === '/pricing') return 'pass';
 
+  // The consent banner asks this before anyone has an account, from both the
+  // app and the Webflow marketing site. Returns one boolean. Exact match.
+  if (pathname === '/api/geo') return 'pass';
+
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return 'pass';
 
   // /portal/[id] is public (viewer access) — no auth needed

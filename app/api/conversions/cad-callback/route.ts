@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { cadGlbKey } from '@/lib/storageKeys';
 import { verifyCadCallbackToken } from '@/lib/cadWorkerToken';
 import { callbackOutcome, parseCallbackBody } from '@/lib/cadConversion';
+import { trackFileEvent } from '@/lib/analytics/server';
 
 /**
  * The CAD worker's result for one claim. Public in middleware (lib/routeAccess.ts): the HMAC token,
@@ -38,6 +39,7 @@ export async function POST(request: NextRequest) {
       UPDATE files SET conversion_status = 'failed'
       WHERE id = ${body.fileId} AND conversion_job_id = ${body.claimId}
     `;
+    await trackFileEvent('file_upload_failed', body.fileId, { reason_code: 'conversion_failed', converter: 'cad' });
     return NextResponse.json({ ok: true });
   }
 
@@ -56,5 +58,6 @@ export async function POST(request: NextRequest) {
       calibrationErr instanceof Error ? calibrationErr.message : String(calibrationErr)
     );
   }
+  await trackFileEvent('file_processed', body.fileId, { conversion: 'cad' });
   return NextResponse.json({ ok: true });
 }

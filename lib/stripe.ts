@@ -9,6 +9,8 @@ import {
   type BillingInterval,
   type SubscriptionFacts,
 } from '@/lib/billing';
+import { track } from '@/lib/analytics/server';
+import { billingTransitionEvents } from '@/lib/analytics/events';
 
 /**
  * Server-side Stripe access. Everything that talks to Stripe or writes the
@@ -165,13 +167,46 @@ export async function syncSubscription(
     return;
   }
 
-  await sql`
-    UPDATE users
+  // The status this account had immediately BEFORE the write, read by the write
+  // itself. One checkout is synced several times at once (the return redirect,
+  // checkout.session.completed, customer.subscription.created and .updated), so a
+  // status read earlier would be the same stale value for every one of them and
+  // each would announce the same subscription_started. FOR UPDATE queues the
+  // later statements behind the first, and they read the status it just wrote.
+  const written = await sql`
+    UPDATE users u
     SET plan = ${decision.plan},
         stripe_subscription_id = ${decision.subscriptionId},
         stripe_subscription_status = ${decision.status}
-    WHERE id = ${user.id}
+    FROM (
+      SELECT id, stripe_subscription_status AS status
+      FROM users WHERE id = ${user.id} FOR UPDATE
+    ) prev
+    WHERE u.id = prev.id
+    RETURNING prev.status AS "prevStatus"
   `;
+
+  // Funnel events fire only on ENTERING a status, from Stripe's own state and
+  // never the browser (see billingTransitionEvents).
+  if (written[0]) {
+    for (const event of billingTransitionEvents(
+      (written[0].prevStatus as string | null) ?? null,
+      decision.status
+    )) {
+      const price = sub.items?.data?.[0]?.price;
+      await track(event, {
+        userId: user.id,
+        properties: {
+          plan: decision.plan,
+          interval: price?.recurring?.interval ?? null,
+          amount: typeof price?.unit_amount === 'number' ? price.unit_amount / 100 : null,
+          currency: price?.currency ?? null,
+          stripe_subscription_id: sub.id,
+        },
+        set: { plan: decision.plan, subscription_status: decision.status },
+      });
+    }
+  }
   console.info(`[stripe] user ${user.id} → ${decision.plan} (${sub.id} ${sub.status})`);
 }
 

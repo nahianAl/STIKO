@@ -2,6 +2,7 @@
 
 import { AuthClientProvider } from '@/lib/authClient';
 import type { AuthProviderName } from '@/lib/authProvider';
+import AnalyticsProvider from '@/components/analytics/AnalyticsProvider';
 
 export default function Providers({
   provider,
@@ -10,5 +11,9 @@ export default function Providers({
   provider: AuthProviderName;
   children: React.ReactNode;
 }) {
-  return <AuthClientProvider provider={provider}>{children}</AuthClientProvider>;
+  return (
+    <AuthClientProvider provider={provider}>
+      <AnalyticsProvider>{children}</AnalyticsProvider>
+    </AuthClientProvider>
+  );
 }

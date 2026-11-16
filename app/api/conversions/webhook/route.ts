@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { verifyWebhookSignature, CloudConvertTask } from '@/lib/cloudconvert';
 import { uploadFromUrl } from '@/lib/s3';
+import { trackFileEvent } from '@/lib/analytics/server';
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
     await sql`
       UPDATE files SET conversion_status = 'failed' WHERE id = ${fileId}
     `;
+    await trackFileEvent('file_upload_failed', fileId, { reason_code: 'conversion_failed', converter: 'cloudconvert' });
     return NextResponse.json({ ok: true });
   }
 
@@ -117,11 +119,17 @@ export async function POST(request: NextRequest) {
           calibrationErr instanceof Error ? calibrationErr.message : String(calibrationErr)
         );
       }
+
+      // Last, after both cleanups, so the event adds nothing to the window between the completed
+      // UPDATE and the deletes of the stale colours and calibrations. It runs in the background
+      // and cannot throw, so it can never send a completed conversion down the catch below.
+      await trackFileEvent('file_processed', fileId, { conversion: 'cloudconvert' });
     } catch (err) {
       console.error('Failed to process conversion result for', fileId, err);
       await sql`
         UPDATE files SET conversion_status = 'failed' WHERE id = ${fileId}
       `;
+      await trackFileEvent('file_upload_failed', fileId, { reason_code: 'conversion_failed', converter: 'cloudconvert' });
     }
   }
 

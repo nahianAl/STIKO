@@ -21,9 +21,12 @@ import {
 import { PasswordStrength } from '@/components/auth/AuthShell';
 import { InviteProblem } from '@/components/invite/InviteProblem';
 import { submissionBadge } from '@/lib/submissionName';
+import { captureClient } from '@/lib/analytics/client';
 
 interface InviteInfo {
   token: string;
+  /** The invite's row id, safe to send to analytics (the token is not). */
+  inviteId: string;
   portalId: string;
   role: 'viewer' | 'commenter' | 'uploader';
   /** Null for a share link, which is addressed to nobody in particular. */
@@ -277,8 +280,13 @@ function InviteAuth({
   const [typedEmail, setTypedEmail] = useState('');
   const email = invite.email ?? typedEmail.trim();
 
+  useEffect(() => {
+    captureClient('reviewer_signup_prompt_shown', { invite_id: invite.inviteId });
+  }, [invite.inviteId]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (tab === 'create') captureClient('reviewer_signup_prompt_clicked', { invite_id: invite.inviteId });
     setError(null);
     setLoading(true);
 

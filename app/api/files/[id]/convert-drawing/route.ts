@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getFileAccess } from '@/lib/access';
 import { getUploadPresignedUrl, getViewerPresignedUrl } from '@/lib/s3';
+import { trackFileEvent } from '@/lib/analytics/server';
 import { drawingPdfKey } from '@/lib/storageKeys';
 import {
   converterEndpoint,
@@ -165,10 +166,15 @@ export async function POST(
 
   if (outcome === 'failed') {
     console.error(`Drawing conversion failed for file ${params.id}: ${reason}`);
-    await sql`
+    const failed = await sql`
       UPDATE files SET conversion_status = 'failed'
       WHERE id = ${params.id} AND conversion_job_id = ${claimId}
+      RETURNING id
     `;
+    // Only the holder of the claim reports it: a lost claim updated no row.
+    if (failed.length > 0) {
+      await trackFileEvent('file_upload_failed', params.id, { reason_code: 'conversion_failed', converter: 'drawing' });
+    }
     return NextResponse.json({ conversionStatus: 'failed', convertedStorageKey: null });
   }
 
@@ -194,9 +200,10 @@ export async function POST(
     return NextResponse.json({ conversionStatus: null, convertedStorageKey: null }, { status: 503 });
   }
 
-  await sql`
+  const completed = await sql`
     UPDATE files SET conversion_status = 'completed', converted_storage_key = ${targetKey}
     WHERE id = ${params.id} AND conversion_job_id = ${claimId}
+    RETURNING id
   `;
 
   // Every place that assigns converted_storage_key must clear this file's calibrations (see
@@ -209,6 +216,12 @@ export async function POST(
       `Failed to delete stale file_calibrations for file ${params.id} after drawing conversion:`,
       calibrationErr instanceof Error ? calibrationErr.message : String(calibrationErr)
     );
+  }
+
+  // After the cleanup, so the event adds nothing to the window between the UPDATE and the
+  // DELETE above; and only for the holder of the claim (a lost claim updated no row).
+  if (completed.length > 0) {
+    await trackFileEvent('file_processed', params.id, { conversion: 'drawing' });
   }
 
   return NextResponse.json({ conversionStatus: 'completed', convertedStorageKey: targetKey });

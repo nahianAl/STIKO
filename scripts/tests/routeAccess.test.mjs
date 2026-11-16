@@ -77,3 +77,8 @@ test('/pricing is public, exactly', () => {
   assert.equal(routeDecision('/pricing-admin', false), 'login');
   assert.equal(routeDecision('/pricingx', false), 'login');
 });
+
+test('/api/geo is public, exactly', () => {
+  assert.equal(routeDecision('/api/geo', false), 'pass');
+  assert.equal(routeDecision('/api/geography', false), 'login');
+});

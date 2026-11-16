@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getFileAccess } from '@/lib/access';
 import { getDownloadPresignedUrl, getUploadPresignedUrl } from '@/lib/s3';
+import { trackFileEvent } from '@/lib/analytics/server';
 import { cadGlbKey } from '@/lib/storageKeys';
 import { converterEndpoint } from '@/lib/drawingConversion';
 import { appBaseUrlOrNull } from '@/lib/appUrl';
@@ -107,6 +108,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
         AND converted_storage_key IS NULL
       RETURNING id
     `;
+    if (gaveUp.length > 0) await trackFileEvent('file_upload_failed', params.id, { reason_code: 'conversion_failed', converter: 'cad' });
     if (gaveUp.length === 0) {
       // Nothing changed, so 'failed' would be a claim about a row we did not touch: report the
       // row as it is now.
