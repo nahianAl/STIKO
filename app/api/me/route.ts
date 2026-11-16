@@ -9,9 +9,12 @@ export async function GET() {
   }
 
   const rows = await sql`
-    SELECT id, name, email, job_title AS "jobTitle", company,
-           email_paused_until AS "emailPausedUntil"
-    FROM users WHERE id = ${session.user.id}
+    SELECT u.id, u.name, u.email, u.job_title AS "jobTitle", u.company,
+           u.email_paused_until AS "emailPausedUntil",
+           w.id AS "workspaceId",
+           (u.profile_completed_at IS NOT NULL) AS "profileCompleted"
+    FROM users u LEFT JOIN workspaces w ON w.owner_user_id = u.id
+    WHERE u.id = ${session.user.id}
   `;
   if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
