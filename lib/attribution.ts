@@ -68,6 +68,14 @@ export function signupSource(inviteToken: string | null | undefined): 'reviewer_
   return inviteToken ? 'reviewer_invite' : 'direct';
 }
 
+/**
+ * The KYC v2 signup type (spec §3). 'joined_teammate' is reserved for when Stiko
+ * has teams; nothing writes it yet.
+ */
+export function signupTypeFor(source: 'reviewer_invite' | 'direct'): 'invited_reviewer' | 'new_workspace' {
+  return source === 'reviewer_invite' ? 'invited_reviewer' : 'new_workspace';
+}
+
 /** /signup?callbackUrl=/invite/<token> → <token>. */
 export function inviteTokenFromCallback(callbackUrl: string | null | undefined): string | null {
   const m = /^\/invite\/([^/?#]+)/.exec(callbackUrl ?? '');

@@ -6,6 +6,8 @@ import Button from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
+import { companyProfilePath, isCompanyProfileRequired } from '@/lib/kyc/companyGateClient';
+import { useResetOnPageShow } from '@/components/billing/checkout';
 
 /**
  * Creating a project without going through the package flow.
@@ -34,6 +36,9 @@ export default function NewProjectModal({
     }
   }, [isOpen]);
 
+  // Back from the company form restores this modal frozen mid-"Creating…".
+  useResetOnPageShow(() => setSaving(false));
+
   // Closing mid-flight cannot cancel the request, so it must not pretend to:
   // the project would be created anyway, or the error toast would arrive after
   // the modal was gone. This covers Escape and the scrim too, because Modal
@@ -53,6 +58,11 @@ export default function NewProjectModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed }),
       });
+      // Navigating away: keep `saving` true so the modal stays inert meanwhile.
+      if (await isCompanyProfileRequired(res)) {
+        window.location.assign(companyProfilePath(`${window.location.pathname}${window.location.search}`));
+        return;
+      }
       const limit = await readPlanLimit(res);
       if (limit) {
         setSaving(false);

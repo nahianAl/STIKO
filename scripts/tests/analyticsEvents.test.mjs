@@ -5,28 +5,29 @@ import {
   ANONYMOUS_CONTEXT, extensionOf, reportableExtension,
 } from '../../lib/analytics/events.ts';
 
-const CTX = { workspaceId: 'ws_1', segmentId: 'PD-07', track: 'mid_team', analyticsConsent: null };
+const CTX = { workspaceId: 'ws_1', industry: 'MFG', primaryMarket: 'MK-15', track: 'mid_team', analyticsConsent: null };
 
 test('every event carries the four standard properties and the workspace group', () => {
   const row = buildCapture({ event: 'project_created', distinctId: 'u1', userId: 'u1', context: CTX, properties: { project_id: 'p1' } }, 'uuid-1');
   assert.deepEqual(row, {
     uuid: 'uuid-1', event: 'project_created', distinctId: 'u1',
     properties: {
-      project_id: 'p1', user_id: 'u1', workspace_id: 'ws_1', segment_id: 'PD-07', track: 'mid_team',
+      project_id: 'p1', user_id: 'u1', workspace_id: 'ws_1', industry: 'MFG', primary_market: 'MK-15', track: 'mid_team',
       $groups: { workspace: 'ws_1' }, $lib: 'stiko-server', $geoip_disable: true,
     },
   });
 });
 
 test('standard properties cannot be overridden by the caller', () => {
-  const row = buildCapture({ event: 'x', distinctId: 'u1', userId: 'u1', context: CTX, properties: { segment_id: 'GV-01', user_id: 'other' } }, 'u');
-  assert.equal(row.properties.segment_id, 'PD-07');
+  const row = buildCapture({ event: 'x', distinctId: 'u1', userId: 'u1', context: CTX, properties: { industry: 'GRD', user_id: 'other' } }, 'u');
+  assert.equal(row.properties.industry, 'MFG');
   assert.equal(row.properties.user_id, 'u1');
 });
 
 test('before KYC the segment and track read unknown, and no group is sent without a workspace', () => {
   const row = buildCapture({ event: 'review_link_opened', distinctId: 'anon-1', userId: null, context: ANONYMOUS_CONTEXT }, 'u');
-  assert.equal(row.properties.segment_id, 'unknown');
+  assert.equal(row.properties.industry, 'unknown');
+  assert.equal(row.properties.primary_market, 'unknown');
   assert.equal(row.properties.track, 'unknown');
   assert.equal(row.properties.workspace_id, null);
   assert.equal('$groups' in row.properties, false);
@@ -197,7 +198,7 @@ test('is_ flags survive even when they end in a forbidden word', () => {
 
 test('every legitimate Stiko property key survives stripping', () => {
   const keep = {
-    marketing_consent: true, signup_source: 'google', segment_id: 'PD-07', track: 'mid_team', invite_id: 'i1',
+    marketing_consent: true, signup_source: 'google', industry: 'MFG', track: 'mid_team', invite_id: 'i1',
     inviter_workspace_id: 'ws_2', first_utm_campaign: 'c', reason_code: 'r', extension: 'step', size_bytes: 10,
     project_id: 'p', file_id: 'f', workspace_id: 'ws', user_id: 'u', role: 'engineer', pillar: 'PD',
     company_size_band: '11-50', client_model: 'agency', country: 'DE', region: 'BY',

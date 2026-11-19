@@ -1,91 +1,253 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PILLARS, BUSINESS_TYPES, CLIENT_MODELS, SIZE_BANDS, ROLES } from '../../lib/kyc/catalog.ts';
+import { ROLES, FILE_TYPES } from '../../lib/kyc/catalog.ts';
+import { SUPPORTED_EXTENSIONS } from '../../lib/fileFormats.ts';
 import {
-  validateProfile, trackForSize, businessTypesFor, isOtherSegment, isBusinessEmail,
+  rolesFor, reviewersFor, clientModelsFor, reviewTeamBandsFor, fileTypeGroupsFor, matchesSearch,
+  normaliseDomain, emailDomain, isBusinessEmail, trackForSize, fileTypeSupported,
+  validateCompany, validateRole, deriveCompany, deriveRole, decideOnboarding, allowedSubmission,
 } from '../../lib/kyc/profile.ts';
 
 const VALID = {
-  pillar: 'PD', segmentId: 'PD-07', clientModel: 'clients',
-  companySizeBand: '25-49', role: 'engineer', marketingConsent: false,
+  website: 'acme.com', industry: 'MFG', markets: ['MK-11', 'MK-15'], clientModel: 'CM-3',
+  companySize: 'CS-04', reviewTeamSize: 'RT-03', reviewers: ['rv-customers', 'rv-toolmakers'],
+  fileTypes: ['FT-STEP', 'FT-PDF'],
 };
+const ft = (code) => FILE_TYPES.find((f) => f.code === code);
 
-test('every business type ID is unique and belongs to its pillar prefix', () => {
-  const ids = BUSINESS_TYPES.map((b) => b.id);
-  assert.equal(new Set(ids).size, ids.length);
-  for (const b of BUSINESS_TYPES) assert.equal(b.id.slice(0, 2), b.pillar, b.id);
-});
-
-test('every pillar has exactly 10 business types plus one Other', () => {
-  assert.deepEqual(PILLARS.map((p) => p.id), ['ID', 'PD', 'AC', 'GV']);
-  for (const p of PILLARS) {
-    const types = businessTypesFor(p.id);
-    assert.equal(types.length, 11, p.id);
-    assert.equal(types.filter((t) => isOtherSegment(t.id)).length, 1, p.id);
-    assert.ok(types.some((t) => t.id === `${p.id}-99`), p.id);
-  }
-});
-
-test('every option has a non-empty label', () => {
-  for (const o of [...PILLARS, ...BUSINESS_TYPES, ...CLIENT_MODELS, ...SIZE_BANDS, ...ROLES]) {
-    assert.ok(o.label.trim().length > 0, o.id);
-  }
-});
-
-test('company size maps to the four tracks', () => {
-  assert.equal(trackForSize('just_me'), 'prosumer');
-  assert.equal(trackForSize('2-4'), 'small_team');
-  for (const b of ['5-9', '10-24', '25-49']) assert.equal(trackForSize(b), 'mid_team', b);
-  for (const b of ['50-99', '100-249', '250+']) assert.equal(trackForSize(b), 'large_team', b);
-  assert.equal(trackForSize('1-4'), null);
-  for (const b of SIZE_BANDS) assert.ok(trackForSize(b.id), b.id);
-});
-
-test('a complete, consistent answer set validates', () => {
-  const r = validateProfile(VALID);
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.answers, { ...VALID, businessTypeOther: null });
-});
-
-test('each field is checked against the catalog', () => {
-  for (const [field, value] of [
-    ['pillar', 'XX'], ['segmentId', 'PD-42'], ['clientModel', 'agency'],
-    ['companySizeBand', '1-4'], ['role', 'ceo'],
+test('rolesFor: industry list in order; Other and null get every role once, Other last', () => {
+  const ind = rolesFor('IND').map((r) => r.label);
+  assert.equal(ind[0], 'Owner / Principal / Founder');
+  assert.equal(ind.at(-1), 'Other');
+  for (const combined of [
+    rolesFor('OTH'), rolesFor(null), rolesFor('nope'),
+    rolesFor('constructor'), rolesFor('__proto__'), rolesFor('toString'),
   ]) {
-    const r = validateProfile({ ...VALID, [field]: value });
-    assert.deepEqual(r, { ok: false, field }, field);
+    const codes = combined.map((r) => r.code);
+    assert.equal(codes.length, ROLES.length);
+    assert.equal(new Set(codes).size, codes.length);
+    assert.equal(codes.at(-1), 'RL-99');
   }
-  assert.deepEqual(validateProfile(null), { ok: false, field: 'pillar' });
 });
 
-test('a business type from another pillar is refused', () => {
-  assert.deepEqual(validateProfile({ ...VALID, segmentId: 'AC-06' }), { ok: false, field: 'segmentId' });
+test('reviewersFor: per parent segment; Other gets the de-duplicated union', () => {
+  assert.deepEqual(reviewersFor('PRD').map((r) => r.label), [
+    'Internal team', 'Customers', 'Suppliers / vendors', 'Contract manufacturers / factories',
+    'Toolmakers / mold shops', 'Quality / inspection partners', 'Investors / leadership',
+  ]);
+  assert.deepEqual(reviewersFor('MFG'), reviewersFor('PRD'));
+  const all = reviewersFor('OTH').map((r) => r.label);
+  assert.equal(all.filter((l) => l === 'Internal team').length, 1);
+  assert.equal(all.filter((l) => l === 'Clients').length, 1);
+  assert.equal(all.length, 20);
 });
 
-test('Other needs its free text, trimmed and at most 120 chars', () => {
-  const other = { ...VALID, segmentId: 'PD-99' };
-  assert.deepEqual(validateProfile(other), { ok: false, field: 'businessTypeOther' });
-  assert.deepEqual(validateProfile({ ...other, businessTypeOther: '   ' }), { ok: false, field: 'businessTypeOther' });
-  assert.deepEqual(validateProfile({ ...other, businessTypeOther: 'x'.repeat(121) }), { ok: false, field: 'businessTypeOther' });
-  const ok = validateProfile({ ...other, businessTypeOther: '  Boat builder ' });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.answers.businessTypeOther, 'Boat builder');
+test('clientModelsFor: CM-3 only for PRD, MFG, CST', () => {
+  const has3 = (i) => clientModelsFor(i).some((c) => c.code === 'CM-3');
+  assert.equal(has3('PRD'), true);
+  assert.equal(has3('MFG'), true);
+  assert.equal(has3('CST'), true);
+  assert.equal(has3('INT'), false);
+  assert.equal(has3('OTH'), false);
+  assert.equal(has3(null), false);
+  assert.equal(clientModelsFor('INT').length, 4);
 });
 
-test('free text on a non-Other type is dropped', () => {
-  const r = validateProfile({ ...VALID, businessTypeOther: 'ignored' });
-  assert.equal(r.answers.businessTypeOther, null);
+test('reviewTeamBandsFor hides bands larger than the company', () => {
+  const codes = (s) => reviewTeamBandsFor(s).map((b) => b.code);
+  assert.deepEqual(codes('CS-01'), ['RT-01']);
+  assert.deepEqual(codes('CS-02'), ['RT-01', 'RT-02']);
+  assert.deepEqual(codes('CS-03'), ['RT-01', 'RT-02', 'RT-03']);
+  assert.equal(codes('CS-08').length, 6);
+  assert.equal(codes(null).length, 6);
+  assert.equal(codes('bogus').length, 6);
 });
 
-test('marketing consent is true only when explicitly true', () => {
-  assert.equal(validateProfile({ ...VALID, marketingConsent: 'true' }).answers.marketingConsent, false);
-  assert.equal(validateProfile({ ...VALID, marketingConsent: true }).answers.marketingConsent, true);
+test('fileTypeGroupsFor orders groups by industry and ends with Other', () => {
+  assert.equal(fileTypeGroupsFor('PRD')[0].group, '3d_cad');
+  assert.equal(fileTypeGroupsFor('ARC')[0].group, '2d_docs');
+  assert.equal(fileTypeGroupsFor('VIZ')[0].group, 'images');
+  assert.equal(fileTypeGroupsFor(null)[0].group, '3d_cad');
+  const last = fileTypeGroupsFor('INT').at(-1);
+  assert.equal(last.group, null);
+  assert.deepEqual(last.types.map((t) => t.code), ['FT-99']);
+  const total = fileTypeGroupsFor('GRD').reduce((n, g) => n + g.types.length, 0);
+  assert.equal(total, FILE_TYPES.length);
 });
 
-test('free-mail domains are not business email, case-insensitively', () => {
-  for (const e of ['a@gmail.com', 'A@GMAIL.COM', 'b@outlook.com', 'c@icloud.com', 'd@yahoo.ca', 'e@shaw.ca', 'f@proton.me']) {
-    assert.equal(isBusinessEmail(e), false, e);
-  }
-  assert.equal(isBusinessEmail('dana@acme-design.com'), true);
-  assert.equal(isBusinessEmail('not-an-email'), false);
+test('matchesSearch: label or synonym, case-insensitive; empty query matches', () => {
+  const cnc = ROLES.find((r) => r.code === 'RL-33');
+  assert.equal(matchesSearch(cnc, 'CNC'), true);
+  assert.equal(matchesSearch(cnc, 'machining'), true);
+  assert.equal(matchesSearch(cnc, 'architect'), false);
+  assert.equal(matchesSearch(cnc, '  '), true);
+  assert.equal(matchesSearch(ROLES.find((r) => r.code === 'RL-31'), 'molding'), true);
+  assert.equal(matchesSearch(ROLES.find((r) => r.code === 'RL-60'), 'millwork'), true);
+});
+
+test('normaliseDomain stores the bare domain or rejects', () => {
+  const cases = [
+    ['acme.com', 'acme.com'], ['  ACME.com ', 'acme.com'], ['https://www.Acme.com/about?x=1', 'acme.com'],
+    ['http://shop.acme.co.uk:8080/', 'shop.acme.co.uk'], ['www.acme.com.', 'acme.com'],
+    ['jo@acme.com', 'acme.com'], ['acme', null], ['', null], ['http://', null],
+    ['192.168.0.1', null], ['ac me.com', null], ['-acme.com', null],
+  ];
+  for (const [input, want] of cases) assert.equal(normaliseDomain(input), want, input);
+});
+
+test('emailDomain only for business email', () => {
+  assert.equal(emailDomain('jo@Acme.com'), 'acme.com');
+  assert.equal(emailDomain('jo@gmail.com'), null);
+  assert.equal(isBusinessEmail('jo@hotmail.ca'), false);
+  assert.equal(isBusinessEmail('jo@ergonic.ca'), true);
+});
+
+test('trackForSize', () => {
+  assert.equal(trackForSize('CS-01'), 'prosumer');
+  assert.equal(trackForSize('CS-02'), 'small_team');
+  assert.equal(trackForSize('CS-05'), 'mid_team');
+  assert.equal(trackForSize('CS-08'), 'large_team');
+  assert.equal(trackForSize('just_me'), null);
+});
+
+test('fileTypeSupported follows lib/fileFormats.ts, not the source doc', () => {
+  assert.equal(fileTypeSupported(ft('FT-WEBP')), true);
+  assert.equal(fileTypeSupported(ft('FT-MOV')), true);
+  assert.equal(fileTypeSupported(ft('FT-STEP')), true);
+  assert.equal(fileTypeSupported(ft('FT-USD')), false);
+  assert.equal(fileTypeSupported(ft('FT-BIM')), false);
+  assert.equal(fileTypeSupported(ft('FT-99')), false);
+  assert.equal(fileTypeSupported(ft('FT-SLDPRT')), SUPPORTED_EXTENSIONS.has('sldprt'));
+  assert.equal(fileTypeSupported(ft('FT-SLDASM')), false);
+  assert.equal(fileTypeSupported(ft('FT-PARASOLID')), false);
+  assert.equal(fileTypeSupported(ft('FT-NATIVE-CAD')), false);
+  assert.equal(fileTypeSupported(ft('FT-PSD-TIFF')), false);
+});
+
+test('validateCompany accepts a full answer and maps reviewers to codes', () => {
+  const r = validateCompany(VALID, 'jo@acme.com');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.value, {
+    companyDomain: 'acme.com', websiteSource: 'prefilled', industry: 'MFG', industryOtherText: null,
+    markets: ['MK-11', 'MK-15'], marketOtherText: null, clientModel: 'CM-3', companySize: 'CS-04',
+    reviewTeamSize: 'RT-03', reviewerCodes: ['ER-CLIENT', 'ER-TOOLING'], fileTypes: ['FT-STEP', 'FT-PDF'],
+    fileTypeOtherText: null,
+  });
+});
+
+test('validateCompany: website source', () => {
+  assert.equal(validateCompany({ ...VALID, website: 'other.io' }, 'jo@acme.com').value.websiteSource, 'typed');
+  assert.equal(validateCompany(VALID, 'jo@gmail.com').value.websiteSource, 'typed');
+  const none = validateCompany({ ...VALID, website: '', noWebsite: true }, 'jo@acme.com').value;
+  assert.equal(none.websiteSource, 'none');
+  assert.equal(none.companyDomain, null);
+});
+
+test('validateCompany: reviewers sharing a code are stored once', () => {
+  const r = validateCompany(
+    { ...VALID, industry: 'IND', clientModel: 'CM-1', reviewers: ['rv-manufacturers', 'rv-prototype-shops'] },
+    'jo@acme.com'
+  );
+  assert.deepEqual(r.value.reviewerCodes, ['ER-MANUFACTURER']);
+});
+
+test('validateCompany: optional multi-selects may be empty or absent', () => {
+  const { reviewers, fileTypes, ...rest } = VALID;
+  const r = validateCompany(rest, 'jo@acme.com');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.value.reviewerCodes, []);
+  assert.deepEqual(r.value.fileTypes, []);
+});
+
+test('validateCompany reports the first bad field', () => {
+  const bad = (patch, field) =>
+    assert.deepEqual(validateCompany({ ...VALID, ...patch }, 'jo@acme.com'), { ok: false, field }, JSON.stringify(patch));
+  bad({ website: 'not a site' }, 'website');
+  bad({ website: '' }, 'website');
+  bad({ industry: 'XX' }, 'industry');
+  bad({ industry: 'OTH', clientModel: 'CM-1' }, 'industryOtherText');
+  bad({ industry: 'OTH', industryOtherText: 'x'.repeat(121), clientModel: 'CM-1' }, 'industryOtherText');
+  bad({ markets: [] }, 'markets');
+  bad({ markets: ['MK-01', 'MK-02', 'MK-03', 'MK-04'] }, 'markets');
+  bad({ markets: ['MK-01', 'MK-01'] }, 'markets');
+  bad({ markets: ['MK-77'] }, 'markets');
+  bad({ markets: 'MK-01' }, 'markets');
+  bad({ markets: ['MK-99'] }, 'marketOtherText');
+  bad({ industry: 'INT', clientModel: 'CM-3', reviewers: [] }, 'clientModel');
+  bad({ companySize: 'CS-99' }, 'companySize');
+  bad({ companySize: 'CS-02', reviewTeamSize: 'RT-03' }, 'reviewTeamSize');
+  bad({ reviewers: ['rv-agencies'] }, 'reviewers');
+  bad({ reviewers: ['rv-customers', 'rv-customers'] }, 'reviewers');
+  bad({ fileTypes: ['FT-NOPE'] }, 'fileTypes');
+  bad({ fileTypes: ['FT-99'] }, 'fileTypeOtherText');
+  assert.deepEqual(validateCompany(null, ''), { ok: false, field: 'website' });
+});
+
+test('validateCompany keeps Other text trimmed', () => {
+  const r = validateCompany(
+    { ...VALID, industry: 'OTH', industryOtherText: '  Boat building ', clientModel: 'CM-1', reviewers: [],
+      markets: ['MK-99'], marketOtherText: ' Yachts ', fileTypes: ['FT-99'], fileTypeOtherText: ' .skp ' },
+    'jo@acme.com'
+  );
+  assert.equal(r.value.industryOtherText, 'Boat building');
+  assert.equal(r.value.marketOtherText, 'Yachts');
+  assert.equal(r.value.fileTypeOtherText, '.skp');
+});
+
+test('validateRole filters by industry; null industry gets the combined list', () => {
+  assert.deepEqual(validateRole({ role: 'RL-33' }, 'MFG'), { ok: true, value: { roleCode: 'RL-33', roleOtherText: null } });
+  assert.deepEqual(validateRole({ role: 'RL-40' }, 'MFG'), { ok: false, field: 'role' });
+  assert.equal(validateRole({ role: 'RL-40' }, null).ok, true);
+  assert.equal(validateRole({ role: 'RL-40' }, 'OTH').ok, true);
+  assert.deepEqual(validateRole({ role: 'RL-99' }, 'MFG'), { ok: false, field: 'roleOtherText' });
+  assert.deepEqual(validateRole({ role: 'RL-99', roleOtherText: ' Owner of a shop ' }, 'MFG').value,
+    { roleCode: 'RL-99', roleOtherText: 'Owner of a shop' });
+  assert.deepEqual(validateRole({}, null), { ok: false, field: 'role' });
+});
+
+test('deriveCompany', () => {
+  const d = deriveCompany(validateCompany(VALID, 'jo@acme.com').value);
+  assert.deepEqual(d, {
+    parentSegment: 'PD', primaryMarket: 'MK-11', sizeMin: 10, sizeMax: 24, rtMin: 5, rtMax: 9,
+    icpSizeFit: true, track: 'mid_team',
+    fileTypeSupport: [{ code: 'FT-STEP', supported: true }, { code: 'FT-PDF', supported: true }],
+  });
+  const small = deriveCompany(validateCompany({ ...VALID, companySize: 'CS-02', reviewTeamSize: 'RT-02' }, '').value);
+  assert.equal(small.icpSizeFit, false);
+  const big = deriveCompany(validateCompany({ ...VALID, companySize: 'CS-08', reviewTeamSize: 'RT-06' }, '').value);
+  assert.equal(big.sizeMax, null);
+  assert.equal(big.rtMax, null);
+  const other = deriveCompany(validateCompany({ ...VALID, industry: 'OTH', industryOtherText: 'x', clientModel: 'CM-1', reviewers: [] }, '').value);
+  assert.equal(other.parentSegment, null);
+});
+
+test('deriveRole', () => {
+  assert.deepEqual(deriveRole('RL-20'), { roleFamily: 'leadership', seniority: 'owner_exec', decisionMaker: true, nonBuyer: false });
+  assert.deepEqual(deriveRole('RL-21'), { roleFamily: 'engineering', seniority: 'director', decisionMaker: true, nonBuyer: false });
+  assert.deepEqual(deriveRole('RL-22'), { roleFamily: 'engineering', seniority: 'manager_lead', decisionMaker: false, nonBuyer: false });
+  assert.deepEqual(deriveRole('RL-10'), { roleFamily: 'education', seniority: 'student', decisionMaker: false, nonBuyer: true });
+  assert.deepEqual(deriveRole('RL-99'), { roleFamily: 'other', seniority: null, decisionMaker: false, nonBuyer: false });
+});
+
+test('decideOnboarding', () => {
+  const d = (roleDone, companyDone, needsCompany) => decideOnboarding({ roleDone, companyDone, needsCompany });
+  assert.equal(d(false, false, true), 'full');
+  assert.equal(d(false, false, false), 'role');
+  assert.equal(d(false, true, true), 'role');
+  assert.equal(d(true, false, false), 'company');
+  assert.equal(d(true, false, true), 'company');
+  assert.equal(d(true, true, true), 'done');
+  assert.equal(d(true, true, false), 'done');
+});
+
+test('allowedSubmission: the expected kind, or a company edit once done', () => {
+  assert.equal(allowedSubmission('full', 'full'), true);
+  assert.equal(allowedSubmission('role', 'full'), false);
+  assert.equal(allowedSubmission('company', 'full'), false);
+  assert.equal(allowedSubmission('role', 'role'), true);
+  assert.equal(allowedSubmission('full', 'role'), false);
+  assert.equal(allowedSubmission('company', 'company'), true);
+  assert.equal(allowedSubmission('company', 'done'), true);
+  assert.equal(allowedSubmission('full', 'done'), false);
+  assert.equal(allowedSubmission('role', 'done'), false);
 });

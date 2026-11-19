@@ -461,3 +461,76 @@ CREATE TABLE IF NOT EXISTS analytics_outbox (
 );
 CREATE INDEX IF NOT EXISTS analytics_outbox_unsent_idx
   ON analytics_outbox (id) WHERE sent_at IS NULL;
+
+-- KYC v2 (migration 020). users/workspaces columns MUST stay as ALTERs: see the note on workos_user_id above.
+CREATE TABLE IF NOT EXISTS company_profiles (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  submitted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  onboarding_version INT NOT NULL,
+  source TEXT NOT NULL,
+  answered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_domain TEXT,
+  website_source TEXT,
+  industry TEXT,
+  industry_other_text TEXT,
+  parent_segment TEXT,
+  client_model TEXT,
+  company_size TEXT,
+  size_min INT,
+  size_max INT,
+  review_team_size TEXT,
+  rt_min INT,
+  rt_max INT,
+  primary_market TEXT,
+  market_other_text TEXT,
+  file_type_other_text TEXT,
+  icp_size_fit BOOLEAN,
+  legacy JSONB
+);
+CREATE INDEX IF NOT EXISTS company_profiles_workspace_idx ON company_profiles (workspace_id, answered_at DESC);
+CREATE INDEX IF NOT EXISTS company_profiles_domain_idx ON company_profiles (company_domain) WHERE company_domain IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS company_profile_markets (
+  profile_id TEXT NOT NULL REFERENCES company_profiles(id) ON DELETE CASCADE,
+  market_code TEXT NOT NULL,
+  pick_order INT NOT NULL,
+  PRIMARY KEY (profile_id, market_code)
+);
+
+CREATE TABLE IF NOT EXISTS company_profile_reviewers (
+  profile_id TEXT NOT NULL REFERENCES company_profiles(id) ON DELETE CASCADE,
+  reviewer_code TEXT NOT NULL,
+  PRIMARY KEY (profile_id, reviewer_code)
+);
+
+CREATE TABLE IF NOT EXISTS company_profile_file_types (
+  profile_id TEXT NOT NULL REFERENCES company_profiles(id) ON DELETE CASCADE,
+  file_type_code TEXT NOT NULL,
+  supported_at_signup BOOLEAN NOT NULL,
+  PRIMARY KEY (profile_id, file_type_code)
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  onboarding_version INT NOT NULL,
+  source TEXT NOT NULL,
+  answered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  role_code TEXT,
+  role_other_text TEXT,
+  role_family TEXT,
+  seniority TEXT,
+  decision_maker BOOLEAN,
+  non_buyer BOOLEAN
+);
+CREATE INDEX IF NOT EXISTS user_roles_user_idx ON user_roles (user_id, answered_at DESC);
+
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS current_profile_id TEXT REFERENCES company_profiles(id) ON DELETE SET NULL;
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS company_domain TEXT;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_version INT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_type TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_country TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_region TEXT;

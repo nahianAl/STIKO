@@ -1,8 +1,8 @@
 /**
  * How a Stiko server event becomes a PostHog capture. Pure.
  *
- * The plan's rule 3: every event carries user_id, workspace_id, segment_id and
- * track. The spec's rule: no names, emails, filenames, comment text or tokens.
+ * The plan's rule 3: every event carries user_id, workspace_id, industry,
+ * primary_market and track. The spec's rule: no names, emails, filenames, comment text or tokens.
  */
 import { analyticsAllowed } from '../geo.ts';
 import {
@@ -11,7 +11,8 @@ import {
 
 export interface WorkspaceContext {
   workspaceId: string | null;
-  segmentId: string;
+  industry: string;
+  primaryMarket: string;
   track: string;
   analyticsConsent: string | null;
 }
@@ -25,7 +26,8 @@ export interface CaptureRow {
 
 export const ANONYMOUS_CONTEXT: WorkspaceContext = {
   workspaceId: null,
-  segmentId: 'unknown',
+  industry: 'unknown',
+  primaryMarket: 'unknown',
   track: 'unknown',
   analyticsConsent: null,
 };
@@ -119,7 +121,8 @@ export function buildCapture(
     ...stripForbidden(input.properties ?? {}),
     user_id: input.userId,
     workspace_id: context.workspaceId,
-    segment_id: context.segmentId,
+    industry: context.industry,
+    primary_market: context.primaryMarket,
     track: context.track,
   };
   if (context.workspaceId) properties.$groups = { workspace: context.workspaceId };

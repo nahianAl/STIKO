@@ -4,6 +4,9 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
 import { track } from '@/lib/analytics/server';
+import { kycGateEnabled } from '@/lib/kyc/gate';
+import { companyProfileDone } from '@/lib/kyc/store';
+import { COMPANY_PROFILE_REQUIRED } from '@/lib/kyc/companyGateClient';
 
 export async function GET() {
   const session = await auth();
@@ -28,6 +31,15 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // A reviewer answers Role only at signup; the company questions come before
+  // their first project (spec §5). Off with the KYC kill switch.
+  if (kycGateEnabled() && !(await companyProfileDone(session.user.id))) {
+    return NextResponse.json(
+      { error: 'Tell us about your company first.', code: COMPANY_PROFILE_REQUIRED },
+      { status: 409 }
+    );
+  }
 
   // The creator is always the owner, so owner and caller are the same person.
   const refusal = await projectLimitRefusal(session.user.id, session.user.id);
