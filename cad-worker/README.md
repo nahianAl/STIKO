@@ -103,7 +103,7 @@ To roll back one format, remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` on 
 
 The variables are read at build time and inlined into the browser bundle, so a redeploy is required, and it must be a redeploy without the build cache: a cached build can keep the old value. After a rollback, drop a file of the switched-off format in the uploader and confirm that format's export advice appears (for example "Export STEP, then upload."; for SolidWorks, "Save As STEP, then upload."). That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
 
-Only if the worker itself breaks SolidWorks conversion, restore the pre-feature worker too: `git checkout 4019050 -- cad-worker && modal deploy cad-worker/app.py`.
+Only if the worker itself breaks SolidWorks conversion, restore the pre-feature worker too: `git worktree add /tmp/stiko-worker-rollback 4019050 && /tmp/stiko-cadw/bin/modal deploy /tmp/stiko-worker-rollback/cad-worker/app.py && git worktree remove /tmp/stiko-worker-rollback` (a throwaway checkout, so no working tree is left holding the old worker; any Python env with `modal` installed works).
 
 ## Reset a part wrongly marked failed
 

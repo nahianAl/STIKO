@@ -196,7 +196,7 @@ Production is the only environment. No migration.
    **Rollback of everything new:** set the variable to `sldprt`.
    **Never `git revert`:** converted files would then show as unsupported.
    - **Roll back with the env first.** Removing a format from the worker while the app still enables it leaves those files permanently "unavailable".
-   - **Worker rollback**, only if the worker itself breaks SolidWorks: `git checkout 4019050 -- cad-worker && modal deploy cad-worker/app.py`.
+   - **Worker rollback**, only if the worker itself breaks SolidWorks: `git worktree add /tmp/stiko-worker-rollback 4019050 && /tmp/stiko-cadw/bin/modal deploy /tmp/stiko-worker-rollback/cad-worker/app.py && git worktree remove /tmp/stiko-worker-rollback` (a throwaway checkout, so no working tree is left holding the old worker; any Python env with `modal` installed works).
    - **Redeploy without the build cache** after changing any `NEXT_PUBLIC_` variable: the values are inlined into the browser bundle at build time, and a cached build can keep the old one.
 
 ## Out of scope
