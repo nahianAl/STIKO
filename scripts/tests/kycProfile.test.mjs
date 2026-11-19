@@ -19,7 +19,10 @@ test('rolesFor: industry list in order; Other and null get every role once, Othe
   const ind = rolesFor('IND').map((r) => r.label);
   assert.equal(ind[0], 'Owner / Principal / Founder');
   assert.equal(ind.at(-1), 'Other');
-  for (const combined of [rolesFor('OTH'), rolesFor(null), rolesFor('nope')]) {
+  for (const combined of [
+    rolesFor('OTH'), rolesFor(null), rolesFor('nope'),
+    rolesFor('constructor'), rolesFor('__proto__'), rolesFor('toString'),
+  ]) {
     const codes = combined.map((r) => r.code);
     assert.equal(codes.length, ROLES.length);
     assert.equal(new Set(codes).size, codes.length);
@@ -115,6 +118,10 @@ test('fileTypeSupported follows lib/fileFormats.ts, not the source doc', () => {
   assert.equal(fileTypeSupported(ft('FT-BIM')), false);
   assert.equal(fileTypeSupported(ft('FT-99')), false);
   assert.equal(fileTypeSupported(ft('FT-SLDPRT')), SUPPORTED_EXTENSIONS.has('sldprt'));
+  assert.equal(fileTypeSupported(ft('FT-SLDASM')), false);
+  assert.equal(fileTypeSupported(ft('FT-PARASOLID')), false);
+  assert.equal(fileTypeSupported(ft('FT-NATIVE-CAD')), false);
+  assert.equal(fileTypeSupported(ft('FT-PSD-TIFF')), false);
 });
 
 test('validateCompany accepts a full answer and maps reviewers to codes', () => {

@@ -74,7 +74,9 @@ function parentOf(industry: string | null): ParentSegment | null {
 
 /** The industry's list, or for Other / no industry every role once, Other last. */
 export function rolesFor(industry: string | null): Role[] {
-  const own = industry && industry in ROLE_LISTS ? ROLE_LISTS[industry as keyof typeof ROLE_LISTS] : null;
+  const own = industry && Object.prototype.hasOwnProperty.call(ROLE_LISTS, industry)
+    ? ROLE_LISTS[industry as keyof typeof ROLE_LISTS]
+    : null;
   const lists = own ? [own] : Object.values(ROLE_LISTS);
   const codes: string[] = [];
   for (const list of lists) for (const c of list) if (c !== OTHER_ROLE && !codes.includes(c)) codes.push(c);
