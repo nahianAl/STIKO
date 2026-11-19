@@ -83,7 +83,7 @@ The table in the 2026-10-18 spec applies unchanged. New in practice:
    For each, record:
    - bodies and triangles;
    - GLB size;
-   - extent against the NIST STEP export of the assembly (`nist_mtc` has no STEP; compare against the sum of its parts' placement or the all-parts spike extent, 152.4 × 101.6 × 107.7 mm);
+   - extent in millimetres. NIST ships no STEP for this assembly, so compare against the all-parts spike extent of 152.4 × 101.6 × 107.7 mm. For other assemblies, check the extent is plausible for the object;
    - names in the GLB, with and without `--convert-metadata`;
    - an on-screen look in the real viewer.
 
