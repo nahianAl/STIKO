@@ -108,17 +108,30 @@ export async function identifyWorkspaceNow(userId: string): Promise<void> {
     const context = await workspaceContext(userId);
     if (!context.workspaceId || context.analyticsConsent === 'denied' || context.analyticsConsent === 'pending') return;
     const rows = await sql`
-      SELECT pillar, segment_id, client_model, company_size_band, track, country, region,
-             is_business_email, activated_at, utm_first
-      FROM workspaces WHERE id = ${context.workspaceId}
+      SELECT cp.industry, cp.parent_segment, cp.primary_market, cp.client_model, cp.company_size,
+             cp.size_min, cp.size_max, cp.review_team_size, cp.rt_min, cp.rt_max, cp.icp_size_fit,
+             cp.company_domain, cp.website_source, cp.onboarding_version,
+             w.country, w.region, w.is_business_email, w.activated_at, w.utm_first,
+             ARRAY(SELECT market_code FROM company_profile_markets m WHERE m.profile_id = cp.id ORDER BY pick_order) AS markets,
+             ARRAY(SELECT reviewer_code FROM company_profile_reviewers r WHERE r.profile_id = cp.id ORDER BY reviewer_code) AS reviewers,
+             ARRAY(SELECT file_type_code FROM company_profile_file_types f WHERE f.profile_id = cp.id ORDER BY file_type_code) AS file_types
+      FROM workspaces w LEFT JOIN company_profiles cp ON cp.id = w.current_profile_id
+      WHERE w.id = ${context.workspaceId}
     `;
     const w = rows[0] as Record<string, unknown> | undefined;
     if (!w) return;
     const utm = (w.utm_first ?? {}) as Record<string, string>;
+    // Codes only; "Other" free text never leaves Postgres.
     const groupSet: Record<string, unknown> = {
-      pillar: w.pillar, segment_id: w.segment_id, client_model: w.client_model,
-      company_size_band: w.company_size_band, track: w.track, country: w.country, region: w.region,
+      industry: w.industry, parent_segment: w.parent_segment, primary_market: w.primary_market,
+      markets: w.markets, client_model: w.client_model, company_size: w.company_size,
+      size_min: w.size_min, size_max: w.size_max, review_team_size: w.review_team_size,
+      rt_min: w.rt_min, rt_max: w.rt_max, reviewers: w.reviewers, file_types: w.file_types,
+      icp_size_fit: w.icp_size_fit, company_domain: w.company_domain, website_source: w.website_source,
+      onboarding_version: w.onboarding_version, track: context.track,
+      country: w.country, region: w.region,
       is_business_email: w.is_business_email,
+      is_free_email: w.is_business_email === null ? null : !w.is_business_email,
       activated_at: w.activated_at ? new Date(w.activated_at as string).toISOString() : null,
       first_utm_source: utm.utm_source ?? null, first_utm_medium: utm.utm_medium ?? null,
       first_utm_campaign: utm.utm_campaign ?? null,

@@ -6,6 +6,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { ANONYMOUS_CONTEXT, type WorkspaceContext } from '@/lib/analytics/events';
+import { trackForSize } from '@/lib/kyc/profile';
 
 /** Idempotent; safe under concurrent calls thanks to the UNIQUE owner_user_id. */
 export async function ensureWorkspace(userId: string): Promise<string> {
@@ -19,19 +20,22 @@ export async function ensureWorkspace(userId: string): Promise<string> {
 
 export async function workspaceContext(userId: string): Promise<WorkspaceContext> {
   const rows = await sql`
-    SELECT w.id AS "workspaceId", w.segment_id AS "segmentId", w.track,
-           u.analytics_consent AS "analyticsConsent"
-    FROM users u LEFT JOIN workspaces w ON w.owner_user_id = u.id
+    SELECT w.id AS "workspaceId", cp.industry, cp.primary_market AS "primaryMarket",
+           cp.company_size AS "companySize", u.analytics_consent AS "analyticsConsent"
+    FROM users u
+    LEFT JOIN workspaces w ON w.owner_user_id = u.id
+    LEFT JOIN company_profiles cp ON cp.id = w.current_profile_id
     WHERE u.id = ${userId}
   `;
   const r = rows[0] as
-    | { workspaceId: string | null; segmentId: string | null; track: string | null; analyticsConsent: string | null }
+    | { workspaceId: string | null; industry: string | null; primaryMarket: string | null; companySize: string | null; analyticsConsent: string | null }
     | undefined;
   if (!r) return ANONYMOUS_CONTEXT;
   return {
     workspaceId: r.workspaceId ?? (await ensureWorkspace(userId)),
-    segmentId: r.segmentId ?? 'unknown',
-    track: r.track ?? 'unknown',
+    industry: r.industry ?? 'unknown',
+    primaryMarket: r.primaryMarket ?? 'unknown',
+    track: (r.companySize && trackForSize(r.companySize)) || 'unknown',
     analyticsConsent: r.analyticsConsent,
   };
 }
