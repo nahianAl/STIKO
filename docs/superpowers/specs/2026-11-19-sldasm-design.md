@@ -47,18 +47,30 @@ Public repos were found with `gh search code --extension sldasm`; only MIT, Apac
 
 **Single parts.** Three `.sldprt` files (`nist_ftc_11`, `nist_ftc_09`, `nist_ctc_02`) convert as before, each to one node named `Body 1`. A lone part has no component `displayName`, so it keeps the fallback name.
 
+**Other formats already live (2026-11-19).** One sample each, through `smoke` (nothing deployed), then the GLB node names read back. In all five the stage's default prim (`/out`) and the `out` Xforms under it carry no `displayName`, so `usd_to_glb.body_name` never picks up a stage-root name and needed no change. Every name below is an authored `displayName` on a component or part Xform.
+
+| Format | Sample | Nodes | Names |
+|---|---|---|---|
+| `.ipt` | `INV_nist_ftc_11_asme1_2021.ipt` | 1 | `INV_nist_ftc_11_asme1_2021.ipt` (the part's own name, extension included) |
+| `.x_t` | `Maslow_Frame.x_t` | 24 | `Part 1`, `Part 1 (2)` ... `Part 1 (24)`: the file names all 24 parts "Part 1", so only the numbering tells them apart |
+| `.x_b` | `Foot_only.x_b` | 23 | `tie-rod-ankle-brackket_left:1`, `foot-top:1`, `2020_150mm:2`, `toes:1`, ... (23 distinct) |
+| `.jt` | `NIST mtc crada assembly.jt` | 36 | `90591A141_ZINC PLATED STEEL HEX NUT_90591A141`, ` (2)` ... ` (10)`, ... `NIST mtc crada box_14652` (36 distinct, 8 before numbering) |
+| `.sat` | `nist_mtc_crada_cover_rev-B.SAT` | 1 | `nist_mtc_crada_cover_rev-B` |
+
+So a single `.ipt` or `.sat` part is named after the part inside the file, where a single `.sldprt` keeps `Body 1`. Nothing else changes for these formats.
+
 **Conversion gate: ship.** The NIST assembly converts with real names and the right extent, and three other public assemblies do too. The one empty file failed cleanly. This verdict is about conversion only; the on-screen result is the next paragraph. Two things to remember: a 1,700-body, 4.3 million triangle assembly (Dingo) produces a 113,546,456-byte GLB (108.3 MiB), 72% of the 150 MiB output cap, and it will test the viewer harder than the 36-body NIST file does.
 
 **On-screen result (2026-11-19).** In headless Chromium with software WebGL (`next dev`, the real `ViewerContainer` and `PartsPanel`, the converted GLBs served from `public/uploads`, every network write stubbed):
 - **NIST:** renders with all 36 components in the parts panel, ready 2.6 s after navigation, no console errors beyond the harness's own stubbed endpoints.
-- **Dingo:** loads and renders, lists all 1,735 components, ready 6.8 s after navigation (about 3.7 s of that is the local download of the 113.5 MB file), no console errors, no crash.
+- **Dingo:** loads and renders, lists all 1,735 components, ready 6.8 s after navigation (about 3.7 s of that is the local download of the 108.3 MiB file), no console errors beyond the harness's own stubbed endpoints, no crash.
 - **Dingo's real-GPU viewer performance is unknown.** Software rendering is far slower than a real GPU, so these numbers show that it loads, not how it performs. The earlier 200 MB 3D audit found that very large models freeze clicks and zoom, and a 4.3 million triangle assembly may do the same.
-- **Names on screen.** Three.js's glTF loader replaces spaces in node names with underscores, so the panel shows `90591A141_ZINC_PLATED_STEEL_HEX_NUT-3` where the GLB holds `90591A141_ZINC PLATED STEEL HEX NUT-3`, and `CLS6336_35kg_servo-1_(2)` for ` (2)`. A panel search for "hex nut" finds nothing; "hex_nut" does. The original text is kept in each node's `userData.name`, which the parts panel does not read. This is the same for every format, and is not changed by this spec.
+- **Names on screen (fixed in `lib/model/partTree.ts`, see section 3).** Three.js's glTF loader sanitises node names: spaces become underscores, `[ ] . : /` are dropped, and a repeated name gets a `_1` suffix. So the panel used to show `90591A141_ZINC_PLATED_STEEL_HEX_NUT-3` where the GLB holds `90591A141_ZINC PLATED STEEL HEX NUT-3`, and `CLS6336_35kg_servo-1_(2)` for ` (2)`, and a panel search for "hex nut" found nothing. The loader keeps the original in each node's `userData.name`; the parts panel now shows that instead. This applies to every format and every GLB already stored, not only to assemblies.
 
 ## Decisions already made
 
 - **The assembly file alone (the user's choice).** There is no zip or folder handling. Parts uploaded beside an assembly are not used by it; each still converts as its own `.sldprt` file, as today. Using sibling parts for full-quality geometry is a later option if anyone notices the coarser mesh.
-- **Real names in the parts panel (the user's choice)**, for assemblies and for any format whose converter emits `displayName`, on files converted from now on. A single `.sldprt` part keeps `Body N`: the real-file test found no authored `displayName` on or above its mesh.
+- **Real names in the parts panel (the user's choice)**, for assemblies and for any format whose converter emits `displayName`, on files converted from now on. A single `.sldprt` part keeps `Body N`: the real-file test found no authored `displayName` on or above its mesh. Single `.ipt` and `.sat` parts do carry one, and get it (see "Other formats already live").
 - **SolidWorks only.** Inventor `.iam`, CATIA `.catproduct` and NX/Creo `.asm` don't store display copies, so they need their parts uploaded. That is a separate, later project.
 - **No migration.** Part colours and comment pins are keyed by index path (`part_key`, for example "0/2/1"), never by name, so renaming bodies cannot disturb stored data.
 
@@ -80,7 +92,7 @@ Public repos were found with `gh search code --extension sldasm`; only MIT, Apac
 
 - **`worker_core.CAD_EXTENSIONS`** gains `'sldasm'`. `input_suffix('a.sldasm')` returns `'.sldasm'`.
 - **No rotation:** `stands_up` stays False for it, because SolidWorks is Y-up.
-- **`--convert-metadata`:** if the real-file test shows `displayName` needs it, `run_converter` adds `--convert-metadata` for every format.
+- **`--convert-metadata`:** not needed. The real-file test found `displayName` on every component without it, so `run_converter` is unchanged.
 - **Body names: `usd_to_glb.py`.** Each glTF node is named after the nearest enclosing prim, the mesh itself included, that has authored `displayName` metadata.
   - **Clean-up:** trim, collapse runs of whitespace to one space, and cut to 120 characters.
   - **No name:** use `Body N`, the current behaviour.
@@ -91,7 +103,14 @@ Public repos were found with `gh search code --extension sldasm`; only MIT, Apac
 
 ### 3. Viewer and portal
 
-There is no new code beyond the noun. The parts panel shows names from the GLB. Sub-assemblies come out as a flat list of components, because `usd_to_glb.py` writes one node per mesh. A nested tree is out of scope.
+One code change, and it is **not behind the switch**: `lib/model/partTree.ts` now shows GLTFLoader's original node name (`userData.name`) in place of the sanitised `object.name`, falling back to `object.name` when there is none. It applies to **every format and every GLB already stored**, as soon as the code deploys.
+
+Effects on screen:
+- `Body_1` becomes `Body 1`.
+- Names keep `[ ] . : /` and spaces.
+- Duplicate original names no longer get the loader's `_1` suffix. This is display only: identity (part colours, comment pins) stays by `part_key`, so nothing stored changes.
+
+The only other app change is the `noun` addition in section 1. Sub-assemblies come out as a flat list of components, because `usd_to_glb.py` writes one node per mesh. A nested tree is out of scope.
 
 ## Failure table
 
@@ -100,7 +119,7 @@ The table in the 2026-10-18 spec applies unchanged. New in practice:
 | Situation | Row becomes | User sees |
 |---|---|---|
 | Assembly saved without its display copy (no visible mesh) | `failed` | "Couldn't convert this SolidWorks assembly." + "Save As STEP, then upload." |
-| Assembly larger than 200 MB, or GLB over 150 MB | `failed` | same |
+| Assembly larger than 200 MiB, or GLB over 150 MiB | `failed` | same |
 
 ## Testing
 
@@ -116,23 +135,28 @@ The table in the 2026-10-18 spec applies unchanged. New in practice:
    - an on-screen look in the real viewer.
 
    An assembly that comes out empty is recorded as such; it shows that the failure path works.
-2. **`node --test`:** the table test lists `sldasm`; `cadLabel('a.sldasm')`; `cadPreparingLabel('a.sldasm')` is "Preparing SolidWorks assembly…"; `assumedMmPerUnit('a.sldasm')` is 1; and `formatTables` disjointness still holds.
+2. **`node --test`:** the table test lists `sldasm`; `cadLabel('a.sldasm')`; `cadPreparingLabel('a.sldasm')` is "Preparing SolidWorks assembly…"; `assumedMmPerUnit('a.sldasm')` is 1; `formatTables` disjointness still holds; and `partTree` shows `userData.name` in preference to `object.name`.
 3. **Worker pytest:**
    - `input_suffix` for `.sldasm`;
    - `stands_up` False for it;
    - naming in `usd_to_glb.py` on hand-built stages: a `displayName` on the parent Xform, on the mesh itself, none (gives `Body N`), duplicates (gives ` (2)`), whitespace and the 120-character cut, and through an instanceable prim.
-4. **Browser:** the real `ViewerContainer` with the converted NIST assembly GLB. The parts panel lists the real names. CadPreparer shows "Converting SolidWorks assembly…" with stubbed status. No uploads.
+4. **Browser:** the real `ViewerContainer` with the converted NIST assembly GLB. The parts panel lists the real names with their original spaces (`ZINC PLATED STEEL HEX NUT-3`, not `ZINC_PLATED_STEEL_HEX_NUT-3`), and an older single-part model reads `Body 1`, not `Body_1`. CadPreparer shows "Converting SolidWorks assembly…" with stubbed status. No uploads.
 5. **Gates:** `tsc`, lint, all node tests, pytest, and `next build` with `sldasm` in the switch list, confirming it is inlined.
 
 ## Release
 
 Production is the only environment. No migration.
 
-1. Deploy `cad-worker/` to Modal. This is backward compatible, but **from this point newly converted assemblies, and any format whose converter emits `displayName`, get real body names; single parts keep `Body N`.**
-2. On Vercel (Production), add `sldasm` to `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` (`sldprt,sldasm,ipt,x_t,x_b,jt,sat`). The real-file test and the on-screen check left this list as written, and the gate build inlined exactly this value.
-3. Merge to main and push.
-4. Upload one real assembly to a throwaway package. Confirm it converts, stands upright, measures in millimetres and lists named parts.
-5. **Rollback:** remove `sldasm` from the variable and redeploy without the build cache. Never `git revert`.
+1. Deploy `cad-worker/` to Modal. This is backward compatible, but **from this point newly converted assemblies, and any format whose converter emits `displayName` (`.ipt`, `.x_t`, `.x_b`, `.jt`, `.sat`), get real body names; single `.sldprt` parts keep `Body N`.**
+   **Check before step 2** that the deployed worker accepts `.sldasm`. A request to the endpoint without the secret is refused with 401 before the filename is looked at, so it cannot prove this. Instead:
+   - check out the commit that was deployed, and run `/tmp/stiko-cadw/bin/modal run cad-worker/app.py::smoke --samples DIR --out DIR` on the NIST assembly (`modal run` builds the same image; it does not call the deployed app). Confirm it prints seconds and a GLB size, not an error;
+   - confirm the `modal deploy` output (or `modal app list`) shows `stiko-cad-worker` deployed just now.
+2. On Vercel (Production), add `sldasm` to `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` (`sldprt,sldasm,ipt,x_t,x_b,jt,sat`), **only after the check above passes**. The real-file test and the on-screen check left this list as written, and the gate build inlined exactly this value. If `sldasm` goes in before the new worker is live, the old worker answers 422, the route treats any reply but a 200 with a call id as transient and releases the claim, CadPreparer shows "SolidWorks preview isn't available right now.", and it heals on the next open after the worker deploy.
+3. Merge to main and push. **This also changes the parts-panel labels of every existing model, in every format** (`Body_1` becomes `Body 1`; cosmetic, identity is by key). It is code, so the env rollback below does not undo it; only a code change would.
+4. Upload one real assembly to a throwaway package. Confirm it converts, stands upright, measures in millimetres and lists named parts. **Also open the largest real assembly (Dingo, 1,735 bodies, 108.3 MiB GLB) on a real-GPU machine before announcing assemblies.** Known risks: GLBs are not counted by the usage meters, so an assembly can add up to 150 MiB uncounted; and every re-open downloads the full GLB again (model-load caching is not built).
+5. **Rollback:**
+   1. Remove `sldasm` from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` and redeploy without the build cache. Never `git revert`.
+   2. Only if the worker itself is at fault, redeploy the previous multi-format worker from a throwaway worktree at `a1b788e`: `git worktree add /tmp/stiko-worker-rollback a1b788e && /tmp/stiko-cadw/bin/modal deploy /tmp/stiko-worker-rollback/cad-worker/app.py && git worktree remove /tmp/stiko-worker-rollback`. Do this only after step 1: rolling the worker back while the env still lists `sldasm` makes those files unavailable (422).
 
 ## Out of scope
 
