@@ -70,31 +70,84 @@ const ADVICE_BASE: Readonly<Record<string, FormatAdvice>> = {
   usdc: { app: 'USD', advice: EXPORT_GLB },
 };
 
-const SLDPRT_ADVICE: FormatAdvice = { app: 'SolidWorks', advice: 'Save As STEP, then upload.' };
+export interface CadFormat extends FormatAdvice {
+  /** How the viewer names one file: "Converting Inventor part…", "Converting JT model…". */
+  noun: 'part' | 'model';
+}
 
 /**
- * Whether SolidWorks parts are converted (lib/cadConversion.ts). On unless the switch is 'off', so
- * production can turn it off with one env var and a redeploy. Read as the literal
- * process.env.NEXT_PUBLIC_SLDPRT_CONVERSION expression so Next inlines it into the browser bundle:
- * the dropzone decides what to accept on the client.
+ * Native CAD formats the CAD worker (cad-worker/, on Modal) converts to GLB, keyed by extension.
+ * Once converted a file opens through its GLB (opensAsModel in lib/cadConversion.ts). A format
+ * switched off by NEXT_PUBLIC_CAD_CONVERSION_FORMATS is refused with its advice instead.
+ * Keep in step with CAD_EXTENSIONS in cad-worker/worker_core.py.
+ */
+export const CAD_CONVERSION_FORMATS: Readonly<Record<string, Readonly<CadFormat>>> = Object.freeze({
+  sldprt: { app: 'SolidWorks', noun: 'part', advice: 'Save As STEP, then upload.' },
+  ipt: { app: 'Inventor', noun: 'part', advice: EXPORT_STEP },
+  catpart: { app: 'CATIA', noun: 'part', advice: EXPORT_STEP },
+  prt: { app: 'NX or Creo', noun: 'part', advice: EXPORT_STEP },
+  x_t: { app: 'Parasolid', noun: 'model', advice: EXPORT_STEP_FROM_TOOL },
+  x_b: { app: 'Parasolid', noun: 'model', advice: EXPORT_STEP_FROM_TOOL },
+  jt: { app: 'JT', noun: 'model', advice: EXPORT_STEP_FROM_TOOL },
+  sat: { app: 'ACIS', noun: 'model', advice: EXPORT_STEP_FROM_TOOL },
+});
+
+/**
+ * The legacy SolidWorks-only switch, read only when NEXT_PUBLIC_CAD_CONVERSION_FORMATS is unset.
+ * On unless the switch is 'off', so production can turn it off with one env var and a redeploy.
+ * Read as the literal process.env.NEXT_PUBLIC_SLDPRT_CONVERSION expression so Next inlines it into
+ * the browser bundle: the dropzone decides what to accept on the client.
  */
 export function sldprtConversionEnabled(value: string | undefined = process.env.NEXT_PUBLIC_SLDPRT_CONVERSION): boolean {
   return (value ?? '').trim().toLowerCase() !== 'off';
 }
 
-/** The model list and the advice table for either switch position. Pure, for tests. */
-export function formatTables(enabled: boolean): { model: string[]; advice: Record<string, FormatAdvice> } {
-  return enabled
-    ? { model: [...MODEL, 'sldprt'], advice: { ...ADVICE_BASE } }
-    : { model: [...MODEL], advice: { sldprt: SLDPRT_ADVICE, ...ADVICE_BASE } };
+/**
+ * Which converted formats are switched on. NEXT_PUBLIC_CAD_CONVERSION_FORMATS is a comma list
+ * ('sldprt,ipt,jt') or 'off'; unset or blank, the legacy SolidWorks switch decides. Both are read
+ * as literal process.env.NEXT_PUBLIC_… expressions so Next inlines them into the browser bundle:
+ * the dropzone decides what to accept on the client. Pure given its arguments, for tests.
+ */
+export function enabledCadFormats(
+  list: string | undefined = process.env.NEXT_PUBLIC_CAD_CONVERSION_FORMATS,
+  legacy: string | undefined = process.env.NEXT_PUBLIC_SLDPRT_CONVERSION
+): string[] {
+  const value = (list ?? '').trim().toLowerCase();
+  if (!value) return sldprtConversionEnabled(legacy) ? ['sldprt'] : [];
+  if (value === 'off') return [];
+  const names = value.split(',').map((s) => s.trim());
+  // Own keys only: 'constructor' or '__proto__' in the env must not count as a format.
+  const known = names.filter((n) => Object.prototype.hasOwnProperty.call(CAD_CONVERSION_FORMATS, n));
+  return Array.from(new Set(known));
 }
 
-const TABLES = formatTables(sldprtConversionEnabled());
+/**
+ * The model list and the advice table for a set of enabled formats. Pure, for tests. An enabled
+ * format joins the model list; a disabled one is refused with advice, and where ADVICE_BASE
+ * already has a row for it (prt: 'NX / Creo / Solid Edge'), that row wins.
+ */
+export function formatTables(enabled: readonly string[]): { model: string[]; advice: Record<string, FormatAdvice> } {
+  const on = new Set(enabled);
+  const advice: Record<string, FormatAdvice> = {};
+  for (const [ext, f] of Object.entries(CAD_CONVERSION_FORMATS)) {
+    if (!on.has(ext)) advice[ext] = { app: f.app, advice: f.advice };
+  }
+  for (const [ext, a] of Object.entries(ADVICE_BASE)) {
+    if (!on.has(ext)) advice[ext] = a;
+  }
+  const converted = Object.keys(CAD_CONVERSION_FORMATS).filter((ext) => on.has(ext));
+  return { model: [...MODEL, ...converted], advice };
+}
+
+/** The converted formats switched on in this build. */
+export const ENABLED_CAD_FORMATS: readonly string[] = enabledCadFormats();
+
+const TABLES = formatTables(ENABLED_CAD_FORMATS);
 
 /**
  * The formats the 3D viewer opens, undotted. ViewerContainer and the portal page derive
  * their checks from this rather than keeping their own copies — there used to be three.
- * A .sldprt opens through its converted GLB; see opensAsModel in lib/cadConversion.ts.
+ * A converted CAD format opens through its GLB; see opensAsModel in lib/cadConversion.ts.
  */
 export const MODEL_FORMATS: readonly string[] = TABLES.model;
 
@@ -108,16 +161,22 @@ export const SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   ...CAD,
 ]);
 
+/** Creo saves each version as name.prt.<n> (also .asm.<n>, .drw.<n>): that is still a .prt. */
+const CREO_VERSIONED = /.\.(prt|asm|drw)\.\d+$/i;
+
 /**
  * The lowercased extension without its dot, or '' when there isn't one.
  *
- * Two cases the naive `split('.').pop()` gets wrong, and both actually occur:
+ * Three cases the naive `split('.').pop()` gets wrong, and all actually occur:
  * a leading dot is a hidden file rather than an extension ('.DS_Store' lands in
- * every dropped macOS folder), and the dropzone carries paths, so a dot in a
- * folder name ('Rev1.2/sheet') must not be read as one.
+ * every dropped macOS folder), the dropzone carries paths, so a dot in a
+ * folder name ('Rev1.2/sheet') must not be read as one, and Creo's version
+ * files ('bracket.prt.5') are .prt files.
  */
 export function extensionOf(filename: string): string {
   const base = filename.slice(filename.lastIndexOf('/') + 1);
+  const creo = CREO_VERSIONED.exec(base);
+  if (creo) return creo[1].toLowerCase();
   const dot = base.lastIndexOf('.');
   if (dot <= 0) return '';
   return base.slice(dot + 1).toLowerCase();

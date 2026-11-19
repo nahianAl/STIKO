@@ -11,6 +11,9 @@ import {
   ACCEPT_ATTRIBUTE,
   formatTables,
   sldprtConversionEnabled,
+  CAD_CONVERSION_FORMATS,
+  ENABLED_CAD_FORMATS,
+  enabledCadFormats,
 } from '../../lib/fileFormats.ts';
 
 // Mirrors the branches in components/viewers/ViewerContainer.tsx. Stated
@@ -145,6 +148,7 @@ test('native CAD files get the advice row the spec fixed', () => {
     'a.usd': ['USD', 'Export GLB, then upload.'],
     'a.usda': ['USD', 'Export GLB, then upload.'],
     'a.usdc': ['USD', 'Export GLB, then upload.'],
+    'a.sat': ['ACIS', 'Export STEP from your CAD tool, then upload.'],
   };
   for (const [name, [app, advice]] of Object.entries(cases)) {
     assert.deepEqual(adviceFor(name), { app, advice }, name);
@@ -182,13 +186,68 @@ test('the SolidWorks switch is on unless explicitly off', () => {
   assert.equal(sldprtConversionEnabled('off'), false);
 });
 
-test('switching SolidWorks off moves .sldprt from the model list back to the advice table', () => {
-  const on = formatTables(true);
-  const off = formatTables(false);
-  assert.equal(on.model.includes('sldprt'), true);
-  assert.equal('sldprt' in on.advice, false);
-  assert.equal(off.model.includes('sldprt'), false);
-  assert.deepEqual(off.advice.sldprt, { app: 'SolidWorks', advice: 'Save As STEP, then upload.' });
-  // Assemblies keep their advice either way.
-  assert.equal('sldasm' in on.advice && 'sldasm' in off.advice, true);
+test('formatTables moves each enabled format from the advice table to the model list', () => {
+  const none = formatTables([]);
+  const some = formatTables(['sldprt', 'ipt', 'prt']);
+  assert.equal(none.model.includes('sldprt'), false);
+  assert.deepEqual(none.advice.sldprt, { app: 'SolidWorks', advice: 'Save As STEP, then upload.' });
+  for (const ext of ['sldprt', 'ipt', 'prt']) {
+    assert.equal(some.model.includes(ext), true, ext);
+    assert.equal(ext in some.advice, false, ext);
+  }
+  // A disabled format with an existing advice row keeps that row, not the table's.
+  assert.deepEqual(some.advice.catpart, { app: 'CATIA', advice: 'Export STEP, then upload.' });
+  assert.deepEqual(none.advice.prt, { app: 'NX / Creo / Solid Edge', advice: 'Export STEP, then upload.' });
+  // Assemblies and Solid Edge keep their advice whatever is enabled.
+  for (const ext of ['sldasm', 'iam', 'asm', 'par', 'psm']) assert.equal(ext in some.advice, true, ext);
+});
+
+test('formatTables keeps the model list and the advice table disjoint for every format', () => {
+  const all = Object.keys(CAD_CONVERSION_FORMATS);
+  for (const enabled of [[], all, ['jt'], ['x_t', 'sat']]) {
+    const t = formatTables(enabled);
+    for (const ext of t.model) assert.equal(ext in t.advice, false, `${enabled}: ${ext}`);
+    for (const ext of all) assert.equal(t.model.includes(ext) || ext in t.advice, true, `${enabled}: ${ext} vanished`);
+  }
+});
+
+test('the converted-format table is exactly the agreed formats, each with a name, noun and advice', () => {
+  assert.deepEqual(Object.keys(CAD_CONVERSION_FORMATS).sort(), ['catpart', 'ipt', 'jt', 'prt', 'sat', 'sldprt', 'x_b', 'x_t']);
+  assert.deepEqual(CAD_CONVERSION_FORMATS.prt, { app: 'NX or Creo', noun: 'part', advice: 'Export STEP, then upload.' });
+  assert.deepEqual(CAD_CONVERSION_FORMATS.jt, { app: 'JT', noun: 'model', advice: 'Export STEP from your CAD tool, then upload.' });
+  for (const f of Object.values(CAD_CONVERSION_FORMATS)) {
+    assert.ok(f.app && f.advice && (f.noun === 'part' || f.noun === 'model'));
+  }
+});
+
+test('enabledCadFormats: unset or blank falls back to the SolidWorks switch', () => {
+  assert.deepEqual(enabledCadFormats(undefined, undefined), ['sldprt']);
+  assert.deepEqual(enabledCadFormats('   ', 'on'), ['sldprt']);
+  assert.deepEqual(enabledCadFormats('', 'off'), []);
+});
+
+test('enabledCadFormats: off, lists, case, spaces, duplicates and unknown names', () => {
+  assert.deepEqual(enabledCadFormats('off', undefined), []);
+  assert.deepEqual(enabledCadFormats(' OFF ', 'on'), []);
+  assert.deepEqual(enabledCadFormats('sldprt,ipt', 'off'), ['sldprt', 'ipt']);
+  assert.deepEqual(enabledCadFormats(' JT , x_t,, ', undefined), ['jt', 'x_t']);
+  assert.deepEqual(enabledCadFormats('ipt,ipt', undefined), ['ipt']);
+  assert.deepEqual(enabledCadFormats('rvt,constructor,__proto__,ipt', undefined), ['ipt']);
+});
+
+test('with the env unset the enabled list is the legacy SolidWorks one', () => {
+  assert.deepEqual([...ENABLED_CAD_FORMATS], ['sldprt']);
+});
+
+test("Creo's version suffix is read as the real extension", () => {
+  assert.equal(extensionOf('bracket.prt.5'), 'prt');
+  assert.equal(extensionOf('BRACKET.PRT.12'), 'prt');
+  assert.equal(extensionOf('top.asm.3'), 'asm');
+  assert.equal(extensionOf('sheet.drw.1'), 'drw');
+  assert.equal(extensionOf('Rev1.2/bracket.prt.5'), 'prt');
+  // Anything else keeps the plain last-segment rule.
+  assert.equal(extensionOf('notes.5'), '5');
+  assert.equal(extensionOf('.prt.5'), '5');
+  assert.equal(extensionOf('a.step.5'), '5');
+  assert.equal(extensionOf('a.prt.x'), 'x');
 });
