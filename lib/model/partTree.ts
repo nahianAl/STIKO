@@ -205,11 +205,20 @@ function sumTriangles(meshes: THREE.Mesh[]): number {
   return meshes.reduce((sum, m) => sum + trianglesOf(m), 0);
 }
 
+/**
+ * The name to show for a part. GLTFLoader sanitises node names for animation binding (spaces
+ * become underscores) but keeps the original in userData.name, so prefer that.
+ */
+function displayNameOf(object: THREE.Object3D): string {
+  const original = object.userData?.name;
+  return typeof original === 'string' && original !== '' ? original : object.name ?? '';
+}
+
 function makePart(object: THREE.Object3D, key: string): PartNode {
   const children = boundariesUnder(object, key);
   const meshes = ownMeshes(object, true);
   const triangles = sumTriangles(meshes) + children.reduce((sum, c) => sum + c.triangles, 0);
-  return { key, name: object.name ?? '', children, meshes, triangles };
+  return { key, name: displayNameOf(object), children, meshes, triangles };
 }
 
 /**
@@ -271,7 +280,7 @@ export function buildPartTree(root: THREE.Object3D): PartNode[] {
     const meshes = ownMeshes(child, true);
     return {
       key: String(i),
-      name: child.name ?? '',
+      name: displayNameOf(child),
       children: [],
       meshes,
       triangles: sumTriangles(meshes),
