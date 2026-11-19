@@ -7,7 +7,7 @@
  */
 import type { NextRequest } from 'next/server';
 import { sql } from '@/lib/db';
-import { clickIds, FIRST_TOUCH_COOKIE, LAST_TOUCH_COOKIE, parseTouchCookie, signupSource } from '@/lib/attribution';
+import { clickIds, FIRST_TOUCH_COOKIE, LAST_TOUCH_COOKIE, parseTouchCookie, signupSource, signupTypeFor } from '@/lib/attribution';
 import { analyticsConsentAtSignup, CONSENT_COOKIE } from '@/lib/geo';
 import { isBusinessEmail } from '@/lib/kyc/profile';
 import { ensureWorkspace } from '@/lib/workspaces';
@@ -27,15 +27,16 @@ function prefixed(prefix: string, touch: Record<string, string> | null): Record<
  */
 async function resolveInvite(
   inviteToken: string | null | undefined
-): Promise<{ inviteId: string | null; inviterWorkspaceId: string | null }> {
-  const out: { inviteId: string | null; inviterWorkspaceId: string | null } = {
-    inviteId: null, inviterWorkspaceId: null,
+): Promise<{ inviteId: string | null; inviterWorkspaceId: string | null; inviterUserId: string | null }> {
+  const out: { inviteId: string | null; inviterWorkspaceId: string | null; inviterUserId: string | null } = {
+    inviteId: null, inviterWorkspaceId: null, inviterUserId: null,
   };
   if (!inviteToken) return out;
   try {
     const rows = await sql`SELECT id, invited_by FROM invite_tokens WHERE token = ${inviteToken} LIMIT 1`;
     if (rows[0]) {
       out.inviteId = rows[0].id as string;
+      out.inviterUserId = (rows[0].invited_by as string | null) ?? null;
       if (rows[0].invited_by) out.inviterWorkspaceId = await ensureWorkspace(rows[0].invited_by as string);
     }
   } catch (err) {
@@ -62,18 +63,23 @@ export async function recordSignup(
     const businessEmail = isBusinessEmail(email);
 
     // Independent of each other, so they run together. Neither can skip the UPDATE below.
-    const [{ inviteId, inviterWorkspaceId }] = await Promise.all([
+    const [{ inviteId, inviterWorkspaceId, inviterUserId }] = await Promise.all([
       resolveInvite(inviteToken),
       ensureWorkspace(userId).catch((err) => console.error('[analytics] recordSignup workspace failed', err)),
     ]);
     // From the RESOLVED invite: a made-up or deleted token is a direct signup, not a reviewer one.
     const source = signupSource(inviteId);
+    const signupType = signupTypeFor(source);
+    const signupCountry = request.headers.get('x-vercel-ip-country');
+    const signupRegion = request.headers.get('x-vercel-ip-country-region');
 
     // signup_source IS NULL: this may only ever fill in attribution, never overwrite an
     // existing user's. No row updated means no signup to report.
     const updated = await sql`
       UPDATE users SET
         signup_source = ${source}, invite_id = ${inviteId}, inviter_workspace_id = ${inviterWorkspaceId},
+        signup_type = ${signupType}, invited_by_user_id = ${inviterUserId},
+        signup_country = ${signupCountry}, signup_region = ${signupRegion},
         is_business_email = ${businessEmail},
         utm_first = ${first ? JSON.stringify(first) : null}::jsonb,
         utm_last = ${last ? JSON.stringify(last) : null}::jsonb,
@@ -85,14 +91,14 @@ export async function recordSignup(
     if (!updated[0]) return;
 
     const props = {
-      signup_source: source, invite_id: inviteId, inviter_workspace_id: inviterWorkspaceId,
+      signup_source: source, signup_type: signupType, invite_id: inviteId, inviter_workspace_id: inviterWorkspaceId,
       is_business_email: businessEmail, ...prefixed('first_', first), ...prefixed('last_', last),
     };
     // The UPDATE above (consent included) is done before track() reads it.
     await track('signup_completed', {
       userId,
       properties: props,
-      set: { signup_source: source, inviter_workspace_id: inviterWorkspaceId, is_business_email: businessEmail },
+      set: { signup_source: source, signup_type: signupType, inviter_workspace_id: inviterWorkspaceId, is_business_email: businessEmail },
       setOnce: prefixed('first_', first),
     });
     if (source === 'reviewer_invite') {
