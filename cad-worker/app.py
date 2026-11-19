@@ -1,7 +1,7 @@
-"""Stiko CAD worker on Modal: .sldprt -> GLB with NVIDIA usd-convert-cad on a T4.
+"""Stiko CAD worker on Modal: native CAD parts -> GLB with NVIDIA usd-convert-cad on a T4.
 
 Deploy:  modal deploy cad-worker/app.py      (needs `pip install modal fastapi` locally)
-Smoke:   modal run cad-worker/app.py::smoke --samples DIR --out DIR
+Smoke:   modal run cad-worker/app.py::smoke --samples DIR --out DIR [--per-format 3]
 See README.md for the secret, the licence terms in use, and the runbook.
 """
 
@@ -100,14 +100,35 @@ def convert_bytes(name: str, data: bytes) -> dict:
         return {'name': name, 'seconds': round(time.time() - t, 2), 'glb': glb.read_bytes()}
 
 
+def _spread(items, k):
+    """Up to k items spread across a size-sorted list: smallest, largest, and evenly between."""
+    if len(items) <= k:
+        return items
+    if k == 1:
+        return items[:1]
+    return [items[round(i * (len(items) - 1) / (k - 1))] for i in range(k)]
+
+
 @app.local_entrypoint()
-def smoke(samples: str, out: str):
+def smoke(samples: str, out: str, per_format: int = 3):
+    import re
+    import sys
+
+    sys.path.insert(0, str(HERE))
+    import worker_core
+
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    files = [p for p in Path(samples).iterdir() if p.suffix.lower() == '.sldprt']
-    for f in sorted(files, key=lambda p: p.stat().st_size):
-        r = convert_bytes.remote(f.name, f.read_bytes())
-        glb = r.pop('glb', None)
-        if glb:
-            (out_dir / (f.stem + '.glb')).write_bytes(glb)
-        print(r, len(glb or b''))
+    groups = {}
+    for p in Path(samples).rglob('*'):
+        suffix = p.is_file() and worker_core.input_suffix(p.name)
+        if suffix:
+            # Creo's .prt.<n> is its own group, so NX and Creo .prt are both sampled.
+            groups.setdefault(re.sub(r'\d+$', 'n', suffix), []).append(p)
+    for key in sorted(groups):
+        for f in _spread(sorted(groups[key], key=lambda p: p.stat().st_size), per_format):
+            r = convert_bytes.remote(f.name, f.read_bytes())
+            glb = r.pop('glb', None)
+            if glb:
+                (out_dir / (f.name + '.glb')).write_bytes(glb)
+            print(key, f.stat().st_size, r, len(glb or b''))

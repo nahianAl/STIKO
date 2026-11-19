@@ -3,12 +3,15 @@
 import { useEffect, useState } from 'react';
 import {
   CAD_POLL_INTERVAL_MS,
+  cadLabel,
   nextCadPollStep,
   type ConversionStatus,
 } from '@/lib/cadConversion';
 
 interface Props {
   fileId: string;
+  /** The original upload's name: decides the format's name and advice in the messages. */
+  filename: string;
   /** Called once with the GLB's key; the parent swaps the file over to the 3D viewer. */
   onConverted: (convertedStorageKey: string) => void;
   /**
@@ -39,11 +42,11 @@ function formatDay(isoDay: string): string {
 }
 
 /**
- * Shown for a .sldprt that has no GLB yet. Asks the server to start a conversion (a no-op if one
+ * Shown for a native CAD file that has no GLB yet. Asks the server to start a conversion (a no-op if one
  * is running) and polls until the GLB exists, the conversion fails, or CAD_POLL_LIMIT_MS passes.
  * Unlike DrawingPreparer the start call answers at once: the worker reports back on its own.
  */
-export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
+export default function CadPreparer({ fileId, filename, onConverted, onReady }: Props) {
   const [view, setView] = useState<View>({ kind: 'converting' });
 
   useEffect(() => {
@@ -138,12 +141,14 @@ export default function CadPreparer({ fileId, onConverted, onReady }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
 
+  // ViewerContainer only mounts this for a CAD file, so cadLabel is never null in practice.
+  const { app, noun, advice } = cadLabel(filename) ?? { app: 'CAD', noun: 'model', advice: 'Export STEP, then upload.' };
   const lines: Record<View['kind'], [string, string | null]> = {
-    converting: ['Converting SolidWorks part…', 'The first one after a quiet spell can take a couple of minutes.'],
-    failed: ["Couldn't convert this SolidWorks part.", 'Save As STEP in SolidWorks and upload that.'],
-    deferred: ['', 'Save As STEP to view it now.'],
-    disabled: ['SolidWorks preview is turned off.', 'Save As STEP to view it.'],
-    unavailable: ["SolidWorks preview isn't available right now.", 'Try again in a few minutes, or Save As STEP to view it now.'],
+    converting: [`Converting ${app} ${noun}…`, 'The first one after a quiet spell can take a couple of minutes.'],
+    failed: [`Couldn't convert this ${app} ${noun}.`, advice],
+    deferred: ['', advice],
+    disabled: [`${app} preview is turned off.`, advice],
+    unavailable: [`${app} preview isn't available right now.`, `Try again in a few minutes. ${advice}`],
     slow: ['Still converting.', 'Check back in a few minutes.'],
   };
   const [title, detail] = lines[view.kind];

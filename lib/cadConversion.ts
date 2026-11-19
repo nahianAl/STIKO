@@ -1,27 +1,52 @@
-import { extensionOf, MODEL_FORMATS } from './fileFormats.ts';
+import {
+  CAD_CONVERSION_FORMATS,
+  ENABLED_CAD_FORMATS,
+  extensionOf,
+  MODEL_FORMATS,
+  type CadFormat,
+} from './fileFormats.ts';
 
 /**
- * SolidWorks parts are shown as GLBs: the CAD worker (cad-worker/, on Modal) converts each one
- * once, and the GLB becomes the file's converted_storage_key. These are the rules around that,
- * kept pure so they can be tested and shared by the routes, the viewer and the portal page.
- * The worker and the claim/callback protocol are in docs/superpowers/specs/2026-10-18-sldprt-conversion-design.md.
+ * Native CAD parts (SolidWorks, Inventor, CATIA, NX/Creo, Parasolid, JT, ACIS) are shown as GLBs:
+ * the CAD worker (cad-worker/, on Modal) converts each one once, and the GLB becomes the file's
+ * converted_storage_key. These are the rules around that, kept pure so they can be tested and
+ * shared by the routes, the viewer and the portal page. The worker and the claim/callback protocol
+ * are in docs/superpowers/specs/2026-10-18-sldprt-conversion-design.md; the format table in
+ * docs/superpowers/specs/2026-11-19-more-cad-formats-design.md.
  */
 
-export function isSldprtFilename(filename: string): boolean {
-  return extensionOf(filename) === 'sldprt';
+/** Any format the worker converts, switched on or not: a converted file must keep opening. */
+export function isCadFilename(filename: string): boolean {
+  return Object.prototype.hasOwnProperty.call(CAD_CONVERSION_FORMATS, extensionOf(filename));
 }
 
-/** A .sldprt with no GLB yet: converting, deferred, failed, or switched off. */
+/** Whether this build converts the file's format (NEXT_PUBLIC_CAD_CONVERSION_FORMATS). */
+export function cadFormatEnabled(filename: string, enabled: readonly string[] = ENABLED_CAD_FORMATS): boolean {
+  return isCadFilename(filename) && enabled.includes(extensionOf(filename));
+}
+
+/** The app, noun and fallback advice for a CAD file, or null for anything else. */
+export function cadLabel(filename: string): CadFormat | null {
+  return isCadFilename(filename) ? CAD_CONVERSION_FORMATS[extensionOf(filename)] : null;
+}
+
+/** The portal's loading text while a CAD file has no GLB yet. */
+export function cadPreparingLabel(filename: string): string {
+  const label = cadLabel(filename);
+  return label ? `Preparing ${label.app} ${label.noun}…` : 'Preparing file…';
+}
+
+/** A CAD file with no GLB yet: converting, deferred, failed, or switched off. */
 export function isPendingCad(filename: string, convertedStorageKey: string | null): boolean {
-  return isSldprtFilename(filename) && !convertedStorageKey;
+  return isCadFilename(filename) && !convertedStorageKey;
 }
 
 /**
- * Whether the 3D viewer shows this file. A .sldprt only through its GLB, whatever the switch
- * says, so parts converted before a switch-off keep working.
+ * Whether the 3D viewer shows this file. A CAD file only through its GLB, whatever the switch
+ * says, so files converted before a switch-off keep working.
  */
 export function opensAsModel(filename: string, convertedStorageKey: string | null): boolean {
-  if (isSldprtFilename(filename)) return !!convertedStorageKey;
+  if (isCadFilename(filename)) return !!convertedStorageKey;
   return MODEL_FORMATS.includes(extensionOf(filename));
 }
 
@@ -75,7 +100,7 @@ export function firstOfNextMonth(now: Date): string {
 
 export const DEFAULT_MONTHLY_CAP = 300;
 
-/** SLDPRT_MONTHLY_CAP as a whole number of conversions; anything unreadable means the default. */
+/** SLDPRT_MONTHLY_CAP (shared by every converted format, despite its name) as a whole number of conversions; anything unreadable means the default. */
 export function monthlyCap(value: string | undefined): number {
   const trimmed = (value ?? '').trim();
   if (!/^\d+$/.test(trimmed)) return DEFAULT_MONTHLY_CAP;

@@ -1,6 +1,6 @@
 # Stiko CAD worker
 
-Converts a SolidWorks `.sldprt` upload to a millimetre, Y-up GLB. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back.
+Converts a native CAD part upload to a millimetre, Y-up GLB. It converts the formats in `CAD_EXTENSIONS` (`.sldprt`, `.ipt`, `.catpart`, `.prt` and Creo's `.prt.<n>`, `.x_t`, `.x_b`, `.jt`, `.sat`); the app's `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` decides which of them are switched on. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back.
 
 ## Deployed endpoint
 
@@ -17,8 +17,12 @@ Modal workspace `hello-63953`, app `stiko-cad-worker`. Dashboard: https://modal.
 | 200 | `{callId}`; the job is running |
 | 401 | missing or wrong `X-Worker-Secret` |
 | 400 | body is not JSON, a field is missing, or a URL is not allowed |
-| 422 | `filename` is not `.sldprt` |
+| 422 | `filename` is not one of `CAD_EXTENSIONS` |
 | 503 | spawn failed (transient — Stiko retries) |
+
+## Size limits
+
+An upload over 200 MB (`MAX_INPUT_BYTES`) is refused while downloading, and a converted GLB over 150 MB (`MAX_OUTPUT_BYTES`) is refused before it is uploaded. Both are verdicts on the file: the callback reports `ok: false` with reason `too_large` or `too_large_output`, and the file is marked failed. The output cap exists because the 200 MB audit showed a model that large freezes the viewer when it opens, and GLBs are not counted by the storage usage meters, so nothing else would stop one.
 
 ## Deploy and smoke test
 
@@ -26,10 +30,10 @@ You need the Modal CLI and `fastapi` in one Python environment (`pip install mod
 
 ```bash
 modal deploy cad-worker/app.py
-modal run cad-worker/app.py::smoke --samples DIR_OF_SLDPRT --out DIR_FOR_GLB
+modal run cad-worker/app.py::smoke --samples DIR_OF_SAMPLES --out DIR_FOR_GLB
 ```
 
-`smoke` converts every `.sldprt` in `DIR_OF_SLDPRT` (any letter case) and prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
+`smoke` walks `DIR_OF_SAMPLES` recursively, converts up to `--per-format` files (default 3) of each format, spread by size, and writes each result as `<original name>.glb`. It prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
 
 ## The secret
 
@@ -69,6 +73,8 @@ Two questions are open with NVIDIA and should be answered in writing before rely
 1. The `usd-convert-cad` README says "Proprietary CAD formats may require CAD converter licensing". Does SolidWorks input need a separate HOOPS Exchange / Tech Soft 3D licence?
 2. Is a paid hosted product explicitly allowed? The forum confirmations came from a non-NVIDIA poster.
 
+NVIDIA's README says proprietary CAD formats can require CAD converter licensing; that question, open with NVIDIA, now covers Inventor, CATIA, NX, Creo, Parasolid and JT as well as SolidWorks.
+
 ## Tests
 
 ```bash
@@ -87,13 +93,17 @@ Grep for `cad-worker:`. The worker logs there when a callback is refused or fail
 
 ## Spend
 
-Set a Modal workspace spending limit of about $30 a month. It is the hard stop. The code cap in Stiko (`SLDPRT_MONTHLY_CAP`, default 300 conversions a month) is soft: it counts claims, can undercount slightly after a reclaim, and does not know what a conversion costs.
+Set a Modal workspace spending limit of about $30 a month. It is the hard stop. The code cap in Stiko (`SLDPRT_MONTHLY_CAP`, default 300 conversions a month) is soft: it counts claims, can undercount slightly after a reclaim, and does not know what a conversion costs. Despite its name it is shared by every converted format, not just SolidWorks.
 
 ## Rollback
 
-Roll back by setting `NEXT_PUBLIC_SLDPRT_CONVERSION=off` on the stiko Vercel project and redeploying. Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With the switch off, the new code still opens any `.sldprt` that has a converted GLB and only stops accepting new ones.
+Roll back with the app's environment first. Removing a format from the worker while the app still enables it leaves those files permanently "unavailable": the app still sends them, and the worker refuses them (422).
 
-The variable is read at build time and inlined into the browser bundle, so a redeploy is required. After a rollback, drop a `.sldprt` in the uploader and confirm the "Save As STEP" advice appears. That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
+To roll back one format, remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` on the stiko Vercel project and redeploy. To roll back everything new, set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=sldprt` and redeploy. To turn all conversion off, set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=off`. `NEXT_PUBLIC_SLDPRT_CONVERSION` only applies while `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` is unset or blank (or names no known format, which also logs a warning). Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With a format switched off, the new code still opens any part of that format that has a converted GLB and only stops accepting new ones.
+
+The variables are read at build time and inlined into the browser bundle, so a redeploy is required, and it must be a redeploy without the build cache: a cached build can keep the old value. After a rollback, drop a file of the switched-off format in the uploader and confirm that format's export advice appears (for example "Export STEP, then upload."; for SolidWorks, "Save As STEP, then upload."). That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
+
+Only if the worker itself breaks SolidWorks conversion, restore the pre-feature worker too: `git worktree add /tmp/stiko-worker-rollback 4019050 && /tmp/stiko-cadw/bin/modal deploy /tmp/stiko-worker-rollback/cad-worker/app.py && git worktree remove /tmp/stiko-worker-rollback` (a throwaway checkout, so no working tree is left holding the old worker; any Python env with `modal` installed works).
 
 ## Reset a part wrongly marked failed
 

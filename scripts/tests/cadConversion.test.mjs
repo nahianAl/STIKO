@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isSldprtFilename, isPendingCad, opensAsModel, cadClaimId, parseCadClaim, claimDecision,
+  isCadFilename, cadFormatEnabled, cadLabel, cadPreparingLabel, isPendingCad, opensAsModel, cadClaimId, parseCadClaim, claimDecision,
   capLikePattern, firstOfNextMonth, monthlyCap, workerStartOutcome, parseCallbackBody,
   callbackOutcome, nextCadPollStep, CAD_CLAIM_STALE_MS, CAD_MAX_ATTEMPTS, CAD_POLL_LIMIT_MS,
 } from '../../lib/cadConversion.ts';
@@ -9,9 +9,32 @@ import {
 const NOW = new Date('2026-10-18T12:00:00.000Z');
 const ago = (ms) => new Date(NOW.getTime() - ms);
 
-test('only .sldprt is a SolidWorks part, in any case', () => {
-  for (const n of ['a.sldprt', 'A.SLDPRT', 'dir/Part.SldPrt']) assert.equal(isSldprtFilename(n), true, n);
-  for (const n of ['a.sldasm', 'a.step', 'sldprt', '.sldprt', 'a.sldprt.glb']) assert.equal(isSldprtFilename(n), false, n);
+test('every converted format is a CAD file, in any case, enabled or not', () => {
+  for (const n of ['a.sldprt', 'A.SLDPRT', 'dir/Part.SldPrt', 'b.ipt', 'c.CATPart', 'nx.prt', 'creo.prt.5', 'd.x_t', 'd.X_B', 'e.jt', 'f.sat']) {
+    assert.equal(isCadFilename(n), true, n);
+  }
+  for (const n of ['a.sldasm', 'a.iam', 'a.asm.3', 'a.step', 'sldprt', '.sldprt', 'a.sldprt.glb', 'a.constructor', 'notes.5']) {
+    assert.equal(isCadFilename(n), false, n);
+  }
+});
+
+test('cadFormatEnabled follows the enabled list', () => {
+  assert.equal(cadFormatEnabled('a.ipt', ['sldprt', 'ipt']), true);
+  assert.equal(cadFormatEnabled('a.jt', ['sldprt', 'ipt']), false);
+  assert.equal(cadFormatEnabled('creo.prt.5', ['prt']), true);
+  assert.equal(cadFormatEnabled('a.step', ['sldprt']), false);
+  // Default: this build's list, which with the env unset is SolidWorks only.
+  assert.equal(cadFormatEnabled('a.sldprt'), true);
+  assert.equal(cadFormatEnabled('a.ipt'), false);
+});
+
+test('cadLabel and cadPreparingLabel name the format', () => {
+  assert.deepEqual(cadLabel('a.ipt'), { app: 'Inventor', noun: 'part', advice: 'Export STEP, then upload.' });
+  assert.equal(cadLabel('a.step'), null);
+  assert.equal(cadPreparingLabel('a.sldprt'), 'Preparing SolidWorks part…');
+  assert.equal(cadPreparingLabel('creo.prt.5'), 'Preparing NX or Creo part…');
+  assert.equal(cadPreparingLabel('m.jt'), 'Preparing JT model…');
+  assert.equal(cadPreparingLabel('a.step'), 'Preparing file…');
 });
 
 test('a part without a GLB is pending; with one it opens as a model', () => {
@@ -22,6 +45,9 @@ test('a part without a GLB is pending; with one it opens as a model', () => {
   assert.equal(opensAsModel('a.sldprt', 'k/a.sldprt.glb'), true);
   assert.equal(opensAsModel('a.step', null), true);
   assert.equal(opensAsModel('a.png', null), false);
+  assert.equal(isPendingCad('a.ipt', null), true);
+  assert.equal(opensAsModel('a.ipt', null), false);
+  assert.equal(opensAsModel('creo.prt.5', 'k/creo.prt.5.glb'), true);
 });
 
 test('claim ids carry the attempt and the time, and parse back', () => {

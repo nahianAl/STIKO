@@ -122,12 +122,52 @@ def test_wrong_scheme_or_host_is_refused(field, url):
     assert e.value.status == 400
 
 
-def test_only_sldprt_is_accepted():
+@pytest.mark.parametrize('name,suffix', [
+    ('a.sldprt', '.sldprt'), ('A.SLDPRT', '.sldprt'), ('bracket.ipt', '.ipt'), ('b.CATPart', '.catpart'),
+    ('nx_part.prt', '.prt'), ('creo_part.prt.5', '.prt.5'), ('CREO.PRT.12', '.prt.12'),
+    ('m.x_t', '.x_t'), ('m.X_B', '.x_b'), ('m.jt', '.jt'), ('m.sat', '.sat'), ('dir/sub/m.jt', '.jt'),
+])
+def test_input_suffix_for_convertible_files(name, suffix):
+    assert worker_core.input_suffix(name) == suffix
+
+
+@pytest.mark.parametrize('name', [
+    'a.sldasm', 'a.iam', 'a.catproduct', 'a.asm', 'a.asm.3', 'a.par', 'a.rvt', 'a.ifc', 'a.step',
+    'notes.5', '.prt', '.prt.5', 'prt', 'a.prt.', 'a.prt.x', '',
+    'a.prt.٥',  # Arabic-Indic five: \d would match it, the worker must not
+    'a.prt.５',  # fullwidth five
+    'a.prt.5\n',     # \Z, not $, so a trailing newline is not a version number
+])
+def test_input_suffix_refuses_everything_else(name):
+    assert worker_core.input_suffix(name) is None
+
+
+@pytest.mark.parametrize('name', ['a.ipt', 'a.prt.5', 'a.jt', 'a.sldprt'])
+def test_convertible_formats_are_accepted(name):
     body = valid()
-    body['filename'] = 'a.sldasm'
+    body['filename'] = name
+    assert worker_core.validate_job(body, STORAGE, CALLBACK)['filename'] == name
+
+
+@pytest.mark.parametrize('name', ['a.sldasm', 'a.rvt', 'a.step'])
+def test_other_formats_are_refused_with_422(name):
+    body = valid()
+    body['filename'] = name
     with pytest.raises(Refused) as e:
         worker_core.validate_job(body, STORAGE, CALLBACK)
     assert e.value.status == 422
+
+
+def test_the_input_keeps_the_real_suffix(server, tmp_path):
+    seen = []
+
+    def convert(src, usd, glb):
+        seen.append(src.name)
+        glb.write_bytes(GLB)
+
+    worker_core.process_job(job(server, filename='creo_bracket.prt.5'), tmp_path, convert=convert, sleep=lambda s: None)
+    worker_core.process_job(job(server, filename='Part.SLDPRT'), tmp_path, convert=convert, sleep=lambda s: None)
+    assert seen == ['input.prt.5', 'input.sldprt']
 
 
 # --- process_job ------------------------------------------------------------------------------
@@ -222,6 +262,46 @@ def test_output_that_is_not_a_glb_is_a_verdict(tmp_path):
         worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=run)
 
 
+def _writes_glb_of(tmp_path, size):
+    """A fake usd_to_glb run that leaves a valid-header GLB of exactly `size` bytes."""
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+    def run(*a, **k):
+        (tmp_path / 'a.glb').write_bytes(b'glTF' + b'\0' * (size - 4))
+        return R()
+    return run
+
+
+def test_a_glb_over_the_output_cap_is_a_verdict(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_core, 'MAX_OUTPUT_BYTES', 64)
+    with pytest.raises(JobFailed, match='too_large_output'):
+        worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=_writes_glb_of(tmp_path, 65))
+
+
+@pytest.mark.parametrize('size', [12, 63, 64])
+def test_a_glb_at_or_below_the_output_cap_passes(tmp_path, monkeypatch, size):
+    monkeypatch.setattr(worker_core, 'MAX_OUTPUT_BYTES', 64)
+    worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=_writes_glb_of(tmp_path, size))
+
+
+def test_the_output_cap_is_150_mb():
+    assert worker_core.MAX_OUTPUT_BYTES == 150 * 1024 * 1024
+
+
+def test_an_oversized_glb_is_reported_and_never_uploaded(server, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_core, 'MAX_OUTPUT_BYTES', 8)
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+    def convert(src, usd, glb):
+        def run(*a, **k):
+            glb.write_bytes(b'glTF' + b'\0' * 60)
+            return R()
+        worker_core.run_usd_to_glb(usd, glb, run=run)
+    payload = worker_core.process_job(job(server), tmp_path, convert=convert, sleep=lambda s: None)
+    assert payload['ok'] is False and payload['reason'] == 'too_large_output'
+    assert Fake.puts == [] and Fake.callbacks == [payload]
+
+
 def test_a_converter_timeout_is_a_verdict(tmp_path):
     import subprocess
     def run(*a, **k):
@@ -243,3 +323,38 @@ def test_a_converter_nonzero_exit_is_a_verdict(tmp_path):
         returncode, stdout, stderr = 1, '', 'cannot parse'
     with pytest.raises(JobFailed, match='unreadable'):
         worker_core.run_converter(tmp_path / 'a.sldprt', tmp_path / 'a.usdc', run=lambda *a, **k: R())
+
+
+@pytest.mark.parametrize('name,head,expected', [
+    ('input.catpart', b'V5_CFV2\x00', True),
+    ('input.prt', b'SPLMSSTR' + b'\x00' * 8, True),       # NX
+    ('input.prt', b'#UGC:2 PART 2159', False),            # Creo, plain .prt
+    ('input.prt.5', b'#UGC:2 PART 2159', False),          # Creo version file
+    ('input.prt', b'', False),                            # unreadable header keeps its axes
+    ('input.sldprt', b'SPLMSSTR', False),
+    ('input.ipt', b'', False), ('input.x_t', b'', False), ('input.jt', b'', False), ('input.sat', b'', False),
+])
+def test_stands_up_only_catia_and_nx(tmp_path, name, head, expected):
+    src = tmp_path / name
+    src.write_bytes(head)
+    assert worker_core.stands_up(src) is expected
+
+
+def test_stands_up_on_a_missing_file_is_false(tmp_path):
+    assert worker_core.stands_up(tmp_path / 'input.prt') is False
+
+
+def test_usd_to_glb_gets_the_stand_up_flag(tmp_path):
+    calls = []
+
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[3]).write_bytes(GLB)
+        return R()
+
+    worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=run, stand_up=True)
+    worker_core.run_usd_to_glb(tmp_path / 'b.usdc', tmp_path / 'b.glb', run=run)
+    assert calls[0][-1] == '--stand-up' and '--stand-up' not in calls[1]

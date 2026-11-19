@@ -265,6 +265,7 @@ Production is the only environment. No migration.
    millimetres, and stands upright.
 5. **Rollback:** set `NEXT_PUBLIC_SLDPRT_CONVERSION=off` and redeploy. `.sldprt` returns to the
    "Save As STEP" advice, and parts already converted keep working.
+   Superseded 2026-11-19: once NEXT_PUBLIC_CAD_CONVERSION_FORMATS is set, NEXT_PUBLIC_SLDPRT_CONVERSION is ignored. Roll back SolidWorks by removing `sldprt` from NEXT_PUBLIC_CAD_CONVERSION_FORMATS (see 2026-11-19-more-cad-formats-design.md).
 
 ## Out of scope
 

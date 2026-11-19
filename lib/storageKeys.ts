@@ -147,7 +147,7 @@ export function drawingPdfKey(originalStorageKey: string): string {
 }
 
 /**
- * Where a SolidWorks part's converted GLB lives: beside the original, the original's full name
+ * Where a native CAD part's converted GLB lives: beside the original, the original's full name
  * plus '.glb'. Always derived from the original's key on the server, never accepted from a caller.
  */
 export function cadGlbKey(originalStorageKey: string): string {

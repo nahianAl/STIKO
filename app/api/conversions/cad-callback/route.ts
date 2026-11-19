@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
 
   const secret = process.env.CAD_WORKER_SECRET;
   if (!secret) {
-    console.error('SolidWorks callback received but CAD_WORKER_SECRET is unset');
+    console.error('CAD callback received but CAD_WORKER_SECRET is unset');
     return NextResponse.json({ error: 'Not configured' }, { status: 503 });
   }
   if (!verifyCadCallbackToken(secret, body.fileId, body.claimId, body.token)) {
@@ -29,12 +29,12 @@ export async function POST(request: NextRequest) {
     WHERE id = ${body.fileId} AND conversion_job_id = ${body.claimId}
   `) as { storageKey: string }[];
   if (!rows[0]) {
-    console.warn(`SolidWorks callback for a claim that is no longer current: file ${body.fileId}, ${body.claimId}`);
+    console.warn(`CAD callback for a claim that is no longer current: file ${body.fileId}, ${body.claimId}`);
     return NextResponse.json({ ok: true, ignored: true });
   }
 
   if (callbackOutcome(body) === 'failed') {
-    console.error(`SolidWorks conversion failed for file ${body.fileId}: ${body.reason ?? 'no reason given'}`);
+    console.error(`CAD conversion failed for file ${body.fileId}: ${body.reason ?? 'no reason given'}`);
     await sql`
       UPDATE files SET conversion_status = 'failed'
       WHERE id = ${body.fileId} AND conversion_job_id = ${body.claimId}
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     await sql`DELETE FROM file_calibrations WHERE file_id = ${body.fileId}`;
   } catch (calibrationErr) {
     console.error(
-      `Failed to delete stale file_calibrations for file ${body.fileId} after SolidWorks conversion:`,
+      `Failed to delete stale file_calibrations for file ${body.fileId} after CAD conversion:`,
       calibrationErr instanceof Error ? calibrationErr.message : String(calibrationErr)
     );
   }

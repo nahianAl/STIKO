@@ -1,6 +1,6 @@
 """Job logic for the Stiko CAD worker, kept free of Modal so it can be tested on a laptop.
 
-Standard library only. A job: download the .sldprt from a presigned GET URL, convert it
+Standard library only. A job: download the CAD part (any of CAD_EXTENSIONS) from a presigned GET URL, convert it
 (usd-convert-cad, then usd_to_glb.py), PUT the GLB to a presigned URL, POST the result to Stiko's
 callback. The worker never holds Stiko credentials: it gets URLs and echoes the token it was given.
 
@@ -13,6 +13,7 @@ Two kinds of failure, kept apart on purpose (see the spec's failure table):
 
 import http.client
 import json
+import re
 import subprocess
 import sys
 import time
@@ -22,11 +23,51 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 MAX_INPUT_BYTES = 200 * 1024 * 1024
+# The converted GLB is capped too. The 200 MB audit showed a model that large freezes the viewer on
+# open, and GLBs are not counted by the storage usage meters, so nothing else would stop one.
+MAX_OUTPUT_BYTES = 150 * 1024 * 1024
 CONVERT_TIMEOUT_S = 420
 GLB_TIMEOUT_S = 120
 GLTF_PYTHON = '/opt/gltf/bin/python'
 HERE = Path(__file__).resolve().parent
 JOB_FIELDS = ('sourceUrl', 'targetUrl', 'callbackUrl', 'fileId', 'claimId', 'token', 'filename')
+# The native formats this worker converts. Keep in step with CAD_CONVERSION_FORMATS in
+# lib/fileFormats.ts: the app decides which of these are switched on; the worker refuses the rest.
+CAD_EXTENSIONS = ('sldprt', 'ipt', 'catpart', 'prt', 'x_t', 'x_b', 'jt', 'sat')
+# Creo saves each version as name.prt.<n>; the version number is part of the real suffix.
+_CREO_VERSION = re.compile(r'.\.(prt\.[0-9]+)\Z')
+
+
+def input_suffix(filename):
+    """The suffix the downloaded file is saved with ('.ipt', '.prt.5'), or None if it isn't convertible."""
+    name = (filename or '').rsplit('/', 1)[-1].lower()
+    creo = _CREO_VERSION.search(name)
+    if creo:
+        return '.' + creo.group(1)
+    dot = name.rfind('.')
+    if dot <= 0:
+        return None
+    ext = name[dot + 1:]
+    return '.' + ext if ext in CAD_EXTENSIONS else None
+
+
+# CATIA and NX treat Z as up; usd-convert-cad keeps the file's own axes, so their parts are turned
+# upright here (user decision, 2026-11-19). NX and Creo share .prt: NX files start with SPLMSSTR.
+NX_MAGIC = b'SPLMSSTR'
+
+
+def stands_up(src):
+    """Whether the downloaded file is a CATIA or NX part, which must be turned from Z-up to Y-up."""
+    name = Path(src).name.lower()
+    if name.endswith('.catpart'):
+        return True
+    if not name.endswith('.prt'):
+        return False
+    try:
+        with open(src, 'rb') as f:
+            return f.read(len(NX_MAGIC)) == NX_MAGIC
+    except OSError:
+        return False
 
 
 class Refused(Exception):
@@ -86,8 +127,8 @@ def validate_job(body, storage_hosts, callback_hosts, allow_local_http=False):
     _check_url('sourceUrl', body['sourceUrl'], storage_hosts, allow_local_http)
     _check_url('targetUrl', body['targetUrl'], storage_hosts, allow_local_http)
     _check_url('callbackUrl', body['callbackUrl'], callback_hosts, allow_local_http)
-    if not body['filename'].lower().endswith('.sldprt'):
-        raise Refused(422, 'only .sldprt files are converted')
+    if input_suffix(body['filename']) is None:
+        raise Refused(422, 'not a convertible CAD file')
     return {field: body[field] for field in JOB_FIELDS}
 
 
@@ -133,8 +174,8 @@ def run_converter(src, usd, run=subprocess.run):
         raise JobFailed('unreadable: ' + (p.stderr or p.stdout or '').strip()[-300:])
 
 
-def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON):
-    cmd = [python, str(HERE / 'usd_to_glb.py'), str(usd), str(glb)]
+def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON, stand_up=False):
+    cmd = [python, str(HERE / 'usd_to_glb.py'), str(usd), str(glb)] + (['--stand-up'] if stand_up else [])
     try:
         p = run(cmd, capture_output=True, text=True, timeout=GLB_TIMEOUT_S)
     except subprocess.TimeoutExpired:
@@ -146,11 +187,13 @@ def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON):
     glb = Path(glb)
     if not glb.exists() or glb.stat().st_size < 12 or glb.read_bytes()[:4] != b'glTF':
         raise JobFailed('bad_glb')
+    if glb.stat().st_size > MAX_OUTPUT_BYTES:
+        raise JobFailed('too_large_output')
 
 
 def default_convert(src, usd, glb):
     run_converter(src, usd)
-    run_usd_to_glb(usd, glb)
+    run_usd_to_glb(usd, glb, stand_up=stands_up(src))
 
 
 def put_file(url, path, content_type='model/gltf-binary', timeout=120):
@@ -194,7 +237,8 @@ def process_job(job, workdir, *, convert=default_convert, sleep=time.sleep):
     may still have failed), or None when nothing was sent because the failure was transient."""
     workdir = Path(workdir)
     base = {'fileId': job['fileId'], 'claimId': job['claimId'], 'token': job['token']}
-    src, usd, glb = workdir / 'input.sldprt', workdir / 'out.usdc', workdir / 'out.glb'
+    # HOOPS picks its reader from the suffix, so the input keeps the real one (Creo's .prt.<n> too).
+    src, usd, glb = workdir / ('input' + input_suffix(job['filename'])), workdir / 'out.usdc', workdir / 'out.glb'
     try:
         download(job['sourceUrl'], src)
         convert(src, usd, glb)

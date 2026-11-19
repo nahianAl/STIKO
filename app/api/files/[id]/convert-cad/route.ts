@@ -7,14 +7,14 @@ import { trackFileEvent } from '@/lib/analytics/server';
 import { cadGlbKey } from '@/lib/storageKeys';
 import { converterEndpoint } from '@/lib/drawingConversion';
 import { appBaseUrlOrNull } from '@/lib/appUrl';
-import { sldprtConversionEnabled } from '@/lib/fileFormats';
 import { cadCallbackToken } from '@/lib/cadWorkerToken';
 import {
   cadClaimId,
+  cadFormatEnabled,
   capLikePattern,
   claimDecision,
   firstOfNextMonth,
-  isSldprtFilename,
+  isCadFilename,
   monthlyCap,
   workerStartOutcome,
   type ConversionStatus,
@@ -35,9 +35,9 @@ type Row = {
 };
 
 /**
- * Start converting one SolidWorks part to GLB, at most once at a time per file.
+ * Start converting one native CAD part (SolidWorks, Inventor, CATIA, NX/Creo, Parasolid, JT, ACIS) to GLB, at most once at a time per file.
  *
- * Called fire-and-forget by the uploader after an upload, and by CadPreparer whenever a .sldprt
+ * Called fire-and-forget by the uploader after an upload, and by CadPreparer whenever a CAD file
  * with no GLB is opened. /api/files is a public middleware prefix, so this checks the session and
  * the caller's access itself. The worker (cad-worker/ on Modal) gets presigned URLs and a callback
  * token, never credentials, and reports to /api/conversions/cad-callback, which finishes the row.
@@ -58,15 +58,15 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
   `) as Row[];
   const file = rows[0];
   if (!file) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  if (!isSldprtFilename(file.filename)) {
-    return NextResponse.json({ error: 'Not a SolidWorks part' }, { status: 400 });
+  if (!isCadFilename(file.filename)) {
+    return NextResponse.json({ error: 'Not a convertible CAD file' }, { status: 400 });
   }
 
   const current = () =>
     NextResponse.json({ conversionStatus: file.conversionStatus, convertedStorageKey: file.convertedStorageKey });
   if (file.convertedStorageKey) return current();
 
-  if (!sldprtConversionEnabled()) {
+  if (!cadFormatEnabled(file.filename)) {
     return NextResponse.json(
       { conversionStatus: file.conversionStatus, convertedStorageKey: null, reason: 'disabled' },
       { status: 503 }
@@ -83,7 +83,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
       !workerUrl && 'CAD_WORKER_URL is unset or not https',
       !base && 'NEXTAUTH_URL / APP_URL is unset',
     ].filter(Boolean);
-    console.error(`SolidWorks conversion is not configured: ${problems.join('; ')}`);
+    console.error(`CAD conversion is not configured: ${problems.join('; ')}`);
     return NextResponse.json(
       { conversionStatus: file.conversionStatus, convertedStorageKey: null, reason: 'not-configured' },
       { status: 503 }
@@ -97,7 +97,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ conversionStatus: 'processing', convertedStorageKey: null });
   }
   if (decision.kind === 'give-up') {
-    console.error(`SolidWorks conversion gave up on file ${params.id} after repeated stale claims`);
+    console.error(`CAD conversion gave up on file ${params.id} after repeated stale claims`);
     // Only a still-processing, unconverted row may be marked failed: a late or duplicate callback
     // may have recorded a verdict (or a GLB) since this request read the row.
     const gaveUp = await sql`
@@ -186,7 +186,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ conversionStatus: 'processing', convertedStorageKey: null });
   }
 
-  console.error(`SolidWorks conversion not started for file ${params.id}, will retry: ${reason}`);
+  console.error(`CAD conversion not started for file ${params.id}, will retry: ${reason}`);
   // Release only a claim that is still processing and unconverted: the worker may have started
   // after all (a timeout is not proof it did not) and its callback may already have recorded the
   // verdict, which this must not undo.

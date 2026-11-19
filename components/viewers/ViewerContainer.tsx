@@ -121,7 +121,7 @@ interface ViewerContainerProps {
   /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
   onPageChange?: (page: number) => void;
   /**
-   * DWG/DXF and SolidWorks parts: the converted PDF or GLB now exists; the parent records it on
+   * DWG/DXF drawings and CAD parts: the converted PDF or GLB now exists; the parent records it on
    * the file. Required: without it the viewer would keep showing the preparing state.
    */
   onDrawingConverted: (fileId: string, convertedStorageKey: string) => void;
@@ -160,7 +160,7 @@ export default function ViewerContainer({
   const viewerKey = file.convertedStorageKey ?? file.storageKey;
   // A DWG/DXF is shown through its converted PDF; until that exists it is 'drawing'.
   const kind = viewerKindFor(file.filename, file.convertedStorageKey);
-  // A .sldprt is shown through its GLB; until that exists it is a pending part.
+  // A CAD file (SolidWorks, Inventor, …) is shown through its GLB; until that exists it is pending.
   const pendingCad = isPendingCad(file.filename, file.convertedStorageKey);
 
   // Fetch presigned URL
@@ -208,6 +208,7 @@ export default function ViewerContainer({
       <CadPreparer
         key={file.id}
         fileId={file.id}
+        filename={file.filename}
         onConverted={(convertedKey) => onDrawingConverted(file.id, convertedKey)}
         onReady={onReady}
       />

@@ -3,6 +3,8 @@
  * stiko_handoff/02-design-system.md and 01-object-model.md.
  */
 
+import { extensionOf } from './fileFormats.ts';
+
 /** The five sticky notes, in palette order. */
 export const NOTE_ORDER = ['yellow', 'red', 'blue', 'green', 'purple'] as const;
 export type NoteColor = (typeof NOTE_ORDER)[number];
@@ -91,11 +93,9 @@ export function fileChip(filename: string): {
   bg: string;
   fg: string;
 } {
-  // Take the extension only when there actually is one — split('.').pop() on a
-  // bare "README" hands back the whole name, which would render as the chip.
-  const base = filename.split('/').pop() ?? filename;
-  const dot = base.lastIndexOf('.');
-  const ext = dot > 0 ? base.slice(dot + 1).toUpperCase() : '';
+  // extensionOf is '' when there is no extension — split('.').pop() on a bare "README" hands back
+  // the whole name, which would render as the chip — and reads Creo's name.prt.<n> as prt.
+  const ext = extensionOf(filename).toUpperCase();
   const hit = FILE_CHIP[ext];
   return {
     // Long extensions would blow out a 9px chip, so anything unusual is
