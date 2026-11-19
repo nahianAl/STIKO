@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Button from '@/components/ui/Button';
 import { ErrorBanner, Input } from '@/components/ui/Primitives';
 import ComboSelect, { type ComboOption } from '@/components/welcome/ComboSelect';
@@ -41,7 +41,7 @@ function Question({
 }
 
 export default function OnboardingForm({
-  variant, initial, prefillWebsite, submitLabel, showMarketing, saving, serverError, onSubmit,
+  variant, initial, prefillWebsite, submitLabel, showMarketing, saving, serverError, onSubmit, onEdit,
 }: {
   variant: SubmitKind;
   initial: FormValues;
@@ -51,10 +51,20 @@ export default function OnboardingForm({
   saving: boolean;
   serverError: { field: string | null; message: string } | null;
   onSubmit: (values: FormValues) => void;
+  /** Called after any answer changes (not on mount), so the parent can clear a stale server error. */
+  onEdit?: () => void;
 }) {
   const [v, setV] = useState<FormValues>(() =>
     initial.website || initial.noWebsite || !prefillWebsite ? initial : { ...initial, website: prefillWebsite }
   );
+  // Fire onEdit when the values actually change. Comparing against the last seen value (not a
+  // "first render" flag) keeps it silent on mount, including under StrictMode's double effect.
+  const seen = useRef(v);
+  useEffect(() => {
+    if (seen.current === v) return;
+    seen.current = v;
+    onEdit?.();
+  }, [v, onEdit]);
   const company = variant !== 'role';
   const askRole = variant !== 'company';
   const invalid = firstInvalidField(v, variant);
