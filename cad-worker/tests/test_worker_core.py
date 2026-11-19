@@ -262,6 +262,46 @@ def test_output_that_is_not_a_glb_is_a_verdict(tmp_path):
         worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=run)
 
 
+def _writes_glb_of(tmp_path, size):
+    """A fake usd_to_glb run that leaves a valid-header GLB of exactly `size` bytes."""
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+    def run(*a, **k):
+        (tmp_path / 'a.glb').write_bytes(b'glTF' + b'\0' * (size - 4))
+        return R()
+    return run
+
+
+def test_a_glb_over_the_output_cap_is_a_verdict(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_core, 'MAX_OUTPUT_BYTES', 64)
+    with pytest.raises(JobFailed, match='too_large_output'):
+        worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=_writes_glb_of(tmp_path, 65))
+
+
+@pytest.mark.parametrize('size', [12, 63, 64])
+def test_a_glb_at_or_below_the_output_cap_passes(tmp_path, monkeypatch, size):
+    monkeypatch.setattr(worker_core, 'MAX_OUTPUT_BYTES', 64)
+    worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=_writes_glb_of(tmp_path, size))
+
+
+def test_the_output_cap_is_150_mb():
+    assert worker_core.MAX_OUTPUT_BYTES == 150 * 1024 * 1024
+
+
+def test_an_oversized_glb_is_reported_and_never_uploaded(server, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_core, 'MAX_OUTPUT_BYTES', 8)
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+    def convert(src, usd, glb):
+        def run(*a, **k):
+            glb.write_bytes(b'glTF' + b'\0' * 60)
+            return R()
+        worker_core.run_usd_to_glb(usd, glb, run=run)
+    payload = worker_core.process_job(job(server), tmp_path, convert=convert, sleep=lambda s: None)
+    assert payload['ok'] is False and payload['reason'] == 'too_large_output'
+    assert Fake.puts == [] and Fake.callbacks == [payload]
+
+
 def test_a_converter_timeout_is_a_verdict(tmp_path):
     import subprocess
     def run(*a, **k):

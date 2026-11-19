@@ -23,6 +23,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 MAX_INPUT_BYTES = 200 * 1024 * 1024
+# The converted GLB is capped too. The 200 MB audit showed a model that large freezes the viewer on
+# open, and GLBs are not counted by the storage usage meters, so nothing else would stop one.
+MAX_OUTPUT_BYTES = 150 * 1024 * 1024
 CONVERT_TIMEOUT_S = 420
 GLB_TIMEOUT_S = 120
 GLTF_PYTHON = '/opt/gltf/bin/python'
@@ -184,6 +187,8 @@ def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON, stand_up=Fa
     glb = Path(glb)
     if not glb.exists() or glb.stat().st_size < 12 or glb.read_bytes()[:4] != b'glTF':
         raise JobFailed('bad_glb')
+    if glb.stat().st_size > MAX_OUTPUT_BYTES:
+        raise JobFailed('too_large_output')
 
 
 def default_convert(src, usd, glb):
