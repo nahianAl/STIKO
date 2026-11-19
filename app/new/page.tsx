@@ -20,6 +20,7 @@ import { notUploadedMessage } from '@/lib/uploadMessages';
 import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { derivePackageName } from '@/lib/design';
 import { companyProfilePath, isCompanyProfileRequired } from '@/lib/kyc/companyGateClient';
+import { useResetOnPageShow } from '@/components/billing/checkout';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 
@@ -79,6 +80,13 @@ function NewPackage() {
       })
       .catch(() => {});
   }, []);
+
+  // Back from the company form restores this page frozen on the uploading
+  // screen. The 409 comes before anything is created, so no draft exists then;
+  // once one does, the uploading screen is the recovery screen and must stay.
+  useResetOnPageShow(() => {
+    if (!draftRef.current) setPhase('compose');
+  });
 
   // "Named automatically from your files — or type your own." Stops guessing as
   // soon as the user types.

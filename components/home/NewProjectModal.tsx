@@ -7,6 +7,7 @@ import { Field, Input } from '@/components/ui/Primitives';
 import { useToast } from '@/components/ui/Toast';
 import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { companyProfilePath, isCompanyProfileRequired } from '@/lib/kyc/companyGateClient';
+import { useResetOnPageShow } from '@/components/billing/checkout';
 
 /**
  * Creating a project without going through the package flow.
@@ -34,6 +35,9 @@ export default function NewProjectModal({
       setSaving(false);
     }
   }, [isOpen]);
+
+  // Back from the company form restores this modal frozen mid-"Creating…".
+  useResetOnPageShow(() => setSaving(false));
 
   // Closing mid-flight cannot cancel the request, so it must not pretend to:
   // the project would be created anyway, or the error toast would arrive after
