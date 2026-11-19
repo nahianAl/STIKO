@@ -81,8 +81,12 @@ export async function POST(request: NextRequest) {
   });
 
   // Codes only: "Other" free text never leaves Postgres (plan Global Constraints).
-  const resubmitted = state.profileCompletedAt !== null;
+  // The marketing checkbox is grant-only (store.ts), so an unticked box says nothing
+  // about stored consent: report it as `marketing_checkbox`, and only $set
+  // marketing_consent when it was ticked (it can only have become true).
   if (company) {
+    // Pre-save state: a re-asked v1 owner and a reviewer's first company save are first answers.
+    const resubmitted = state.companyDone;
     const d = deriveCompany(company);
     const r = role ? deriveRole(role.roleCode) : null;
     await track('company_profile_completed', {
@@ -94,20 +98,24 @@ export async function POST(request: NextRequest) {
         reviewers: company.reviewerCodes, file_types: company.fileTypes, icp_size_fit: d.icpSizeFit,
         website_source: company.websiteSource, track: d.track, country, region, resubmitted,
         ...(role && r ? { role: role.roleCode, seniority: r.seniority, role_family: r.roleFamily } : {}),
-        ...(kind === 'full' ? { marketing_consent: marketing } : {}),
+        ...(kind === 'full' ? { marketing_checkbox: marketing } : {}),
       },
       set: {
         is_business_email: businessEmail,
         ...(role && r ? { role: role.roleCode, seniority: r.seniority, role_family: r.roleFamily, decision_maker: r.decisionMaker, non_buyer: r.nonBuyer } : {}),
-        ...(kind === 'full' ? { marketing_consent: marketing } : {}),
+        ...(kind === 'full' && marketing ? { marketing_consent: true } : {}),
       },
     });
   } else if (role) {
     const r = deriveRole(role.roleCode);
+    const resubmitted = state.roleDone;
     await track('reviewer_role_completed', {
       userId,
-      properties: { role: role.roleCode, seniority: r.seniority, role_family: r.roleFamily, marketing_consent: marketing, resubmitted },
-      set: { role: role.roleCode, seniority: r.seniority, role_family: r.roleFamily, decision_maker: r.decisionMaker, non_buyer: r.nonBuyer, marketing_consent: marketing },
+      properties: { role: role.roleCode, seniority: r.seniority, role_family: r.roleFamily, marketing_checkbox: marketing, resubmitted },
+      set: {
+        role: role.roleCode, seniority: r.seniority, role_family: r.roleFamily, decision_maker: r.decisionMaker, non_buyer: r.nonBuyer,
+        ...(marketing ? { marketing_consent: true } : {}),
+      },
     });
   }
   await identifyWorkspace(userId);

@@ -71,14 +71,29 @@ function NewPackage() {
       .catch(() => setProjects([]));
   }, []);
 
-  // Send a reviewer to the company questions before they fill anything in.
+  // Read by the load-time check below, whose effect runs once and so would
+  // otherwise see only the first render's phase.
+  const phaseRef = useRef(phase);
   useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  // Send a reviewer to the company questions before they fill anything in.
+  // Only while the page is still composing: a slow answer must not navigate
+  // away mid-upload (create() handles the 409 itself on that path).
+  useEffect(() => {
+    let cancelled = false;
     fetch('/api/welcome')
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
-        if (s?.companyRequired) window.location.assign(companyProfilePath(`/new${window.location.search}`));
+        if (cancelled || !s?.companyRequired) return;
+        if (phaseRef.current !== 'compose' || draftRef.current) return;
+        window.location.assign(companyProfilePath(`/new${window.location.search}`));
       })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Back from the company form restores this page frozen on the uploading

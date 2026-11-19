@@ -79,7 +79,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_country TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_region TEXT;
 
 -- Backfill: v1 answers become history rows (spec §7). current_profile_id is NOT
--- pointed at them, so everyone is asked the v2 questions.
+-- pointed at them, so everyone is asked the v2 questions. The runbook re-runs these
+-- four statements after the deploy, when users.role may already hold a v2 code: the
+-- onboarding_version guard keeps those out of the v1 history.
 INSERT INTO company_profiles (id, workspace_id, submitted_by_user_id, onboarding_version, source, answered_at, legacy)
 SELECT 'v1-' || w.id, w.id, w.owner_user_id, 1, 'migrated_v1',
        COALESCE(u.profile_completed_at, w.created_at),
@@ -94,7 +96,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO user_roles (id, user_id, onboarding_version, source, answered_at, role_code)
 SELECT 'v1-' || u.id, u.id, 1, 'migrated_v1', COALESCE(u.profile_completed_at, u.created_at, now()), u.role
 FROM users u
-WHERE u.role IS NOT NULL
+WHERE u.role IS NOT NULL AND COALESCE(u.onboarding_version, 0) < 2
 ON CONFLICT (id) DO NOTHING;
 
 UPDATE users SET signup_type = CASE signup_source WHEN 'reviewer_invite' THEN 'invited_reviewer' ELSE 'new_workspace' END

@@ -48,13 +48,38 @@ export async function onboardingState(userId: string): Promise<OnboardingState |
   };
 }
 
+/**
+ * Postgres undefined_table / undefined_column: what a missed migration 020 looks like
+ * to a query that reads company_profiles or workspaces.current_profile_id.
+ */
+const MISSING_SCHEMA_CODES: ReadonlySet<string> = new Set(['42P01', '42703']);
+let loggedMissingSchema = false;
+
+function isMissingSchema(err: unknown): err is { code: string } {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && MISSING_SCHEMA_CODES.has(code);
+}
+
 export async function companyProfileDone(userId: string): Promise<boolean> {
-  const rows = await sql`
-    SELECT cp.onboarding_version
-    FROM workspaces w JOIN company_profiles cp ON cp.id = w.current_profile_id
-    WHERE w.owner_user_id = ${userId}
-  `;
-  return Number(rows[0]?.onboarding_version ?? 0) >= ONBOARDING_VERSION;
+  try {
+    const rows = await sql`
+      SELECT cp.onboarding_version
+      FROM workspaces w JOIN company_profiles cp ON cp.id = w.current_profile_id
+      WHERE w.owner_user_id = ${userId}
+    `;
+    return Number(rows[0]?.onboarding_version ?? 0) >= ONBOARDING_VERSION;
+  } catch (err) {
+    if (!isMissingSchema(err)) throw err;
+    // Migration 020 was not applied before this deploy. POST /api/projects calls this
+    // for every project; it must not 500 for everyone. Fail open, like the gate lookup.
+    if (!loggedMissingSchema) {
+      loggedMissingSchema = true;
+      console.error(
+        `[kyc] migration 020 looks unapplied (Postgres ${err.code}); not requiring a company profile. Apply lib/migrations/020-kyc-v2.sql.`
+      );
+    }
+    return true;
+  }
 }
 
 /** The current v2 profile as form values, for Settings → Company. */
@@ -175,11 +200,13 @@ export async function saveOnboarding(input: SaveInput): Promise<{ profileId: str
   }
 
   if (consent) {
+    // The checkbox is grant-only: it starts unticked for everyone re-asked, so an
+    // unticked box must never revoke an earlier opt-in. Unsubscribe is the revoke path.
     queries.push(sql`
       UPDATE users SET
-        marketing_consent = ${consent.marketing},
-        marketing_consent_at = CASE WHEN ${consent.marketing} THEN now() ELSE NULL END,
-        marketing_consent_method = CASE WHEN ${consent.marketing} THEN 'welcome_checkbox' ELSE NULL END,
+        marketing_consent = (marketing_consent OR ${consent.marketing}),
+        marketing_consent_at = CASE WHEN ${consent.marketing} THEN COALESCE(marketing_consent_at, now()) ELSE marketing_consent_at END,
+        marketing_consent_method = CASE WHEN ${consent.marketing} THEN COALESCE(marketing_consent_method, 'welcome_checkbox') ELSE marketing_consent_method END,
         analytics_consent = COALESCE(${consent.analytics}, analytics_consent, ${consent.pendingIfRequired})
       WHERE id = ${userId}
     `);
