@@ -160,7 +160,7 @@ export default function ViewerContainer({
   const viewerKey = file.convertedStorageKey ?? file.storageKey;
   // A DWG/DXF is shown through its converted PDF; until that exists it is 'drawing'.
   const kind = viewerKindFor(file.filename, file.convertedStorageKey);
-  // A .sldprt is shown through its GLB; until that exists it is a pending part.
+  // A CAD file (SolidWorks, Inventor, …) is shown through its GLB; until that exists it is pending.
   const pendingCad = isPendingCad(file.filename, file.convertedStorageKey);
 
   // Fetch presigned URL
@@ -208,6 +208,7 @@ export default function ViewerContainer({
       <CadPreparer
         key={file.id}
         fileId={file.id}
+        filename={file.filename}
         onConverted={(convertedKey) => onDrawingConverted(file.id, convertedKey)}
         onReady={onReady}
       />

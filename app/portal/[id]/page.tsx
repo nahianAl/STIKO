@@ -55,7 +55,7 @@ import { distance } from '@/lib/measure/geometry';
 import { pointsPerStagePixel, type ImageSnapshotSpace } from '@/lib/measure/space';
 import { extensionOf } from '@/lib/fileFormats';
 import { viewerKindFor } from '@/lib/drawingConversion';
-import { isPendingCad, opensAsModel } from '@/lib/cadConversion';
+import { cadPreparingLabel, isPendingCad, opensAsModel } from '@/lib/cadConversion';
 
 interface Project {
   id: string;
@@ -702,7 +702,7 @@ export default function PortalPage() {
 
   const is3DFile = useMemo(() => {
     if (!selectedFile) return false;
-    // A .sldprt counts only once its GLB exists; until then there is no model to measure or pin.
+    // A CAD file counts only once its GLB exists; until then there is no model to measure or pin.
     return opensAsModel(selectedFile.filename, selectedFile.convertedStorageKey);
   }, [selectedFile]);
 
@@ -721,7 +721,7 @@ export default function PortalPage() {
   const selectedIsPendingDrawing =
     !!selectedFile && viewerKindFor(selectedFile.filename, selectedFile.convertedStorageKey) === 'drawing';
 
-  // A .sldprt whose GLB does not exist yet (converting, deferred, failed, or switched off).
+  // A CAD file whose GLB does not exist yet (converting, deferred, failed, or switched off).
   const selectedIsPendingCad =
     !!selectedFile && isPendingCad(selectedFile.filename, selectedFile.convertedStorageKey);
 
@@ -985,7 +985,7 @@ export default function PortalPage() {
     setContentTransform(transform);
   }, []);
 
-  // A DWG/DXF's PDF (or a SolidWorks part's GLB) now exists: record it on the file so the viewer
+  // A DWG/DXF's PDF (or a CAD part's GLB) now exists: record it on the file so the viewer
   // swaps to PDFKonvaViewer / ModelViewer.
   const handleDrawingConverted = useCallback((fileId: string, convertedStorageKey: string) => {
     setFiles((prev) =>
@@ -2469,7 +2469,7 @@ export default function PortalPage() {
                         : selectedIsPendingDrawing
                           ? 'Preparing drawing…'
                           : selectedIsPendingCad
-                            ? 'Preparing SolidWorks part…'
+                            ? cadPreparingLabel(selectedFile?.filename ?? '')
                             : 'Opening file…'
                   }
                 />
