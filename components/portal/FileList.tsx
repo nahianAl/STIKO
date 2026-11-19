@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { MODEL_FORMATS } from '@/lib/fileFormats';
+import { MODEL_FORMATS, extensionOf } from '@/lib/fileFormats';
 
 interface FileRecord {
   id: string;
@@ -23,7 +23,8 @@ interface FileListProps {
 }
 
 function getFileIcon(fileType: string, filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  // extensionOf reads Creo's name.prt.<n> as prt; a name it finds no extension in keeps the old reading.
+  const ext = extensionOf(filename) || (filename.split('.').pop()?.toLowerCase() ?? '');
   if (fileType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
     return 'image';
   }
