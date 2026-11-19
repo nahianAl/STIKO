@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
     properties: { file_id: file.id, extension: ext, size_bytes: Number(file.fileSize) },
   });
   // Viewable now unless a server conversion still has to run (DWG/DXF → PDF,
-  // SolidWorks → GLB); those fire file_processed when the conversion lands.
+  // CAD → GLB); those fire file_processed when the conversion lands.
   // STEP converts in the viewer, so it counts as processed here.
   if (!isDrawingFilename(filename) && !isPendingCad(filename, convertedStorageKey)) {
     await track('file_processed', {

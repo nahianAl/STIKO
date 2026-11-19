@@ -121,7 +121,7 @@ interface ViewerContainerProps {
   /** PDF only: the visible page, reported as it changes. Ignored by every other viewer. */
   onPageChange?: (page: number) => void;
   /**
-   * DWG/DXF and SolidWorks parts: the converted PDF or GLB now exists; the parent records it on
+   * DWG/DXF drawings and CAD parts: the converted PDF or GLB now exists; the parent records it on
    * the file. Required: without it the viewer would keep showing the preparing state.
    */
   onDrawingConverted: (fileId: string, convertedStorageKey: string) => void;

@@ -37,8 +37,9 @@ const EXPORT_GLB = 'Export GLB, then upload.';
 /**
  * Native formats nothing free can read. A file with one of these extensions is refused
  * like any other unsupported file, but the refusal says what to do instead of just "no".
- * Disjoint from SUPPORTED_EXTENSIONS by test. SolidWorks parts (.sldprt) are not in this base
- * table: formatTables adds their advice only when the conversion switch is off.
+ * Disjoint from SUPPORTED_EXTENSIONS by test. Where a converted format (CAD_CONVERSION_FORMATS)
+ * has a row here (ipt, catpart, prt, x_t, x_b, jt), formatTables uses this row while the format is
+ * switched off; the others (sldprt, sat) get the advice from their own table entry.
  */
 const ADVICE_BASE: Readonly<Record<string, FormatAdvice>> = {
   sldasm: { app: 'SolidWorks', advice: 'Save As STEP, then upload.' },

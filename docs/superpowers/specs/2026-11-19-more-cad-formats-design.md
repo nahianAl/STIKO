@@ -84,10 +84,11 @@ Facts observed in these files that shape the design:
 
   Its keys are `sldprt`, `ipt`, `catpart`, `prt`, `x_t`, `x_b`, `jt` and `sat`. SolidWorks moves into this table, and `SLDPRT_ADVICE` goes away.
 - **`enabledCadFormats(list, legacy)`** is pure, with its arguments defaulted from the two literal `process.env.NEXT_PUBLIC_…` expressions so Next inlines them.
-  - **`list` set and not blank:** `'off'` means none. Otherwise split on commas, trim, lowercase, and keep only keys of `CAD_CONVERSION_FORMATS`. Unknown names are ignored.
+  - **`list` set and not blank:** `'off'` means none. Otherwise split on commas, semicolons, pipes and whitespace (`/[\s,;|]+/`, because the variable is typed by hand: `sldprt; ipt` and `sldprt ipt` both work), lowercase, keep only own keys of `CAD_CONVERSION_FORMATS` and drop duplicates. Unknown names among known ones are ignored.
+  - **A list naming no known format** (`solidworks`, a typo): `console.warn` one line naming the value, then fall back to the legacy SolidWorks switch exactly as for an unset list. A typo must neither switch every conversion off nor surprise anyone by turning something on.
   - **`list` unset or blank:** today's behaviour. That is `['sldprt']` when `sldprtConversionEnabled(legacy)`, otherwise none.
   - **The new variable:** `NEXT_PUBLIC_CAD_CONVERSION_FORMATS`.
-  - **The legacy variable:** `NEXT_PUBLIC_SLDPRT_CONVERSION`, read only as the fallback. It can be removed once the new variable is set in production.
+  - **The legacy variable:** `NEXT_PUBLIC_SLDPRT_CONVERSION`, read only as the fallback (unset, blank, or no known format in the list). Once the new variable names a known format or is `off`, the legacy one is ignored. It can be removed once the new variable is set in production.
 - **`formatTables(enabled)`** now takes the enabled list.
   - Each enabled format joins the model list and leaves the advice table.
   - Each disabled one stays in, or is added to, the advice table with its `advice`.
@@ -101,7 +102,7 @@ Facts observed in these files that shape the design:
   - `part.prt.5` → `prt`;
   - `top.asm.3` → `asm`, which keeps its advice;
   - `notes.5` → `5`, which stays unsupported.
-- **Who it affects:** everything that goes through `extensionOf`, including support checks, advice, file chips, analytics and units. That is intended: a Creo version file *is* a `.prt`.
+- **Who it affects:** everything that goes through `extensionOf`, including support checks, advice, analytics, units and the file chips. The chips are `getFileChip` in `lib/fileChips.ts`, `fileChip` in `lib/design.ts` and the portal file list's icon (`components/portal/FileList.tsx`); a Creo version file is labelled PRT, not by its version number. Each of the three keeps its old reading, the last dot-segment, for a name `extensionOf` finds no extension in (`README`, `.DS_Store`), so no other label changes. That is intended: a Creo version file *is* a `.prt`.
 - **The file picker can't pre-filter these.** The `accept` attribute matches only the final extension, so `.prt.5` is greyed out in the picker on some systems. Drag and drop goes through `extensionOf`, so it works. Creo runs only on Windows, where the picker's "All files" option shows the file. This limitation is accepted. No UI copy mentions it, and it isn't worth a custom picker.
 
 ### 3. Shared helpers: `lib/cadConversion.ts`
@@ -129,7 +130,7 @@ Facts observed in these files that shape the design:
   - **`input_suffix(filename)`** returns the lowercased suffix to give the downloaded file. That is `.prt.5` for a Creo version file, otherwise `.<ext>`. It returns `None` when the format isn't convertible.
   - `validate_job` refuses with 422 when `input_suffix` is `None`, instead of when the name doesn't end in `.sldprt`.
   - `process_job` saves the download as `input<suffix>`, so HOOPS sees the real extension.
-- **What stays the same:** the converter command, `usd_to_glb.py` and the 200 MB cap.
+- **What stays the same:** the converter command and the 200 MB input cap. `usd_to_glb.py` gains `--stand-up` and `worker_core` gains `stands_up` (section 6). A converted GLB over 150 MB (`MAX_OUTPUT_BYTES`) is refused with a `too_large_output` verdict and not uploaded: the 200 MB audit showed a model that large freezes the viewer, and GLBs are not counted by the usage meters.
 - **The worker's list is a superset of the app's switch.** The app decides what is sent, and the worker refuses anything it doesn't know.
 - **The local `smoke` entrypoint** takes every file whose `input_suffix` isn't `None`, instead of only `.sldprt`, and walks the sample folder recursively.
 - **README:** the supported list and the licence note gain the new formats.
@@ -149,7 +150,7 @@ Facts observed in these files that shape the design:
   SolidWorks goes through the same template, so its texts change slightly to match. For example, "Save As STEP in SolidWorks and upload that." becomes its table advice, "Save As STEP, then upload."
 - **`app/portal/[id]/page.tsx`:** `'Preparing SolidWorks part…'` becomes ``Preparing ${app} ${noun}…``. The branches already use `isPendingCad` and `opensAsModel`.
 - **`lib/measure/calibration.ts`:** `assumedMmPerUnit` returns 1 for every key of `CAD_CONVERSION_FORMATS`, because the worker writes millimetres whatever unit the part was drawn in. The `sldprt` case becomes a table check.
-- **`lib/fileChips.ts`:** no change. Enabled formats are in `MODEL_FORMATS` and get the model chip.
+- **`lib/fileChips.ts`:** enabled formats are in `MODEL_FORMATS` and get the model chip. The only change is that it reads the extension through `extensionOf` (section 2), as `lib/design.ts` and the portal file list do, so a Creo `name.prt.5` is labelled PRT.
 - **Orientation (user decision, 2026-11-19):** `usd-convert-cad` keeps each file's own axes. CATIA (`.catpart`) and NX `.prt` treat Z as up, so the worker turns those parts -90° about X (`usd_to_glb.py --stand-up`, chosen by `worker_core.stands_up`, which tells NX from Creo by the `SPLMSSTR` header). Every other format keeps its axes: SolidWorks, Inventor and Creo are Y-up already, and Parasolid, JT and ACIS have no fixed convention. Once production pins exist on a format, its orientation can never change.
 
 ## Failure table
@@ -172,13 +173,14 @@ The failure table in the SolidWorks spec applies to every format unchanged. One 
 
    **A format that fails or comes out wrong is dropped from the table and the switch list, not shipped.** The results go into this spec, as the SolidWorks spec did.
 2. **`node --test`:**
-   - `enabledCadFormats` covering unset, blank, `off`, a list, unknown names, case and spaces, and the legacy fallback both ways;
+   - `enabledCadFormats` covering unset, blank, `off`, a list, unknown names, case and spaces, comma, semicolon, pipe and whitespace separators, a list of only unknown names (warns, then the legacy fallback both ways), and the legacy fallback both ways;
+   - a child-process test (`scripts/tests/sldprtSwitchOff.test.mjs`) that sets the real variables: a one-format list, `off`, the new switch winning over the legacy one, and a switched-off format still opening once converted;
    - `formatTables` for every format, including the disjointness test;
    - `extensionOf` for `.prt.<n>`, `.asm.<n>`, `.drw.<n>`, a bare `.5`, and a dotted folder;
    - `isCadFilename`, `cadFormatEnabled`, `cadLabel`;
    - `assumedMmPerUnit` for every format.
 3. **Route tests on the PGlite harness:** `convert-cad` refuses a non-CAD file (400), answers 503 `disabled` for a known but switched-off format, and starts a job for an enabled non-SolidWorks format. The existing claim, cap and callback scenarios re-run.
-4. **Worker pytest:** `input_suffix` for each format and for `.prt.<n>`; `validate_job` refusing an unknown extension; `process_job` naming the input with the right suffix. The existing tests re-run.
+4. **Worker pytest:** `input_suffix` for each format and for `.prt.<n>`; `validate_job` refusing an unknown extension; `process_job` naming the input with the right suffix; a GLB over the output cap reported as `too_large_output` and never uploaded. The existing tests re-run.
 5. **Browser:** the local harness serves one converted GLB per new format through `CadPreparer` and the viewer. The state texts are checked for two formats with stubbed status responses. There are no uploads, because local dev uses the production database and R2.
 6. **Gates:** `tsc`, lint, all node tests, `next build`, pytest.
 
@@ -193,11 +195,15 @@ Production is the only environment. No migration.
 5. **Rollback of one format:** remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` and redeploy.
    **Rollback of everything new:** set the variable to `sldprt`.
    **Never `git revert`:** converted files would then show as unsupported.
+   - **Roll back with the env first.** Removing a format from the worker while the app still enables it leaves those files permanently "unavailable".
+   - **Worker rollback**, only if the worker itself breaks SolidWorks: `git checkout 4019050 -- cad-worker && modal deploy cad-worker/app.py`.
+   - **Redeploy without the build cache** after changing any `NEXT_PUBLIC_` variable: the values are inlined into the browser bundle at build time, and a cached build can keep the old one.
 
 ## Out of scope
 
 - Assemblies and zip uploads (Release B).
 - Revit, IFC and Solid Edge.
+- Multi-file NX assemblies (which are also `.prt`) and shattered JT (a JT that references other files). They are not supported; they will most likely fail with "no visible mesh" and show the export advice.
 - A per-format monthly cap.
 - A custom file picker for Creo's `.prt.<n>`.
 - Telling NX `.prt` from Creo `.prt` in the UI. Both show as "NX or Creo part".

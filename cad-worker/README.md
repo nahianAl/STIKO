@@ -20,6 +20,10 @@ Modal workspace `hello-63953`, app `stiko-cad-worker`. Dashboard: https://modal.
 | 422 | `filename` is not one of `CAD_EXTENSIONS` |
 | 503 | spawn failed (transient — Stiko retries) |
 
+## Size limits
+
+An upload over 200 MB (`MAX_INPUT_BYTES`) is refused while downloading, and a converted GLB over 150 MB (`MAX_OUTPUT_BYTES`) is refused before it is uploaded. Both are verdicts on the file: the callback reports `ok: false` with reason `too_large` or `too_large_output`, and the file is marked failed. The output cap exists because the 200 MB audit showed a model that large freezes the viewer when it opens, and GLBs are not counted by the storage usage meters, so nothing else would stop one.
+
 ## Deploy and smoke test
 
 You need the Modal CLI and `fastapi` in one Python environment (`pip install modal fastapi==0.146.0`), and `modal token new` once.
@@ -89,13 +93,17 @@ Grep for `cad-worker:`. The worker logs there when a callback is refused or fail
 
 ## Spend
 
-Set a Modal workspace spending limit of about $30 a month. It is the hard stop. The code cap in Stiko (`SLDPRT_MONTHLY_CAP`, default 300 conversions a month) is soft: it counts claims, can undercount slightly after a reclaim, and does not know what a conversion costs.
+Set a Modal workspace spending limit of about $30 a month. It is the hard stop. The code cap in Stiko (`SLDPRT_MONTHLY_CAP`, default 300 conversions a month) is soft: it counts claims, can undercount slightly after a reclaim, and does not know what a conversion costs. Despite its name it is shared by every converted format, not just SolidWorks.
 
 ## Rollback
 
-To roll back one format, remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` on the stiko Vercel project and redeploy. To roll back everything new, set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=sldprt` and redeploy. `NEXT_PUBLIC_SLDPRT_CONVERSION` only applies while `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` is unset. Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With a format switched off, the new code still opens any part of that format that has a converted GLB and only stops accepting new ones.
+Roll back with the app's environment first. Removing a format from the worker while the app still enables it leaves those files permanently "unavailable": the app still sends them, and the worker refuses them (422).
 
-The variables are read at build time and inlined into the browser bundle, so a redeploy is required. After a rollback, drop a file of the switched-off format in the uploader and confirm the "Save As STEP" advice appears. That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
+To roll back one format, remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` on the stiko Vercel project and redeploy. To roll back everything new, set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=sldprt` and redeploy. To turn all conversion off, set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=off`. `NEXT_PUBLIC_SLDPRT_CONVERSION` only applies while `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` is unset or blank (or names no known format, which also logs a warning). Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With a format switched off, the new code still opens any part of that format that has a converted GLB and only stops accepting new ones.
+
+The variables are read at build time and inlined into the browser bundle, so a redeploy is required, and it must be a redeploy without the build cache: a cached build can keep the old value. After a rollback, drop a file of the switched-off format in the uploader and confirm that format's export advice appears (for example "Export STEP, then upload."; for SolidWorks, "Save As STEP, then upload."). That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
+
+Only if the worker itself breaks SolidWorks conversion, restore the pre-feature worker too: `git checkout 4019050 -- cad-worker && modal deploy cad-worker/app.py`.
 
 ## Reset a part wrongly marked failed
 
