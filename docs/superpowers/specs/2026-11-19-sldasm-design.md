@@ -27,6 +27,26 @@ What this shows:
 - **This depends on a SolidWorks save setting** that is normally on. An assembly saved without it gives no visible mesh, which is the existing failure path.
 - **Real names are present.** Each component is an `Xform` whose `displayName` metadata holds SolidWorks's instance name, for example `ZINC PLATED STEEL HEX NUT-3` or `nist_mtc_crada_cover_rev-B-1`. Its mesh child is just `Mesh`. The spike ran with `--convert-metadata`; whether `displayName` also appears without it is checked in the real-file test.
 
+## Real-file test (2026-11-19)
+
+Five assemblies, each uploaded alone (no parts beside it), through the real worker code (`cad-worker/app.py::smoke`, `worker_core.run_converter` + `usd_to_glb.py`) on a Modal T4. `modal run` only; nothing deployed. The converter was called exactly as the worker calls it, **without `--convert-metadata`**.
+
+| Assembly | Source (licence) | Saved no later than | Seconds | GLB MB | Bodies | Triangles | Extent (mm) | Names sample | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| `nist_mtc_crada_assembly_rev-D.SLDASM` | NIST MTC CRADA (US Gov, public domain) | SolidWorks year unknown | 9.0 | 12.1 | 36 | 436,251 | 152.4 × 101.6 × 107.7 | `nist_mtc_crada_box_rev-D-1`, `91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW-1`, `90591A141_ZINC PLATED STEEL HEX NUT-3` | **Pass**: 36/36 real names, same body count, triangle count and extent as the spike |
+| `MLS800.SLDASM` | blemasle/mls800-enclosure (MIT) | 2019 or earlier | 8.2 | 7.5 | 115 | 274,644 | 482.6 × 43.9 × 98.5 | `Rack-Chassis-2`, `Rack-Cover-1`, `flush stud_pmm-10` | Pass: 115/115 real names; 482.6 mm is a 19-inch rack width |
+| `ens.SLDASM` | enriquewph/esp-map (MIT) | 2024 or earlier | 7.1 | 3.9 | 64 | 139,712 | 104.0 × 78.0 × 27.3 | `Pcb_ec12.step-1`, `U2_SMDIP_16_W953mm_9c7765f4fb9e.step-1` | Pass: 64/64 real names |
+| `Dingo Quadruped.SLDASM` | Yerbert/DingoCAD (MIT) | 2026 or earlier | 44.9 | 113.5 | 1,735 | 4,289,185 | 250.8 × 414.1 × 555.7 | `Torso base plate-1`, `CLS6336 35kg servo-1`, `CLS6336 35kg servo-1 (2)` | Pass: 1,735/1,735 real names, 1,352 of them numbered " (2)" and up because sub-assemblies repeat instance names; the 65 MB input and 113.5 MB GLB are both under the worker caps (200 MB in, 150 MB out) |
+| `01-MOTOR_ASM.SLDASM` | takaki-maeda-99/GEM-4 (Apache-2.0) | 2026 or earlier | n/a | none | n/a | n/a | n/a | n/a | Failed through the verdict path: `no visible mesh in the converted part` (25 KB file with no display data). Recorded, not a blocker |
+
+Public repos were found with `gh search code --extension sldasm`; only MIT, Apache-2.0, BSD, CC0, CC-BY and CERN-OHL repos were used. Poppy, gloworm and OpenSaint (no usable licence) and fluxpad, selfdrive and holydrone (GPL-3.0) were skipped. The files live in `~/Desktop/stiko-cad-samples/solidworks-assembly-public/` with a `SOURCES.md`; they are not in the repo.
+
+**`--convert-metadata` is not needed.** Without it, every component node still carries the SolidWorks instance name (`displayName`), and no node in any converted assembly fell back to `Body N`. The worker command is unchanged.
+
+**Single parts.** Three `.sldprt` files (`nist_ftc_11`, `nist_ftc_09`, `nist_ctc_02`) convert as before, each to one node named `Body 1`. A lone part has no component `displayName`, so it keeps the fallback name.
+
+**Verdict: ship.** The NIST assembly converts with real names and the right extent, and three other public assemblies do too. The one empty file failed cleanly. Two things to remember: a 1,700-body, 4.3 million triangle assembly (Dingo) produces a 113.5 MB GLB, close to the 150 MB output cap, and it will test the viewer harder than the 36-body NIST file does.
+
 ## Decisions already made
 
 - **The assembly file alone (the user's choice).** There is no zip or folder handling. Parts uploaded beside an assembly are not used by it; each still converts as its own `.sldprt` file, as today. Using sibling parts for full-quality geometry is a later option if anyone notices the coarser mesh.
