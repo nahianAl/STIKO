@@ -1,6 +1,6 @@
 # Stiko CAD worker
 
-Converts a SolidWorks `.sldprt` upload to a millimetre, Y-up GLB. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back.
+Converts a native CAD part upload to a millimetre, Y-up GLB. It converts the formats in `CAD_EXTENSIONS` (`.sldprt`, `.ipt`, `.catpart`, `.prt` and Creo's `.prt.<n>`, `.x_t`, `.x_b`, `.jt`, `.sat`); the app's `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` decides which of them are switched on. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back.
 
 ## Deployed endpoint
 
@@ -17,7 +17,7 @@ Modal workspace `hello-63953`, app `stiko-cad-worker`. Dashboard: https://modal.
 | 200 | `{callId}`; the job is running |
 | 401 | missing or wrong `X-Worker-Secret` |
 | 400 | body is not JSON, a field is missing, or a URL is not allowed |
-| 422 | `filename` is not `.sldprt` |
+| 422 | `filename` is not one of `CAD_EXTENSIONS` |
 | 503 | spawn failed (transient — Stiko retries) |
 
 ## Deploy and smoke test
@@ -29,7 +29,7 @@ modal deploy cad-worker/app.py
 modal run cad-worker/app.py::smoke --samples DIR_OF_SLDPRT --out DIR_FOR_GLB
 ```
 
-`smoke` converts every `.sldprt` in `DIR_OF_SLDPRT` (any letter case) and prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
+`smoke` converts up to `--per-format` files (default 3) of each format in `DIR_OF_SLDPRT`, spread by size, and prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
 
 ## The secret
 
@@ -68,6 +68,8 @@ Two questions are open with NVIDIA and should be answered in writing before rely
 
 1. The `usd-convert-cad` README says "Proprietary CAD formats may require CAD converter licensing". Does SolidWorks input need a separate HOOPS Exchange / Tech Soft 3D licence?
 2. Is a paid hosted product explicitly allowed? The forum confirmations came from a non-NVIDIA poster.
+
+NVIDIA's README says proprietary CAD formats can require CAD converter licensing; that question, open with NVIDIA, now covers Inventor, CATIA, NX, Creo, Parasolid and JT as well as SolidWorks.
 
 ## Tests
 

@@ -122,12 +122,49 @@ def test_wrong_scheme_or_host_is_refused(field, url):
     assert e.value.status == 400
 
 
-def test_only_sldprt_is_accepted():
+@pytest.mark.parametrize('name,suffix', [
+    ('a.sldprt', '.sldprt'), ('A.SLDPRT', '.sldprt'), ('bracket.ipt', '.ipt'), ('b.CATPart', '.catpart'),
+    ('nx_part.prt', '.prt'), ('creo_part.prt.5', '.prt.5'), ('CREO.PRT.12', '.prt.12'),
+    ('m.x_t', '.x_t'), ('m.X_B', '.x_b'), ('m.jt', '.jt'), ('m.sat', '.sat'), ('dir/sub/m.jt', '.jt'),
+])
+def test_input_suffix_for_convertible_files(name, suffix):
+    assert worker_core.input_suffix(name) == suffix
+
+
+@pytest.mark.parametrize('name', [
+    'a.sldasm', 'a.iam', 'a.catproduct', 'a.asm', 'a.asm.3', 'a.par', 'a.rvt', 'a.ifc', 'a.step',
+    'notes.5', '.prt', '.prt.5', 'prt', 'a.prt.', 'a.prt.x', '',
+])
+def test_input_suffix_refuses_everything_else(name):
+    assert worker_core.input_suffix(name) is None
+
+
+@pytest.mark.parametrize('name', ['a.ipt', 'a.prt.5', 'a.jt', 'a.sldprt'])
+def test_convertible_formats_are_accepted(name):
     body = valid()
-    body['filename'] = 'a.sldasm'
+    body['filename'] = name
+    assert worker_core.validate_job(body, STORAGE, CALLBACK)['filename'] == name
+
+
+@pytest.mark.parametrize('name', ['a.sldasm', 'a.rvt', 'a.step'])
+def test_other_formats_are_refused_with_422(name):
+    body = valid()
+    body['filename'] = name
     with pytest.raises(Refused) as e:
         worker_core.validate_job(body, STORAGE, CALLBACK)
     assert e.value.status == 422
+
+
+def test_the_input_keeps_the_real_suffix(server, tmp_path):
+    seen = []
+
+    def convert(src, usd, glb):
+        seen.append(src.name)
+        glb.write_bytes(GLB)
+
+    worker_core.process_job(job(server, filename='creo_bracket.prt.5'), tmp_path, convert=convert, sleep=lambda s: None)
+    worker_core.process_job(job(server, filename='Part.SLDPRT'), tmp_path, convert=convert, sleep=lambda s: None)
+    assert seen == ['input.prt.5', 'input.sldprt']
 
 
 # --- process_job ------------------------------------------------------------------------------
