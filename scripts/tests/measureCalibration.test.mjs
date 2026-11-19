@@ -80,8 +80,10 @@ test('the assumption reads the original upload name, never the converted GLB', (
   assert.equal(resolveScale({ filename: 'bracket.step' }).mmPerUnit, 1);
 });
 
-test('SolidWorks parts are millimetres, because the worker writes them that way', () => {
-  assert.equal(assumedMmPerUnit('bracket.sldprt'), 1);
-  assert.equal(assumedMmPerUnit('BRACKET.SLDPRT'), 1);
+test('every converted CAD format is millimetres, because the worker writes them that way', () => {
+  for (const n of ['bracket.sldprt', 'BRACKET.SLDPRT', 'a.ipt', 'a.catpart', 'a.prt', 'a.prt.5', 'a.x_t', 'a.x_b', 'a.jt', 'a.sat']) {
+    assert.equal(assumedMmPerUnit(n), 1, n);
+  }
   assert.equal(assumedMmPerUnit('assembly.sldasm'), null);
+  assert.equal(assumedMmPerUnit('a.constructor'), null);
 });

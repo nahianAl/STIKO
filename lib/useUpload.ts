@@ -5,8 +5,7 @@ import type { FileWithPath } from '@/components/ui/FileDropzone';
 import type { UploadItem } from '@/components/ui/UploadProgress';
 import { prepareViewerVariant, shouldPrepareVariant } from '@/lib/model/runOptimize';
 import { isDrawingFilename } from '@/lib/drawingConversion';
-import { isSldprtFilename } from '@/lib/cadConversion';
-import { sldprtConversionEnabled } from '@/lib/fileFormats';
+import { cadFormatEnabled } from '@/lib/cadConversion';
 import { openUpgradeDialog, PlanLimitError, readPlanLimit } from '@/lib/planLimitClient';
 import {
   MAX_UPLOAD_ATTEMPTS,
@@ -294,9 +293,9 @@ export function useUpload() {
           );
         }
 
-        // SolidWorks: start the GLB conversion now; nothing waits on it, and the viewer starts it
-        // again if this is lost.
-        if (isSldprtFilename(entry.file.name) && sldprtConversionEnabled()) {
+        // Native CAD (SolidWorks, Inventor, …): start the GLB conversion now; nothing waits on it,
+        // and the viewer starts it again if this is lost.
+        if (cadFormatEnabled(entry.file.name)) {
           fetch(`/api/files/${fileId}/convert-cad`, { method: 'POST', keepalive: true }).catch(() => {});
         }
 

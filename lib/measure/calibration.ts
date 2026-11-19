@@ -1,4 +1,4 @@
-import { extensionOf } from '../fileFormats.ts';
+import { CAD_CONVERSION_FORMATS, extensionOf } from '../fileFormats.ts';
 import { toMillimetres, type LengthUnit } from './units.ts';
 
 /**
@@ -36,13 +36,14 @@ export interface Scale {
  * every 2D format — an image or a PDF is calibrated or nothing.
  */
 export function assumedMmPerUnit(filename: string): number | null {
-  switch (extensionOf(filename)) {
+  const ext = extensionOf(filename);
+  // The CAD worker writes every format it converts in millimetres, whatever unit it was drawn in.
+  if (Object.prototype.hasOwnProperty.call(CAD_CONVERSION_FORMATS, ext)) return 1;
+  switch (ext) {
     case 'step':
     case 'stp':
     case 'igs':
     case 'iges':
-    // The CAD worker writes SolidWorks parts in millimetres whatever unit they were drawn in.
-    case 'sldprt':
       return 1;
     case 'glb':
     case 'gltf':
