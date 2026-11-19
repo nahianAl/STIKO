@@ -20,6 +20,8 @@ interface CommonProps {
   placeholder?: string;
   searchable?: boolean;
   invalid?: boolean;
+  /** DOM id of the field's error text, set only while there is an error. */
+  describedBy?: string;
   disabled?: boolean;
 }
 interface SingleProps extends CommonProps { multiple?: false; value: string; onChange: (v: string) => void }
@@ -38,7 +40,7 @@ interface MultiProps extends CommonProps {
  * Tab closes and moves on. Tags reorder by drag or by ArrowLeft/Right when focused.
  */
 export default function ComboSelect(props: SingleProps | MultiProps) {
-  const { id, labelId, options, placeholder = 'Select…', searchable = false, invalid = false, disabled = false } = props;
+  const { id, labelId, options, placeholder = 'Select…', searchable = false, invalid = false, disabled = false, describedBy } = props;
   const listId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -173,19 +175,24 @@ export default function ComboSelect(props: SingleProps | MultiProps) {
                 tabIndex={reorder ? 0 : -1}
                 draggable={reorder}
                 onDragStart={(e) => {
-                  // Firefox only starts a drag when the event carries some data.
-                  e.dataTransfer.setData('text/plain', name);
+                  // Firefox only starts a drag when the event carries some data. A custom
+                  // type, not text/plain, so a drop outside the tags is never read as text
+                  // (typed into an input, or opened as a URL).
+                  e.dataTransfer.setData('application/x-stiko-tag', name);
                   e.dataTransfer.effectAllowed = 'move';
                   setDragFrom(i);
                 }}
                 onDragEnd={() => setDragFrom(null)}
                 onDragOver={(e) => reorder && e.preventDefault()}
-                onDrop={() => {
+                onDrop={(e) => {
+                  // Without this Firefox's default for a dropped item is to navigate away.
+                  e.preventDefault();
                   if (dragFrom !== null) multi.onChange(moveValue(multi.value, dragFrom, i));
                   setDragFrom(null);
                 }}
                 onKeyDown={(e) => {
-                  if (!reorder) return;
+                  // Arrow keys from the remove button inside the tag are not reorder keys.
+                  if (!reorder || e.target !== e.currentTarget) return;
                   if (e.key === 'ArrowLeft') { e.preventDefault(); moveTag(i - 1); }
                   if (e.key === 'ArrowRight') { e.preventDefault(); moveTag(i + 1); }
                 }}
@@ -224,6 +231,7 @@ export default function ComboSelect(props: SingleProps | MultiProps) {
           aria-controls={listId}
           aria-haspopup="listbox"
           aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           aria-activedescendant={searchable ? undefined : activeId}
           disabled={disabled}
           onClick={() => setOpen((o) => !o)}
@@ -238,7 +246,14 @@ export default function ComboSelect(props: SingleProps | MultiProps) {
       </div>
 
       {open && (
-        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-[10px] border-[1.5px] border-stiko-divider bg-white shadow-lg">
+        <div
+          // A press anywhere in the popover but the search box must not pull focus off
+          // the field: key handlers would go dead and Escape would reach a drawer.
+          onMouseDown={(e) => {
+            if (e.target !== searchRef.current) e.preventDefault();
+          }}
+          className="absolute z-20 mt-1 w-full overflow-hidden rounded-[10px] border-[1.5px] border-stiko-divider bg-white shadow-lg"
+        >
           {searchable && (
             <input
               ref={searchRef}
@@ -279,7 +294,6 @@ export default function ComboSelect(props: SingleProps | MultiProps) {
                     role="option"
                     aria-selected={isSelected}
                     aria-disabled={isDisabled || undefined}
-                    onMouseDown={(e) => e.preventDefault()}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => !isDisabled && choose(o.id)}
                     className={`flex cursor-pointer items-start gap-2 px-3 py-[7px] text-[13.5px] ${

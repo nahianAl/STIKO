@@ -14,6 +14,11 @@ import {
 } from '@/lib/kyc/profile';
 import { FIELD_ERRORS, fieldDomId, firstInvalidField, withCompanySize, withIndustry, type FormValues } from '@/lib/kyc/form';
 
+/** The error text under a question; the control that failed points at it with aria-describedby. */
+const errorDomId = (field: CompanyField | RoleField) => `${fieldDomId(field)}-error`;
+/** An input the server rejected: red border (important, since inputClass sets its own), blue while focused. */
+const INVALID_INPUT = '!border-note-red-accent focus:!border-stiko-primary';
+
 /** One labelled question: the label is the question, helper text sits under it. */
 function Question({
   field, label, helper, optional, error, children,
@@ -28,7 +33,9 @@ function Question({
       </span>
       {helper && <span className="-mt-[3px] text-[12px] text-stiko-muted">{helper}</span>}
       {children}
-      {error && <span role="alert" className="text-[12px] font-semibold text-note-red-text">{error}</span>}
+      {error && (
+        <span id={errorDomId(field)} role="alert" className="text-[12px] font-semibold text-note-red-text">{error}</span>
+      )}
     </div>
   );
 }
@@ -60,7 +67,13 @@ export default function OnboardingForm({
     if (serverError?.field) document.getElementById(fieldDomId(serverError.field as CompanyField | RoleField))?.focus();
   }, [serverError]);
 
-  const ids = (f: CompanyField | RoleField) => ({ id: fieldDomId(f), labelId: `${fieldDomId(f)}-label` });
+  // Spread onto a ComboSelect: its DOM ids, plus red border / aria-invalid / aria-describedby while the server blames it.
+  const ids = (f: CompanyField | RoleField) => ({
+    id: fieldDomId(f),
+    labelId: `${fieldDomId(f)}-label`,
+    invalid: Boolean(errorFor(f)),
+    describedBy: errorFor(f) ? errorDomId(f) : undefined,
+  });
   const industryOptions: ComboOption[] = INDUSTRIES.map((i) => ({ id: i.code, label: i.label, helper: i.helper, synonyms: i.synonyms }));
   const marketOptions: ComboOption[] = MARKETS.map((m) => ({ id: m.code, label: m.label, group: m.group || undefined, synonyms: m.synonyms }));
   const clientOptions: ComboOption[] = clientModelsFor(v.industry || null).map((c) => ({ id: c.code, label: c.label, helper: c.helper }));
@@ -80,10 +93,18 @@ export default function OnboardingForm({
   const needIndustryFirst = company && !v.industry;
 
   const set = (patch: Partial<FormValues>) => setV((cur) => ({ ...cur, ...patch }));
-  const otherInput = (field: 'industryOtherText' | 'marketOtherText' | 'fileTypeOtherText' | 'roleOtherText', placeholder: string) => (
+  // `owner` is the question whose error text this box shares.
+  const otherInput = (
+    field: 'industryOtherText' | 'marketOtherText' | 'fileTypeOtherText' | 'roleOtherText',
+    owner: CompanyField | RoleField,
+    placeholder: string
+  ) => (
     <Input
       id={fieldDomId(field)}
       aria-label={placeholder}
+      aria-invalid={errorFor(field) ? true : undefined}
+      aria-describedby={errorFor(field) ? errorDomId(owner) : undefined}
+      className={errorFor(field) ? INVALID_INPUT : ''}
       placeholder={placeholder}
       maxLength={OTHER_TEXT_MAX}
       value={v[field]}
@@ -106,6 +127,9 @@ export default function OnboardingForm({
             <Input
               id={fieldDomId('website')}
               aria-labelledby={`${fieldDomId('website')}-label`}
+              aria-invalid={errorFor('website') ? true : undefined}
+              aria-describedby={errorFor('website') ? errorDomId('website') : undefined}
+              className={errorFor('website') ? INVALID_INPUT : ''}
               placeholder="yourcompany.com"
               inputMode="url"
               autoComplete="url"
@@ -126,12 +150,12 @@ export default function OnboardingForm({
 
           <Question field="industry" label="What industry are you in?" helper="Pick the closest match." error={errorFor('industry', 'industryOtherText')}>
             <ComboSelect {...ids('industry')} options={industryOptions} value={v.industry} onChange={(c) => setV((cur) => withIndustry(cur, c))} />
-            {v.industry === OTHER_INDUSTRY && otherInput('industryOtherText', 'What industry are you in?')}
+            {v.industry === OTHER_INDUSTRY && otherInput('industryOtherText', 'industry', 'What industry are you in?')}
           </Question>
 
           <Question field="markets" label="What do you work on?" helper={`Select up to ${MAX_MARKETS}, starting with your biggest market.`} error={errorFor('markets', 'marketOtherText')}>
             <ComboSelect {...ids('markets')} multiple primaryTag max={MAX_MARKETS} searchable options={marketOptions} value={v.markets} onChange={(m) => set({ markets: m })} />
-            {v.markets.includes(OTHER_MARKET) && otherInput('marketOtherText', 'Your other market')}
+            {v.markets.includes(OTHER_MARKET) && otherInput('marketOtherText', 'markets', 'Your other market')}
           </Question>
 
           <Question field="clientModel" label="Who do you mainly work for?" helper="Pick the one that describes most of your work." error={errorFor('clientModel')}>
@@ -159,7 +183,7 @@ export default function OnboardingForm({
             disabled={needIndustryFirst}
             placeholder={needIndustryFirst ? 'Pick your industry first' : 'Select…'}
           />
-          {v.role === OTHER_ROLE && otherInput('roleOtherText', 'Your role')}
+          {v.role === OTHER_ROLE && otherInput('roleOtherText', 'role', 'Your role')}
         </Question>
       )}
 
@@ -179,7 +203,7 @@ export default function OnboardingForm({
 
           <Question field="fileTypes" label="What files do you share for review?" helper="Select all that apply." optional error={errorFor('fileTypes', 'fileTypeOtherText')}>
             <ComboSelect {...ids('fileTypes')} multiple searchable options={fileOptions} value={v.fileTypes} onChange={(f) => set({ fileTypes: f })} />
-            {v.fileTypes.includes(OTHER_FILE_TYPE) && otherInput('fileTypeOtherText', 'Other file type')}
+            {v.fileTypes.includes(OTHER_FILE_TYPE) && otherInput('fileTypeOtherText', 'fileTypes', 'Other file type')}
           </Question>
         </>
       )}
