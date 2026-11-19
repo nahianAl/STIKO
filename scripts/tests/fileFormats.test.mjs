@@ -212,12 +212,13 @@ test('formatTables keeps the model list and the advice table disjoint for every 
 });
 
 test('the converted-format table is exactly the agreed formats, each with a name, noun and advice', () => {
-  assert.deepEqual(Object.keys(CAD_CONVERSION_FORMATS).sort(), ['catpart', 'ipt', 'jt', 'prt', 'sat', 'sldprt', 'x_b', 'x_t']);
+  assert.deepEqual(Object.keys(CAD_CONVERSION_FORMATS).sort(), ['catpart', 'ipt', 'jt', 'prt', 'sat', 'sldasm', 'sldprt', 'x_b', 'x_t']);
   assert.deepEqual(CAD_CONVERSION_FORMATS.prt, { app: 'NX or Creo', noun: 'part', advice: 'Export STEP, then upload.' });
   assert.deepEqual(CAD_CONVERSION_FORMATS.jt, { app: 'JT', noun: 'model', advice: 'Export STEP from your CAD tool, then upload.' });
   for (const f of Object.values(CAD_CONVERSION_FORMATS)) {
-    assert.ok(f.app && f.advice && (f.noun === 'part' || f.noun === 'model'));
+    assert.ok(f.app && f.advice && (f.noun === 'part' || f.noun === 'model' || f.noun === 'assembly'));
   }
+  assert.deepEqual(CAD_CONVERSION_FORMATS.sldasm, { app: 'SolidWorks', noun: 'assembly', advice: 'Save As STEP, then upload.' });
 });
 
 test('enabledCadFormats: unset or blank falls back to the SolidWorks switch', () => {

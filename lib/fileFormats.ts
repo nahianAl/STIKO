@@ -38,7 +38,7 @@ const EXPORT_GLB = 'Export GLB, then upload.';
  * Native formats nothing free can read. A file with one of these extensions is refused
  * like any other unsupported file, but the refusal says what to do instead of just "no".
  * Disjoint from SUPPORTED_EXTENSIONS by test. Where a converted format (CAD_CONVERSION_FORMATS)
- * has a row here (ipt, catpart, prt, x_t, x_b, jt), formatTables uses this row while the format is
+ * has a row here (sldasm, ipt, catpart, prt, x_t, x_b, jt), formatTables uses this row while the format is
  * switched off; the others (sldprt, sat) get the advice from their own table entry.
  */
 const ADVICE_BASE: Readonly<Record<string, FormatAdvice>> = {
@@ -72,8 +72,8 @@ const ADVICE_BASE: Readonly<Record<string, FormatAdvice>> = {
 };
 
 export interface CadFormat extends FormatAdvice {
-  /** How the viewer names one file: "Converting Inventor part…", "Converting JT model…". */
-  noun: 'part' | 'model';
+  /** How the viewer names one file: "Converting Inventor part…", "Converting JT model…", "Converting SolidWorks assembly…". */
+  noun: 'part' | 'model' | 'assembly';
 }
 
 /**
@@ -84,6 +84,8 @@ export interface CadFormat extends FormatAdvice {
  */
 export const CAD_CONVERSION_FORMATS: Readonly<Record<string, Readonly<CadFormat>>> = Object.freeze({
   sldprt: { app: 'SolidWorks', noun: 'part', advice: 'Save As STEP, then upload.' },
+  // A .sldasm converts on its own: SolidWorks stores a display copy of every component inside it.
+  sldasm: { app: 'SolidWorks', noun: 'assembly', advice: 'Save As STEP, then upload.' },
   ipt: { app: 'Inventor', noun: 'part', advice: EXPORT_STEP },
   catpart: { app: 'CATIA', noun: 'part', advice: EXPORT_STEP },
   prt: { app: 'NX or Creo', noun: 'part', advice: EXPORT_STEP },
