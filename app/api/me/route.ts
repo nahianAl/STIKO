@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { ONBOARDING_VERSION } from '@/lib/kyc/gate';
 
 /**
- * Postgres undefined_table / undefined_column: what a missed migration 019
- * (workspaces, users.profile_completed_at) looks like to a query that uses them.
+ * Postgres undefined_table / undefined_column: what a missed migration 019 or 020
+ * (workspaces, users.onboarding_version) looks like to a query that uses them.
  */
 const MISSING_SCHEMA_CODES: ReadonlySet<string> = new Set(['42P01', '42703']);
 let loggedMissingSchema = false;
@@ -26,7 +27,7 @@ export async function GET() {
       SELECT u.id, u.name, u.email, u.job_title AS "jobTitle", u.company,
              u.email_paused_until AS "emailPausedUntil",
              w.id AS "workspaceId",
-             (u.profile_completed_at IS NOT NULL) AS "profileCompleted"
+             (COALESCE(u.onboarding_version, 0) >= ${ONBOARDING_VERSION}) AS "profileCompleted"
       FROM users u LEFT JOIN workspaces w ON w.owner_user_id = u.id
       WHERE u.id = ${session.user.id}
     `;

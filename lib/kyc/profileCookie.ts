@@ -7,6 +7,7 @@
  * The subject is the identity the middleware can see without a DB call: the
  * WorkOS user id under AUTH_PROVIDER=workos, the local users.id under nextauth.
  */
+import { ONBOARDING_VERSION } from './gate.ts';
 
 export const PROFILE_COOKIE = 'stiko_profile';
 export const PROFILE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
@@ -23,7 +24,7 @@ async function hmac(secret: string, message: string): Promise<string> {
 }
 
 export async function signProfileCookie(subject: string, secret: string): Promise<string> {
-  return `${subject}.${await hmac(secret, `stiko-profile:${subject}`)}`;
+  return `${subject}.${await hmac(secret, `stiko-profile:${ONBOARDING_VERSION}:${subject}`)}`;
 }
 
 export async function profileCookieValid(

@@ -69,3 +69,18 @@ test('appending the profile cookie keeps a Set-Cookie already on the response', 
   assert.equal(all.length, 2);
   assert.equal(all[0], 'wos-session=abc; Path=/; HttpOnly');
 });
+
+import { ONBOARDING_VERSION } from '../../lib/kyc/gate.ts';
+
+test('the profile cookie is versioned: a v1 cookie no longer passes', async () => {
+  const SECRET_V = 's3cret';
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(SECRET_V), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode('stiko-profile:user_01ABC')));
+  let bin = '';
+  for (const b of sig) bin += String.fromCharCode(b);
+  const v1 = `user_01ABC.${btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+  assert.equal(await profileCookieValid(v1, 'user_01ABC', SECRET_V), false);
+  assert.equal(await profileCookieValid(await signProfileCookie('user_01ABC', SECRET_V), 'user_01ABC', SECRET_V), true);
+  assert.equal(ONBOARDING_VERSION, 2);
+});

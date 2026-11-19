@@ -13,6 +13,13 @@ const UNGATED_PREFIXES = [
   '/forgot-password', '/reset-password', '/verify-email', '/pricing',
 ];
 
+/**
+ * The onboarding a signed-in person must have finished (users.onboarding_version).
+ * Raising it re-asks everyone; the profile cookie's HMAC message carries it, so old
+ * cookies stop passing at the same moment (lib/kyc/profileCookie.ts).
+ */
+export const ONBOARDING_VERSION = 2;
+
 export function kycGateEnabled(value: string | undefined = process.env.KYC_GATE): boolean {
   return value !== 'off';
 }
