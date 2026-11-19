@@ -36,21 +36,29 @@ Five assemblies, each uploaded alone (no parts beside it), through the real work
 | `nist_mtc_crada_assembly_rev-D.SLDASM` | NIST MTC CRADA (US Gov, public domain) | SolidWorks year unknown | 9.0 | 12.1 | 36 | 436,251 | 152.4 × 101.6 × 107.7 | `nist_mtc_crada_box_rev-D-1`, `91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW-1`, `90591A141_ZINC PLATED STEEL HEX NUT-3` | **Pass**: 36/36 real names, same body count, triangle count and extent as the spike |
 | `MLS800.SLDASM` | blemasle/mls800-enclosure (MIT) | 2019 or earlier | 8.2 | 7.5 | 115 | 274,644 | 482.6 × 43.9 × 98.5 | `Rack-Chassis-2`, `Rack-Cover-1`, `flush stud_pmm-10` | Pass: 115/115 real names; 482.6 mm is a 19-inch rack width |
 | `ens.SLDASM` | enriquewph/esp-map (MIT) | 2024 or earlier | 7.1 | 3.9 | 64 | 139,712 | 104.0 × 78.0 × 27.3 | `Pcb_ec12.step-1`, `U2_SMDIP_16_W953mm_9c7765f4fb9e.step-1` | Pass: 64/64 real names |
-| `Dingo Quadruped.SLDASM` | Yerbert/DingoCAD (MIT) | 2026 or earlier | 44.9 | 113.5 | 1,735 | 4,289,185 | 250.8 × 414.1 × 555.7 | `Torso base plate-1`, `CLS6336 35kg servo-1`, `CLS6336 35kg servo-1 (2)` | Pass: 1,735/1,735 real names, 1,352 of them numbered " (2)" and up because sub-assemblies repeat instance names; the 65 MB input and 113.5 MB GLB are both under the worker caps (200 MB in, 150 MB out) |
-| `01-MOTOR_ASM.SLDASM` | takaki-maeda-99/GEM-4 (Apache-2.0) | 2026 or earlier | n/a | none | n/a | n/a | n/a | n/a | Failed through the verdict path: `no visible mesh in the converted part` (25 KB file with no display data). Recorded, not a blocker |
+| `Dingo Quadruped.SLDASM` | Yerbert/DingoCAD (MIT) | 2026 or earlier | 44.9 | 113.5 | 1,735 | 4,289,185 | 250.8 × 414.1 × 555.7 | `Torso base plate-1`, `CLS6336 35kg servo-1`, `CLS6336 35kg servo-1 (2)` | Pass: 1,735/1,735 real names, 1,352 of them numbered " (2)" and up because SolidWorks repeats instance names across sub-assemblies, and the flat parts list shows those as "name (2)" without the parent context; input 64,862,814 bytes (61.9 MiB) and GLB 113,546,456 bytes (108.3 MiB) are both under the worker caps (200 MiB in, 150 MiB out) |
+| `01-MOTOR_ASM.SLDASM` | takaki-maeda-99/GEM-4 (Apache-2.0) | 2026 or earlier | n/a | none | n/a | n/a | n/a | n/a | Failed through the verdict path: `no visible mesh in the converted part` (a 25 KB file, which is consistent with an assembly saved without display data). Recorded, not a blocker |
 
 Public repos were found with `gh search code --extension sldasm`; only MIT, Apache-2.0, BSD, CC0, CC-BY and CERN-OHL repos were used. Poppy, gloworm and OpenSaint (no usable licence) and fluxpad, selfdrive and holydrone (GPL-3.0) were skipped. The files live in `~/Desktop/stiko-cad-samples/solidworks-assembly-public/` with a `SOURCES.md`; they are not in the repo.
+
+**Timing.** The 9.0 s for the NIST assembly is the whole worker path (the converter, `usd_to_glb.py` and process overhead). The spike's "about 4 s" timed the converter alone.
 
 **`--convert-metadata` is not needed.** Without it, every component node still carries the SolidWorks instance name (`displayName`), and no node in any converted assembly fell back to `Body N`. The worker command is unchanged.
 
 **Single parts.** Three `.sldprt` files (`nist_ftc_11`, `nist_ftc_09`, `nist_ctc_02`) convert as before, each to one node named `Body 1`. A lone part has no component `displayName`, so it keeps the fallback name.
 
-**Verdict: ship.** The NIST assembly converts with real names and the right extent, and three other public assemblies do too. The one empty file failed cleanly. Two things to remember: a 1,700-body, 4.3 million triangle assembly (Dingo) produces a 113.5 MB GLB, close to the 150 MB output cap, and it will test the viewer harder than the 36-body NIST file does.
+**Conversion gate: ship.** The NIST assembly converts with real names and the right extent, and three other public assemblies do too. The one empty file failed cleanly. This verdict is about conversion only; the on-screen result is the next paragraph. Two things to remember: a 1,700-body, 4.3 million triangle assembly (Dingo) produces a 113,546,456-byte GLB (108.3 MiB), 72% of the 150 MiB output cap, and it will test the viewer harder than the 36-body NIST file does.
+
+**On-screen result (2026-11-19).** In headless Chromium with software WebGL (`next dev`, the real `ViewerContainer` and `PartsPanel`, the converted GLBs served from `public/uploads`, every network write stubbed):
+- **NIST:** renders with all 36 components in the parts panel, ready 2.6 s after navigation, no console errors beyond the harness's own stubbed endpoints.
+- **Dingo:** loads and renders, lists all 1,735 components, ready 6.8 s after navigation (about 3.7 s of that is the local download of the 113.5 MB file), no console errors, no crash.
+- **Dingo's real-GPU viewer performance is unknown.** Software rendering is far slower than a real GPU, so these numbers show that it loads, not how it performs. The earlier 200 MB 3D audit found that very large models freeze clicks and zoom, and a 4.3 million triangle assembly may do the same.
+- **Names on screen.** Three.js's glTF loader replaces spaces in node names with underscores, so the panel shows `90591A141_ZINC_PLATED_STEEL_HEX_NUT-3` where the GLB holds `90591A141_ZINC PLATED STEEL HEX NUT-3`, and `CLS6336_35kg_servo-1_(2)` for ` (2)`. A panel search for "hex nut" finds nothing; "hex_nut" does. The original text is kept in each node's `userData.name`, which the parts panel does not read. This is the same for every format, and is not changed by this spec.
 
 ## Decisions already made
 
 - **The assembly file alone (the user's choice).** There is no zip or folder handling. Parts uploaded beside an assembly are not used by it; each still converts as its own `.sldprt` file, as today. Using sibling parts for full-quality geometry is a later option if anyone notices the coarser mesh.
-- **Real names in the parts panel (the user's choice)**, for every format, for files converted from now on.
+- **Real names in the parts panel (the user's choice)**, for assemblies and for any format whose converter emits `displayName`, on files converted from now on. A single `.sldprt` part keeps `Body N`: the real-file test found no authored `displayName` on or above its mesh.
 - **SolidWorks only.** Inventor `.iam`, CATIA `.catproduct` and NX/Creo `.asm` don't store display copies, so they need their parts uploaded. That is a separate, later project.
 - **No migration.** Part colours and comment pins are keyed by index path (`part_key`, for example "0/2/1"), never by name, so renaming bodies cannot disturb stored data.
 
@@ -76,7 +84,7 @@ Public repos were found with `gh search code --extension sldasm`; only MIT, Apac
 - **Body names: `usd_to_glb.py`.** Each glTF node is named after the nearest enclosing prim, the mesh itself included, that has authored `displayName` metadata.
   - **Clean-up:** trim, collapse runs of whitespace to one space, and cut to 120 characters.
   - **No name:** use `Body N`, the current behaviour.
-  - **Duplicates:** when two or more nodes would get the same name (one component with several meshes), the second and later get ` (2)`, ` (3)`, and so on.
+  - **Duplicates:** when two or more nodes would get the same name (one component with several meshes, or the same instance name repeated across sub-assemblies), the second and later get ` (2)`, ` (3)`, and so on. The flat parts list shows these as "name (2)" without the parent context.
   - **Instance proxies:** the walk goes up through instance proxies, the same way meshes are already found.
   - The `extras.stikoPart = true` marker is unchanged.
 - **README:** the supported list gains `.sldasm`, with one sentence on the display-copy behaviour.
@@ -120,8 +128,8 @@ The table in the 2026-10-18 spec applies unchanged. New in practice:
 
 Production is the only environment. No migration.
 
-1. Deploy `cad-worker/` to Modal. This is backward compatible, but **every format's newly converted files get real body names from this point.**
-2. On Vercel (Production), add `sldasm` to `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` (`sldprt,sldasm,ipt,x_t,x_b,jt,sat`).
+1. Deploy `cad-worker/` to Modal. This is backward compatible, but **from this point newly converted assemblies, and any format whose converter emits `displayName`, get real body names; single parts keep `Body N`.**
+2. On Vercel (Production), add `sldasm` to `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` (`sldprt,sldasm,ipt,x_t,x_b,jt,sat`). The real-file test and the on-screen check left this list as written, and the gate build inlined exactly this value.
 3. Merge to main and push.
 4. Upload one real assembly to a throwaway package. Confirm it converts, stands upright, measures in millimetres and lists named parts.
 5. **Rollback:** remove `sldasm` from the variable and redeploy without the build cache. Never `git revert`.
