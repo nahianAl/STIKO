@@ -19,6 +19,7 @@ import { useUpload } from '@/lib/useUpload';
 import { notUploadedMessage } from '@/lib/uploadMessages';
 import { openUpgradeDialog, readPlanLimit } from '@/lib/planLimitClient';
 import { derivePackageName } from '@/lib/design';
+import { companyProfilePath, isCompanyProfileRequired } from '@/lib/kyc/companyGateClient';
 
 type Role = 'viewer' | 'commenter' | 'uploader';
 
@@ -67,6 +68,16 @@ function NewPackage() {
       .then((r) => (r.ok ? r.json() : []))
       .then(setProjects)
       .catch(() => setProjects([]));
+  }, []);
+
+  // Send a reviewer to the company questions before they fill anything in.
+  useEffect(() => {
+    fetch('/api/welcome')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (s?.companyRequired) window.location.assign(companyProfilePath(`/new${window.location.search}`));
+      })
+      .catch(() => {});
   }, []);
 
   // "Named automatically from your files — or type your own." Stops guessing as
@@ -119,6 +130,10 @@ function NewPackage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: effectiveProjectName.trim() }),
         });
+        if (await isCompanyProfileRequired(res)) {
+          window.location.assign(companyProfilePath(`/new${window.location.search}`));
+          return;
+        }
         const limit = await readPlanLimit(res);
         if (limit) {
           // Nothing was created yet, so compose is the right place to land.
