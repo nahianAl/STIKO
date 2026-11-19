@@ -32,7 +32,7 @@ JOB_FIELDS = ('sourceUrl', 'targetUrl', 'callbackUrl', 'fileId', 'claimId', 'tok
 # lib/fileFormats.ts: the app decides which of these are switched on; the worker refuses the rest.
 CAD_EXTENSIONS = ('sldprt', 'ipt', 'catpart', 'prt', 'x_t', 'x_b', 'jt', 'sat')
 # Creo saves each version as name.prt.<n>; the version number is part of the real suffix.
-_CREO_VERSION = re.compile(r'.\.(prt\.\d+)$')
+_CREO_VERSION = re.compile(r'.\.(prt\.[0-9]+)\Z')
 
 
 def input_suffix(filename):

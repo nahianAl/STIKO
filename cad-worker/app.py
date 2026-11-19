@@ -1,7 +1,7 @@
-"""Stiko CAD worker on Modal: .sldprt -> GLB with NVIDIA usd-convert-cad on a T4.
+"""Stiko CAD worker on Modal: native CAD parts -> GLB with NVIDIA usd-convert-cad on a T4.
 
 Deploy:  modal deploy cad-worker/app.py      (needs `pip install modal fastapi` locally)
-Smoke:   modal run cad-worker/app.py::smoke --samples DIR --out DIR
+Smoke:   modal run cad-worker/app.py::smoke --samples DIR --out DIR [--per-format 3]
 See README.md for the secret, the licence terms in use, and the runbook.
 """
 

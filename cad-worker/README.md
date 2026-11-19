@@ -26,10 +26,10 @@ You need the Modal CLI and `fastapi` in one Python environment (`pip install mod
 
 ```bash
 modal deploy cad-worker/app.py
-modal run cad-worker/app.py::smoke --samples DIR_OF_SLDPRT --out DIR_FOR_GLB
+modal run cad-worker/app.py::smoke --samples DIR_OF_SAMPLES --out DIR_FOR_GLB
 ```
 
-`smoke` converts up to `--per-format` files (default 3) of each format in `DIR_OF_SLDPRT`, spread by size, and prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
+`smoke` walks `DIR_OF_SAMPLES` recursively, converts up to `--per-format` files (default 3) of each format, spread by size, and writes each result as `<original name>.glb`. It prints one line per file with the seconds taken, or the error. It uses no storage and no callback. `modal run` starts an ephemeral app from the same image definition; it does not call the deployed app, so it proves the image and the conversion, not the deployed endpoint.
 
 ## The secret
 
@@ -93,9 +93,9 @@ Set a Modal workspace spending limit of about $30 a month. It is the hard stop. 
 
 ## Rollback
 
-Roll back by setting `NEXT_PUBLIC_SLDPRT_CONVERSION=off` on the stiko Vercel project and redeploying. Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With the switch off, the new code still opens any `.sldprt` that has a converted GLB and only stops accepting new ones.
+To roll back one format, remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` on the stiko Vercel project and redeploy. To roll back everything new, set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=sldprt` and redeploy. `NEXT_PUBLIC_SLDPRT_CONVERSION` only applies while `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` is unset. Never `git revert` the feature: after a revert, parts that were already converted would show as unsupported, because the old viewer decides by file extension. With a format switched off, the new code still opens any part of that format that has a converted GLB and only stops accepting new ones.
 
-The variable is read at build time and inlined into the browser bundle, so a redeploy is required. After a rollback, drop a `.sldprt` in the uploader and confirm the "Save As STEP" advice appears. That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
+The variables are read at build time and inlined into the browser bundle, so a redeploy is required. After a rollback, drop a file of the switched-off format in the uploader and confirm the "Save As STEP" advice appears. That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
 
 ## Reset a part wrongly marked failed
 

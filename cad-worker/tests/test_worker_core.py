@@ -134,6 +134,9 @@ def test_input_suffix_for_convertible_files(name, suffix):
 @pytest.mark.parametrize('name', [
     'a.sldasm', 'a.iam', 'a.catproduct', 'a.asm', 'a.asm.3', 'a.par', 'a.rvt', 'a.ifc', 'a.step',
     'notes.5', '.prt', '.prt.5', 'prt', 'a.prt.', 'a.prt.x', '',
+    'a.prt.٥',  # Arabic-Indic five: \d would match it, the worker must not
+    'a.prt.５',  # fullwidth five
+    'a.prt.5\n',     # \Z, not $, so a trailing newline is not a version number
 ])
 def test_input_suffix_refuses_everything_else(name):
     assert worker_core.input_suffix(name) is None
