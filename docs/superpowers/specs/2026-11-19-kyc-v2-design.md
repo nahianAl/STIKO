@@ -50,6 +50,10 @@ Answers are stored as codes and never overwritten, so lists can change without b
   Rollback is a git revert.
 - **`onboarding_step_completed` (the wizard's per-step event) is removed.** A one-page form has no
   steps. `company_profile_completed` stays and carries the new codes.
+- **The marketing checkbox is grant-only (never revokes).** It starts unticked for everyone re-asked,
+  so ticking it records consent (keeping the first timestamp and method) and leaving it unticked
+  changes nothing; unsubscribe is the revoke path. Events report the box as `marketing_checkbox`,
+  and the person property `marketing_consent` is only ever `$set` to true.
 - **PostHog property names change freely.** PostHog keys are not set in production yet, so no
   dashboards depend on `segment_id`. Events now carry `industry` and `primary_market` instead of
   `segment_id`; `track` stays (it still derives from company size).
@@ -67,7 +71,7 @@ Answers are stored as codes and never overwritten, so lists can change without b
 |---|---|---|
 | Signed up directly, or owns any project | Full page (9 fields + marketing checkbox) | `users.onboarding_version >= 2` |
 | Invited reviewer with no projects | Role only (combined role list) + marketing checkbox | same |
-| Reviewer creating their first project | `/new` shows the company form (8 fields; Role already known) before the name step | n/a: this is a project-creation check, not the page gate |
+| Reviewer creating their first project | `/new` sends them to `/welcome` (company variant: 8 fields; Role already known) and back | n/a: this is a project-creation check, not the page gate |
 
 **Re-ask mechanism (D3).** The middleware gate today checks `users.profile_completed_at`. It switches
 to `users.onboarding_version >= CURRENT_ONBOARDING_VERSION` (constant `2` in `lib/kyc/gate.ts`).
@@ -82,7 +86,7 @@ and the next request falls back to the database. Future versions bump the same s
 when the caller's workspace has no v2 company profile (skipped when `KYC_GATE=off`, so the kill switch
 also unblocks project creation). The two callers, `app/new/page.tsx` and
 `components/home/NewProjectModal.tsx`, send the person to `/welcome?callbackUrl=<where they were>` on
-that 409; `/new` also checks on load (`GET /api/welcome` → `companyDone`) so nobody fills in a package
+that 409; `/new` also checks on load (`GET /api/welcome` → `companyRequired`, acted on only while still composing) so nobody fills in a package
 and loses it. `/welcome` then shows the company variant and returns them. The API check is what makes
 it unbypassable; the load check is what makes it pleasant. `app/api/projects/route.ts` is the only
 place that inserts into `projects`.
@@ -129,7 +133,7 @@ Webflow site and /pricing.
 company_profiles            one row per submission, never updated
   id TEXT PK
   workspace_id TEXT NOT NULL → workspaces
-  submitted_by_user_id TEXT NOT NULL → users
+  submitted_by_user_id TEXT → users ON DELETE SET NULL   nullable: history outlives a deleted submitter
   onboarding_version INT NOT NULL          1 = migrated old answers, 2 = this page
   source TEXT NOT NULL                     'onboarding' | 'project_gate' | 'settings' | 'migrated_v1'
   answered_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -182,7 +186,7 @@ users       + onboarding_version INT, + signup_type TEXT, + invited_by_user_id T
 | `lib/kyc/profile.ts` (rewritten) | `validateCompanyProfile`, `validateRole`, `normaliseDomain`, `deriveProfile`, `deriveRole`, filters (`rolesFor`, `reviewersFor`, `clientModelsFor`, `reviewTeamBandsFor`, `fileTypeGroupsFor`). Pure, shared by page and API. | catalog, `lib/fileFormats.ts` |
 | `lib/kyc/store.ts` (new) | `saveCompanyProfile`, `saveRole`, `currentCompanyProfile`: the transactions in §7. | db |
 | `lib/kyc/gate.ts`, `gateLookup.ts`, `profileCookie.ts` | Version check (§5), cookie v2 message. | db (edge-safe) |
-| `app/api/welcome/route.ts` | Accepts `{kind:'full'|'role'|'company', …}`. `full` is allowed for anyone; `role` only for a reviewer with no projects (so an owner cannot skip the company questions); `company` only for a user who already has a v2 role. Anything else is a 400. | profile, store |
+| `app/api/welcome/route.ts` | Accepts `{kind:'full'|'role'|'company', …}`. The posted kind must equal the kind the user is expected to answer (`full`, `role` or `company`, from §5), or be `company` once they are done (Settings → Company); anything else is a 409 `{error:'wrong_kind', kind}` naming the expected kind. An unknown kind is a 400. | profile, store |
 | `app/welcome/page.tsx` + `components/welcome/*` | The page: `ComboSelect` (single/multi, search, groups, tags, reorder) used by every field. | profile |
 | `app/new/page.tsx`, `components/home/NewProjectModal.tsx`, `app/api/projects/route.ts` | Company-profile check (§5). | store |
 | `app/settings/company/page.tsx` | Same form, prefilled from the current profile, saves a `settings` row. Every user owns exactly one workspace, so it edits their own; a reviewer filling it here also satisfies the project check. | profile, store |

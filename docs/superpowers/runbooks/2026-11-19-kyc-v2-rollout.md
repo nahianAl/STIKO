@@ -25,8 +25,9 @@ There is no staging site: **production is the only environment**. Do the steps i
 | 3 | Apply the migration, then confirm | VS Code terminal |
 | 4 | Check two things before the merge | Vercel (browser) + VS Code terminal |
 | 5 | Merge and push (this deploys) | VS Code terminal |
-| 6 | Check the deploy | Browser |
-| 7 | Re-run the backfill once | VS Code terminal |
+| 6 | Re-run the backfill once | VS Code terminal |
+| 7 | Check the deploy | Browser |
+| 8 | Check the new answers reached the database | VS Code terminal |
 
 Why the migration comes first: the new code reads the new tables on every signed-in page. If the code goes live before the migration, pages can break with no visible error. This has happened before in this project. The migration only adds tables and columns, so it is safe to apply while the old code is still live.
 
@@ -128,19 +129,9 @@ git checkout main && git pull --ff-only && git merge --no-ff feature/kyc-v2 -m "
 
 Then open Vercel, your stiko project, **Deployments**. The newest deployment builds for a few minutes and turns **Ready**. **If it shows Error or Build Failed instead, visitors are not affected:** Vercel keeps serving the previous version until a new build succeeds, and the migration only added things, so the old version is happy with the new database. Copy the red error message from the build log to Claude.
 
-## Step 6. Check the deploy (browser)
+## Step 6. Re-run the backfill once
 
-Wait until the deployment is **Ready**, then:
-
-1. Open **https://app.stiko.design** signed in as yourself. **You should see:** you are sent to the new one-page questions ("Set up your workspace"). This is expected: everyone is re-asked.
-2. Answer the questions and press **Create workspace**. **You should see:** your dashboard, with all your projects. Reload the dashboard: it must **not** send you back to the questions.
-3. Open **https://app.stiko.design/settings/company** (or the avatar menu, **Settings**, **Company**). **You should see:** the answers you just gave, filled in.
-
-If the questions page shows "Could not load this page" or the app is broken for everyone, go to **Rollback** below.
-
-## Step 7. Re-run the backfill once
-
-Anyone who signed up between Step 3 (the migration) and Step 5 (the deploy) answered the **old** questions, so their old answers were not yet copied into history. This re-runs only the four copy statements at the bottom of the migration file to catch them. It never overwrites anything: each statement only fills gaps, so **it is safe to run twice.**
+Do this as soon as the deployment from Step 5 shows **Ready**, before you open the app yourself. Anyone who signed up between Step 3 (the migration) and Step 5 (the deploy) answered the **old** questions, so their old answers were not yet copied into history. This re-runs only the four copy statements at the bottom of the migration file to catch them. It never overwrites anything: each statement only fills gaps, so **it is safe to run twice.**
 
 Paste (one block):
 
@@ -150,6 +141,27 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.local | cut -d= -f2- | sed -e 's/
 ```
 
 **You should see:** four lines `Backfill 1 of 4: … row(s) changed` to `Backfill 4 of 4: … row(s) changed`, then `Backfill done. Nothing else was changed.` The numbers are usually `0` (nobody signed up in between); any number is fine. If you see `Unexpected migration file`, `failed:` or `Could not connect (details hidden)`, stop and tell Claude; the statements that did run are safe and nothing needs undoing.
+
+## Step 7. Check the deploy (browser)
+
+With the deployment **Ready** and Step 6 done:
+
+1. Open **https://app.stiko.design** signed in as yourself. **You should see:** you are sent to the new one-page questions ("Set up your workspace"). This is expected: everyone is re-asked.
+2. Answer the questions and press **Create workspace**. **You should see:** your dashboard, with all your projects. Reload the dashboard: it must **not** send you back to the questions.
+3. Open **https://app.stiko.design/settings/company** (or the avatar menu, **Settings**, **Company**). **You should see:** the answers you just gave, filled in.
+
+If the questions page shows "Could not load this page" or the app is broken for everyone, go to **Rollback** below.
+
+## Step 8. Check the new answers reached the database
+
+This only reads. Paste (one block):
+
+```bash
+cd ~/Desktop/STIKO-main
+DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.local | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" node --input-type=module -e 'import { neon } from "@neondatabase/serverless"; let db; try { db = neon(process.env.DATABASE_URL); } catch { console.error("Could not connect (details hidden)"); process.exit(1); } db.query("SELECT (SELECT count(*) FROM company_profiles WHERE onboarding_version = 2) AS v2_company_rows, (SELECT count(*) FROM user_roles WHERE onboarding_version = 2) AS v2_role_rows, (SELECT count(*) FROM users WHERE onboarding_version >= 2) AS users_done").then((r) => console.log(r[0]), (e) => { console.error("Failed:", String(e.message).replace(/postgres[^ ]*/g, "<redacted-url>")); process.exit(1); })' 2>&1 | sed -E 's#postgres(ql)?://[^ "]*#<redacted-url>#g'
+```
+
+**You should see:** one line of three counts, like `{ v2_company_rows: '1', v2_role_rows: '1', users_done: '1' }`. After your own submit in Step 7, each of the three numbers must be **at least 1**; they grow as co-founders and customers answer. If any of them is `0`, or you see `Could not connect (details hidden)` or `Failed:`, stop and tell Claude. This command changes nothing.
 
 That is the end of the rollout.
 
