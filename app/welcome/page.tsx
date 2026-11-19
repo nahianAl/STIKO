@@ -63,7 +63,7 @@ function Welcome() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         // A full navigation, not router.push: the middleware must see the new cookie.
-        window.location.assign(safeCallbackUrl(data.redirectPath));
+        window.location.assign(safeCallbackUrl(data.redirectPath ?? callbackUrl));
         return;
       }
       setSaving(false);
@@ -74,7 +74,9 @@ function Welcome() {
         load();
         return;
       }
-      const field = typeof data.field === 'string' ? data.field : null;
+      // Only a field the form knows is a field; anything else (e.g. 'kind') shows in the banner.
+      const field =
+        typeof data.field === 'string' && Object.prototype.hasOwnProperty.call(FIELD_ERRORS, data.field) ? data.field : null;
       setServerError({
         field,
         message: (field && FIELD_ERRORS[field as keyof typeof FIELD_ERRORS]) || 'Could not save your answers. Try again.',
@@ -89,14 +91,18 @@ function Welcome() {
 
   return (
     <div className="min-h-screen bg-stiko-app px-4 pb-10 pt-6 sm:pt-12">
-      <div className="mx-auto flex w-full max-w-[480px] flex-col">
+      <main className="mx-auto flex w-full max-w-[480px] flex-col">
         <div className="flex items-center gap-[7px]">
           <LogoMark size={24} />
           <Wordmark />
         </div>
 
+        {!state && !loadError && (
+          <p role="status" className="mt-10 text-[13.5px] text-stiko-muted">Loading…</p>
+        )}
+
         {loadError && (
-          <p className="mt-10 text-[13.5px] text-stiko-muted">
+          <p role="alert" className="mt-10 text-[13.5px] text-stiko-muted">
             Could not load this page.{' '}
             <button type="button" onClick={load} className={linkClass}>Try again</button>
           </p>
@@ -132,7 +138,7 @@ function Welcome() {
             Sign out
           </button>
         </p>
-      </div>
+      </main>
     </div>
   );
 }
