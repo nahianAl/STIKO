@@ -33,7 +33,7 @@ def body_name(prim):
     """The cleaned displayName of the prim or its nearest named ancestor, or None."""
     p = prim
     while p and p.IsValid() and not p.IsPseudoRoot():
-        name = ' '.join(str(p.GetDisplayName() or '').split())[:MAX_NAME]
+        name = ' '.join(str(p.GetDisplayName() or '').split())[:MAX_NAME].rstrip()
         if name:
             return name
         p = p.GetParent()

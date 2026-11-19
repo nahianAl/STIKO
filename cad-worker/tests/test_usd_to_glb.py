@@ -356,6 +356,16 @@ def test_names_are_cleaned_and_cut(tmp_path):
     assert _named(out) == ['Hex nut -1', 'x' * usd_to_glb.MAX_NAME]
 
 
+def test_a_cut_never_leaves_a_trailing_space(tmp_path):
+    src = stage(tmp_path)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part/Body0').SetDisplayName('a' * (usd_to_glb.MAX_NAME - 1) + ' b')
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    assert _named(out) == ['a' * (usd_to_glb.MAX_NAME - 1)]
+
+
 def test_a_blank_display_name_falls_through_to_the_next_ancestor(tmp_path):
     src = stage(tmp_path)
     s = Usd.Stage.Open(src)
