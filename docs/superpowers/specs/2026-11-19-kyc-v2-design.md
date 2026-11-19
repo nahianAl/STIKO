@@ -41,7 +41,7 @@ Answers are stored as codes and never overwritten, so lists can change without b
   the catalog. **The role → `role_family` and `seniority` mapping is drafted by engineering from the
   doc's value lists and must be checked by marketing** (it is one table in `lib/kyc/catalog.ts`).
 - **"Other" always asks for text.** Picking Other in any field opens a required text box
-  (max 80 characters, the existing `OTHER_TEXT_MAX`).
+  (max 120 characters, the existing `OTHER_TEXT_MAX`).
 - **File-type support comes from the code, not the doc.** `supported_at_signup` is computed from
   `lib/fileFormats.ts`. The doc's column is wrong in two places: **WEBP and MOV are supported
   today**; **USDZ/USD are not** (the uploader tells people to export GLB).
@@ -79,11 +79,19 @@ the middleware. Old cookies would let v1 users skip the re-ask. The HMAC message
 and the next request falls back to the database. Future versions bump the same string.
 
 **Reviewer → project (D2).** `POST /api/projects` refuses with `409 {code:'company_profile_required'}`
-when the caller's workspace has no v2 company profile. The `/new` page checks the same thing server-side
-and renders the company form in place before the project-name step; on submit it continues to
-project creation. The API check is what makes it unbypassable; the page check is what makes it
-pleasant. Project creation is the only path that inserts into `projects` (verified: only
-`app/api/projects/route.ts`).
+when the caller's workspace has no v2 company profile (skipped when `KYC_GATE=off`, so the kill switch
+also unblocks project creation). The two callers, `app/new/page.tsx` and
+`components/home/NewProjectModal.tsx`, send the person to `/welcome?callbackUrl=<where they were>` on
+that 409; `/new` also checks on load (`GET /api/welcome` → `companyDone`) so nobody fills in a package
+and loses it. `/welcome` then shows the company variant and returns them. The API check is what makes
+it unbypassable; the load check is what makes it pleasant. `app/api/projects/route.ts` is the only
+place that inserts into `projects`.
+
+**Which variant /welcome shows** is one pure function, `decideOnboarding({roleDone, companyDone,
+needsCompany})`: not role-done and needs company and no company → `full`; not role-done → `role`;
+no company → `company`; otherwise `done` (the page redirects to the callback). `needsCompany` =
+`signup_type <> 'invited_reviewer'` OR owns a project. The middleware gate only checks role-done
+(`users.onboarding_version`), so a reviewer reaches `company` only by being sent there.
 
 ## 6. The page
 
@@ -176,7 +184,7 @@ users       + onboarding_version INT, + signup_type TEXT, + invited_by_user_id T
 | `lib/kyc/gate.ts`, `gateLookup.ts`, `profileCookie.ts` | Version check (§5), cookie v2 message. | db (edge-safe) |
 | `app/api/welcome/route.ts` | Accepts `{kind:'full'|'role'|'company', …}`. `full` is allowed for anyone; `role` only for a reviewer with no projects (so an owner cannot skip the company questions); `company` only for a user who already has a v2 role. Anything else is a 400. | profile, store |
 | `app/welcome/page.tsx` + `components/welcome/*` | The page: `ComboSelect` (single/multi, search, groups, tags, reorder) used by every field. | profile |
-| `app/new/page.tsx`, `app/api/projects/route.ts` | Company-profile check (§5). | store |
+| `app/new/page.tsx`, `components/home/NewProjectModal.tsx`, `app/api/projects/route.ts` | Company-profile check (§5). | store |
 | `app/settings/company/page.tsx` | Same form, prefilled from the current profile, saves a `settings` row. Every user owns exactly one workspace, so it edits their own; a reviewer filling it here also satisfies the project check. | profile, store |
 | `lib/analytics/*` | Event context + group properties use v2 fields (§3). | store |
 
