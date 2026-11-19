@@ -6,22 +6,24 @@
 
 ## Real-file test (2026-11-19)
 
-31 real public files went through the real converter on a temporary Modal T4 app (`modal run`, the production worker untouched): 20 files in the main smoke run, then 11 in two targeted runs (the same NIST parts across CAD systems, and the same MTC parts across SLDPRT, NX and ACIS). All 31 converted, none failed. "s" is the worker's convert time per file, cold start not included. Scale is the GLB's sorted bounding box against NIST's own STEP export of the same part, within 1% counting as OK.
+31 real public files went through the real converter on a temporary Modal T4 app (`modal run`, the production worker untouched): 20 files in the main smoke run, then 11 in two targeted runs (the same NIST parts across CAD systems, and the same MTC parts across SLDPRT, NX and ACIS). All 31 converted, none failed. Cold start was not measured: the Convert s column is the worker's convert time per file, and the 20-file main run took about 3 minutes of wall clock. Scale is the GLB's sorted bounding box against NIST's own STEP export of the same part, within 1% counting as OK. The Upright column records bounding-box and material evidence only; nothing was looked at on screen, so every verdict is provisional until the Task 6 on-screen check.
 
 | Format | Files | Converted | Convert s | GLB size | Scale vs STEP | Upright, colours | Verdict |
 |---|---|---|---|---|---|---|---|
-| .ipt | 4 (Inventor 2021) | 4/4 | 4.0-4.7 | 47-221 KB | OK 4/4, worst 0.35% | 1-3 bodies, one default grey (0.75); frame differs from the STEP frame on 2 of 4, Inventor is Y-up natively; visual check in Task 6 | ship |
-| .catpart | 5 (V5R2019) | 5/5 | 4.2-5.4 | 55-363 KB | OK 5/5, worst 0.46% | 1 body, one light blue (0.82/0.82/1.0); frame equals the Z-up STEP frame, never rotated to Y-up; visual check in Task 6 | ship, orientation open |
-| .prt (NX) | 6 (NX 1980, 2027) | 6/6 | 3.9-6.0 | 39-156 KB | OK 2/2 against STEP; the 2 MTC parts tried (cover, polycarb) equal the SLDPRT of the same part | 1 body, grey-blue or default grey; same frame behaviour as CATIA; visual check in Task 6 | ship, orientation open |
-| .prt.n (Creo) | 5 (Creo 4, 10) | 5/5 | 4.0-4.8 | 55-380 KB | OK 5/5, worst 0.46% | 1 body; default grey or tinted; same frame behaviour as CATIA; visual check in Task 6 | ship, orientation open |
-| .x_t | 2 | 2/2 | 4.4-4.6 | 5-128 KB | no reference file; metres honoured (LONGBAR stores 2 and 20, GLB 2000 x 2000 x 20000 mm) | 4 and 24 bodies, default grey; visual check in Task 6 | ship, scale plausible only |
-| .x_b | 1 | 1/1 | 4.5 | 1.4 MB | no reference file; 297 x 102 x 91 mm, plausible for a foot part | 23 bodies, 5 materials, 2 coloured; visual check in Task 6 | ship, scale plausible only |
-| .jt | 1 | 1/1 | 8.5 | 14.8 MB | no STEP; 152.4 x 101.6 x 107.7 mm is the 6 x 4 inch MTC assembly | 36 bodies, 3 materials, 1 coloured; 494k triangles from a 1.6 MB file | ship, watch GLB size |
-| .sat | 1 | 1/1 | 4.0 | 163 KB | equals the SLDPRT and NX versions of the same part (152.4 x 101.6 x 25.0, same centre) | 1 body, pale grey; visual check in Task 6 | ship |
-| .sldprt (control) | 6 | 6/6 | 4.2-5.1 | 21-907 KB | OK 3/3 against STEP | the live format; same frames as CATIA, NX and Creo | live |
+| .ipt | 4 (Inventor 2021) | 4/4 | 4.0-4.7 | 47-221 KB | OK 4/4, worst 0.35% | 1-3 bodies, one default grey (0.75); axes differ from the STEP frame on 2 of 4 files (ctc_02 swaps X and Y, ftc_08 swaps Y and Z); the worker keeps them as the file has them | ship, pending Task 6 on-screen check |
+| .catpart | 5 (V5R2019) | 5/5 | 4.2-5.4 | 55-363 KB | OK 5/5, worst 0.46% | 1 body, one light blue (0.82/0.82/1.0); before Task 2b the axes equalled the STEP frame on 5 of 5, and the worker now stands the part up (see below) | ship, pending Task 6 on-screen check |
+| .prt (NX) | 6 (NX 1957 x1, NX 1953/1957 x2, NX 1980 x2, NX 2027 x1, read from the version strings in the file headers) | 6/6 | 3.9-6.0 | 39-156 KB | OK 2/2 against STEP; the 2 MTC parts tried (cover, polycarb) have the same extents as the SLDPRT of the same part, the cover with the same centre, the polycarb with the Z centre's sign flipped (41,34,-2 against 41,34,2) | 1 body, grey-blue or default grey; before Task 2b the axes equalled the STEP frame on 1 of 2, and the worker now stands the part up (see below) | ship, pending Task 6 on-screen check |
+| .prt.n (Creo) | 5 (Creo 4, 10) | 5/5 | 4.0-4.8 | 55-380 KB | OK 5/5, worst 0.46% | 1 body; default grey or tinted; keeps its axes, which equal the STEP frame on 4 of 5 (ftc_06 swaps X and Z; so does ftc_09 on the Creo 10 file, checked in Task 2b) | ship, pending Task 6 on-screen check |
+| .x_t | 2 | 2/2 | 4.4-4.6 | 5-128 KB | no reference file, scale plausible only (LONGBAR 2000 x 2000 x 20000 mm, Maslow_Frame 548 x 3157 x 1976 mm) | 4 and 24 bodies, default grey | ship, pending Task 6 on-screen check |
+| .x_b | 1 | 1/1 | 4.5 | 1.4 MB | no reference file, scale plausible only (297 x 102 x 91 mm, plausible for a foot part) | 23 bodies, 5 materials, 2 coloured | ship, pending Task 6 on-screen check |
+| .jt | 1 | 1/1 | 8.5 | 14.8 MB (9 times the 1.6 MB source, 494k triangles; watch the size) | no STEP; 152.4 x 101.6 x 107.7 mm is the 6 x 4 inch MTC assembly | 36 bodies, 3 materials, 1 coloured | ship, pending Task 6 on-screen check |
+| .sat | 1 | 1/1 | 4.0 | 163 KB | equals the SLDPRT and NX versions of the same part (152.4 x 101.6 x 25.0, same centre) | 1 body, pale grey | ship, pending Task 6 on-screen check |
+| .sldprt (control) | 6 | 6/6 | 4.2-5.1 | 21-907 KB | OK 3/3 against STEP | the live format; axes equal the STEP frame on 3 of 3 | ship (already live), pending Task 6 on-screen check |
 
-- **Creo's version suffix works as is.** `.prt.5` and `.prt.8` converted with the suffix kept, so `input_suffix` needs no change and Step 2's fallback was not needed.
-- **Orientation is the open question, and it is not the same for every format.** The worker asks for a Y-up stage, but the converted geometry keeps the source file's own axes. NIST's STEP frame (Z-up) comes through axis for axis in most comparisons: SolidWorks 3 of 3, CATIA 5 of 5, Creo 4 of 5, NX 1 of 2, Inventor 2 of 4, and the ACIS cover equals the SolidWorks cover. The CATIA plate `ftc_09`, tall along Z in STEP, is still tall along Z in the GLB, which fails the check that Z-up parts should end up tall along Y. The evidence is bounding-box extents only. A part drawn upright in a Z-up system will therefore probably lie on its back in the viewer. Inventor and SolidWorks are Y-up natively, and the Inventor files do move to a Y-up frame (`ftc_08` is thin along Y). Task 6 must look at these on screen before any Z-up format is switched on; a fix would be a -90 degrees about X in the worker for those formats, which is only free to choose while no production pins exist for them.
+Passed so far (input to Task 7): sldprt, ipt, catpart, prt, x_t, x_b, jt, sat — each still subject to the Task 6 on-screen check.
+
+- **Creo's version suffix works as is.** `.prt.1` and `.prt.8` converted with the suffix kept, so `input_suffix` needs no change and Step 2's fallback was not needed.
+- **Orientation: what the files showed, and what settled it.** `usd-convert-cad` keeps each file's own axes; asking for a Y-up stage does not rotate anything. NIST built the same coordinates across the CAD systems, so its files cannot show any one app's idea of "up", and reading the STEP frame as Z-up is an assumption. Against that frame (unsorted bounding-box extents only), the axes matched on SolidWorks 3 of 3, CATIA 5 of 5, Creo 4 of 5, NX 1 of 2 and Inventor 2 of 4, and the ACIS cover equals the SolidWorks cover. Inventor's two differences are a swap of X and Y on ctc_02 and a swap of Y and Z on ftc_08, so its Z axis moved on 1 of 4 files only. The check "a part tall along Z in STEP ends up tall along Y" could be run on ftc_09 alone, the only part whose STEP is tallest along Z, and the CATIA file failed it (still tall along Z). That is all the NIST evidence shows. Orientation was then settled by the user's decision on each app's own convention (Task 2b, below), not by this evidence.
 - Inventor and CATIA files came out in one default colour each; the NIST files may simply carry no authored colours.
 - Only Inventor 2021 and CATIA V5R2019 files were sampled; the 2024 and R2023 files in the sample folder were not.
 
@@ -162,7 +164,7 @@ The failure table in the SolidWorks spec applies to every format unchanged. One 
    - conversion success;
    - cold and warm time;
    - GLB size;
-   - Y-up orientation;
+   - orientation, per the rule in section 6;
    - colours;
    - **millimetre scale**, checked by comparing each NIST part's bounding box with the NIST STEP export of the same part opened through Stiko's existing STEP path.
 
@@ -183,7 +185,7 @@ The failure table in the SolidWorks spec applies to every format unchanged. One 
 Production is the only environment. No migration.
 
 1. Deploy `cad-worker/` to Modal. It accepts more extensions; SolidWorks behaviour is unchanged.
-2. On stiko (Production), set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` to the formats that passed the real-file test, for example `sldprt,ipt,catpart,prt,x_t,x_b,jt,sat`.
+2. On stiko (Production), set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` to the formats that pass the Task 6 on-screen check on top of the real-file test. The list `sldprt,ipt,catpart,prt,x_t,x_b,jt,sat` is the result if all eight pass; it is not already passed.
 3. Merge to main with a merge commit and push. Main auto-deploys.
 4. On production, upload one real file per new format to a throwaway package. Confirm each one converts, stands upright and measures in millimetres.
 5. **Rollback of one format:** remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` and redeploy.
