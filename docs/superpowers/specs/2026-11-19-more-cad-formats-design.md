@@ -22,6 +22,8 @@
 
 Passed so far (input to Task 7): sldprt, ipt, catpart, prt, x_t, x_b, jt, sat — each still subject to the Task 6 on-screen check.
 
+**Task 6 on-screen check (2026-11-19): all eight render in the real viewer with no errors**, so all eight ship. The NIST ftc_09 plate stands on its edge for CATIA and NX once stood up, and lies flat for Creo and for the raw CATIA output. That is expected: NIST drew its parts with Y-up-style coordinates in every system, so a Z-up app (and now Stiko) shows this plate standing. A real customer CATIA or NX file is the release check for the orientation decision.
+
 - **Creo's version suffix works as is.** `.prt.1` and `.prt.8` converted with the suffix kept, so `input_suffix` needs no change and Step 2's fallback was not needed.
 - **Orientation: what the files showed, and what settled it.** `usd-convert-cad` keeps each file's own axes; asking for a Y-up stage does not rotate anything. NIST built the same coordinates across the CAD systems, so its files cannot show any one app's idea of "up", and reading the STEP frame as Z-up is an assumption. Against that frame (unsorted bounding-box extents only), the axes matched on SolidWorks 3 of 3, CATIA 5 of 5, Creo 4 of 5, NX 1 of 2 and Inventor 2 of 4, and the ACIS cover equals the SolidWorks cover. Inventor's two differences are a swap of X and Y on ctc_02 and a swap of Y and Z on ftc_08, so its Z axis moved on 1 of 4 files only. The check "a part tall along Z in STEP ends up tall along Y" could be run on ftc_09 alone, the only part whose STEP is tallest along Z, and the CATIA file failed it (still tall along Z). That is all the NIST evidence shows. Orientation was then settled by the user's decision on each app's own convention (Task 2b, below), not by this evidence.
 - Inventor and CATIA files came out in one default colour each; the NIST files may simply carry no authored colours.
@@ -185,7 +187,7 @@ The failure table in the SolidWorks spec applies to every format unchanged. One 
 Production is the only environment. No migration.
 
 1. Deploy `cad-worker/` to Modal. It accepts more extensions; SolidWorks behaviour is unchanged.
-2. On stiko (Production), set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` to the formats that pass the Task 6 on-screen check on top of the real-file test. The list `sldprt,ipt,catpart,prt,x_t,x_b,jt,sat` is the result if all eight pass; it is not already passed.
+2. On stiko (Production), set `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` to `sldprt,ipt,catpart,prt,x_t,x_b,jt,sat`. All eight passed the real-file test and the Task 6 on-screen check.
 3. Merge to main with a merge commit and push. Main auto-deploys.
 4. On production, upload one real file per new format to a throwaway package. Confirm each one converts, stands upright and measures in millimetres.
 5. **Rollback of one format:** remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` and redeploy.
