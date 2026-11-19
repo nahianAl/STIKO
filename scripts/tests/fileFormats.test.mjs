@@ -235,6 +235,47 @@ test('enabledCadFormats: off, lists, case, spaces, duplicates and unknown names'
   assert.deepEqual(enabledCadFormats('rvt,constructor,__proto__,ipt', undefined), ['ipt']);
 });
 
+test('enabledCadFormats: commas, semicolons, pipes and whitespace all separate names', () => {
+  assert.deepEqual(enabledCadFormats('Sldprt; ipt', undefined), ['sldprt', 'ipt']);
+  assert.deepEqual(enabledCadFormats('sldprt ipt', undefined), ['sldprt', 'ipt']);
+  assert.deepEqual(enabledCadFormats('sldprt|ipt', undefined), ['sldprt', 'ipt']);
+  assert.deepEqual(enabledCadFormats('sldprt,\n ipt;jt | x_t', undefined), ['sldprt', 'ipt', 'jt', 'x_t']);
+});
+
+function captureWarnings(fn) {
+  const calls = [];
+  const original = console.warn;
+  console.warn = (...args) => calls.push(args);
+  try {
+    return { result: fn(), calls };
+  } finally {
+    console.warn = original;
+  }
+}
+
+test('enabledCadFormats: a value with no known format warns and falls back to the legacy switch', () => {
+  const on = captureWarnings(() => enabledCadFormats('solidworks', undefined));
+  assert.deepEqual(on.result, ['sldprt']);
+  assert.equal(on.calls.length, 1);
+  assert.match(String(on.calls[0][0]), /solidworks/);
+  assert.match(String(on.calls[0][0]), /SolidWorks/);
+
+  const off = captureWarnings(() => enabledCadFormats('solidworks', 'off'));
+  assert.deepEqual(off.result, []);
+  assert.equal(off.calls.length, 1);
+});
+
+test('enabledCadFormats: no warning for unset, blank, off or any known format', () => {
+  const { calls } = captureWarnings(() => {
+    enabledCadFormats(undefined, undefined);
+    enabledCadFormats('   ', 'off');
+    enabledCadFormats('off', undefined);
+    enabledCadFormats('sldprt,rvt', undefined);
+    enabledCadFormats('ipt', 'off');
+  });
+  assert.equal(calls.length, 0);
+});
+
 test('with the env unset the enabled list is the legacy SolidWorks one', () => {
   assert.deepEqual([...ENABLED_CAD_FORMATS], ['sldprt']);
 });

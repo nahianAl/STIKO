@@ -93,8 +93,9 @@ export const CAD_CONVERSION_FORMATS: Readonly<Record<string, Readonly<CadFormat>
 });
 
 /**
- * The legacy SolidWorks-only switch, read only when NEXT_PUBLIC_CAD_CONVERSION_FORMATS is unset.
- * On unless the switch is 'off', so production can turn it off with one env var and a redeploy.
+ * The legacy SolidWorks-only switch, read only when NEXT_PUBLIC_CAD_CONVERSION_FORMATS is unset,
+ * blank or names no known format. On unless the switch is 'off', so production can turn it off
+ * with one env var and a redeploy.
  * Read as the literal process.env.NEXT_PUBLIC_SLDPRT_CONVERSION expression so Next inlines it into
  * the browser bundle: the dropzone decides what to accept on the client.
  */
@@ -103,10 +104,11 @@ export function sldprtConversionEnabled(value: string | undefined = process.env.
 }
 
 /**
- * Which converted formats are switched on. NEXT_PUBLIC_CAD_CONVERSION_FORMATS is a comma list
- * ('sldprt,ipt,jt') or 'off'; unset or blank, the legacy SolidWorks switch decides. Both are read
- * as literal process.env.NEXT_PUBLIC_… expressions so Next inlines them into the browser bundle:
- * the dropzone decides what to accept on the client. Pure given its arguments, for tests.
+ * Which converted formats are switched on. NEXT_PUBLIC_CAD_CONVERSION_FORMATS is a list
+ * ('sldprt,ipt,jt'; commas, semicolons, pipes or spaces) or 'off'. Unset or blank, the legacy
+ * SolidWorks switch decides; so it does for a list naming no known format, with a warning. Both are
+ * read as literal process.env.NEXT_PUBLIC_… expressions so Next inlines them into the browser
+ * bundle: the dropzone decides what to accept on the client. Pure given its arguments, for tests.
  */
 export function enabledCadFormats(
   list: string | undefined = process.env.NEXT_PUBLIC_CAD_CONVERSION_FORMATS,
@@ -115,9 +117,19 @@ export function enabledCadFormats(
   const value = (list ?? '').trim().toLowerCase();
   if (!value) return sldprtConversionEnabled(legacy) ? ['sldprt'] : [];
   if (value === 'off') return [];
-  const names = value.split(',').map((s) => s.trim());
+  // Commas, semicolons, pipes and whitespace all separate names: an env var is typed by hand.
+  const names = value.split(/[\s,;|]+/).map((s) => s.trim());
   // Own keys only: 'constructor' or '__proto__' in the env must not count as a format.
   const known = names.filter((n) => Object.prototype.hasOwnProperty.call(CAD_CONVERSION_FORMATS, n));
+  if (known.length === 0) {
+    // A typo ('solidworks') must not silently change what is converted: say so and let the legacy
+    // SolidWorks switch decide, exactly as if this variable were unset.
+    console.warn(
+      `NEXT_PUBLIC_CAD_CONVERSION_FORMATS=${JSON.stringify(value)} names no known CAD format; ` +
+        'falling back to the legacy SolidWorks switch (NEXT_PUBLIC_SLDPRT_CONVERSION).'
+    );
+    return sldprtConversionEnabled(legacy) ? ['sldprt'] : [];
+  }
   return Array.from(new Set(known));
 }
 
