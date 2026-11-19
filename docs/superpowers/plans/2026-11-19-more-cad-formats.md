@@ -367,6 +367,191 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+### Task 2b: Stand CATIA and NX parts upright (added 2026-11-19 after the real-file test)
+
+The real-file test showed that `usd-convert-cad --up-axis y` keeps each file's own axes. CATIA and NX treat Z as up, so their parts would lie on their back.
+
+**User decision (2026-11-19):** the worker turns **CATIA (`.catpart`) and NX `.prt`** parts so Z-up becomes Y-up before writing the GLB. Everything else keeps its axes: SolidWorks, Inventor, Creo (`.prt` or `.prt.<n>` whose bytes start `#UGC`), Parasolid, JT and ACIS. NX and Creo share `.prt`, so the worker tells them apart by the file's first 8 bytes: NX files start with `SPLMSSTR`. Anything unrecognised keeps its axes.
+
+**Files:**
+- Modify: `cad-worker/usd_to_glb.py` (`convert` gains `stand_up=False`, CLI flag `--stand-up`, module docstring)
+- Modify: `cad-worker/worker_core.py` (`stands_up(src)`, `run_usd_to_glb(..., stand_up=False)`, `default_convert`)
+- Test: `cad-worker/tests/test_usd_to_glb.py`, `cad-worker/tests/test_worker_core.py`
+- Modify: `docs/superpowers/specs/2026-11-19-more-cad-formats-design.md` (Orientation bullet in section 6, and a note under the Real-file test table)
+
+**Interfaces:**
+- **Produces:** `usd_to_glb.convert(usd_path, glb_path, stand_up=False)`. With `stand_up=True`, every world transform is post-multiplied by a -90° rotation about X, so a point `(x, y, z)` lands at `(x, z, -y)`. Normals follow, because they are derived from the same transform, and winding is unchanged, because the determinant is +1.
+- **Produces:** `worker_core.stands_up(src: Path) -> bool`. It is True for `*.catpart`, and for a plain `*.prt` whose first 8 bytes are `b'SPLMSSTR'`. Otherwise it is False, including for Creo `.prt.<n>`, and it is never an exception.
+- The signatures of `process_job` and `default_convert(src, usd, glb)` don't change. `default_convert` asks `stands_up(src)` itself.
+
+- [ ] **Step 1: Write the failing tests.** Append to `cad-worker/tests/test_usd_to_glb.py`:
+
+```python
+def test_stand_up_turns_z_up_geometry_to_y_up(tmp_path):
+    # A box 10 x 10 x 10 translated +20 mm along Z: after standing up it sits +20 mm along Y.
+    plain, upright = str(tmp_path / 'plain.glb'), str(tmp_path / 'upright.glb')
+    src = stage(tmp_path, meshes=2)  # second body is translated by 20 mm along X; see the meshes=2 test
+    usd_to_glb.convert(src, plain)
+    usd_to_glb.convert(src, upright, stand_up=True)
+    (plo, phi), (ulo, uhi) = bounds(read_glb(plain)[0]), bounds(read_glb(upright)[0])
+    # (x, y, z) -> (x, z, -y): X unchanged, new Y spans old Z, new Z spans old -Y.
+    assert round(uhi[0] - ulo[0], 4) == round(phi[0] - plo[0], 4)
+    assert round(uhi[1], 4) == round(phi[2], 4) and round(ulo[1], 4) == round(plo[2], 4)
+    assert round(uhi[2], 4) == round(-plo[1], 4) and round(ulo[2], 4) == round(-phi[1], 4)
+
+
+def test_stand_up_keeps_normals_outward(tmp_path):
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(stage(tmp_path, rotate=('X', 90)), out, stand_up=True)
+    gltf, binary = read_glb(out)
+    checked = 0
+    for tri, nrm in _triangles(gltf, binary):
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri
+        ux, uy, uz = (bx - ax, by - ay, bz - az)
+        vx, vy, vz = (cx - ax, cy - ay, cz - az)
+        g = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+        n = [sum(v[i] for v in nrm) / 3 for i in range(3)]
+        assert g[0] * n[0] + g[1] * n[1] + g[2] * n[2] > 0
+        checked += 1
+    assert checked == 12
+
+
+def test_cli_stand_up_flag(tmp_path):
+    script = os.path.join(os.path.dirname(HERE), 'usd_to_glb.py')
+    src = stage(tmp_path, rotate=('X', 90))
+    plain = subprocess.run([sys.executable, script, src, str(tmp_path / 'a.glb')], capture_output=True, text=True)
+    upright = subprocess.run([sys.executable, script, src, str(tmp_path / 'b.glb'), '--stand-up'], capture_output=True, text=True)
+    assert plain.returncode == 0 and upright.returncode == 0
+    assert bounds(read_glb(str(tmp_path / 'a.glb'))[0]) != bounds(read_glb(str(tmp_path / 'b.glb'))[0])
+```
+
+  First read `stage()` and `bounds()` at the top of that file. If `meshes=2` translates along a different axis than the comment says, choose a stage whose bounds are asymmetric in Y and Z (e.g. `rotate=('X', 90)` combined with `meshes=2`) so the first test proves the mapping. Keep the three assertions on `(x, z, -y)`.
+
+  Append to `cad-worker/tests/test_worker_core.py`:
+
+```python
+@pytest.mark.parametrize('name,head,expected', [
+    ('input.catpart', b'V5_CFV2\x00', True),
+    ('input.prt', b'SPLMSSTR' + b'\x00' * 8, True),       # NX
+    ('input.prt', b'#UGC:2 PART 2159', False),            # Creo, plain .prt
+    ('input.prt.5', b'#UGC:2 PART 2159', False),          # Creo version file
+    ('input.prt', b'', False),                            # unreadable header keeps its axes
+    ('input.sldprt', b'SPLMSSTR', False),
+    ('input.ipt', b'', False), ('input.x_t', b'', False), ('input.jt', b'', False), ('input.sat', b'', False),
+])
+def test_stands_up_only_catia_and_nx(tmp_path, name, head, expected):
+    src = tmp_path / name
+    src.write_bytes(head)
+    assert worker_core.stands_up(src) is expected
+
+
+def test_stands_up_on_a_missing_file_is_false(tmp_path):
+    assert worker_core.stands_up(tmp_path / 'input.prt') is False
+
+
+def test_usd_to_glb_gets_the_stand_up_flag(tmp_path):
+    calls = []
+
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[3]).write_bytes(GLB)
+        return R()
+
+    worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=run, stand_up=True)
+    worker_core.run_usd_to_glb(tmp_path / 'b.usdc', tmp_path / 'b.glb', run=run)
+    assert calls[0][-1] == '--stand-up' and '--stand-up' not in calls[1]
+```
+
+- [ ] **Step 2: Run the tests to verify they fail.**
+
+```bash
+cd /Users/user/Desktop/STIKO-more-cad-formats && /tmp/stiko-cadw/bin/python -m pytest -q cad-worker/tests 2>&1 | tail -4
+```
+Expected: the new tests FAIL. `convert()` has no `stand_up` argument, and `worker_core` has no `stands_up`.
+
+- [ ] **Step 3: Implement `usd_to_glb.py`.**
+  - Below `PART_MARKER`, add:
+
+```python
+# Row-vector convention (world = point @ xf): post-multiplying by this maps (x, y, z) to (x, z, -y),
+# a -90 degree turn about X that stands a Z-up part (CATIA, NX) upright in Y-up glTF.
+STAND_UP = np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=np.float64)
+```
+  - Change `def convert(usd_path, glb_path):` to `def convert(usd_path, glb_path, stand_up=False):`.
+  - Directly after `xf = np.asarray(cache.GetLocalToWorldTransform(prim), dtype=np.float64)`, add:
+
+```python
+            if stand_up:
+                xf = xf @ STAND_UP
+```
+  - In `main`, call `convert(argv[1], argv[2], stand_up='--stand-up' in argv[3:])`.
+  - In the module docstring, append to the CLI line: `Add --stand-up for a Z-up source (CATIA, NX): the part is turned -90 degrees about X.`
+
+- [ ] **Step 4: Implement `worker_core.py`.**
+  - Below `input_suffix`, add:
+
+```python
+# CATIA and NX treat Z as up; usd-convert-cad keeps the file's own axes, so their parts are turned
+# upright here (user decision, 2026-11-19). NX and Creo share .prt: NX files start with SPLMSSTR.
+NX_MAGIC = b'SPLMSSTR'
+
+
+def stands_up(src):
+    """Whether the downloaded file is a CATIA or NX part, which must be turned from Z-up to Y-up."""
+    name = Path(src).name.lower()
+    if name.endswith('.catpart'):
+        return True
+    if not name.endswith('.prt'):
+        return False
+    try:
+        with open(src, 'rb') as f:
+            return f.read(len(NX_MAGIC)) == NX_MAGIC
+    except OSError:
+        return False
+```
+  - Change `run_usd_to_glb`'s signature to `def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON, stand_up=False):`. Build the command as `cmd = [python, str(HERE / 'usd_to_glb.py'), str(usd), str(glb)] + (['--stand-up'] if stand_up else [])`.
+  - Change `default_convert` to:
+
+```python
+def default_convert(src, usd, glb):
+    run_converter(src, usd)
+    run_usd_to_glb(usd, glb, stand_up=stands_up(src))
+```
+
+- [ ] **Step 5: Run the tests to verify they pass.**
+
+```bash
+cd /Users/user/Desktop/STIKO-more-cad-formats && /tmp/stiko-cadw/bin/python -m pytest -q cad-worker/tests 2>&1 | tail -3
+```
+Expected: all pass, the older tests included.
+
+- [ ] **Step 6: Check it on real files on Modal.** Make a folder with three samples: one CATPart (`nist_ftc_09…ct5290…CATPart`), one NX `.prt` (`nist_ftc_09_asme1_nx1980_rd.prt`) and one Creo `.prt.<n>` (`nist_ftc_09…cr10030.prt.*`), all from `~/Desktop/stiko-cad-samples`. Then run:
+
+```bash
+mkdir -p /tmp/stiko-standup && cp ~/Desktop/stiko-cad-samples/catia-catpart/*ftc_09*ct5290* ~/Desktop/stiko-cad-samples/nx-prt/nist_ftc_09_asme1_nx1980_rd.prt ~/Desktop/stiko-cad-samples/creo-prt/*ftc_09*cr10030* /tmp/stiko-standup/ && cd /Users/user/Desktop/STIKO-more-cad-formats && /tmp/stiko-cadw/bin/modal run cad-worker/app.py::smoke --samples /tmp/stiko-standup --out /tmp/stiko-standup-out --per-format 1 && node /tmp/stiko-bbox.mjs /tmp/stiko-standup-out ~/Desktop/stiko-cad-samples/step-reference
+```
+Expected: all three convert and scale is still `OK`. In the printed (unsorted) extents, the CATIA and NX GLBs have Y equal to the STEP's Z, because they now stand upright. The Creo GLB keeps the STEP's frame (Z equals Z). Paste the output into the report.
+
+- [ ] **Step 7: Update the spec.** In section 6, replace the bullet "**Orientation:** the worker already writes Y-up. Once production pins exist on a format, its orientation can never change." with:
+
+```markdown
+- **Orientation (user decision, 2026-11-19):** `usd-convert-cad` keeps each file's own axes. CATIA (`.catpart`) and NX `.prt` treat Z as up, so the worker turns those parts -90° about X (`usd_to_glb.py --stand-up`, chosen by `worker_core.stands_up`, which tells NX from Creo by the `SPLMSSTR` header). Every other format keeps its axes: SolidWorks, Inventor and Creo are Y-up already, and Parasolid, JT and ACIS have no fixed convention. Once production pins exist on a format, its orientation can never change.
+```
+Under the Real-file test table, add one line: "Orientation was then settled by the user: CATIA and NX are stood upright (Task 2b); re-checked on ftc_09 — see the plan's Task 2b."
+
+- [ ] **Step 8: Commit.**
+
+```bash
+cd /Users/user/Desktop/STIKO-more-cad-formats && git add cad-worker/usd_to_glb.py cad-worker/worker_core.py cad-worker/tests/test_usd_to_glb.py cad-worker/tests/test_worker_core.py docs/superpowers/specs/2026-11-19-more-cad-formats-design.md && git commit -m "feat(cad-worker): stand CATIA and NX parts upright
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 3: The format table, the switch and Creo's suffix
 
 **Files:**
