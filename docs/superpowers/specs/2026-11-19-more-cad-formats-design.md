@@ -25,6 +25,8 @@
 - Inventor and CATIA files came out in one default colour each; the NIST files may simply carry no authored colours.
 - Only Inventor 2021 and CATIA V5R2019 files were sampled; the 2024 and R2023 files in the sample folder were not.
 
+Orientation was then settled by the user: CATIA and NX are stood upright (Task 2b); re-checked on ftc_09 — see the plan's Task 2b.
+
 ## Goal
 
 People can upload native part files from six more CAD systems and review them in the 3D viewer without exporting STEP first. Each file converts once to a GLB on the existing NVIDIA worker, exactly as SolidWorks parts already do.
@@ -144,7 +146,7 @@ Facts observed in these files that shape the design:
 - **`app/portal/[id]/page.tsx`:** `'Preparing SolidWorks part…'` becomes ``Preparing ${app} ${noun}…``. The branches already use `isPendingCad` and `opensAsModel`.
 - **`lib/measure/calibration.ts`:** `assumedMmPerUnit` returns 1 for every key of `CAD_CONVERSION_FORMATS`, because the worker writes millimetres whatever unit the part was drawn in. The `sldprt` case becomes a table check.
 - **`lib/fileChips.ts`:** no change. Enabled formats are in `MODEL_FORMATS` and get the model chip.
-- **Orientation:** the worker already writes Y-up. Once production pins exist on a format, its orientation can never change.
+- **Orientation (user decision, 2026-11-19):** `usd-convert-cad` keeps each file's own axes. CATIA (`.catpart`) and NX `.prt` treat Z as up, so the worker turns those parts -90° about X (`usd_to_glb.py --stand-up`, chosen by `worker_core.stands_up`, which tells NX from Creo by the `SPLMSSTR` header). Every other format keeps its axes: SolidWorks, Inventor and Creo are Y-up already, and Parasolid, JT and ACIS have no fixed convention. Once production pins exist on a format, its orientation can never change.
 
 ## Failure table
 

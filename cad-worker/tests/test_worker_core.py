@@ -283,3 +283,38 @@ def test_a_converter_nonzero_exit_is_a_verdict(tmp_path):
         returncode, stdout, stderr = 1, '', 'cannot parse'
     with pytest.raises(JobFailed, match='unreadable'):
         worker_core.run_converter(tmp_path / 'a.sldprt', tmp_path / 'a.usdc', run=lambda *a, **k: R())
+
+
+@pytest.mark.parametrize('name,head,expected', [
+    ('input.catpart', b'V5_CFV2\x00', True),
+    ('input.prt', b'SPLMSSTR' + b'\x00' * 8, True),       # NX
+    ('input.prt', b'#UGC:2 PART 2159', False),            # Creo, plain .prt
+    ('input.prt.5', b'#UGC:2 PART 2159', False),          # Creo version file
+    ('input.prt', b'', False),                            # unreadable header keeps its axes
+    ('input.sldprt', b'SPLMSSTR', False),
+    ('input.ipt', b'', False), ('input.x_t', b'', False), ('input.jt', b'', False), ('input.sat', b'', False),
+])
+def test_stands_up_only_catia_and_nx(tmp_path, name, head, expected):
+    src = tmp_path / name
+    src.write_bytes(head)
+    assert worker_core.stands_up(src) is expected
+
+
+def test_stands_up_on_a_missing_file_is_false(tmp_path):
+    assert worker_core.stands_up(tmp_path / 'input.prt') is False
+
+
+def test_usd_to_glb_gets_the_stand_up_flag(tmp_path):
+    calls = []
+
+    class R:
+        returncode, stdout, stderr = 0, '{}', ''
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[3]).write_bytes(GLB)
+        return R()
+
+    worker_core.run_usd_to_glb(tmp_path / 'a.usdc', tmp_path / 'a.glb', run=run, stand_up=True)
+    worker_core.run_usd_to_glb(tmp_path / 'b.usdc', tmp_path / 'b.glb', run=run)
+    assert calls[0][-1] == '--stand-up' and '--stand-up' not in calls[1]

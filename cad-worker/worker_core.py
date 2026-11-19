@@ -48,6 +48,25 @@ def input_suffix(filename):
     return '.' + ext if ext in CAD_EXTENSIONS else None
 
 
+# CATIA and NX treat Z as up; usd-convert-cad keeps the file's own axes, so their parts are turned
+# upright here (user decision, 2026-11-19). NX and Creo share .prt: NX files start with SPLMSSTR.
+NX_MAGIC = b'SPLMSSTR'
+
+
+def stands_up(src):
+    """Whether the downloaded file is a CATIA or NX part, which must be turned from Z-up to Y-up."""
+    name = Path(src).name.lower()
+    if name.endswith('.catpart'):
+        return True
+    if not name.endswith('.prt'):
+        return False
+    try:
+        with open(src, 'rb') as f:
+            return f.read(len(NX_MAGIC)) == NX_MAGIC
+    except OSError:
+        return False
+
+
 class Refused(Exception):
     """The start request itself is unacceptable. status is the HTTP status to answer with."""
 
@@ -152,8 +171,8 @@ def run_converter(src, usd, run=subprocess.run):
         raise JobFailed('unreadable: ' + (p.stderr or p.stdout or '').strip()[-300:])
 
 
-def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON):
-    cmd = [python, str(HERE / 'usd_to_glb.py'), str(usd), str(glb)]
+def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON, stand_up=False):
+    cmd = [python, str(HERE / 'usd_to_glb.py'), str(usd), str(glb)] + (['--stand-up'] if stand_up else [])
     try:
         p = run(cmd, capture_output=True, text=True, timeout=GLB_TIMEOUT_S)
     except subprocess.TimeoutExpired:
@@ -169,7 +188,7 @@ def run_usd_to_glb(usd, glb, run=subprocess.run, python=GLTF_PYTHON):
 
 def default_convert(src, usd, glb):
     run_converter(src, usd)
-    run_usd_to_glb(usd, glb)
+    run_usd_to_glb(usd, glb, stand_up=stands_up(src))
 
 
 def put_file(url, path, content_type='model/gltf-binary', timeout=120):

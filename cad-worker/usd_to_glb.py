@@ -11,6 +11,7 @@ usd2gltf was tried first and rejected: it crashes on indexed per-face colours an
 
 CLI: python usd_to_glb.py in.usdc out.glb  ->  exit 0 and a JSON summary, or exit 3 and the
 reason on stderr when the stage cannot become a GLB (a verdict on the file, not a crash).
+Add --stand-up for a Z-up source (CATIA, NX): the part is turned -90 degrees about X.
 """
 
 import json
@@ -22,6 +23,9 @@ from pxr import Usd, UsdGeom, UsdShade
 
 DEFAULT_COLOR = (0.8, 0.8, 0.8)
 PART_MARKER = 'stikoPart'
+# Row-vector convention (world = point @ xf): post-multiplying by this maps (x, y, z) to (x, z, -y),
+# a -90 degree turn about X that stands a Z-up part (CATIA, NX) upright in Y-up glTF.
+STAND_UP = np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=np.float64)
 
 
 class ConversionError(Exception):
@@ -100,7 +104,7 @@ def _triangulate(counts):
     return np.asarray(tri_fv, dtype=np.int64).reshape(-1, 3), np.asarray(tri_face, dtype=np.int64)
 
 
-def convert(usd_path, glb_path):
+def convert(usd_path, glb_path, stand_up=False):
     try:
         stage = Usd.Stage.Open(usd_path)
     except Exception as e:
@@ -157,6 +161,8 @@ def convert(usd_path, glb_path):
             counts = np.asarray(counts, dtype=np.int64)
             indices = np.asarray(indices, dtype=np.int64)
             xf = np.asarray(cache.GetLocalToWorldTransform(prim), dtype=np.float64)
+            if stand_up:
+                xf = xf @ STAND_UP
             world = (np.c_[points, np.ones(len(points))] @ xf)[:, :3] * mm_per_unit
             normals = _normals(prim, counts, indices, xf)
             colors = _face_colors(prim, len(counts))
@@ -226,7 +232,7 @@ def convert(usd_path, glb_path):
 
 def main(argv):
     try:
-        print(json.dumps(convert(argv[1], argv[2])))
+        print(json.dumps(convert(argv[1], argv[2], stand_up='--stand-up' in argv[3:])))
         return 0
     except ConversionError as e:
         print(str(e), file=sys.stderr)

@@ -250,3 +250,43 @@ def test_singular_transform_has_no_normals(tmp_path):
     out = str(tmp_path / 'o.glb')
     usd_to_glb.convert(path, out)
     assert all('NORMAL' not in p['attributes'] for p in read_glb(out)[0]['meshes'][0]['primitives'])
+
+
+def test_stand_up_turns_z_up_geometry_to_y_up(tmp_path):
+    # rotate=('X', 90) leaves the part at Y in [-10, 0] and Z in [0, 10], so Y and Z are not
+    # interchangeable and the assertions below can only pass for the (x, y, z) -> (x, z, -y) mapping.
+    plain, upright = str(tmp_path / 'plain.glb'), str(tmp_path / 'upright.glb')
+    src = stage(tmp_path, meshes=2, rotate=('X', 90))  # the second body sits 20 mm further along X
+    usd_to_glb.convert(src, plain)
+    usd_to_glb.convert(src, upright, stand_up=True)
+    (plo, phi), (ulo, uhi) = bounds(read_glb(plain)[0]), bounds(read_glb(upright)[0])
+    assert round(plo[1], 4) != round(plo[2], 4) and round(phi[1], 4) != round(phi[2], 4)  # asymmetric
+    # (x, y, z) -> (x, z, -y): X unchanged, new Y spans old Z, new Z spans old -Y.
+    assert round(uhi[0] - ulo[0], 4) == round(phi[0] - plo[0], 4)
+    assert round(uhi[1], 4) == round(phi[2], 4) and round(ulo[1], 4) == round(plo[2], 4)
+    assert round(uhi[2], 4) == round(-plo[1], 4) and round(ulo[2], 4) == round(-phi[1], 4)
+
+
+def test_stand_up_keeps_normals_outward(tmp_path):
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(stage(tmp_path, rotate=('X', 90)), out, stand_up=True)
+    gltf, binary = read_glb(out)
+    checked = 0
+    for tri, nrm in _triangles(gltf, binary):
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri
+        ux, uy, uz = (bx - ax, by - ay, bz - az)
+        vx, vy, vz = (cx - ax, cy - ay, cz - az)
+        g = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+        n = [sum(v[i] for v in nrm) / 3 for i in range(3)]
+        assert g[0] * n[0] + g[1] * n[1] + g[2] * n[2] > 0
+        checked += 1
+    assert checked == 12
+
+
+def test_cli_stand_up_flag(tmp_path):
+    script = os.path.join(os.path.dirname(HERE), 'usd_to_glb.py')
+    src = stage(tmp_path, rotate=('X', 90))
+    plain = subprocess.run([sys.executable, script, src, str(tmp_path / 'a.glb')], capture_output=True, text=True)
+    upright = subprocess.run([sys.executable, script, src, str(tmp_path / 'b.glb'), '--stand-up'], capture_output=True, text=True)
+    assert plain.returncode == 0 and upright.returncode == 0
+    assert bounds(read_glb(str(tmp_path / 'a.glb'))[0]) != bounds(read_glb(str(tmp_path / 'b.glb'))[0])
