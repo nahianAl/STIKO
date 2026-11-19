@@ -1,6 +1,6 @@
 # Stiko CAD worker
 
-Converts a native CAD part upload to a millimetre, Y-up GLB. It converts the formats in `CAD_EXTENSIONS` (`.sldprt`, `.ipt`, `.catpart`, `.prt` and Creo's `.prt.<n>`, `.x_t`, `.x_b`, `.jt`, `.sat`); the app's `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` decides which of them are switched on. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back.
+Converts a native CAD part upload to a millimetre, Y-up GLB. It converts the formats in `CAD_EXTENSIONS` (`.sldprt`, `.sldasm`, `.ipt`, `.catpart`, `.prt` and Creo's `.prt.<n>`, `.x_t`, `.x_b`, `.jt`, `.sat`); the app's `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` decides which of them are switched on. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back. A `.sldasm` converts on its own: SolidWorks stores a display copy of every component inside the assembly, so no part files are needed (an assembly saved without it comes out empty and is marked failed). Each GLB node is named after its component (`displayName`), else `Body N`.
 
 ## Deployed endpoint
 
