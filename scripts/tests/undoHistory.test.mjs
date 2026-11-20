@@ -148,3 +148,56 @@ test('a step dropped while its undo was in flight does not reappear on redo', as
   assert.equal((await first).status, 'done');
   assert.deepEqual(h.depth(), { undo: 0, redo: 0 });
 });
+
+test('a record during an in-flight undo forks the timeline: the undone step does not land on redo', async () => {
+  const h = createUndoHistory();
+  const { step } = fake();
+  let release;
+  h.record(step('markup', 'a'));
+  h.record({ domain: 'model', undo: () => new Promise((r) => { release = r; }), redo: () => {} });
+  const first = h.undo();
+  h.record(step('markup', 'c'));
+  release();
+  assert.equal((await first).status, 'done');
+  assert.deepEqual(h.depth(), { undo: 2, redo: 0 });
+  assert.equal((await h.redo()).status, 'empty');
+});
+
+test('a record during an in-flight redo keeps the redone step undoable, older than the new step', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  let release;
+  h.record({
+    domain: 'model',
+    undo: () => { log.push('undo m'); },
+    redo: () => new Promise((r) => { release = r; }),
+  });
+  await h.undo();
+  const second = h.redo();
+  h.record(step('markup', 'c'));
+  release();
+  assert.equal((await second).status, 'done');
+  assert.deepEqual(h.depth(), { undo: 2, redo: 0 });
+  await h.undo();
+  await h.undo();
+  assert.deepEqual(log, ['undo m', 'undo c', 'undo m']);
+});
+
+test('a failed redo leaves the step on redo', async () => {
+  const h = createUndoHistory();
+  let fail = true;
+  h.record({
+    domain: 'model',
+    undo: async () => {},
+    redo: async () => { if (fail) throw new Error('500'); },
+  });
+  assert.equal((await h.undo()).status, 'done');
+  const out = await h.redo();
+  assert.equal(out.status, 'failed');
+  assert.equal(out.error.message, '500');
+  assert.deepEqual(h.depth(), { undo: 0, redo: 1 });
+  assert.equal(h.isBusy(), false);
+  fail = false;
+  assert.equal((await h.redo()).status, 'done');
+  assert.deepEqual(h.depth(), { undo: 1, redo: 0 });
+});

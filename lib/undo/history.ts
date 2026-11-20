@@ -47,6 +47,10 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
   let undoStack: UndoStep[] = [];
   let redoStack: UndoStep[] = [];
   let busy = false;
+  // Set when record() runs while a step is in flight: the redo branch was forked away under it.
+  let recordedInFlight = false;
+  // Steps removed by clear()/dropDomain(): gone on purpose, so an in-flight one must not come back.
+  const dropped = new WeakSet<UndoStep>();
   const flushes = new Set<() => void>();
 
   const trim = () => {
@@ -60,6 +64,8 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
     const step = source[source.length - 1];
     if (!step) return { status: 'empty' };
     busy = true;
+    recordedInFlight = false;
+    const undoLengthAtStart = undoStack.length;
     try {
       await (direction === 'undo' ? step.undo() : step.redo());
     } catch (error) {
@@ -69,20 +75,27 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
       busy = false;
     }
     // Located again by identity rather than popped: the stacks may have been reassigned while
-    // an async step was in flight (a file switch clears them). A step that is gone was dropped
-    // on purpose and must not come back on the other stack.
+    // an async step was in flight. Two different things can have happened meanwhile. A step in
+    // `dropped` was removed on purpose (a file switch) and stays gone. Otherwise a record() may
+    // have forked the timeline: an undone step then has no redo branch left to join, but a redone
+    // step's change was applied and must stay undoable, just older than what was recorded since.
+    if (dropped.has(step)) return { status: 'done', step };
     if (direction === 'undo') {
       const i = undoStack.lastIndexOf(step);
-      if (i !== -1) { undoStack.splice(i, 1); redoStack.push(step); }
+      if (i !== -1) undoStack.splice(i, 1);
+      if (!recordedInFlight) redoStack.push(step);
     } else {
       const i = redoStack.lastIndexOf(step);
-      if (i !== -1) { redoStack.splice(i, 1); undoStack.push(step); trim(); }
+      if (i !== -1) redoStack.splice(i, 1);
+      undoStack.splice(Math.min(undoLengthAtStart, undoStack.length), 0, step);
+      trim();
     }
     return { status: 'done', step };
   };
 
   return {
     record(step) {
+      if (busy) recordedInFlight = true;
       undoStack.push(step);
       trim();
       redoStack = [];
@@ -90,10 +103,12 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
     undo: () => run('undo'),
     redo: () => run('redo'),
     dropDomain(domain) {
+      for (const s of [...undoStack, ...redoStack]) if (s.domain === domain) dropped.add(s);
       undoStack = undoStack.filter((s) => s.domain !== domain);
       redoStack = redoStack.filter((s) => s.domain !== domain);
     },
     clear() {
+      for (const s of [...undoStack, ...redoStack]) dropped.add(s);
       undoStack = [];
       redoStack = [];
     },
