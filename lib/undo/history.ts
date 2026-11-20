@@ -18,6 +18,8 @@ export type UndoOutcome =
   | { status: 'done'; step: UndoStep }
   | { status: 'empty' }
   | { status: 'busy' }
+  /** A registered guard refused this press; nothing ran and both stacks are as they were. */
+  | { status: 'blocked' }
   | { status: 'failed'; step: UndoStep; error: unknown };
 
 export const UNDO_CAPACITY = 200;
@@ -38,7 +40,20 @@ export interface UndoHistory {
    * yet becomes a step first — otherwise the first undo would skip it. Returns the unregister.
    */
   registerFlush(flush: () => void): () => void;
-  /** True while an async step (a server save) is running. */
+  /**
+   * Register a veto over undo/redo. It runs after the flushes, with the step this press would
+   * run (undefined when the stack is empty) and the direction; returning true blocks the press
+   * with `{ status: 'blocked' }` and touches nothing. For rules about WHEN history may be walked
+   * — a store holding unrecorded work, a markup session that owns the timeline — as opposed to
+   * which steps exist. Returns the unregister.
+   */
+  registerGuard(guard: (step: UndoStep | undefined, direction: 'undo' | 'redo') => boolean): () => void;
+  /**
+   * Mark the history busy for work it does not own — a drag's own server save. undo/redo return
+   * 'busy' until the returned release is called. The release is idempotent.
+   */
+  beginExternal(): () => void;
+  /** True while an async step (a server save) is running or an external hold is open. */
   isBusy(): boolean;
   depth(): { undo: number; redo: number };
 }
@@ -52,16 +67,21 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
   // Steps removed by clear()/dropDomain(): gone on purpose, so an in-flight one must not come back.
   const dropped = new WeakSet<UndoStep>();
   const flushes = new Set<() => void>();
+  const guards = new Set<(step: UndoStep | undefined, direction: 'undo' | 'redo') => boolean>();
+  // Open beginExternal() holds. A count, not a flag: two saves can overlap.
+  let externalHolds = 0;
 
   const trim = () => {
     if (undoStack.length > capacity) undoStack.splice(0, undoStack.length - capacity);
   };
 
   const run = async (direction: 'undo' | 'redo'): Promise<UndoOutcome> => {
-    if (busy) return { status: 'busy' };
+    if (busy || externalHolds > 0) return { status: 'busy' };
     for (const flush of Array.from(flushes)) flush();
     const source = direction === 'undo' ? undoStack : redoStack;
     const step = source[source.length - 1];
+    // After the flushes, so a guard judges the step this press would really run.
+    for (const guard of Array.from(guards)) if (guard(step, direction)) return { status: 'blocked' };
     if (!step) return { status: 'empty' };
     busy = true;
     recordedInFlight = false;
@@ -116,7 +136,20 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
       flushes.add(flush);
       return () => { flushes.delete(flush); };
     },
-    isBusy: () => busy,
+    registerGuard(guard) {
+      guards.add(guard);
+      return () => { guards.delete(guard); };
+    },
+    beginExternal() {
+      externalHolds++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        externalHolds--;
+      };
+    },
+    isBusy: () => busy || externalHolds > 0,
     depth: () => ({ undo: undoStack.length, redo: redoStack.length }),
   };
 }

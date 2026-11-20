@@ -201,3 +201,142 @@ test('a failed redo leaves the step on redo', async () => {
   assert.equal((await h.redo()).status, 'done');
   assert.deepEqual(h.depth(), { undo: 1, redo: 0 });
 });
+
+test('a guard blocks undo and redo and leaves both stacks untouched', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  h.record(step('markup', 'a'));
+  h.record(step('markup', 'b'));
+  await h.undo(); // b -> redo
+  h.registerGuard(() => true);
+  assert.deepEqual(await h.undo(), { status: 'blocked' });
+  assert.deepEqual(await h.redo(), { status: 'blocked' });
+  assert.deepEqual(h.depth(), { undo: 1, redo: 1 });
+  assert.deepEqual(log, ['undo b']);
+  assert.equal(h.isBusy(), false);
+});
+
+test('a guard receives the top step of the source stack and the direction', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  const seen = [];
+  h.registerGuard((s, direction) => {
+    seen.push({ domain: s?.domain, direction });
+    return s?.domain === 'model';
+  });
+  h.record(step('markup', 'k'));
+  h.record(step('model', 'm'));
+  // A model step on top: blocked, and the guard was shown that step and the direction.
+  assert.equal((await h.undo()).status, 'blocked');
+  assert.deepEqual(seen, [{ domain: 'model', direction: 'undo' }]);
+  assert.deepEqual(h.depth(), { undo: 2, redo: 0 });
+  // Take the model step out; a markup step on top undoes fine.
+  h.dropDomain('model');
+  assert.equal((await h.undo()).status, 'done');
+  assert.deepEqual(log, ['undo k']);
+  // Redo shows the guard the REDO stack's top step.
+  assert.equal((await h.redo()).status, 'done');
+  assert.deepEqual(seen.slice(-2), [
+    { domain: 'markup', direction: 'undo' },
+    { domain: 'markup', direction: 'redo' },
+  ]);
+  // Nothing left to redo: the guard sees `undefined` and the empty answer stands.
+  assert.equal((await h.redo()).status, 'empty');
+  assert.deepEqual(seen[seen.length - 1], { domain: undefined, direction: 'redo' });
+});
+
+test('a guard that blocks only one domain lets another domain through, in both directions', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  h.registerGuard((s) => s?.domain === 'model');
+  h.record(step('model', 'm'));
+  h.record(step('markup', 'k'));
+  assert.equal((await h.undo()).status, 'done'); // markup on top
+  assert.equal((await h.undo()).status, 'blocked'); // model now on top
+  assert.equal((await h.redo()).status, 'done'); // redo top is markup
+  assert.deepEqual(log, ['undo k', 'redo k']);
+});
+
+test('unregistering a guard unblocks', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  h.record(step('markup', 'a'));
+  const unregister = h.registerGuard(() => true);
+  assert.equal((await h.undo()).status, 'blocked');
+  unregister();
+  assert.equal((await h.undo()).status, 'done');
+  assert.deepEqual(log, ['undo a']);
+});
+
+test('beginExternal makes undo and redo busy until released', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  h.record(step('markup', 'a'));
+  h.record(step('markup', 'b'));
+  await h.undo();
+  assert.equal(h.isBusy(), false);
+  const release = h.beginExternal();
+  assert.equal(h.isBusy(), true);
+  assert.equal((await h.undo()).status, 'busy');
+  assert.equal((await h.redo()).status, 'busy');
+  assert.deepEqual(h.depth(), { undo: 1, redo: 1 });
+  release();
+  assert.equal(h.isBusy(), false);
+  assert.equal((await h.redo()).status, 'done');
+  assert.deepEqual(log, ['undo b', 'redo b']);
+});
+
+test('releasing an external hold twice releases it once', async () => {
+  const h = createUndoHistory();
+  const { step } = fake();
+  h.record(step('markup', 'a'));
+  const first = h.beginExternal();
+  const second = h.beginExternal();
+  first();
+  first(); // must not also release `second`
+  assert.equal(h.isBusy(), true);
+  assert.equal((await h.undo()).status, 'busy');
+  second();
+  assert.equal(h.isBusy(), false);
+  assert.equal((await h.undo()).status, 'done');
+});
+
+test('isBusy is true for a running step even with no external hold', async () => {
+  const h = createUndoHistory();
+  let release;
+  h.record({ domain: 'model', undo: () => new Promise((r) => { release = r; }), redo: () => {} });
+  const release0 = h.beginExternal();
+  release0();
+  const first = h.undo();
+  assert.equal(h.isBusy(), true);
+  release();
+  await first;
+  assert.equal(h.isBusy(), false);
+});
+
+test('a guard is consulted after the flushes, so it sees a step a flush just recorded', async () => {
+  const h = createUndoHistory();
+  const { log, step } = fake();
+  h.record(step('markup', 'a'));
+  const seen = [];
+  h.registerFlush(() => {
+    if (log.length === 0 && h.depth().undo === 1) h.record(step('model', 'flushed'));
+  });
+  h.registerGuard((s) => { seen.push(s?.domain); return s?.domain === 'model'; });
+  assert.equal((await h.undo()).status, 'blocked');
+  assert.deepEqual(seen, ['model']);
+  assert.deepEqual(h.depth(), { undo: 2, redo: 0 });
+  assert.deepEqual(log, []);
+});
+
+test('the guard is not consulted while busy', async () => {
+  const h = createUndoHistory();
+  const { step } = fake();
+  h.record(step('markup', 'a'));
+  let consulted = 0;
+  h.registerGuard(() => { consulted++; return false; });
+  const release = h.beginExternal();
+  assert.equal((await h.undo()).status, 'busy');
+  assert.equal(consulted, 0);
+  release();
+});
