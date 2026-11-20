@@ -42,6 +42,7 @@ import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { UndoHistoryContext, useUndoHistoryRoot, useUndoShortcuts } from '@/components/undo/UndoHistory';
 import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
+import type { ObjectTransform } from '@/lib/objectTransform';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -411,6 +412,11 @@ export default function PortalPage() {
 
   // Selected file (needed before 3D state)
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
+
+  // Read by handleTransformCommit for the placement BEFORE a drag, without re-binding the
+  // callback (and so the gizmo) on every files change.
+  const filesRef = useRef(files);
+  filesRef.current = files;
 
   // 3D comment pin state
   const [worldPinPositions, setWorldPinPositions] = useState<Map<string, PinScreenPosition>>(new Map());
@@ -1014,45 +1020,72 @@ export default function PortalPage() {
     if (fileId === currentFileIdRef.current) setViewerReady(false);
   }, []);
 
-  // Persist the 3D object's move/rotate gizmo transform once a drag ends.
+  /**
+   * Save the 3D object's placement. True on success. On failure, put the object back where it
+   * is actually persisted: the gizmo has already moved the group directly, and nothing else
+   * will undo that — leaving it there would mean the view and the stored placement disagree,
+   * and any comment pin placed next would be saved against the wrong frame. A fresh object
+   * identity is what makes the viewer's re-apply effect fire, since the values are unchanged.
+   *
+   * Shared by a drag's commit and by undo/redo, which re-save so everyone sees the model go back.
+   */
+  const saveObjectTransform = useCallback(async (fileId: string, transform: ObjectTransform): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/files/${fileId}/transform`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(transform),
+      });
+      if (!res.ok) throw new Error(`Transform save failed: ${res.status}`);
+      // Keep the in-memory file in step so a re-render does not snap the object back
+      // to the position it had when the list was last fetched.
+      setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, transform } : f)));
+      return true;
+    } catch (e) {
+      console.error('Failed to save object transform:', e);
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === fileId
+            ? {
+                ...f,
+                transform: {
+                  position: [...f.transform.position] as [number, number, number],
+                  rotation: [...f.transform.rotation] as [number, number, number],
+                },
+              }
+            : f
+        )
+      );
+      return false;
+    }
+  }, []);
+
+  // Persist the 3D object's move/rotate gizmo transform once a drag ends, and make it an undo
+  // step — only after the save succeeded, so a failed save never enters history.
   const handleTransformCommit = useCallback(
-    async (transform: { position: [number, number, number]; rotation: [number, number, number] }) => {
+    async (transform: ObjectTransform) => {
       if (!selectedFileId) return;
-      try {
-        const res = await fetch(`/api/files/${selectedFileId}/transform`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(transform),
-        });
-        if (!res.ok) throw new Error(`Transform save failed: ${res.status}`);
-        // Keep the in-memory file in step so a re-render does not snap the object back
-        // to the position it had when the list was last fetched.
-        setFiles((prev) =>
-          prev.map((f) => (f.id === selectedFileId ? { ...f, transform } : f))
-        );
-      } catch (e) {
-        console.error('Failed to save object transform:', e);
-        // Put the object back where it is actually persisted. The gizmo has already moved the
-        // group directly, and nothing else will undo that — leaving it there would mean the
-        // view and the stored placement disagree, and any comment pin placed next would be
-        // saved against the wrong frame. A fresh object identity is what makes the viewer's
-        // re-apply effect fire, since the values themselves are unchanged.
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === selectedFileId
-              ? {
-                  ...f,
-                  transform: {
-                    position: [...f.transform.position] as [number, number, number],
-                    rotation: [...f.transform.rotation] as [number, number, number],
-                  },
-                }
-              : f
-          )
-        );
-      }
+      const fileId = selectedFileId;
+      const before = filesRef.current.find((f) => f.id === fileId)?.transform;
+      const saved = await saveObjectTransform(fileId, transform);
+      // The person may have opened another file while the save was in flight; that file's
+      // timeline must not receive this step.
+      if (!saved || !before || fileId !== currentFileIdRef.current) return;
+      // drei fires mouseup (and so this commit) for a click on a handle that moved nothing.
+      // That re-save is harmless; an undo step that changes nothing is not.
+      const same = (a: readonly number[], b: readonly number[]) => a.every((v, i) => v === b[i]);
+      if (same(before.position, transform.position) && same(before.rotation, transform.rotation)) return;
+      // A fresh copy per save, so the viewer's identity-keyed re-apply effect always fires.
+      const put = (t: ObjectTransform) => async () => {
+        const copy: ObjectTransform = {
+          position: [...t.position] as [number, number, number],
+          rotation: [...t.rotation] as [number, number, number],
+        };
+        if (!(await saveObjectTransform(fileId, copy))) throw new Error('Transform save failed');
+      };
+      undoHistory.record({ domain: 'model', undo: put(before), redo: put(transform) });
     },
-    [selectedFileId]
+    [selectedFileId, saveObjectTransform, undoHistory]
   );
 
   // Fetch package details and the parent project's NAME for the breadcrumb.
@@ -1874,6 +1907,15 @@ export default function PortalPage() {
 
   useUndoShortcuts(undoHistory, {
     beforeUndo: abandonPartialMeasure,
+    // Only a server step can fail. It stays on its stack, so pressing again retries.
+    onFailed: (outcome, direction) => {
+      const verb = direction === 'undo' ? 'undo' : 'redo';
+      toast(
+        outcome.step.domain === 'model'
+          ? `Couldn't ${verb} — the model position wasn't saved.`
+          : `Couldn't ${verb} that.`
+      );
+    },
   });
 
   const handleSelectVersion = (versionId: string) => {
