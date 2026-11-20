@@ -182,10 +182,12 @@ own steps:
 - `model` and `section` steps are blocked for the whole session: the model's placement and the
   cut planes sit behind the frozen snapshot (or, for an attachment, are not the thing being
   marked up), so replaying them would change what the person cannot see.
-- `measure` steps are blocked when the open file is 3D — those measurements live in the live
-  scene under the frozen snapshot and cannot be added mid-session. On an image the measurements
-  are reset when the session starts, and a PDF session draws on the live page, so there the
-  measure steps are the session's own and stay allowed.
+- `measure` steps are allowed only where the session draws on the surface the measurements live
+  on: a PDF's own session (it draws on the live page) and an image's own session (its
+  measurements are reset when it starts). They are blocked everywhere else, because the session
+  canvas covers them: a 3D or video snapshot, and an attachment being marked up over a PDF or
+  image, whose own measurements sit hidden underneath. In code: blocked when
+  `drawsOnCanvas && !measuresOnCanvas`.
 - `markup` steps are always allowed.
 
 Older steps become undoable again after Done or Discard. Implemented as a history guard (a

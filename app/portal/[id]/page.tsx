@@ -1924,19 +1924,22 @@ export default function PortalPage() {
   // Markup sessions own the timeline (decided 2026-11-20, "stop at the session"): while one is
   // open, undo and redo walk only that session's own steps. Everything recorded before it belongs
   // to a view the session has frozen or taken over, and replaying it would change things the
-  // person cannot see — the model's placement and the cut planes sit behind the frozen snapshot,
-  // and so do a 3D file's measurements. Image measurements are reset when a session starts and
-  // PDF sessions draw on the live page, so on those files measure steps ARE the session's own.
-  // 'markup' is always allowed. The older steps become undoable again after Done or Discard.
+  // person cannot see — the model's placement and the cut planes sit behind the frozen snapshot.
+  // Measure steps are the session's own only where the session draws on the surface the
+  // measurements live on: a PDF's own session (the live page) and an image's own session (its
+  // measurements are reset when it starts). Everywhere else the session canvas covers them — a
+  // 3D or video snapshot, or an ATTACHMENT being marked up over a PDF or image, whose own
+  // measurements sit hidden underneath. 'markup' is always allowed. The older steps become
+  // undoable again after Done or Discard.
   // Read through refs (assigned during render, like annotatingRef) so one registration is enough.
-  const is3DFileRef = useRef(is3DFile);
-  is3DFileRef.current = is3DFile;
+  const sessionHidesMeasuresRef = useRef(false);
+  sessionHidesMeasuresRef.current = drawsOnCanvas && !measuresOnCanvas;
   useEffect(
     () =>
       undoHistory.registerGuard((step) => {
         if (!step || !annotatingRef.current) return false;
         if (step.domain === 'model' || step.domain === 'section') return true;
-        return step.domain === 'measure' && is3DFileRef.current;
+        return step.domain === 'measure' && sessionHidesMeasuresRef.current;
       }),
     [undoHistory]
   );
