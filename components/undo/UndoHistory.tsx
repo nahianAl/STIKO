@@ -48,10 +48,14 @@ export function useUndoShortcuts(history: UndoHistory, options: UndoShortcutOpti
       // Mid-gesture: the gesture is not a step yet, and undoing under it would tear it.
       if (isPointerHeld()) return;
       e.preventDefault();
+      // A server step is in flight: ignore the press entirely, before beforeUndo can abandon anything.
+      if (history.isBusy()) return;
       if (which === 'undo' && opts.current.beforeUndo?.()) return;
-      void (which === 'undo' ? history.undo() : history.redo()).then((out) => {
-        if (out.status === 'failed') opts.current.onFailed?.(out, which);
-      });
+      void (which === 'undo' ? history.undo() : history.redo())
+        .then((out) => {
+          if (out.status === 'failed') opts.current.onFailed?.(out, which);
+        })
+        .catch((err) => console.error('Undo failed:', err));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

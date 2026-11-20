@@ -8,8 +8,11 @@
  *
  * Capture-phase listeners on window, installed once on first use, so a handler that stops
  * propagation (Konva's cancelBubble, drei's pointer capture) cannot hide a press from it.
- * `blur` releases everything: a button released outside the browser window never sends
- * pointerup here, and a stuck "held" would block every checkpoint for the session.
+ * The WINDOW losing focus releases everything: a button released outside the browser window
+ * never sends pointerup here, and a stuck "held" would block every checkpoint for the session.
+ * Only the window's own blur counts (registered without capture, target checked): a press on
+ * the canvas blurs the focused toolbar button or input right after pointerdown, and that
+ * element blur must not clear a gesture that has just started.
  */
 const down = new Set<number>();
 const releaseListeners = new Set<() => void>();
@@ -28,7 +31,7 @@ function install() {
   window.addEventListener('pointerdown', (e) => { down.add(e.pointerId); }, true);
   window.addEventListener('pointerup', (e) => release(e.pointerId), true);
   window.addEventListener('pointercancel', (e) => release(e.pointerId), true);
-  window.addEventListener('blur', () => release(), true);
+  window.addEventListener('blur', (e) => { if (e.target === window) release(); });
 }
 
 export function isPointerHeld(): boolean {
