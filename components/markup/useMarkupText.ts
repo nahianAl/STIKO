@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { normalizeBox, type Box, type Point } from '@/lib/markup/selection';
 import { fontStepFromKey, isBlank, stepFontSize, textBoxFromGesture, type RectLike, type TextStyle } from '@/lib/markup/text';
 import type { AnnotationObject, ToolType, useAnnotationObjects } from './useAnnotationObjects';
@@ -36,7 +36,7 @@ function isActivatable(el: Element): boolean {
  * shortcuts. The surfaces keep only what differs between them — their coordinate space.
  */
 export function useMarkupText(ann: Annotations, { enabled, activeTool, onObjectCreated, containerRef }: MarkupTextOptions) {
-  const { objects, selectedIds, textOnlySelection, setSelectedId, addText, deleteObject, updateTextStyle } = ann;
+  const { objects, selectedIds, textOnlySelection, setSelectedId, addText, deleteObject, updateTextStyle, holdHistory } = ann;
   // The text currently open in the editor. The object itself already exists in `ann` — this is
   // only which one the editor is bound to.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,6 +61,17 @@ export function useMarkupText(ann: Annotations, { enabled, activeTool, onObjectC
   useEffect(() => {
     if (editingId && !objects.some((o) => o.id === editingId)) setEditingId(null);
   }, [editingId, objects]);
+
+  // One undo step per editing session, not per key: history holds while the editor is open, and
+  // the close records the net change. A layout effect so the hold is in place before the
+  // checkpoint frame that the create (addText in the same handler) scheduled — that is what
+  // makes "create, type, close" one step. A box closed blank is deleted by commit(), leaving no
+  // net change and so no step.
+  useLayoutEffect(() => {
+    if (!editingId) return;
+    holdHistory('text-editing', true);
+    return () => holdHistory('text-editing', false);
+  }, [editingId, holdHistory]);
 
   /** Open a committed text, selected. Every way in — double-click, the Text tool, Enter — lands here. */
   const startEditing = useCallback((id: string) => {
