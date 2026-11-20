@@ -186,8 +186,10 @@ display unit.
   - PDF: draw 3 shapes, Z×3 removes them in reverse, ⇧Z×3 restores; group-move 2 objects is one
     step; drag-erase across 3 is one step; type a word in a text box, close it, Z removes the
     text edit in one go; Z inside the open text box only undoes text.
-  - Image: same sweep on the snapshot surface; Done drops markup steps but a prior measurement
-    still undoes.
+  - Image: same sweep on the snapshot surface. (Ending an image session clears its
+    measurements too — that is existing behaviour — so they leave history with it.)
+  - 3D: a measurement placed before a markup session still undoes after Done, because 3D
+    measurements survive the session.
   - 3D: rotate the model, Z puts it back and a reload shows the old placement; turn on plane 1,
     drag it, flip it, Z×3 walks back flip → drag → on.
   - Typing in the comment composer: ⌘Z undoes text, not the viewer.
