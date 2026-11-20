@@ -1,7 +1,8 @@
 """USD (from usd-convert-cad) -> GLB in millimetres, Y-up.
 
-One glTF node and mesh per USD mesh, named `Body N` and stamped `extras.stikoPart = true` (the
-marker lib/model/partTree.ts reads; SolidWorks body names do not survive usd-convert-cad). World
+One glTF node and mesh per USD mesh, named after the nearest prim's `displayName` (SolidWorks
+component names), else `Body N`, and stamped `extras.stikoPart = true` (the marker
+lib/model/partTree.ts reads; SolidWorks body names inside a part do not survive usd-convert-cad). World
 transforms and the stage's metersPerUnit are baked into the positions, so one unit is one
 millimetre whatever unit the part was drawn in. Each mesh is split into one primitive per distinct
 colour, so per-face colours (displayColor with uniform interpolation) survive as materials.
@@ -23,6 +24,22 @@ from pxr import Usd, UsdGeom, UsdShade
 
 DEFAULT_COLOR = (0.8, 0.8, 0.8)
 PART_MARKER = 'stikoPart'
+# Body names in the GLB come from the nearest prim with a displayName (usd-convert-cad writes SolidWorks's
+# component instance names there, e.g. 'ZINC PLATED STEEL HEX NUT-3'); the parts panel shows them.
+MAX_NAME = 120
+
+
+def body_name(prim):
+    """The cleaned displayName of the prim or its nearest named ancestor, or None."""
+    p = prim
+    while p and p.IsValid() and not p.IsPseudoRoot():
+        name = ' '.join(str(p.GetDisplayName() or '').split())[:MAX_NAME].rstrip()
+        if name:
+            return name
+        p = p.GetParent()
+    return None
+
+
 # Row-vector convention (world = point @ xf): post-multiplying by this maps (x, y, z) to (x, z, -y),
 # a -90 degree turn about X that stands a Z-up part (CATIA, NX) upright in Y-up glTF.
 STAND_UP = np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=np.float64)
@@ -145,6 +162,7 @@ def convert(usd_path, glb_path, stand_up=False):
         return material_ids[key]
 
     total_tris = 0
+    name_counts = {}
     for prim in Usd.PrimRange(stage.GetPseudoRoot(), Usd.TraverseInstanceProxies()):
         if not prim.IsA(UsdGeom.Mesh):
             continue
@@ -198,7 +216,10 @@ def convert(usd_path, glb_path, stand_up=False):
                     'mode': 4,
                 })
                 total_tris += len(fv) // 3
-            body = f'Body {len(meshes) + 1}'
+            body = body_name(prim) or f'Body {len(meshes) + 1}'
+            name_counts[body] = name_counts.get(body, 0) + 1
+            if name_counts[body] > 1:
+                body = f'{body} ({name_counts[body]})'
             meshes.append({'name': body, 'primitives': primitives})
             nodes.append({'name': body, 'mesh': len(meshes) - 1, 'extras': {PART_MARKER: True}})
         except IndexError:

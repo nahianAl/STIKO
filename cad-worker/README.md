@@ -1,6 +1,6 @@
 # Stiko CAD worker
 
-Converts a native CAD part upload to a millimetre, Y-up GLB. It converts the formats in `CAD_EXTENSIONS` (`.sldprt`, `.ipt`, `.catpart`, `.prt` and Creo's `.prt.<n>`, `.x_t`, `.x_b`, `.jt`, `.sat`); the app's `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` decides which of them are switched on. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back.
+Converts a native CAD part upload to a millimetre, Y-up GLB. It converts the formats in `CAD_EXTENSIONS` (`.sldprt`, `.sldasm`, `.ipt`, `.catpart`, `.prt` and Creo's `.prt.<n>`, `.x_t`, `.x_b`, `.jt`, `.sat`); the app's `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` decides which of them are switched on. It runs on Modal on a T4 GPU and uses NVIDIA's Omniverse CAD Converter (`usd-convert-cad`). Stiko calls the `start` endpoint with presigned storage URLs; the worker downloads the part, converts it, uploads the GLB to the presigned target and calls Stiko back. A `.sldasm` converts on its own: SolidWorks stores a display copy of every component inside the assembly, so no part files are needed (an assembly saved without it comes out empty and is marked failed). Each GLB node is named after its component (`displayName`), else `Body N`.
 
 ## Deployed endpoint
 
@@ -22,7 +22,7 @@ Modal workspace `hello-63953`, app `stiko-cad-worker`. Dashboard: https://modal.
 
 ## Size limits
 
-An upload over 200 MB (`MAX_INPUT_BYTES`) is refused while downloading, and a converted GLB over 150 MB (`MAX_OUTPUT_BYTES`) is refused before it is uploaded. Both are verdicts on the file: the callback reports `ok: false` with reason `too_large` or `too_large_output`, and the file is marked failed. The output cap exists because the 200 MB audit showed a model that large freezes the viewer when it opens, and GLBs are not counted by the storage usage meters, so nothing else would stop one.
+An upload over 200 MiB (`MAX_INPUT_BYTES`) is refused while downloading, and a converted GLB over 150 MiB (`MAX_OUTPUT_BYTES`) is refused before it is uploaded. Both are verdicts on the file: the callback reports `ok: false` with reason `too_large` or `too_large_output`, and the file is marked failed. The output cap exists because the 200 MB audit showed a model that large freezes the viewer when it opens, and GLBs are not counted by the storage usage meters, so nothing else would stop one.
 
 ## Deploy and smoke test
 
@@ -103,7 +103,7 @@ To roll back one format, remove it from `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` on 
 
 The variables are read at build time and inlined into the browser bundle, so a redeploy is required, and it must be a redeploy without the build cache: a cached build can keep the old value. After a rollback, drop a file of the switched-off format in the uploader and confirm that format's export advice appears (for example "Export STEP, then upload."; for SolidWorks, "Save As STEP, then upload."). That proves the switch was inlined in the real build. `scripts/tests/sldprtSwitchOff.test.mjs` locks in the same behaviour for the code.
 
-Only if the worker itself breaks SolidWorks conversion, restore the pre-feature worker too: `git worktree add /tmp/stiko-worker-rollback 4019050 && /tmp/stiko-cadw/bin/modal deploy /tmp/stiko-worker-rollback/cad-worker/app.py && git worktree remove /tmp/stiko-worker-rollback` (a throwaway checkout, so no working tree is left holding the old worker; any Python env with `modal` installed works).
+Only if the worker itself is at fault, redeploy the previous worker: roll back to the commit before the release being undone (for the `.sldasm` release, `a1b788e`, the multi-format worker). `git worktree add /tmp/stiko-worker-rollback a1b788e && /tmp/stiko-cadw/bin/modal deploy /tmp/stiko-worker-rollback/cad-worker/app.py && git worktree remove /tmp/stiko-worker-rollback` (a throwaway checkout, so no working tree is left holding the old worker; any Python env with `modal` installed works). Remove the format from the app's environment first and redeploy: rolling the worker back while `NEXT_PUBLIC_CAD_CONVERSION_FORMATS` still lists a format it no longer converts makes those files unavailable (422).
 
 ## Reset a part wrongly marked failed
 

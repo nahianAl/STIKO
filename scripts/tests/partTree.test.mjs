@@ -441,3 +441,29 @@ test('collectDrawables also finds a Sprite, wrapped the same way as Line/Points'
   assert.equal(clone.material, sprite.material);
   assert.equal(clone.geometry, sprite.geometry);
 });
+
+test('a part shows its original glTF name, not the loader-sanitised one', () => {
+  const a = group('ZINC_PLATED_STEEL_HEX_NUT-3', true, mesh('m1'));
+  a.userData.name = 'ZINC PLATED STEEL HEX NUT-3';
+  const b = group('Bracket_(2)', true, mesh('m2'));
+  b.userData.name = 'Bracket (2)';
+  const c = group('Plain', true, mesh('m3')); // no userData.name: falls back to object.name
+  const root = group('', false, a, b, c);
+  assert.deepEqual(buildPartTree(root).map((p) => p.name), ['ZINC PLATED STEEL HEX NUT-3', 'Bracket (2)', 'Plain']);
+});
+
+test('the unmarked branch also prefers the original glTF name', () => {
+  const a = mesh('Body_1');
+  a.userData.name = 'Body 1';
+  const b = mesh('Lid');
+  const root = group('', false, a, b);
+  assert.deepEqual(buildPartTree(root).map((p) => p.name), ['Body 1', 'Lid']);
+});
+
+test('a non-string or empty userData.name is ignored', () => {
+  const a = group('A', true, mesh('m1'));
+  a.userData.name = 42;
+  const b = group('B', true, mesh('m2'));
+  b.userData.name = '';
+  assert.deepEqual(buildPartTree(group('', false, a, b)).map((p) => p.name), ['A', 'B']);
+});

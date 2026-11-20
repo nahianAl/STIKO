@@ -123,7 +123,8 @@ def test_wrong_scheme_or_host_is_refused(field, url):
 
 
 @pytest.mark.parametrize('name,suffix', [
-    ('a.sldprt', '.sldprt'), ('A.SLDPRT', '.sldprt'), ('bracket.ipt', '.ipt'), ('b.CATPart', '.catpart'),
+    ('a.sldprt', '.sldprt'), ('A.SLDPRT', '.sldprt'), ('asm.SLDASM', '.sldasm'), ('a.sldasm', '.sldasm'),
+    ('bracket.ipt', '.ipt'), ('b.CATPart', '.catpart'),
     ('nx_part.prt', '.prt'), ('creo_part.prt.5', '.prt.5'), ('CREO.PRT.12', '.prt.12'),
     ('m.x_t', '.x_t'), ('m.X_B', '.x_b'), ('m.jt', '.jt'), ('m.sat', '.sat'), ('dir/sub/m.jt', '.jt'),
 ])
@@ -132,7 +133,7 @@ def test_input_suffix_for_convertible_files(name, suffix):
 
 
 @pytest.mark.parametrize('name', [
-    'a.sldasm', 'a.iam', 'a.catproduct', 'a.asm', 'a.asm.3', 'a.par', 'a.rvt', 'a.ifc', 'a.step',
+    'a.iam', 'a.catproduct', 'a.asm', 'a.asm.3', 'a.par', 'a.rvt', 'a.ifc', 'a.step',
     'notes.5', '.prt', '.prt.5', 'prt', 'a.prt.', 'a.prt.x', '',
     'a.prt.٥',  # Arabic-Indic five: \d would match it, the worker must not
     'a.prt.５',  # fullwidth five
@@ -142,14 +143,14 @@ def test_input_suffix_refuses_everything_else(name):
     assert worker_core.input_suffix(name) is None
 
 
-@pytest.mark.parametrize('name', ['a.ipt', 'a.prt.5', 'a.jt', 'a.sldprt'])
+@pytest.mark.parametrize('name', ['a.ipt', 'a.prt.5', 'a.jt', 'a.sldprt', 'a.sldasm'])
 def test_convertible_formats_are_accepted(name):
     body = valid()
     body['filename'] = name
     assert worker_core.validate_job(body, STORAGE, CALLBACK)['filename'] == name
 
 
-@pytest.mark.parametrize('name', ['a.sldasm', 'a.rvt', 'a.step'])
+@pytest.mark.parametrize('name', ['a.iam', 'a.rvt', 'a.step'])
 def test_other_formats_are_refused_with_422(name):
     body = valid()
     body['filename'] = name
@@ -332,6 +333,7 @@ def test_a_converter_nonzero_exit_is_a_verdict(tmp_path):
     ('input.prt.5', b'#UGC:2 PART 2159', False),          # Creo version file
     ('input.prt', b'', False),                            # unreadable header keeps its axes
     ('input.sldprt', b'SPLMSSTR', False),
+    ('input.sldasm', b'', False),
     ('input.ipt', b'', False), ('input.x_t', b'', False), ('input.jt', b'', False), ('input.sat', b'', False),
 ])
 def test_stands_up_only_catia_and_nx(tmp_path, name, head, expected):

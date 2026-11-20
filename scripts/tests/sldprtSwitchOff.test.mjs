@@ -29,7 +29,7 @@ console.log(JSON.stringify({
   iptSupported: f.isSupportedFilename('a.ipt'),
   sldprtAdvice: f.adviceFor('a.sldprt'),
   sldprtSupported: f.isSupportedFilename('a.sldprt'),
-  anyConverted: ['a.sldprt', 'a.ipt', 'a.catpart', 'a.prt', 'a.x_t', 'a.x_b', 'a.jt', 'a.sat']
+  anyConverted: ['a.sldprt', 'a.sldasm', 'a.ipt', 'a.catpart', 'a.prt', 'a.x_t', 'a.x_b', 'a.jt', 'a.sat']
     .filter((n) => f.isSupportedFilename(n)),
   iptConvertedOpens: c.opensAsModel('a.ipt', 'k/a.ipt.glb'),
   iptPending: c.isPendingCad('a.ipt', null),

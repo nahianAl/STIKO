@@ -118,9 +118,12 @@ test('fileTypeSupported follows lib/fileFormats.ts, not the source doc', () => {
   assert.equal(fileTypeSupported(ft('FT-BIM')), false);
   assert.equal(fileTypeSupported(ft('FT-99')), false);
   assert.equal(fileTypeSupported(ft('FT-SLDPRT')), SUPPORTED_EXTENSIONS.has('sldprt'));
-  assert.equal(fileTypeSupported(ft('FT-SLDASM')), false);
-  assert.equal(fileTypeSupported(ft('FT-PARASOLID')), false);
-  assert.equal(fileTypeSupported(ft('FT-NATIVE-CAD')), false);
+  assert.equal(fileTypeSupported(ft('FT-SLDASM')), SUPPORTED_EXTENSIONS.has('sldasm'));
+  assert.equal(fileTypeSupported(ft('FT-PARASOLID')), SUPPORTED_EXTENSIONS.has('x_t') || SUPPORTED_EXTENSIONS.has('x_b'));
+  assert.equal(
+    fileTypeSupported(ft('FT-NATIVE-CAD')),
+    ['f3d', 'ipt', 'iam', 'catpart', 'catproduct', 'prt', 'asm'].some((e) => SUPPORTED_EXTENSIONS.has(e))
+  );
   assert.equal(fileTypeSupported(ft('FT-PSD-TIFF')), false);
 });
 

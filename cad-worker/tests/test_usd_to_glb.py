@@ -290,3 +290,109 @@ def test_cli_stand_up_flag(tmp_path):
     upright = subprocess.run([sys.executable, script, src, str(tmp_path / 'b.glb'), '--stand-up'], capture_output=True, text=True)
     assert plain.returncode == 0 and upright.returncode == 0
     assert bounds(read_glb(str(tmp_path / 'a.glb'))[0]) != bounds(read_glb(str(tmp_path / 'b.glb'))[0])
+
+
+def _named(path):
+    gltf, _ = read_glb(path)
+    return [n['name'] for n in gltf['nodes']]
+
+
+def _cube(s, path, size=10.0):
+    m = UsdGeom.Mesh.Define(s, path)
+    m.CreatePointsAttr([Gf.Vec3f(*(c * size for c in p)) for p in CUBE_POINTS])
+    m.CreateFaceVertexCountsAttr(CUBE_COUNTS)
+    m.CreateFaceVertexIndicesAttr(CUBE_INDICES)
+    return m
+
+
+def test_unnamed_bodies_keep_body_n(tmp_path):
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(stage(tmp_path, meshes=2), out)
+    assert _named(out) == ['Body 1', 'Body 2']
+
+
+def test_a_component_display_name_names_its_body(tmp_path):
+    src = stage(tmp_path, meshes=2)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part/Body0').SetDisplayName('nist_mtc_crada_cover_rev-B-1')
+    s.GetPrimAtPath('/Part/Body1').SetDisplayName('ZINC PLATED STEEL HEX NUT-3')
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    gltf, _ = read_glb(out)
+    assert [n['name'] for n in gltf['nodes']] == ['nist_mtc_crada_cover_rev-B-1', 'ZINC PLATED STEEL HEX NUT-3']
+    assert all(n['extras'] == {'stikoPart': True} for n in gltf['nodes'])
+
+
+def test_the_mesh_own_display_name_wins_over_its_parent(tmp_path):
+    src = stage(tmp_path)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part/Body0').SetDisplayName('Parent')
+    s.GetPrimAtPath('/Part/Body0/Mesh').SetDisplayName('Own')
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    assert _named(out) == ['Own']
+
+
+def test_a_shared_name_is_numbered(tmp_path):
+    src = stage(tmp_path, meshes=3)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part').SetDisplayName('Bracket')
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    assert _named(out) == ['Bracket', 'Bracket (2)', 'Bracket (3)']
+
+
+def test_names_are_cleaned_and_cut(tmp_path):
+    src = stage(tmp_path, meshes=2)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part/Body0').SetDisplayName('  Hex \t  nut\n -1  ')
+    s.GetPrimAtPath('/Part/Body1').SetDisplayName('x' * 300)
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    assert _named(out) == ['Hex nut -1', 'x' * usd_to_glb.MAX_NAME]
+
+
+def test_a_cut_never_leaves_a_trailing_space(tmp_path):
+    src = stage(tmp_path)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part/Body0').SetDisplayName('a' * (usd_to_glb.MAX_NAME - 1) + ' b')
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    assert _named(out) == ['a' * (usd_to_glb.MAX_NAME - 1)]
+
+
+def test_a_blank_display_name_falls_through_to_the_next_ancestor(tmp_path):
+    src = stage(tmp_path)
+    s = Usd.Stage.Open(src)
+    s.GetPrimAtPath('/Part').SetDisplayName('Housing')
+    s.GetPrimAtPath('/Part/Body0').SetDisplayName('   ')
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(src, out)
+    assert _named(out) == ['Housing']
+
+
+def test_names_come_through_instanceable_components(tmp_path):
+    # usd-convert-cad writes each SolidWorks component as an instanceable Xform with a displayName.
+    path = str(tmp_path / 'inst.usda')
+    s = Usd.Stage.CreateNew(path)
+    UsdGeom.SetStageMetersPerUnit(s, 0.001)
+    UsdGeom.SetStageUpAxis(s, UsdGeom.Tokens.y)
+    s.CreateClassPrim('/Protos')
+    UsdGeom.Xform.Define(s, '/Protos/Nut')
+    _cube(s, '/Protos/Nut/Mesh')
+    for i in (1, 2):
+        inst = UsdGeom.Xform.Define(s, f'/Asm/Nut{i}')
+        inst.GetPrim().GetReferences().AddInternalReference('/Protos/Nut')
+        inst.GetPrim().SetInstanceable(True)
+        inst.GetPrim().SetDisplayName(f'HEX NUT-{i}')
+        inst.AddTranslateOp().Set(Gf.Vec3d(30.0 * i, 0, 0))
+    s.GetRootLayer().Save()
+    out = str(tmp_path / 'o.glb')
+    usd_to_glb.convert(path, out)
+    assert _named(out) == ['HEX NUT-1', 'HEX NUT-2']

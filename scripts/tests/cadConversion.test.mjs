@@ -10,10 +10,10 @@ const NOW = new Date('2026-10-18T12:00:00.000Z');
 const ago = (ms) => new Date(NOW.getTime() - ms);
 
 test('every converted format is a CAD file, in any case, enabled or not', () => {
-  for (const n of ['a.sldprt', 'A.SLDPRT', 'dir/Part.SldPrt', 'b.ipt', 'c.CATPart', 'nx.prt', 'creo.prt.5', 'd.x_t', 'd.X_B', 'e.jt', 'f.sat']) {
+  for (const n of ['a.sldprt', 'A.SLDPRT', 'dir/Part.SldPrt', 'b.ipt', 'c.CATPart', 'nx.prt', 'creo.prt.5', 'd.x_t', 'd.X_B', 'e.jt', 'f.sat', 'Top.SLDASM']) {
     assert.equal(isCadFilename(n), true, n);
   }
-  for (const n of ['a.sldasm', 'a.iam', 'a.asm.3', 'a.step', 'sldprt', '.sldprt', 'a.sldprt.glb', 'a.constructor', 'notes.5']) {
+  for (const n of ['a.iam', 'a.asm.3', 'a.step', 'sldprt', '.sldprt', 'a.sldprt.glb', 'a.constructor', 'notes.5']) {
     assert.equal(isCadFilename(n), false, n);
   }
 });
@@ -32,6 +32,11 @@ test('cadLabel and cadPreparingLabel name the format', () => {
   assert.deepEqual(cadLabel('a.ipt'), { app: 'Inventor', noun: 'part', advice: 'Export STEP, then upload.' });
   assert.equal(cadLabel('a.step'), null);
   assert.equal(cadPreparingLabel('a.sldprt'), 'Preparing SolidWorks part…');
+  assert.equal(cadPreparingLabel('Top.SLDASM'), 'Preparing SolidWorks assembly…');
+  assert.deepEqual(cadLabel('a.sldasm'), { app: 'SolidWorks', noun: 'assembly', advice: 'Save As STEP, then upload.' });
+  // With the env unset only SolidWorks parts are switched on; assemblies wait for the switch.
+  assert.equal(cadFormatEnabled('a.sldasm'), false);
+  assert.equal(cadFormatEnabled('a.sldasm', ['sldprt', 'sldasm']), true);
   assert.equal(cadPreparingLabel('creo.prt.5'), 'Preparing NX or Creo part…');
   assert.equal(cadPreparingLabel('m.jt'), 'Preparing JT model…');
   assert.equal(cadPreparingLabel('a.step'), 'Preparing file…');
