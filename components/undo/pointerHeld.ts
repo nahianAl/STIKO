@@ -28,7 +28,15 @@ function release(pointerId?: number) {
 function install() {
   if (installed || typeof window === 'undefined') return;
   installed = true;
-  window.addEventListener('pointerdown', (e) => { down.add(e.pointerId); }, true);
+  window.addEventListener('pointerdown', (e) => {
+    // A new primary pointer starts a fresh gesture, so anything still "held" from before is stale.
+    // A touch/pen pointerup can go missing (the OS takes the gesture, the element is removed
+    // mid-press) and each press has a unique pointerId, so without this the lost one would stay
+    // held until the window blurs — disabling every checkpoint and the undo shortcut. Extra
+    // fingers are not primary, so a real multi-touch gesture still accumulates.
+    if (e.isPrimary) down.clear();
+    down.add(e.pointerId);
+  }, true);
   window.addEventListener('pointerup', (e) => release(e.pointerId), true);
   window.addEventListener('pointercancel', (e) => release(e.pointerId), true);
   window.addEventListener('blur', (e) => { if (e.target === window) release(); });

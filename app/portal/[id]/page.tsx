@@ -1067,7 +1067,17 @@ export default function PortalPage() {
       if (!selectedFileId) return;
       const fileId = selectedFileId;
       const before = filesRef.current.find((f) => f.id === fileId)?.transform;
-      const saved = await saveObjectTransform(fileId, transform);
+      // The drag's own save is work the history does not own, so tell it: without this a quick
+      // undo while the PATCH is in flight would undo the step BEFORE this drag, this record()
+      // would then clear redo, and two model PATCHes could race. Released before the checks below
+      // so the step is recorded into an idle history.
+      const release = undoHistory.beginExternal();
+      let saved = false;
+      try {
+        saved = await saveObjectTransform(fileId, transform);
+      } finally {
+        release();
+      }
       // The person may have opened another file while the save was in flight; that file's
       // timeline must not receive this step.
       if (!saved || !before || fileId !== currentFileIdRef.current) return;
@@ -1836,9 +1846,13 @@ export default function PortalPage() {
   }, [activeTool, removeMeasure]);
 
   // Calibrate's own points are a scale, not dimensions anyone asked to keep, and the effect above
-  // sweeps them out when the tool is left. Holding measure history while it is armed makes that
-  // add-then-remove net to no step. Declared AFTER the sweep on purpose: passive cleanups run in
-  // declaration order, so the sweep lands before the release triggers a checkpoint.
+  // sweeps them out when the tool is left. Holding measure history while it is armed keeps them
+  // from being checkpointed as steps while they are on the list. What makes the add-then-remove
+  // net to NO step is the checkpoint's one-frame deferral: releasing the hold only schedules a
+  // checkpoint for the next animation frame, by which time the sweep's removals have landed and
+  // the list is back at its baseline. Declaring this AFTER the sweep (so the sweep's cleanup runs
+  // first) is belt-and-braces, not what the guarantee rests on. The hold also blocks undo and
+  // redo while Calibrate is armed: walking history then would run underneath the unrecorded span.
   useEffect(() => {
     if (activeTool !== 'calibrate') return;
     holdMeasureHistory('calibrate', true);
@@ -1906,6 +1920,26 @@ export default function PortalPage() {
     setCalibrationSpan(null);
     setMeasureError(null);
   }, [selectedFileId, clearMeasure, undoHistory, resetSectionSlots]);
+
+  // Markup sessions own the timeline (decided 2026-11-20, "stop at the session"): while one is
+  // open, undo and redo walk only that session's own steps. Everything recorded before it belongs
+  // to a view the session has frozen or taken over, and replaying it would change things the
+  // person cannot see — the model's placement and the cut planes sit behind the frozen snapshot,
+  // and so do a 3D file's measurements. Image measurements are reset when a session starts and
+  // PDF sessions draw on the live page, so on those files measure steps ARE the session's own.
+  // 'markup' is always allowed. The older steps become undoable again after Done or Discard.
+  // Read through refs (assigned during render, like annotatingRef) so one registration is enough.
+  const is3DFileRef = useRef(is3DFile);
+  is3DFileRef.current = is3DFile;
+  useEffect(
+    () =>
+      undoHistory.registerGuard((step) => {
+        if (!step || !annotatingRef.current) return false;
+        if (step.domain === 'model' || step.domain === 'section') return true;
+        return step.domain === 'measure' && is3DFileRef.current;
+      }),
+    [undoHistory]
+  );
 
   useUndoShortcuts(undoHistory, {
     beforeUndo: abandonPartialMeasure,

@@ -17,7 +17,8 @@ export interface Checkpointed<T> {
   /**
    * Hold checkpoints while `on` (e.g. a text editor is open, the calibrate tool is armed).
    * Releasing the last hold checkpoints on the next frame, so everything done while held is ONE
-   * step.
+   * step. While any hold is active, undo and redo are refused outright (a history guard): there
+   * is unrecorded work that walking history would run underneath.
    */
   hold: (key: string, on: boolean) => void;
 }
@@ -75,6 +76,15 @@ export function useCheckpointedState<T>(
   useEffect(() => { schedule(); }, [state, schedule]);
   useEffect(() => onPointerRelease(schedule), [schedule]);
   useEffect(() => (history ? history.registerFlush(checkpoint) : undefined), [history, checkpoint]);
+  // The flush above is a no-op under a hold, so work done since the last checkpoint — the markup
+  // text being typed, a Calibrate span — is not a step yet and undo would walk history underneath
+  // it: the work is lost (a later checkpoint finds nothing to compare, or its record() clears redo)
+  // and, with Calibrate, a restored real measurement could be captured as the calibration span.
+  // Any active hold therefore refuses undo AND redo until it is released.
+  useEffect(
+    () => (history ? history.registerGuard(() => holds.current.size > 0) : undefined),
+    [history]
+  );
   useEffect(() => cancelFrame, [cancelFrame]);
 
   const reset = useCallback((next: T) => {
