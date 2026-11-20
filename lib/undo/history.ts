@@ -59,7 +59,7 @@ export function createUndoHistory(capacity: number = UNDO_CAPACITY): UndoHistory
 
   const run = async (direction: 'undo' | 'redo'): Promise<UndoOutcome> => {
     if (busy) return { status: 'busy' };
-    for (const flush of [...flushes]) flush();
+    for (const flush of Array.from(flushes)) flush();
     const source = direction === 'undo' ? undoStack : redoStack;
     const step = source[source.length - 1];
     if (!step) return { status: 'empty' };
