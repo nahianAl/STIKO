@@ -76,6 +76,12 @@ function quaternionFor(rotation: ObjectTransform['rotation']): THREE.Quaternion 
  * as [-PI, ~0, -PI]). So orientations are compared as quaternions, where `1 - |dot|` is ~0 for
  * the same rotation (|dot| because q and -q are one rotation). That is used rather than
  * `angleTo`, whose acos loses precision near zero.
+ *
+ * `epsilon` is absolute, in model units, and means two things. For each position component it
+ * is the largest difference still counted as the same (1e-9 units, far below anything a drag
+ * can produce). For rotation it bounds `1 - |dot|` of the two quaternions, which is
+ * ~theta^2 / 8 for a relative rotation of theta radians — so the default accepts differences up
+ * to about 9e-5 rad (0.005 degrees) and treats anything larger as a real rotation.
  */
 export function samePlacement(a: ObjectTransform, b: ObjectTransform, epsilon = 1e-9): boolean {
   for (let i = 0; i < 3; i++) {

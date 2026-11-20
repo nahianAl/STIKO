@@ -37,7 +37,12 @@ The shortcut is **ignored** (left to the browser) when:
   browser's own text undo;
 - a modal dialog is open (`[aria-modal="true"]` in the document);
 - a pointer is held down — mid-stroke, mid-drag, mid-gizmo-drag, mid-colour-picker-drag;
-- a server step is still in flight (see Model placement).
+- a server step is still in flight (see Model placement) — which includes a model drag's own
+  save: undo/redo is refused from the moment the drag ends until its PATCH settles;
+- a store is holding history for work it has not recorded yet — a markup text editor is open
+  (even with focus on the floating bar rather than the textarea), or the Calibrate tool is
+  armed. Undo AND redo are refused until the hold is released, so nothing walks underneath the
+  unrecorded work.
 
 ## Architecture
 
@@ -167,6 +172,27 @@ model, so nobody else ever holds these steps.
 - Last writer wins: undo overwrites whatever is stored, even if another reviewer moved the model
   since. Live updates are not merged, so there is no change feed to check against; this matches
   how a normal move behaves today.
+
+## Markup sessions
+
+Decided 2026-11-20 ("stop at the session"). While a markup session is open (from picking a draw
+tool, or marking up an attachment, until Done or Discard), undo and redo walk only that session's
+own steps:
+
+- `model` and `section` steps are blocked for the whole session: the model's placement and the
+  cut planes sit behind the frozen snapshot (or, for an attachment, are not the thing being
+  marked up), so replaying them would change what the person cannot see.
+- `measure` steps are blocked when the open file is 3D — those measurements live in the live
+  scene under the frozen snapshot and cannot be added mid-session. On an image the measurements
+  are reset when the session starts, and a PDF session draws on the live page, so there the
+  measure steps are the session's own and stay allowed.
+- `markup` steps are always allowed.
+
+Older steps become undoable again after Done or Discard. Implemented as a history guard (a
+registered veto the core consults after its flushes, with the step the press would run and the
+direction) in the portal page, which owns `annotating`; the core stays free of any notion of
+sessions. The same mechanism refuses undo/redo while a store holds history, and
+`beginExternal()` lets a model drag's own save mark the history busy.
 
 ## Not recorded
 

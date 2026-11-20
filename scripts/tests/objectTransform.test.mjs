@@ -124,6 +124,14 @@ test('samePlacement: a real rotation difference is a change', () => {
   assert.equal(samePlacement(a, b), false);
 });
 
+test('samePlacement: a 1e-3 rad rotation difference is not the same (epsilon boundary)', () => {
+  // The default epsilon bounds 1 - |dot| of the two quaternions, which is ~theta^2/8: it accepts
+  // roughly 9e-5 rad (0.005 deg) and no more. A thousandth of a radian is a real nudge.
+  const a = { position: [0, 0, 0], rotation: [0, 0, 0] };
+  assert.equal(samePlacement(a, { position: [0, 0, 0], rotation: [0, 0, 1e-3] }), false);
+  assert.equal(samePlacement(a, { position: [0, 0, 0], rotation: [0, 0, 5e-5] }), true);
+});
+
 test('samePlacement: a real position difference is a change', () => {
   const a = { position: [0, 0, 0], rotation: [0.3, 0.4, 0.5] };
   const b = { position: [0, 0.001, 0], rotation: [0.3, 0.4, 0.5] };
