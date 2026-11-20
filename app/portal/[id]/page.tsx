@@ -40,6 +40,7 @@ import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { UndoHistoryContext, useUndoHistoryRoot, useUndoShortcuts } from '@/components/undo/UndoHistory';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -197,6 +198,9 @@ export default function PortalPage() {
   const params = useParams();
   const portalId = params.id as string;
   const { toast } = useToast();
+  // The open file's undo history (one timeline across markup, measurements, cross-section and
+  // the model's placement). Created here, before the stores that record into it.
+  const undoHistory = useUndoHistoryRoot();
 
   // Two shapes of confirm, because the stakes differ. A published version
   // carries other people's comments; a file the uploader added a minute ago to
@@ -1808,6 +1812,8 @@ export default function PortalPage() {
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
+    // A new file is a new timeline: no step may replay onto a file it was not taken on.
+    undoHistory.clear();
     // A different file has to prove itself on screen again before the
     // indicator comes down.
     setViewerReady(false);
@@ -1844,7 +1850,9 @@ export default function PortalPage() {
     // already belong to file B. Reset in one commit instead of depending on an effect chain.
     setCalibrationSpan(null);
     setMeasureError(null);
-  }, [selectedFileId, clearMeasure]);
+  }, [selectedFileId, clearMeasure, undoHistory]);
+
+  useUndoShortcuts(undoHistory, {});
 
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
@@ -2398,6 +2406,7 @@ export default function PortalPage() {
   const maxVersionNumber = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
 
   return (
+    <UndoHistoryContext.Provider value={undoHistory}>
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
       {/* Submitting a version is the sidebar's job now — it sits next to the
@@ -2851,5 +2860,6 @@ export default function PortalPage() {
         />
       )}
     </div>
+    </UndoHistoryContext.Provider>
   );
 }
