@@ -40,6 +40,9 @@ import { DestructiveConfirm } from '@/components/settings/DestructiveConfirm';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { UndoHistoryContext, useUndoHistoryRoot, useUndoShortcuts } from '@/components/undo/UndoHistory';
+import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
+import { samePlacement, type ObjectTransform } from '@/lib/objectTransform';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -197,6 +200,9 @@ export default function PortalPage() {
   const params = useParams();
   const portalId = params.id as string;
   const { toast } = useToast();
+  // The open file's undo history (one timeline across markup, measurements, cross-section and
+  // the model's placement). Created here, before the stores that record into it.
+  const undoHistory = useUndoHistoryRoot();
 
   // Two shapes of confirm, because the stakes differ. A published version
   // carries other people's comments; a file the uploader added a minute ago to
@@ -273,7 +279,7 @@ export default function PortalPage() {
 
   // Measure tool state. The store is session-only, exactly like markup: nothing here survives a
   // file switch, and the way to keep a reading is to snapshot it into a comment.
-  const measure = useMeasurements();
+  const measure = useMeasurements(undoHistory);
   // The store's callbacks are individually stable, but the object holding them is new every
   // render. The effects below therefore depend on the callbacks BY NAME, pulled out here:
   // written as `measure.begin` in a dependency array, react-hooks/exhaustive-deps asks for the
@@ -292,6 +298,8 @@ export default function PortalPage() {
     clear: clearMeasure,
     remove: removeMeasure,
     recolor: recolorMeasure,
+    abandonPartial: abandonPartialMeasure,
+    holdHistory: holdMeasureHistory,
   } = measure;
   // The page PDFKonvaViewer is showing. Mirrored here rather than pulled off its imperative
   // handle because two things RENDER from it — the toolbar's disabled state and the per-page
@@ -405,6 +413,11 @@ export default function PortalPage() {
   // Selected file (needed before 3D state)
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
 
+  // Read by handleTransformCommit for the placement BEFORE a drag, without re-binding the
+  // callback (and so the gizmo) on every files change.
+  const filesRef = useRef(files);
+  filesRef.current = files;
+
   // 3D comment pin state
   const [worldPinPositions, setWorldPinPositions] = useState<Map<string, PinScreenPosition>>(new Map());
 
@@ -423,7 +436,13 @@ export default function PortalPage() {
   // Only the FLAGS live here. Each plane's position and rotation live on its Object3D inside
   // the canvas and are never read back — see lib/crossSection for why.
   const [sectionActive, setSectionActive] = useState(false);
-  const [sectionSlots, setSectionSlots] = useState<SectionSlots>(emptySlots);
+  // Checkpointed: switching a plane on/off and flipping it are undo steps. Plane DRAGS are
+  // recorded separately by ModelViewerInner, since a pose lives on the scene object, not here.
+  const {
+    state: sectionSlots,
+    setState: setSectionSlots,
+    reset: resetSectionSlots,
+  } = useCheckpointedState<SectionSlots>(emptySlots, undoHistory, 'section');
   const [selectedPlane, setSelectedPlane] = useState<PlaneId | null>(null);
 
   const [parts, setParts] = useState<PartNode[]>([]);
@@ -938,14 +957,15 @@ export default function PortalPage() {
       return;
     }
     setSectionActive(false);
-    setSectionSlots(emptySlots());
+    // Closing the tool is not a step, and drops every section step: the planes are gone.
+    resetSectionSlots(emptySlots());
     setSelectedPlane(null);
     setTransformMode(null);
-  }, [sectionActive]);
+  }, [sectionActive, resetSectionSlots]);
 
   const handlePlaneToggle = useCallback((id: PlaneId) => {
     setSectionSlots((slots) => togglePlane(slots, id));
-  }, []);
+  }, [setSectionSlots]);
 
   // A hidden plane cannot be dragged, so hiding the selected one has to release it — otherwise
   // the gizmo hangs in mid-air over an invisible target. Driven off the COMMITTED slots rather
@@ -970,7 +990,7 @@ export default function PortalPage() {
 
   const handlePlaneFlip = useCallback((id: PlaneId) => {
     setSectionSlots((slots) => setPlaneFlipped(slots, id, !slots[id].flipped));
-  }, []);
+  }, [setSectionSlots]);
 
   // Clicking a plane arms Move on it, per the tool's design: selection and the move gizmo are
   // one gesture. Switching to Rotate afterwards keeps the same plane.
@@ -1000,45 +1020,84 @@ export default function PortalPage() {
     if (fileId === currentFileIdRef.current) setViewerReady(false);
   }, []);
 
-  // Persist the 3D object's move/rotate gizmo transform once a drag ends.
+  /**
+   * Save the 3D object's placement. True on success. On failure, put the object back where it
+   * is actually persisted: the gizmo has already moved the group directly, and nothing else
+   * will undo that — leaving it there would mean the view and the stored placement disagree,
+   * and any comment pin placed next would be saved against the wrong frame. A fresh object
+   * identity is what makes the viewer's re-apply effect fire, since the values are unchanged.
+   *
+   * Shared by a drag's commit and by undo/redo, which re-save so everyone sees the model go back.
+   */
+  const saveObjectTransform = useCallback(async (fileId: string, transform: ObjectTransform): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/files/${fileId}/transform`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(transform),
+      });
+      if (!res.ok) throw new Error(`Transform save failed: ${res.status}`);
+      // Keep the in-memory file in step so a re-render does not snap the object back
+      // to the position it had when the list was last fetched.
+      setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, transform } : f)));
+      return true;
+    } catch (e) {
+      console.error('Failed to save object transform:', e);
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === fileId
+            ? {
+                ...f,
+                transform: {
+                  position: [...f.transform.position] as [number, number, number],
+                  rotation: [...f.transform.rotation] as [number, number, number],
+                },
+              }
+            : f
+        )
+      );
+      return false;
+    }
+  }, []);
+
+  // Persist the 3D object's move/rotate gizmo transform once a drag ends, and make it an undo
+  // step — only after the save succeeded, so a failed save never enters history.
   const handleTransformCommit = useCallback(
-    async (transform: { position: [number, number, number]; rotation: [number, number, number] }) => {
+    async (transform: ObjectTransform) => {
       if (!selectedFileId) return;
+      const fileId = selectedFileId;
+      const before = filesRef.current.find((f) => f.id === fileId)?.transform;
+      // The drag's own save is work the history does not own, so tell it: without this a quick
+      // undo while the PATCH is in flight would undo the step BEFORE this drag, this record()
+      // would then clear redo, and two model PATCHes could race. Released before the checks below
+      // so the step is recorded into an idle history.
+      const release = undoHistory.beginExternal();
+      let saved = false;
       try {
-        const res = await fetch(`/api/files/${selectedFileId}/transform`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(transform),
-        });
-        if (!res.ok) throw new Error(`Transform save failed: ${res.status}`);
-        // Keep the in-memory file in step so a re-render does not snap the object back
-        // to the position it had when the list was last fetched.
-        setFiles((prev) =>
-          prev.map((f) => (f.id === selectedFileId ? { ...f, transform } : f))
-        );
-      } catch (e) {
-        console.error('Failed to save object transform:', e);
-        // Put the object back where it is actually persisted. The gizmo has already moved the
-        // group directly, and nothing else will undo that — leaving it there would mean the
-        // view and the stored placement disagree, and any comment pin placed next would be
-        // saved against the wrong frame. A fresh object identity is what makes the viewer's
-        // re-apply effect fire, since the values themselves are unchanged.
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === selectedFileId
-              ? {
-                  ...f,
-                  transform: {
-                    position: [...f.transform.position] as [number, number, number],
-                    rotation: [...f.transform.rotation] as [number, number, number],
-                  },
-                }
-              : f
-          )
-        );
+        saved = await saveObjectTransform(fileId, transform);
+      } finally {
+        release();
       }
+      // The person may have opened another file while the save was in flight; that file's
+      // timeline must not receive this step.
+      if (!saved || !before || fileId !== currentFileIdRef.current) return;
+      // drei fires mouseup (and so this commit) for a click on a handle that moved nothing.
+      // That re-save is harmless; an undo step that changes nothing is not — and recording one
+      // would clear the redo stack. The gizmo rebuilds `rotation` from a quaternion round trip,
+      // so a stationary click on a rotated model differs by float noise (or an equivalent Euler
+      // representation); samePlacement compares within tolerance, not exactly.
+      if (samePlacement(before, transform)) return;
+      // A fresh copy per save, so the viewer's identity-keyed re-apply effect always fires.
+      const put = (t: ObjectTransform) => async () => {
+        const copy: ObjectTransform = {
+          position: [...t.position] as [number, number, number],
+          rotation: [...t.rotation] as [number, number, number],
+        };
+        if (!(await saveObjectTransform(fileId, copy))) throw new Error('Transform save failed');
+      };
+      undoHistory.record({ domain: 'model', undo: put(before), redo: put(transform) });
     },
-    [selectedFileId]
+    [selectedFileId, saveObjectTransform, undoHistory]
   );
 
   // Fetch package details and the parent project's NAME for the breadcrumb.
@@ -1786,6 +1845,20 @@ export default function PortalPage() {
     };
   }, [activeTool, removeMeasure]);
 
+  // Calibrate's own points are a scale, not dimensions anyone asked to keep, and the effect above
+  // sweeps them out when the tool is left. Holding measure history while it is armed keeps them
+  // from being checkpointed as steps while they are on the list. What makes the add-then-remove
+  // net to NO step is the checkpoint's one-frame deferral: releasing the hold only schedules a
+  // checkpoint for the next animation frame, by which time the sweep's removals have landed and
+  // the list is back at its baseline. Declaring this AFTER the sweep (so the sweep's cleanup runs
+  // first) is belt-and-braces, not what the guarantee rests on. The hold also blocks undo and
+  // redo while Calibrate is armed: walking history then would run underneath the unrecorded span.
+  useEffect(() => {
+    if (activeTool !== 'calibrate') return;
+    holdMeasureHistory('calibrate', true);
+    return () => holdMeasureHistory('calibrate', false);
+  }, [activeTool, holdMeasureHistory]);
+
   // Escape abandons a pending gesture; Delete removes a selected measurement. One handler for
   // all three surfaces, because the store lives here and the 3D viewer has no keyboard surface
   // of its own. Keys are ignored while a field has focus — CalibrationPanel's own input handles
@@ -1808,6 +1881,8 @@ export default function PortalPage() {
 
   // Discard snapshots and reset transform when the selected file changes
   useEffect(() => {
+    // A new file is a new timeline: no step may replay onto a file it was not taken on.
+    undoHistory.clear();
     // A different file has to prove itself on screen again before the
     // indicator comes down.
     setViewerReady(false);
@@ -1833,7 +1908,7 @@ export default function PortalPage() {
     setTransformMode(null);
     setFocalLength(DEFAULT_FOCAL_LENGTH);
     setSectionActive(false);
-    setSectionSlots(emptySlots());
+    resetSectionSlots(emptySlots());
     setSelectedPlane(null);
     // Measurements are per-file and session-only: a reading taken on one drawing means nothing
     // on the next, and the scale it was read against has already changed underneath it.
@@ -1844,7 +1919,43 @@ export default function PortalPage() {
     // already belong to file B. Reset in one commit instead of depending on an effect chain.
     setCalibrationSpan(null);
     setMeasureError(null);
-  }, [selectedFileId, clearMeasure]);
+  }, [selectedFileId, clearMeasure, undoHistory, resetSectionSlots]);
+
+  // Markup sessions own the timeline (decided 2026-11-20, "stop at the session"): while one is
+  // open, undo and redo walk only that session's own steps. Everything recorded before it belongs
+  // to a view the session has frozen or taken over, and replaying it would change things the
+  // person cannot see — the model's placement and the cut planes sit behind the frozen snapshot.
+  // Measure steps are the session's own only where the session draws on the surface the
+  // measurements live on: a PDF's own session (the live page) and an image's own session (its
+  // measurements are reset when it starts). Everywhere else the session canvas covers them — a
+  // 3D or video snapshot, or an ATTACHMENT being marked up over a PDF or image, whose own
+  // measurements sit hidden underneath. 'markup' is always allowed. The older steps become
+  // undoable again after Done or Discard.
+  // Read through refs (assigned during render, like annotatingRef) so one registration is enough.
+  const sessionHidesMeasuresRef = useRef(false);
+  sessionHidesMeasuresRef.current = drawsOnCanvas && !measuresOnCanvas;
+  useEffect(
+    () =>
+      undoHistory.registerGuard((step) => {
+        if (!step || !annotatingRef.current) return false;
+        if (step.domain === 'model' || step.domain === 'section') return true;
+        return step.domain === 'measure' && sessionHidesMeasuresRef.current;
+      }),
+    [undoHistory]
+  );
+
+  useUndoShortcuts(undoHistory, {
+    beforeUndo: abandonPartialMeasure,
+    // Only a server step can fail. It stays on its stack, so pressing again retries.
+    onFailed: (outcome, direction) => {
+      const verb = direction === 'undo' ? 'undo' : 'redo';
+      toast(
+        outcome.step.domain === 'model'
+          ? `Couldn't ${verb} — the model position wasn't saved.`
+          : `Couldn't ${verb} that.`
+      );
+    },
+  });
 
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
@@ -2398,6 +2509,7 @@ export default function PortalPage() {
   const maxVersionNumber = versions.reduce((m, v) => Math.max(m, v.versionNumber), 0);
 
   return (
+    <UndoHistoryContext.Provider value={undoHistory}>
     <div className={`${manrope.variable} font-manrope h-screen flex flex-col bg-stiko-app p-3 gap-3`}>
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
       {/* Submitting a version is the sidebar's job now — it sits next to the
@@ -2851,5 +2963,6 @@ export default function PortalPage() {
         />
       )}
     </div>
+    </UndoHistoryContext.Provider>
   );
 }

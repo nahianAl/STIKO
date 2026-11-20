@@ -30,7 +30,8 @@ import { cuttingPlaneIds, defaultPoseFor, emptySlots, isClipped, type ModelBox, 
 import { boundsForUrl, type MeasuredModel } from '@/lib/modelMeasurement';
 import { registerModel } from '@/lib/model/modelCache';
 import ViewGizmo from './ViewGizmo';
-import TransformGizmo from './TransformGizmo';
+import TransformGizmo, { type GizmoPose } from './TransformGizmo';
+import { useUndoHistory } from '@/components/undo/UndoHistory';
 import SceneGround from './SceneGround';
 import SceneAxes from './SceneAxes';
 import SceneLighting from './SceneLighting';
@@ -1531,6 +1532,24 @@ export default function ModelViewerInner({
     if (object) planeObjects.current.set(id, object);
     else planeObjects.current.delete(id);
   }, []);
+  // A plane drag is an undo step. The pose is written straight back onto the widget's group —
+  // the scene owns it (see SectionPlaneWidget) and the frame loop reads world matrices off it,
+  // so the cut follows with no React render. Looked up by slot at undo time, not captured:
+  // widgets stay mounted while the tool is open, and closing the tool drops section steps.
+  // Read in this component's body, outside <Canvas>: R3F's reconciler does not carry DOM-tree
+  // context into the scene, but a closure built here does.
+  const undoHistory = useUndoHistory();
+  const recordPlanePose = useCallback((id: PlaneId, before: GizmoPose, after: GizmoPose) => {
+    if (!undoHistory) return;
+    const apply = (pose: GizmoPose) => {
+      const object = planeObjects.current.get(id);
+      if (!object) return;
+      object.position.copy(pose.position);
+      object.quaternion.copy(pose.quaternion);
+      object.updateMatrixWorld();
+    };
+    undoHistory.record({ domain: 'section', undo: () => apply(before), redo: () => apply(after) });
+  }, [undoHistory]);
   // Set for the duration of a gizmo drag, on either target. See TransformGizmo's doc comment
   // for why this exists.
   const gizmoDraggingRef = useRef(false);
@@ -1974,6 +1993,9 @@ export default function ModelViewerInner({
             target={planeObjects.current.get(selectedPlane)!}
             mode={transformMode}
             draggingRef={gizmoDraggingRef}
+            onDragEnd={(before, after) => {
+              if (selectedPlane !== null) recordPlanePose(selectedPlane, before, after);
+            }}
           />
         )}
         {transformMode && onTransformCommit && bounds && selectedPlane === null && transformRef.current && (

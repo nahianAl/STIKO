@@ -60,3 +60,32 @@ export function worldToModel(
   const v = new THREE.Vector3(...point).applyMatrix4(matrixFor(transform).invert());
   return [v.x, v.y, v.z];
 }
+
+function quaternionFor(rotation: ObjectTransform['rotation']): THREE.Quaternion {
+  return new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(rotation[0], rotation[1], rotation[2], 'XYZ'),
+  );
+}
+
+/**
+ * Whether two placements are the same to within floating-point noise.
+ *
+ * Exact component equality is wrong for rotation: the move/rotate gizmo rebuilds `rotation`
+ * from the group's quaternion on every mouse-up, and that quaternion-to-Euler round trip
+ * drifts by ~1e-16 and can also land on an equivalent representation ([0, PI, 0] comes back
+ * as [-PI, ~0, -PI]). So orientations are compared as quaternions, where `1 - |dot|` is ~0 for
+ * the same rotation (|dot| because q and -q are one rotation). That is used rather than
+ * `angleTo`, whose acos loses precision near zero.
+ *
+ * `epsilon` is absolute, in model units, and means two things. For each position component it
+ * is the largest difference still counted as the same (1e-9 units, far below anything a drag
+ * can produce). For rotation it bounds `1 - |dot|` of the two quaternions, which is
+ * ~theta^2 / 8 for a relative rotation of theta radians — so the default accepts differences up
+ * to about 9e-5 rad (0.005 degrees) and treats anything larger as a real rotation.
+ */
+export function samePlacement(a: ObjectTransform, b: ObjectTransform, epsilon = 1e-9): boolean {
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(a.position[i] - b.position[i]) > epsilon) return false;
+  }
+  return 1 - Math.abs(quaternionFor(a.rotation).dot(quaternionFor(b.rotation))) < epsilon;
+}

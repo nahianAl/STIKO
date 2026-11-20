@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   DEFAULT_TEXT_STYLE,
   MIN_TEXT_WIDTH,
@@ -13,6 +13,8 @@ import {
 } from '@/lib/markup/text';
 import { startGeometry, updateGeometry, isBoxTool, type DraftTool } from '@/lib/markup/draft';
 import { pickId, mergeSelection } from '@/lib/markup/selection';
+import { useUndoHistory } from '@/components/undo/UndoHistory';
+import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
 
 export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'image';
 export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'eraser';
@@ -66,7 +68,15 @@ export interface MarkupSelection {
 const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'line', 'arrow', 'rect', 'ellipse', 'cloud']);
 
 export function useAnnotationObjects() {
-  const [objects, setObjects] = useState<AnnotationObject[]>([]);
+  // Checkpointed: every quiet moment (no pointer held, no text editor open) with a net change
+  // to the list is one undo step. The surfaces need no undo code of their own.
+  const history = useUndoHistory();
+  const {
+    state: objects,
+    setState: setObjects,
+    reset: resetObjects,
+    hold: holdHistory,
+  } = useCheckpointedState<AnnotationObject[]>([], history, 'markup');
   const [draft, setDraft] = useState<AnnotationObject | null>(null);
   // Ordered; the first id is the "primary" the toolbar reflects. A list rather than one id so
   // Shift+click and the selection box can hold several objects at once.
@@ -78,6 +88,18 @@ export function useAnnotationObjects() {
   const pick = useCallback((id: string, additive: boolean) => setSelectedIds((ids) => pickId(ids, id, additive)), []);
   /** The selection box's hits: see mergeSelection. */
   const selectMany = useCallback((ids: string[], additive: boolean) => setSelectedIds((cur) => mergeSelection(cur, ids, additive)), []);
+  // Undo and redo replace `objects` wholesale, so a selected id can stop existing. Selection is
+  // not history, but a Transformer pointed at a missing node would hang over nothing — keep
+  // only ids that are still there. Returns the same array when nothing went, so no re-render.
+  useEffect(() => {
+    setSelectedIds((ids) => {
+      const live = ids.filter((id) => objects.some((o) => o.id === id));
+      return live.length === ids.length ? ids : live;
+    });
+  }, [objects]);
+
+  // A surface that goes away takes its objects with it; their steps would replay onto nothing.
+  useEffect(() => () => history?.dropDomain('markup'), [history]);
   const idRef = useRef(0);
   const draftRef = useRef<AnnotationObject | null>(null);
 
@@ -125,7 +147,7 @@ export function useAnnotationObjects() {
     setObjects((prev) => [...prev, obj]);
     setSelectedIds([obj.id]);
     return obj.id;
-  }, []);
+  }, [setObjects]);
 
   /**
    * Creates the text object *before* anything is typed, so the editor can be bound to a real
@@ -149,7 +171,7 @@ export function useAnnotationObjects() {
       setSelectedIds([o.id]);
       return o.id;
     },
-    []
+    [setObjects]
   );
 
   const addImage = useCallback((p: { x: number; y: number }, src: string, width: number, height: number) => {
@@ -158,17 +180,17 @@ export function useAnnotationObjects() {
     setObjects((prev) => [...prev, o]);
     setSelectedIds([o.id]);
     return o.id;
-  }, []);
+  }, [setObjects]);
 
   const updateObject = useCallback((id: string, patch: Partial<AnnotationObject>) => {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
-  }, []);
+  }, [setObjects]);
 
   /** Write-through from the text editor. Separate from updateObject so the editor cannot
    *  accidentally clobber geometry it does not own. */
   const updateText = useCallback((id: string, text: string) => {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, text } : o)));
-  }, []);
+  }, [setObjects]);
 
   /**
    * Restyle an existing object from the main toolbar. A colour recolours anything but an image.
@@ -184,7 +206,7 @@ export function useAnnotationObjects() {
         return next;
       })
     );
-  }, []);
+  }, [setObjects]);
 
   /** Restyle every selected object (see applyStyle for what each type takes). */
   const applyStyleToSelected = useCallback((patch: { color?: string; strokeWidth?: number }) => {
@@ -211,14 +233,14 @@ export function useAnnotationObjects() {
         return next;
       })
     );
-  }, []);
+  }, [setObjects]);
 
   /** A side-handle drag: the box is now this wide and wraps. An auto-width box becomes fixed. */
   const setTextWidth = useCallback((id: string, width: number) => {
     setObjects((prev) =>
       prev.map((o) => (o.id === id && o.type === 'text' ? { ...o, width: Math.max(MIN_TEXT_WIDTH, width), autoWidth: false } : o))
     );
-  }, []);
+  }, [setObjects]);
 
   /**
    * Folds a text object's transform scale into its font size and wrap width, resetting the
@@ -255,13 +277,13 @@ export function useAnnotationObjects() {
         })
       );
     },
-    []
+    [setObjects]
   );
 
   const deleteObject = useCallback((id: string) => {
     setObjects((prev) => prev.filter((o) => o.id !== id));
     setSelectedIds((ids) => ids.filter((i) => i !== id));
-  }, []);
+  }, [setObjects]);
 
   /** Delete every selected object. */
   const deleteSelected = useCallback(() => {
@@ -269,11 +291,15 @@ export function useAnnotationObjects() {
     const drop = new Set(selectedIds);
     setObjects((prev) => prev.filter((o) => !drop.has(o.id)));
     setSelectedIds([]);
-  }, [selectedIds]);
+  }, [selectedIds, setObjects]);
 
+  /**
+   * End of an annotation session (Done or Discard). Not a step: the objects are captured or
+   * discarded, and reset() drops every markup step so none replays onto the next session.
+   */
   const clear = useCallback(() => {
-    setObjects([]); setDraft(null); setSelectedIds([]); draftRef.current = null;
-  }, []);
+    resetObjects([]); setDraft(null); setSelectedIds([]); draftRef.current = null;
+  }, [resetObjects]);
 
   const hasObjects = useCallback(() => objects.length > 0, [objects]);
 
@@ -300,6 +326,6 @@ export function useAnnotationObjects() {
     startDraw, moveDraw, endDraw, addText, addImage,
     updateObject, updateText, applyStyle, applyStyleToSelected, bakeTextTransform,
     updateTextStyle, setTextWidth,
-    deleteObject, deleteSelected, clear, hasObjects,
+    deleteObject, deleteSelected, clear, hasObjects, holdHistory,
   };
 }

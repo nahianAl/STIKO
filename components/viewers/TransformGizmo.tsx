@@ -9,6 +9,12 @@ import type { ObjectTransform } from '@/lib/objectTransform';
 import useShiftKey from '@/components/markup/useShiftKey';
 import { snapEulerToRightAngles } from '@/lib/markup/rotationSnap';
 
+/** A target's pose, cloned — the gizmo mutates the live vectors in place during a drag. */
+export interface GizmoPose {
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+}
+
 /**
  * Move/rotate handles for whatever object is handed in — the loaded model, or one
  * cross-section plane.
@@ -25,6 +31,7 @@ export default function TransformGizmo({
   mode,
   onCommit,
   draggingRef,
+  onDragEnd,
 }: {
   target: THREE.Object3D;
   mode: 'translate' | 'rotate';
@@ -36,10 +43,17 @@ export default function TransformGizmo({
    * dragged.
    */
   draggingRef?: React.MutableRefObject<boolean>;
+  /**
+   * The pose at drag start and at release, for undo. Not called for a click that moved nothing.
+   * Used for planes, whose pose is session-only; the model's placement goes through onCommit
+   * and is recorded by the page once the save succeeds.
+   */
+  onDragEnd?: (before: GizmoPose, after: GizmoPose) => void;
 }) {
   const defaultControls = useThree((state) => state.controls);
   const controlsRef = useRef<TransformControlsImpl>(null);
   const shiftHeld = useShiftKey();
+  const dragStartRef = useRef<GizmoPose | null>(null);
 
   useEffect(() => {
     return () => {
@@ -91,10 +105,19 @@ export default function TransformGizmo({
       // the plane and dismissed the gizmo mid-interaction.
       onMouseDown={() => {
         if (draggingRef) draggingRef.current = true;
+        dragStartRef.current = { position: target.position.clone(), quaternion: target.quaternion.clone() };
       }}
       // Auto-save on release. drei suspends the default OrbitControls for the duration
       // of a drag, so orbiting and dragging cannot fight each other.
       onMouseUp={() => {
+        const start = dragStartRef.current;
+        dragStartRef.current = null;
+        if (onDragEnd && start) {
+          const end = { position: target.position.clone(), quaternion: target.quaternion.clone() };
+          if (!start.position.equals(end.position) || !start.quaternion.equals(end.quaternion)) {
+            onDragEnd(start, end);
+          }
+        }
         if (onCommit) {
           // Euler XYZ to match how the columns are read and written.
           const euler = new THREE.Euler().setFromQuaternion(target.quaternion, 'XYZ');
