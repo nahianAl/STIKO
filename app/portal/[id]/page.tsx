@@ -41,6 +41,7 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { UndoHistoryContext, useUndoHistoryRoot, useUndoShortcuts } from '@/components/undo/UndoHistory';
+import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -429,7 +430,13 @@ export default function PortalPage() {
   // Only the FLAGS live here. Each plane's position and rotation live on its Object3D inside
   // the canvas and are never read back — see lib/crossSection for why.
   const [sectionActive, setSectionActive] = useState(false);
-  const [sectionSlots, setSectionSlots] = useState<SectionSlots>(emptySlots);
+  // Checkpointed: switching a plane on/off and flipping it are undo steps. Plane DRAGS are
+  // recorded separately by ModelViewerInner, since a pose lives on the scene object, not here.
+  const {
+    state: sectionSlots,
+    setState: setSectionSlots,
+    reset: resetSectionSlots,
+  } = useCheckpointedState<SectionSlots>(emptySlots, undoHistory, 'section');
   const [selectedPlane, setSelectedPlane] = useState<PlaneId | null>(null);
 
   const [parts, setParts] = useState<PartNode[]>([]);
@@ -944,14 +951,15 @@ export default function PortalPage() {
       return;
     }
     setSectionActive(false);
-    setSectionSlots(emptySlots());
+    // Closing the tool is not a step, and drops every section step: the planes are gone.
+    resetSectionSlots(emptySlots());
     setSelectedPlane(null);
     setTransformMode(null);
-  }, [sectionActive]);
+  }, [sectionActive, resetSectionSlots]);
 
   const handlePlaneToggle = useCallback((id: PlaneId) => {
     setSectionSlots((slots) => togglePlane(slots, id));
-  }, []);
+  }, [setSectionSlots]);
 
   // A hidden plane cannot be dragged, so hiding the selected one has to release it — otherwise
   // the gizmo hangs in mid-air over an invisible target. Driven off the COMMITTED slots rather
@@ -976,7 +984,7 @@ export default function PortalPage() {
 
   const handlePlaneFlip = useCallback((id: PlaneId) => {
     setSectionSlots((slots) => setPlaneFlipped(slots, id, !slots[id].flipped));
-  }, []);
+  }, [setSectionSlots]);
 
   // Clicking a plane arms Move on it, per the tool's design: selection and the move gizmo are
   // one gesture. Switching to Rotate afterwards keeps the same plane.
@@ -1851,7 +1859,7 @@ export default function PortalPage() {
     setTransformMode(null);
     setFocalLength(DEFAULT_FOCAL_LENGTH);
     setSectionActive(false);
-    setSectionSlots(emptySlots());
+    resetSectionSlots(emptySlots());
     setSelectedPlane(null);
     // Measurements are per-file and session-only: a reading taken on one drawing means nothing
     // on the next, and the scale it was read against has already changed underneath it.
@@ -1862,7 +1870,7 @@ export default function PortalPage() {
     // already belong to file B. Reset in one commit instead of depending on an effect chain.
     setCalibrationSpan(null);
     setMeasureError(null);
-  }, [selectedFileId, clearMeasure, undoHistory]);
+  }, [selectedFileId, clearMeasure, undoHistory, resetSectionSlots]);
 
   useUndoShortcuts(undoHistory, {
     beforeUndo: abandonPartialMeasure,
