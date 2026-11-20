@@ -5,6 +5,7 @@ import {
   IDENTITY_TRANSFORM,
   isValidTransform,
   modelToWorld,
+  samePlacement,
   worldToModel,
 } from '../../lib/objectTransform.ts';
 
@@ -94,4 +95,37 @@ test('validation rejects anything that would poison the column', () => {
   for (const value of bad) {
     assert.equal(isValidTransform(value), false, `accepted ${JSON.stringify(value)}`);
   }
+});
+
+test('samePlacement: an identical placement is the same', () => {
+  const t = { position: [1, -2, 3], rotation: [0.3, 0.4, 0.5] };
+  assert.equal(samePlacement(t, { position: [1, -2, 3], rotation: [0.3, 0.4, 0.5] }), true);
+});
+
+test('samePlacement: the gizmo quaternion-to-Euler round trip drift is not a change', () => {
+  // TransformGizmo rebuilds `rotation` from the group's quaternion on every mouse-up, even in
+  // translate mode, so a stationary click on a rotated model reports ~1e-16 of drift.
+  const a = { position: [4, 5, 6], rotation: [0.3, 0.4, 0.5] };
+  const b = { position: [4, 5, 6], rotation: [0.2999999999999999, 0.3999999999999999, 0.5] };
+  assert.equal(samePlacement(a, b), true);
+});
+
+test('samePlacement: an equivalent Euler representation is the same orientation', () => {
+  // A half turn about Y comes back from the round trip as [-PI, ~0, -PI]: different numbers,
+  // identical rotation.
+  const a = { position: [0, 0, 0], rotation: [0, Math.PI, 0] };
+  const b = { position: [0, 0, 0], rotation: [-Math.PI, 1.2e-16, -Math.PI] };
+  assert.equal(samePlacement(a, b), true);
+});
+
+test('samePlacement: a real rotation difference is a change', () => {
+  const a = { position: [0, 0, 0], rotation: [0.3, 0.4, 0.5] };
+  const b = { position: [0, 0, 0], rotation: [0.3, 0.41, 0.5] };
+  assert.equal(samePlacement(a, b), false);
+});
+
+test('samePlacement: a real position difference is a change', () => {
+  const a = { position: [0, 0, 0], rotation: [0.3, 0.4, 0.5] };
+  const b = { position: [0, 0.001, 0], rotation: [0.3, 0.4, 0.5] };
+  assert.equal(samePlacement(a, b), false);
 });

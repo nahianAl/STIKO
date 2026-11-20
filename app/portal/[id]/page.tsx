@@ -42,7 +42,7 @@ import Button from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { UndoHistoryContext, useUndoHistoryRoot, useUndoShortcuts } from '@/components/undo/UndoHistory';
 import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
-import type { ObjectTransform } from '@/lib/objectTransform';
+import { samePlacement, type ObjectTransform } from '@/lib/objectTransform';
 
 // AnnotationCanvas uses react-konva, which cannot be server-rendered (same reason
 // PDFKonvaViewer is dynamically imported in ViewerContainer).
@@ -1072,9 +1072,11 @@ export default function PortalPage() {
       // timeline must not receive this step.
       if (!saved || !before || fileId !== currentFileIdRef.current) return;
       // drei fires mouseup (and so this commit) for a click on a handle that moved nothing.
-      // That re-save is harmless; an undo step that changes nothing is not.
-      const same = (a: readonly number[], b: readonly number[]) => a.every((v, i) => v === b[i]);
-      if (same(before.position, transform.position) && same(before.rotation, transform.rotation)) return;
+      // That re-save is harmless; an undo step that changes nothing is not — and recording one
+      // would clear the redo stack. The gizmo rebuilds `rotation` from a quaternion round trip,
+      // so a stationary click on a rotated model differs by float noise (or an equivalent Euler
+      // representation); samePlacement compares within tolerance, not exactly.
+      if (samePlacement(before, transform)) return;
       // A fresh copy per save, so the viewer's identity-keyed re-apply effect always fires.
       const put = (t: ObjectTransform) => async () => {
         const copy: ObjectTransform = {
