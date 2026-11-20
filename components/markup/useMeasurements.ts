@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   beginGesture,
   addPoint as addGesturePoint,
@@ -9,6 +9,8 @@ import {
   type PendingGesture,
 } from '@/lib/measure/gesture';
 import { UNPAGED } from '@/lib/measure/calibration';
+import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
+import type { UndoHistory } from '@/lib/undo/history';
 
 export interface Measurement extends MeasurementDraft {
   id: string;
@@ -32,10 +34,22 @@ export interface Measurement extends MeasurementDraft {
  * Measurements are session-only, exactly like markup: the way to keep one is to snapshot it into
  * a comment.
  */
-export function useMeasurements() {
-  const [measurements, setMeasurements] = useState<Measurement[]>([]);
+export function useMeasurements(history: UndoHistory | null = null) {
+  // Checkpointed: placing, erasing and recolouring a measurement are undo steps. Passed in rather
+  // than read from context because the portal page creates this store ABOVE its own provider.
+  const {
+    state: measurements,
+    setState: setMeasurements,
+    reset: resetMeasurements,
+    hold: holdHistory,
+  } = useCheckpointedState<Measurement[]>([], history, 'measure');
   const [pending, setPending] = useState<PendingGesture | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // An undo can remove the selected measurement; a highlight on nothing would turn the next
+  // Delete into a no-op that looks like a bug.
+  useEffect(() => {
+    setSelectedId((cur) => (cur && !measurements.some((m) => m.id === cur) ? null : cur));
+  }, [measurements]);
   const idRef = useRef(0);
 
   // The pending gesture is mirrored in a ref and READ from the ref, never from inside a state
@@ -106,7 +120,7 @@ export function useMeasurements() {
       setMeasurements((prev) => [...prev, committed]);
       return committed;
     },
-    [setGesture]
+    [setGesture, setMeasurements]
   );
 
   const cancel = useCallback(() => setGesture(null), [setGesture]);
@@ -114,17 +128,29 @@ export function useMeasurements() {
   const remove = useCallback((id: string) => {
     setMeasurements((prev) => prev.filter((m) => m.id !== id));
     setSelectedId((current) => (current === id ? null : current));
-  }, []);
+  }, [setMeasurements]);
 
   /** Restyle one measurement. The colour picker's route to a selected dimension. */
   const recolor = useCallback((id: string, color: string) => {
     setMeasurements((prev) => prev.map((m) => (m.id === id ? { ...m, color } : m)));
-  }, []);
+  }, [setMeasurements]);
 
+  /** Not a step: a file switch or a fresh freeze invalidates the space the points live in. */
   const clear = useCallback(() => {
-    setMeasurements([]);
+    resetMeasurements([]);
     setGesture(null);
     setSelectedId(null);
+  }, [setGesture, resetMeasurements]);
+
+  /**
+   * Undo between the first and second click of a measurement only abandons the half-placed
+   * gesture (restarting it, as Escape does) and consumes no step. True when it did.
+   */
+  const abandonPartial = useCallback((): boolean => {
+    const current = pendingRef.current;
+    if (!current || current.points.length === 0) return false;
+    setGesture(beginGesture(current.kind, current.page));
+    return true;
   }, [setGesture]);
 
   return {
@@ -140,5 +166,7 @@ export function useMeasurements() {
     remove,
     recolor,
     clear,
+    abandonPartial,
+    holdHistory,
   };
 }

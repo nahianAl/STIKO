@@ -277,7 +277,7 @@ export default function PortalPage() {
 
   // Measure tool state. The store is session-only, exactly like markup: nothing here survives a
   // file switch, and the way to keep a reading is to snapshot it into a comment.
-  const measure = useMeasurements();
+  const measure = useMeasurements(undoHistory);
   // The store's callbacks are individually stable, but the object holding them is new every
   // render. The effects below therefore depend on the callbacks BY NAME, pulled out here:
   // written as `measure.begin` in a dependency array, react-hooks/exhaustive-deps asks for the
@@ -296,6 +296,8 @@ export default function PortalPage() {
     clear: clearMeasure,
     remove: removeMeasure,
     recolor: recolorMeasure,
+    abandonPartial: abandonPartialMeasure,
+    holdHistory: holdMeasureHistory,
   } = measure;
   // The page PDFKonvaViewer is showing. Mirrored here rather than pulled off its imperative
   // handle because two things RENDER from it — the toolbar's disabled state and the per-page
@@ -1790,6 +1792,16 @@ export default function PortalPage() {
     };
   }, [activeTool, removeMeasure]);
 
+  // Calibrate's own points are a scale, not dimensions anyone asked to keep, and the effect above
+  // sweeps them out when the tool is left. Holding measure history while it is armed makes that
+  // add-then-remove net to no step. Declared AFTER the sweep on purpose: passive cleanups run in
+  // declaration order, so the sweep lands before the release triggers a checkpoint.
+  useEffect(() => {
+    if (activeTool !== 'calibrate') return;
+    holdMeasureHistory('calibrate', true);
+    return () => holdMeasureHistory('calibrate', false);
+  }, [activeTool, holdMeasureHistory]);
+
   // Escape abandons a pending gesture; Delete removes a selected measurement. One handler for
   // all three surfaces, because the store lives here and the 3D viewer has no keyboard surface
   // of its own. Keys are ignored while a field has focus — CalibrationPanel's own input handles
@@ -1852,7 +1864,9 @@ export default function PortalPage() {
     setMeasureError(null);
   }, [selectedFileId, clearMeasure, undoHistory]);
 
-  useUndoShortcuts(undoHistory, {});
+  useUndoShortcuts(undoHistory, {
+    beforeUndo: abandonPartialMeasure,
+  });
 
   const handleSelectVersion = (versionId: string) => {
     setSelectedVersionId(versionId);
