@@ -1,6 +1,8 @@
-// Draws one pdf.js page into a canvas. Shared by the scroll view and the sidebar thumbnails.
-import type { PDFPageProxy } from 'pdfjs-dist';
+// Draws one pdf.js page into a canvas. Shared by the scroll view, the sidebar thumbnails and the
+// single-page detail render.
+import type { PDFPageProxy, PageViewport } from 'pdfjs-dist';
 import { cappedRenderScale } from './viewMode';
+import { detailRenderParams, type Rect } from './detailTile';
 
 export interface PageRenderJob {
   promise: Promise<void>;
@@ -14,17 +16,13 @@ export function isRenderCancelled(err: unknown): boolean {
 }
 
 /**
- * Draw `page` into `target` at `cssWidth` CSS pixels wide (× `dpr` device pixels). Renders
- * off-screen and copies on completion, so a re-render after a zoom never blanks the visible canvas.
- * The scale is capped to stay within browser canvas limits; CSS stretches the result past that.
+ * Render `viewport` off-screen at width×height and copy into `target` on completion, so a
+ * re-render never blanks the visible canvas.
  */
-export function renderPageToCanvas(page: PDFPageProxy, target: HTMLCanvasElement, cssWidth: number, dpr: number): PageRenderJob {
-  const base = page.getViewport({ scale: 1 });
-  const scale = cappedRenderScale(base.width, base.height, (cssWidth * dpr) / base.width);
-  const viewport = page.getViewport({ scale });
+function drawOffscreen(page: PDFPageProxy, viewport: PageViewport, width: number, height: number, target: HTMLCanvasElement): PageRenderJob {
   const off = document.createElement('canvas');
-  off.width = Math.max(1, Math.floor(viewport.width));
-  off.height = Math.max(1, Math.floor(viewport.height));
+  off.width = Math.max(1, Math.floor(width));
+  off.height = Math.max(1, Math.floor(height));
   const ctx = off.getContext('2d');
   if (!ctx) return { promise: Promise.reject(new Error('2D canvas unavailable')), cancel: () => {} };
 
@@ -37,6 +35,30 @@ export function renderPageToCanvas(page: PDFPageProxy, target: HTMLCanvasElement
     })
     .finally(() => releaseCanvas(off));
   return { promise, cancel: () => task.cancel() };
+}
+
+/**
+ * Draw `page` into `target` at `cssWidth` CSS pixels wide (× `dpr` device pixels). The scale is
+ * capped to stay within browser canvas limits; CSS stretches the result past that, and the detail
+ * render (renderPageRegion) covers the visible part at full resolution.
+ */
+export function renderPageToCanvas(page: PDFPageProxy, target: HTMLCanvasElement, cssWidth: number, dpr: number): PageRenderJob {
+  const base = page.getViewport({ scale: 1 });
+  const scale = cappedRenderScale(base.width, base.height, (cssWidth * dpr) / base.width);
+  const viewport = page.getViewport({ scale });
+  return drawOffscreen(page, viewport, viewport.width, viewport.height, target);
+}
+
+/**
+ * Draw only `region` of `page` — CSS px relative to the page's top-left, with the page displayed
+ * `displayWidth` CSS px wide — into `target` at screen resolution. `target` ends up
+ * ceil(region × dpr) device pixels (dpr lowered past the canvas pixel cap).
+ */
+export function renderPageRegion(page: PDFPageProxy, target: HTMLCanvasElement, region: Rect, displayWidth: number, dpr: number): PageRenderJob {
+  const base = page.getViewport({ scale: 1 });
+  const p = detailRenderParams(base.width, region, displayWidth, dpr);
+  const viewport = page.getViewport({ scale: p.scale, offsetX: p.offsetX, offsetY: p.offsetY });
+  return drawOffscreen(page, viewport, p.canvasWidth, p.canvasHeight, target);
 }
 
 /** Free a canvas's pixel buffer. A 0×0 canvas holds nothing, which matters on iOS. */
