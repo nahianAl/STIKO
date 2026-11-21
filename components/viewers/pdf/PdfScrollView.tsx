@@ -10,10 +10,15 @@ import {
   anchoredScroll,
   clampZoom,
   fitWidthScale,
+  isPointHidden,
   layoutPages,
   mostVisiblePage,
+  PIN_MARGIN,
   pagesToRender,
+  scrollToCentre,
   scrollTopForPage,
+  type JumpTarget,
+  type PageLayout,
   type PageSize,
 } from '@/lib/pdf/viewMode';
 import { isRenderCancelled, releaseCanvas, renderPageRegion, renderPageToCanvas, type PageRenderJob } from '@/lib/pdf/pageRender';
@@ -24,11 +29,25 @@ const PADDING = 24; // CSS px around the column
 const SETTLE_MS = 150; // redraw sharp this long after the last zoom change
 const NO_COMMENTS: Comment[] = [];
 
+/** Scroll `el` so the pin is centred, unless it is already on screen. */
+function revealIn(el: HTMLDivElement, layout: PageLayout, t: JumpTarget, behavior: ScrollBehavior): void {
+  const p = layout.pages[t.page - 1];
+  if (!p) return;
+  const colWidth = Math.max(layout.contentWidth, el.clientWidth);
+  const x = (colWidth - p.width) / 2 + (t.xPct / 100) * p.width;
+  const y = p.top + (t.yPct / 100) * p.height;
+  if (!isPointHidden(x - el.scrollLeft, y - el.scrollTop, el.clientWidth, el.clientHeight, PIN_MARGIN)) return;
+  const c = scrollToCentre(x, y, el.clientWidth, el.clientHeight);
+  el.scrollTo({ left: c.left, top: c.top, behavior });
+}
+
 export interface PdfScrollViewHandle {
   scrollToPage: (page: number, behavior?: ScrollBehavior) => void;
   /** Add `delta` to the zoom (the single-page buttons' additive step), anchored on the viewport centre. */
   zoomStep: (delta: number) => void;
   fitWidth: () => void;
+  /** Bring a pin (percent of `page`) on screen, centred, unless it already is. Queued until first layout. */
+  revealPoint: (page: number, xPct: number, yPct: number) => void;
 }
 
 interface PdfScrollViewProps {
@@ -68,6 +87,10 @@ export default function PdfScrollView({
   const committedScaleRef = useRef<number | null>(null);
   const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
   const initialPageRef = useRef(initialPage);
+  // A revealPoint that arrived before the first layout; applied in place of the initial page.
+  const pendingRevealRef = useRef<JumpTarget | null>(null);
+  // `ready` as a ref, for the imperative handle.
+  const readyRef = useRef(false);
 
   // Parent callbacks through refs, so memoised pages never re-render for a new function identity.
   const cbs = useRef({ onCommentPinClick, onCommentPlace, onCurrentPageChange, onScaleChange, onFirstPageDrawn });
@@ -174,7 +197,11 @@ export default function PdfScrollView({
     if (!el || !layout) return;
     if (!ready) {
       el.scrollTop = scrollTopForPage(layout, initialPageRef.current, GAP);
+      const reveal = pendingRevealRef.current;
+      pendingRevealRef.current = null;
+      if (reveal) revealIn(el, layout, reveal, 'auto');
       setScrollPos({ top: el.scrollTop, scale });
+      readyRef.current = true;
       setReady(true);
       return;
     }
@@ -290,6 +317,15 @@ export default function PdfScrollView({
       if (!el) return;
       fitModeRef.current = true;
       applyScale(fitWidthScale(pageSizes, el.clientWidth, PADDING), el.clientWidth / 2, el.clientHeight / 2);
+    },
+    revealPoint: (page, xPct, yPct) => {
+      const el = scrollRef.current;
+      const s = scaleRef.current;
+      if (!el || s === null || !readyRef.current) {
+        pendingRevealRef.current = { page, xPct, yPct };
+        return;
+      }
+      revealIn(el, layoutPages(pageSizes, s, GAP, PADDING), { page, xPct, yPct }, 'smooth');
     },
   }), [pageSizes, applyScale]);
 

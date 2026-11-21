@@ -28,7 +28,16 @@ import PageArrows from './pdf/PageArrows';
 import PdfScrollView, { type PdfScrollViewHandle } from './pdf/PdfScrollView';
 import PdfSidebar from './pdf/PdfSidebar';
 import { usePageSizes } from './pdf/usePageSizes';
-import { browserStorage, effectiveMode, readStoredMode, writeStoredMode } from '@/lib/pdf/viewMode';
+import {
+  browserStorage,
+  commentJumpTarget,
+  effectiveMode,
+  isPointHidden,
+  PIN_MARGIN,
+  readStoredMode,
+  stagePosCentring,
+  writeStoredMode,
+} from '@/lib/pdf/viewMode';
 import { intersectRect, needsDetail, snapOutward, type Rect as PageRect } from '@/lib/pdf/detailTile';
 import { isRenderCancelled, releaseCanvas, renderPageRegion, type PageRenderJob } from '@/lib/pdf/pageRender';
 
@@ -189,6 +198,10 @@ function PDFKonvaViewer(
     const measureLayerRef = useRef<Konva.Layer>(null);
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+    // The sizes the current `stageScale`/`stagePos` were last fitted to. The fit effect sets them from
+    // an effect, so in the commit that brings a new page size, other effects still see the previous
+    // values; the comment jump waits until this matches.
+    const [fitted, setFitted] = useState<{ pageSize: { width: number; height: number }; containerSize: { width: number; height: number } } | null>(null);
     // The on-screen part of the page, redrawn at screen resolution once zoom/pan settles
     // (lib/pdf/detailTile.ts). `rect` is in PAGE pixels, so it stays aligned through later zooms
     // and pans and is only stretched until the next one lands. Tagged with its page so a page
@@ -508,7 +521,60 @@ function PDFKonvaViewer(
         x: (containerSize.width - pageSize.width * fitScale) / 2,
         y: (containerSize.height - pageSize.height * fitScale) / 2,
       });
+      setFitted({ pageSize, containerSize });
     }, [pageSize, containerSize]);
+
+    // Clicking a tagged comment (panel, pin or Brief citation) brings its page and pin into view.
+    // Once per activeCommentId: paging away afterwards is never undone. Waits — without marking
+    // the comment handled — for the document, the comments and the page layout to exist, which
+    // is how a Brief citation that switched files still lands. A markup/measure session locks the
+    // page, so a click during one is marked handled and ignored.
+    const jumpedForRef = useRef<string | null>(null);
+    useEffect(() => {
+      if (!activeCommentId) {
+        jumpedForRef.current = null;
+        return;
+      }
+      if (jumpedForRef.current === activeCommentId) return;
+      if (annotating) {
+        jumpedForRef.current = activeCommentId;
+        return;
+      }
+      const comment = comments.find((c) => c.id === activeCommentId);
+      if (!comment || !numPages) return; // not loaded yet: try again when it is
+      const target = commentJumpTarget(comment, numPages);
+      if (!target) {
+        jumpedForRef.current = activeCommentId;
+        return;
+      }
+      if (mode === 'scroll') {
+        if (!pageSizes) return; // the scroll view mounts once page sizes exist
+        scrollViewRef.current?.revealPoint(target.page, target.xPct, target.yPct);
+      } else if (target.page !== currentPage) {
+        // A page turn re-fits the whole sheet (the fit effect above), so the pin is on screen.
+        setCurrentPage(target.page);
+      } else {
+        // Page not laid out yet — or `pageSize` / the stage still describe another sheet, or were fitted
+        // by an effect that has not committed (`fitted`): try again when they have.
+        if (!pageSize.width || !containerSize.width) return;
+        if (pageImagePage !== currentPage) return;
+        if (fitted?.pageSize !== pageSize || fitted.containerSize !== containerSize) return;
+        const sx = stagePos.x + (target.xPct / 100) * pageSize.width * stageScale;
+        const sy = stagePos.y + (target.yPct / 100) * pageSize.height * stageScale;
+        if (isPointHidden(sx, sy, containerSize.width, containerSize.height, PIN_MARGIN)) {
+          setStagePos(stagePosCentring({
+            xPct: target.xPct,
+            yPct: target.yPct,
+            pageWidth: pageSize.width,
+            pageHeight: pageSize.height,
+            scale: stageScale,
+            containerWidth: containerSize.width,
+            containerHeight: containerSize.height,
+          }));
+        }
+      }
+      jumpedForRef.current = activeCommentId;
+    }, [activeCommentId, annotating, comments, numPages, mode, pageSizes, currentPage, pageImagePage, pageSize, containerSize, fitted, stagePos, stageScale]);
 
     // Container resize observer
     useEffect(() => {
