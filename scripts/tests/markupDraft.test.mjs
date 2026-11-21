@@ -10,6 +10,7 @@ import {
   constrainBox,
   constrainSegment,
   normalizedBox,
+  polylineExtent,
 } from '../../lib/markup/draft.ts';
 
 const close = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
@@ -106,4 +107,30 @@ test('normalizedBox describes the box a negative-extent draft occupies', () => {
   assert.deepEqual(normalizedBox(30, 20), { left: 0, top: 0, width: 30, height: 20 });
   assert.deepEqual(normalizedBox(-30, 20), { left: -30, top: 0, width: 30, height: 20 });
   assert.deepEqual(normalizedBox(-30, -20), { left: -30, top: -20, width: 30, height: 20 });
+});
+
+test('highlight starts like freehand', () => {
+  assert.deepEqual(startGeometry('highlight', { x: 3, y: 4 }), { points: [3, 4], x: 0, y: 0, width: 0, height: 0 });
+});
+
+test('highlight without Shift appends points like freehand', () => {
+  const g = startGeometry('highlight', { x: 0, y: 0 });
+  const g2 = updateGeometry('highlight', updateGeometry('highlight', g, { x: 5, y: 1 }, false), { x: 9, y: 2 }, false);
+  assert.deepEqual(g2.points, [0, 0, 5, 1, 9, 2]);
+});
+
+test('highlight with Shift is a straight band from the start, snapped to 45 degrees', () => {
+  let g = startGeometry('highlight', { x: 0, y: 0 });
+  g = updateGeometry('highlight', g, { x: 5, y: 3 }, false);
+  g = updateGeometry('highlight', g, { x: 100, y: 4 }, true);
+  assert.equal(g.points.length, 4);
+  assert.equal(g.points[0], 0);
+  assert.equal(g.points[1], 0);
+  assert.ok(Math.abs(g.points[3]) < 1e-9); // snapped horizontal
+  assert.ok(Math.abs(g.points[2] - Math.hypot(100, 4)) < 1e-9); // length kept
+});
+
+test('polylineExtent: furthest distance from the first point', () => {
+  assert.equal(polylineExtent([0, 0]), 0);
+  assert.equal(polylineExtent([0, 0, 3, 4, 1, 1]), 5);
 });

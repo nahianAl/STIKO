@@ -5,7 +5,7 @@
 // both delegate here, so the constraint behaves identically on a 3D snapshot and on a PDF.
 // Pure arithmetic, no React and no '@/' imports.
 
-export type DraftTool = 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud';
+export type DraftTool = 'freehand' | 'highlight' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud';
 
 /** Tools drawn by dragging out a bounding box. They share all of their gesture maths. */
 export const BOX_TOOLS = ['rect', 'ellipse', 'cloud'] as const;
@@ -40,7 +40,7 @@ export interface DraftGeometry {
 }
 
 export function startGeometry(tool: DraftTool, p: Point): DraftGeometry {
-  if (tool === 'freehand') return { points: [p.x, p.y], x: 0, y: 0, width: 0, height: 0 };
+  if (tool === 'freehand' || tool === 'highlight') return { points: [p.x, p.y], x: 0, y: 0, width: 0, height: 0 };
   if (isSegmentTool(tool)) return { points: [p.x, p.y, p.x, p.y], x: 0, y: 0, width: 0, height: 0 };
   return { points: [], x: p.x, y: p.y, width: 0, height: 0 };
 }
@@ -80,6 +80,12 @@ export function constrainSegment(x0: number, y0: number, x1: number, y1: number)
  */
 export function updateGeometry(tool: DraftTool, g: DraftGeometry, p: Point, constrain: boolean): DraftGeometry {
   if (tool === 'freehand') return { ...g, points: [...g.points, p.x, p.y] };
+  // Shift turns a highlight into a straight band from where it started, snapped like a segment.
+  if (tool === 'highlight') {
+    if (!constrain) return { ...g, points: [...g.points, p.x, p.y] };
+    const end = constrainSegment(g.points[0], g.points[1], p.x, p.y);
+    return { ...g, points: [g.points[0], g.points[1], end.x, end.y] };
+  }
   if (isSegmentTool(tool)) {
     const end = constrain ? constrainSegment(g.points[0], g.points[1], p.x, p.y) : p;
     return { ...g, points: [g.points[0], g.points[1], end.x, end.y] };
@@ -103,4 +109,13 @@ export function normalizedBox(width: number, height: number): { left: number; to
     width: Math.abs(width),
     height: Math.abs(height),
   };
+}
+
+/** The furthest any point of a flat [x, y, ...] list lies from its first point — "was anything drawn". */
+export function polylineExtent(points: number[]): number {
+  let max = 0;
+  for (let i = 2; i + 1 < points.length; i += 2) {
+    max = Math.max(max, Math.hypot(points[i] - points[0], points[i + 1] - points[1]));
+  }
+  return max;
 }
