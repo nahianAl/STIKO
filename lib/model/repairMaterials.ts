@@ -5,10 +5,10 @@ import * as THREE from 'three';
  *
  * glTF defaults `metallicFactor` and `roughnessFactor` to 1.0 when they are absent, so a
  * Rhino export that carries only a display colour arrives as a *fully metallic* surface.
- * Metals have no diffuse response — they show reflections and nothing else — and
- * SceneLighting deliberately runs the environment at 0.15 because the headlight is meant
- * to do the lighting. The result is geometry that renders pitch black with no way to
- * recover, which is exactly what one third of the reference model did.
+ * Metals have no diffuse response — they show reflections and nothing else — and the
+ * viewer's environment (lib/sceneLights.ts) is a modest fill, not the main light. The result
+ * is geometry that renders near-black with no way to recover, which is exactly what one
+ * third of the reference model did.
  *
  * The signature below is the discriminator. `metalness === 1 && roughness === 1` describes
  * a perfectly rough mirror, which is physically meaningless and never authored on purpose,
@@ -24,7 +24,7 @@ const NEAR_BLACK_LUMINANCE = 0.02;
 /** What a black display colour becomes: a neutral grey that shades legibly. */
 const FALLBACK_LUMINANCE = 0.55;
 
-/** Matte enough to read as an untextured CAD surface under the headlight. */
+/** Matte enough to read as an untextured CAD surface under the viewer's lights. */
 const REPAIRED_ROUGHNESS = 0.8;
 
 /** three.js stores material colours in linear working space, so this is a linear luminance. */
