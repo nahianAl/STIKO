@@ -16,7 +16,7 @@ import { Rhino3dmLoader } from 'three/examples/jsm/loaders/3DMLoader.js';
 import { ModelDisplayError, emptyModelMessage } from '@/lib/model/modelDisplayError';
 import { isZUpExtension, Z_UP_TO_Y_UP_X_ROTATION } from '@/lib/model/upAxis';
 import { STEPLoader } from '@/lib/STEPLoader';
-import { makeDoubleSided, offsetFacesBehindEdges } from '@/lib/threeMaterials';
+import { makeDoubleSided, offsetFacesBehindEdges, setClippingPlanes } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
 import { applyCadFinish, CAD_FINISH_ROUGHNESS } from '@/lib/model/cadFinish';
 import { buildPartTree, cascadeToDescendants, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
@@ -300,6 +300,7 @@ function Model({
   highlightedPart,
   onPartsLoaded,
   onBatchesReady,
+  clipPlanesRef,
 }: {
   url: string;
   bytes: number;
@@ -309,6 +310,8 @@ function Model({
   onPartsLoaded?: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   /** Hands the batches to SceneInteraction so a click can be mapped back to a part. */
   onBatchesReady?: (batches: PartBatches | null) => void;
+  /** The active cutting planes, written by ApplyCrossSection. Edge lines that arrive late are given them. */
+  clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
 }) {
   const ext = getExtFromUrl(url);
   const LoaderClass = getLoaderForExt(ext);
@@ -513,6 +516,19 @@ function Model({
       setEdges(null);
     };
   }, [batches, parts, root, data]);
+
+  // Edges arrive from the worker after the model is on screen, so a section plane switched
+  // on in that window has already been applied (ApplyCrossSection only re-traverses when the
+  // plane SET changes) and the new lines would draw through the cut. Hand them the same
+  // array the faces hold: ApplyCrossSection mutates those planes in place every frame, so
+  // the lines follow drags from then on. A passive effect, not the .then: it runs after
+  // the lines are attached, so either ApplyCrossSection already ran (the ref is current) or
+  // it runs later and its traverse covers the attached lines.
+  useEffect(() => {
+    if (!edges) return;
+    const planes = clipPlanesRef.current;
+    setClippingPlanes(edges.lines, planes.length > 0 ? planes : null);
+  }, [edges, clipPlanesRef]);
 
   useEffect(() => {
     onPartsLoadedRef.current?.(parts, authored, partBaseColors);
@@ -1852,6 +1868,7 @@ export default function ModelViewerInner({
                   highlightedPart={highlightedPart}
                   onPartsLoaded={onPartsLoaded}
                   onBatchesReady={setBatches}
+                  clipPlanesRef={clipPlanesRef}
                 />
               </group>
             </Center>

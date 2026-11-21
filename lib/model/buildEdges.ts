@@ -17,8 +17,10 @@ import { flattenParts, type PartNode } from './partTree.ts';
  *
  * The lines do not pick: raycast is a no-op, so measurement snapping, comment pins and part
  * clicks see exactly the faces they saw before. They are clipped by the section planes for
- * free (setClippingPlanes in lib/threeMaterials.ts sets planes on ANY object with a material),
- * and SectionCaps skips them because it only reads `isMesh` objects.
+ * free when the planes change after the lines exist (setClippingPlanes in lib/threeMaterials.ts
+ * sets planes on ANY object with a material); ModelViewerInner hands lines that arrive from the
+ * worker after a plane is already active that same plane array. SectionCaps skips them because
+ * it only reads `isMesh` objects.
  */
 
 export const EDGE_COLOR = '#2b2f36';
