@@ -23,7 +23,7 @@ import { flattenParts, type PartNode } from './partTree.ts';
  * it only reads `isMesh` objects.
  */
 
-export const EDGE_COLOR = '#4a4f57';
+export const EDGE_COLOR = '#2b2f36';
 
 /**
  * Above this many triangles in a model, no edges are drawn. The worker would take roughly
