@@ -500,22 +500,25 @@ function Model({
           : [];
     const job = computeModelEdges(sources);
     let cancelled = false;
-    let current: ModelEdges | null = null;
     job.promise.then((result) => {
       if (cancelled) {
-        result?.dispose();
+        result?.dispose(); // arrived after this effect stopped caring: never mounted, so free it here
         return;
       }
-      current = result;
       setEdges(result);
     });
     return () => {
       cancelled = true;
       job.cancel();
-      current?.dispose();
       setEdges(null);
     };
   }, [batches, parts, root, data]);
+
+  // Disposal is its own effect, as for `batches` above: this cleanup runs only after the commit
+  // that detaches <primitive object={edges.lines} />. Disposing inside the compute effect's
+  // cleanup instead runs BEFORE that detach, so a frame rendered in between would re-upload the
+  // disposed geometry and leak it.
+  useEffect(() => () => edges?.dispose(), [edges]);
 
   // Edges arrive from the worker after the model is on screen, so a section plane switched
   // on in that window has already been applied (ApplyCrossSection only re-traverses when the
