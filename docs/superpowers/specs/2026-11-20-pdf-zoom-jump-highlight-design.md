@@ -46,7 +46,10 @@ at the visible rect, above the base image and below markup/pins. Because it is p
 
 **Scroll mode:** each rendered `ScrollPage` gets an absolutely positioned second `<canvas>` covering
 the visible part of that page, drawn only for pages where `needsDetail` holds (i.e. the base hit the
-canvas cap). Pages out of view drop their detail canvas (`releaseCanvas`).
+canvas cap). A page keeps its detail canvas while it stays inside the render window (within two
+screen-heights above or below the viewport), so scrolling back shows it still aligned; it is released
+(`releaseCanvas`) only when the page leaves that window. That bounds memory to the pages in the
+window, by design.
 
 Max zoom stays 500 %.
 
