@@ -13,7 +13,11 @@ the way they do in Onshape: crisp, thin, dark edges and shading that separates f
    was a deliberate SketchUp-style choice, documented in that file's header. This design
    reverses it.
 2. **No edge lines.** This is Onshape's main legibility cue, and the main thing the user wants.
-3. Nothing darkens recesses, and pale part colours sit on a pale `#f0f0f0` background. Both are
+3. **Matte finish, almost no reflections.** Both converters write `roughness 0.6, metallic 0`
+   on every part: `lib/model/stepToGlb.ts:236-238` and `cad-worker/usd_to_glb.py:158`. The
+   environment runs at 0.15. Curved faces therefore get no highlight gradient, which is the
+   eye's main curvature cue, and Onshape's semi-gloss finish leans on it heavily.
+4. Nothing darkens recesses, and pale part colours sit on a pale `#f0f0f0` background. Both are
    **out of scope** (see below).
 
 ## Decisions (made by the user)
@@ -21,6 +25,8 @@ the way they do in Onshape: crisp, thin, dark edges and shading that separates f
 - Edge lines: **yes**, and **not thick**. They are 1 px; WebGL ignores `linewidth`, so 1 px is
   also the floor.
 - Lighting: **directional key/fill/hemisphere rig**, still camera-relative.
+- Materials: **semi-gloss finish for Stiko's own conversions plus stronger reflections**. The
+  user added this after the first approval, on 2026-11-20.
 - Edges are **precomputed crease edges** (option A), not a screen-space post-process (option B).
   B was rejected because it adds a composer stage that touches snapshots
   (`preserveDrawingBuffer`), stencil section caps, measurement sprites and highlight.
@@ -88,10 +94,16 @@ export function buildEdgesForObject(root: THREE.Object3D, opts?): ModelEdges | n
   There are no part keys here, so there is no hiding (none exists today on these paths either).
 - **Picking:** set `lines.raycast = () => {}`. Measurement snapping, comment pins and part
   clicks must not change at all.
-- **Clipping:** the edges are under `modelRef`, so `ApplyCrossSection` should give their
-  material the same `clippingPlanes`. **Verify** that its traversal visits `LineSegments`, not
-  only `isMesh`. `SectionCaps` must **not** treat the lines as cap geometry. **Verify** it
-  filters on `isMesh`.
+- **Clipping (confirmed in code):** the edges are under `modelRef`. `setClippingPlanes` in
+  `lib/threeMaterials.ts` sets planes on *any* object that has a material, so the lines get cut
+  without extra work. `SectionCaps` skips non-`isMesh` objects, so the lines never feed the cap
+  stencil.
+- **Legacy frame trap:** on the unbatched path, `root` itself is mounted. Its meshes'
+  `matrixWorld` therefore includes the transform group and `Center` offset once React has
+  attached it, and baking that into a sibling would apply those transforms twice. Bake
+  relative to `root`'s parent: `root.matrix × root.matrixWorld⁻¹ × mesh.matrixWorld`. The
+  batched path never mounts `root`, so its meshes' `matrixWorld` is already root-relative, the
+  same frame `buildBatches` uses.
 - **Bounds:** the edges are a subset of the model's own vertices, so `Center`,
   `FitCameraToModel` and ground placement are unchanged.
 
@@ -105,7 +117,7 @@ recomputed every frame from the camera basis (right, up, forward) around the orb
 | Key, directional | up + left of the view direction (≈ 35° up, 30° left) | 1.4 |
 | Fill, directional | opposite side, slightly low | 0.45 |
 | Hemisphere | sky `#ffffff` / ground `#b8bcc4`, world-up | 0.5 |
-| Environment (`studio`) | unchanged preset | 0.15 → 0.3 |
+| Environment (`studio`) | unchanged preset | 0.15 → 0.7 |
 
 - Drop the separate `ambientLight`; the hemisphere replaces it.
 - The intensities are starting points. Tune them against screenshots of the countersunk screw
@@ -114,6 +126,28 @@ recomputed every frame from the camera basis (right, up, forward) around the orb
 - The header comment's "a headlight deliberately flattens form" reasoning is replaced with the
   new rationale. `repairMaterials.ts` quotes the environment intensity of 0.15 in a comment;
   update that comment. The metal repair logic itself stays.
+
+## 3. Material finish (new `lib/model/cadFinish.ts`)
+
+`applyCadFinish(root)` makes Stiko's own conversions semi-gloss **in the viewer**. Files that are
+already uploaded get the new finish too, with no re-conversion.
+
+- **Signature:** `MeshStandardMaterial`, `metalness === 0`, `|roughness − 0.6| < 1e-6`, and no
+  map in `map / normalMap / roughnessMap / metalnessMap / aoMap / emissiveMap / alphaMap`. This
+  is exactly what both converters emit. A designer-authored finish almost never sits at exactly
+  0.6, so those are left alone.
+- **Effect:** set `roughness = 0.38`. Leave colour and metalness untouched. It sets no
+  `needsUpdate`, because roughness is a uniform. Make 0.38 a named constant.
+- **Order:** run it in the existing `Model` useMemo, after `repairExporterDefaults` and before
+  batching, because `buildBatches` reads roughness into its appearance key. A repaired material
+  sits at 0.8, so it is unaffected.
+- **Idempotent:** `useLoader` caches the tree. A second pass finds 0.38, not 0.6, and does
+  nothing.
+- STL/PLY's `DEFAULT_MATERIAL` and `VERTEX_COLOR_MATERIAL` go from 0.6 to the same constant.
+- The converters themselves are **not** changed. One viewer-side rule covers old and new files
+  alike.
+- **Tuning:** 0.38 and the environment's 0.7 are starting points. Tune them on screenshots
+  together with the lights. Too glossy washes pale parts out into glare, and that is a failure.
 
 ## Error handling
 
@@ -131,6 +165,11 @@ recomputed every frame from the camera basis (right, up, forward) around the orb
 - A geometry over `maxTriangles` returns `null`.
 - A part with a non-identity `matrixWorld` gets baked positions.
 
+**Unit (`lib/model/cadFinish` tests):**
+- The converter signature becomes 0.38.
+- A material at 0.5, a metallic one, or one with a map stays unchanged.
+- A second pass is a no-op.
+
 **Browser (harness recipe from the seamless-ground memory: temporary
 `app/portal/harness-3d/page.tsx`, Playwright + swiftshader):**
 - Before/after screenshots of the screw (STEP) and `jet_engine.glb`.
@@ -141,7 +180,7 @@ recomputed every frame from the camera basis (right, up, forward) around the orb
 
 ## Out of scope
 
-Ambient occlusion, a default part colour change, an edges toggle, silhouette lines on smooth
+Ambient occlusion, a default part colour change, an edges toggle, changing the converters' emitted roughness, silhouette lines on smooth
 curves, and per-part explode.
 
 ## Rollback
