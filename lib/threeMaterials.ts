@@ -44,3 +44,29 @@ export function setClippingPlanes<T extends THREE.Object3D>(
   });
   return root;
 }
+
+/**
+ * Nudges every face in `root` slightly back in depth so the edge lines drawn on top of them
+ * (lib/model/buildEdges.ts) win the depth test cleanly instead of z-fighting into a dashed
+ * shimmer while the camera moves. An edge sits exactly on the boundary of the faces it
+ * separates, so without this half its pixels lose to its own faces.
+ *
+ * Faces only: polygon offset has no effect on lines or points, and the edge material itself
+ * must NOT be offset, or the lines would sink behind the faces they outline.
+ *
+ * Mutates in place (loader results are cached and shared by useLoader) and returns `root`.
+ * Idempotent. buildBatches clones these materials, and Material.copy carries the offset over.
+ */
+export function offsetFacesBehindEdges<T extends THREE.Object3D>(root: T): T {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh !== true || !mesh.material) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      material.polygonOffset = true;
+      material.polygonOffsetFactor = 1;
+      material.polygonOffsetUnits = 1;
+    }
+  });
+  return root;
+}

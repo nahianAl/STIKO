@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { setClippingPlanes } from '../../lib/threeMaterials.ts';
+import { setClippingPlanes, offsetFacesBehindEdges } from '../../lib/threeMaterials.ts';
 
 // A group shaped like a real loaded model: one mesh with a single material, one mesh with a
 // material ARRAY (multi-material meshes are routine on imported CAD/glTF geometry), and a
@@ -81,4 +81,45 @@ test('stores the SAME array instance, not a copy', () => {
 test('returns root', () => {
   const { root } = buildScene();
   assert.equal(setClippingPlanes(root, null), root);
+});
+
+test('offsetFacesBehindEdges pushes every mesh material back, arrays included', () => {
+  const single = new THREE.MeshStandardMaterial();
+  const a = new THREE.MeshStandardMaterial();
+  const b = new THREE.MeshStandardMaterial();
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(new THREE.BufferGeometry(), single));
+  root.add(new THREE.Mesh(new THREE.BufferGeometry(), [a, b]));
+
+  offsetFacesBehindEdges(root);
+
+  for (const material of [single, a, b]) {
+    assert.equal(material.polygonOffset, true);
+    assert.equal(material.polygonOffsetFactor, 1);
+    assert.equal(material.polygonOffsetUnits, 1);
+  }
+});
+
+test('offsetFacesBehindEdges leaves line materials alone', () => {
+  const lineMaterial = new THREE.LineBasicMaterial();
+  const root = new THREE.Group();
+  root.add(new THREE.LineSegments(new THREE.BufferGeometry(), lineMaterial));
+
+  offsetFacesBehindEdges(root);
+
+  assert.equal(lineMaterial.polygonOffset, false);
+});
+
+test('offsetFacesBehindEdges survives the clone buildBatches makes', () => {
+  // buildBatches' batchMaterialFrom() clones the source material; Material.copy carries the
+  // offset over, which is why offsetting the loaded tree is enough for the batched path too.
+  const source = new THREE.MeshStandardMaterial();
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(new THREE.BufferGeometry(), source));
+  offsetFacesBehindEdges(root);
+
+  const clone = source.clone();
+  assert.equal(clone.polygonOffset, true);
+  assert.equal(clone.polygonOffsetFactor, 1);
+  assert.equal(clone.polygonOffsetUnits, 1);
 });
