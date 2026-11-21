@@ -41,6 +41,45 @@ test('agrees with THREE.EdgesGeometry on a mixed shape', () => {
   assert.equal(segmentsOf(geometry), threeCount(geometry));
   assert.equal(segmentsOf(new THREE.TorusKnotGeometry(1, 0.3, 100, 16)),
     threeCount(new THREE.TorusKnotGeometry(1, 0.3, 100, 16)));
+  // Side facets meet at exactly 30 degrees: a tie that only matches if we compute in doubles.
+  const tie = () => new THREE.CylinderGeometry(1, 1, 2, 12);
+  assert.equal(segmentsOf(tie()), threeCount(tie()));
+});
+
+test('a box translated far from the origin still welds its corners', () => {
+  // 300000 * 1e4 overflows int32; the weld must still see each corner's twins.
+  const geometry = new THREE.BoxGeometry(100, 100, 100).toNonIndexed();
+  geometry.translate(300000, 0, 0);
+  assert.equal(segmentsOf(geometry), 12);
+});
+
+test('a single triangle emits exactly its three sides as boundary segments', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const out = extractCreaseEdges(positions, null, 30);
+  const key = (a, b) => [a, b].map((p) => p.join(',')).sort().join(' | ');
+  const segments = [];
+  for (let i = 0; i < out.length; i += 6) {
+    segments.push(key(
+      [out[i], out[i + 1], out[i + 2]],
+      [out[i + 3], out[i + 4], out[i + 5]],
+    ));
+  }
+  assert.deepEqual(segments.sort(), [
+    key([0, 0, 0], [1, 0, 0]),
+    key([1, 0, 0], [0, 1, 0]),
+    key([0, 1, 0], [0, 0, 0]),
+  ].sort());
+});
+
+test('a non-manifold edge shared by three faces matches EdgesGeometry', () => {
+  const positions = new Float32Array([
+    0, 0, 0, 1, 0, 0, 0, 1, 0,
+    0, 0, 0, 1, 0, 0, 0, -1, 0,
+    0, 0, 0, 1, 0, 0, 0, 0, 1,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  assert.equal(segmentsOf(geometry), threeCount(geometry));
 });
 
 test('an open edge (one triangle) is a boundary and is emitted', () => {

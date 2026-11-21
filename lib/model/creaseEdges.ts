@@ -32,9 +32,11 @@ export function extractCreaseEdges(
   while (capacity < vertexCount * 2) capacity <<= 1;
   const mask = capacity - 1;
   const slots = new Int32Array(capacity).fill(-1);
-  const qx = new Int32Array(vertexCount);
-  const qy = new Int32Array(vertexCount);
-  const qz = new Int32Array(vertexCount);
+  // Stored as doubles so the exact comparison below never wraps. The hash may wrap; the
+  // comparison must not, or two distinct points ~429,497 units apart would weld falsely.
+  const qx = new Float64Array(vertexCount);
+  const qy = new Float64Array(vertexCount);
+  const qz = new Float64Array(vertexCount);
   const weld = new Int32Array(vertexCount);
   for (let v = 0; v < vertexCount; v++) {
     const x = Math.round(positions[v * 3] * WELD_PRECISION);
@@ -61,7 +63,7 @@ export function extractCreaseEdges(
 
   // --- Pair faces across each welded edge and compare their normals.
   const cosThreshold = Math.cos((thresholdDeg * Math.PI) / 180);
-  const normals = new Float32Array(triangleCount * 3);
+  const normals = new Float64Array(triangleCount * 3); // doubles, as EdgesGeometry computes
   // Edge key -> the first triangle seen on it, or -1 once a second triangle has been compared.
   // lo * vertexCount + hi stays far below 2^53 for any mesh that fits in memory.
   const firstFace = new Map<number, number>();
