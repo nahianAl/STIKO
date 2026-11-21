@@ -28,9 +28,23 @@ import PageArrows from './pdf/PageArrows';
 import PdfScrollView, { type PdfScrollViewHandle } from './pdf/PdfScrollView';
 import PdfSidebar from './pdf/PdfSidebar';
 import { usePageSizes } from './pdf/usePageSizes';
-import { browserStorage, effectiveMode, readStoredMode, writeStoredMode } from '@/lib/pdf/viewMode';
+import {
+  browserStorage,
+  commentJumpTarget,
+  effectiveMode,
+  isPointHidden,
+  PIN_MARGIN,
+  readStoredMode,
+  stagePosCentring,
+  writeStoredMode,
+} from '@/lib/pdf/viewMode';
+import { intersectRect, needsDetail, snapOutward, type Rect as PageRect } from '@/lib/pdf/detailTile';
+import { isRenderCancelled, releaseCanvas, renderPageRegion, type PageRenderJob } from '@/lib/pdf/pageRender';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+
+/** Redraw the visible part sharp this long after the last zoom/pan (matches PdfScrollView's SETTLE_MS). */
+const DETAIL_SETTLE_MS = 150;
 
 export interface PDFKonvaViewerHandle {
   captureSnapshot: () => string | null;
@@ -129,6 +143,10 @@ function PDFKonvaViewer(
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
     const [pageImage, setPageImage] = useState<HTMLImageElement | null>(null);
+    // Which page `pageImage`/`pageSize` were rendered for. On a page turn `currentPage` moves at once
+    // but those (and the zoom/pan) still describe the previous sheet until the new base loads; the
+    // detail render must only run, and only be shown, once the two agree.
+    const [pageImagePage, setPageImagePage] = useState(0);
     const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
@@ -180,6 +198,15 @@ function PDFKonvaViewer(
     const measureLayerRef = useRef<Konva.Layer>(null);
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+    // The sizes the current `stageScale`/`stagePos` were last fitted to. The fit effect sets them from
+    // an effect, so in the commit that brings a new page size, other effects still see the previous
+    // values; the comment jump waits until this matches.
+    const [fitted, setFitted] = useState<{ pageSize: { width: number; height: number }; containerSize: { width: number; height: number } } | null>(null);
+    // The on-screen part of the page, redrawn at screen resolution once zoom/pan settles
+    // (lib/pdf/detailTile.ts). `rect` is in PAGE pixels, so it stays aligned through later zooms
+    // and pans and is only stretched until the next one lands. Tagged with its page so a page
+    // turn never shows another sheet's pixels.
+    const [detail, setDetail] = useState<{ canvas: HTMLCanvasElement; page: number; rect: PageRect } | null>(null);
 
     // Shared Konva annotation object model (select/move/scale/rotate/erase)
     const ann = useAnnotationObjects();
@@ -396,6 +423,7 @@ function PDFKonvaViewer(
           img.onload = () => {
             if (cancelled) return;
             setPageImage(img);
+            setPageImagePage(currentPage);
             setPageSize({ width: viewport.width, height: viewport.height });
             setLoading(false);
             announceReady();
@@ -412,11 +440,73 @@ function PDFKonvaViewer(
       return () => { cancelled = true; };
     }, [pdfDoc, currentPage, announceReady, mode]);
 
+    // Detail render (single-page). Runs SETTLE_MS after the last zoom/pan/resize; a newer change
+    // cancels it. Skipped when the base is already at screen density (fit zoom).
+    useEffect(() => {
+      if (!pdfDoc || mode !== 'single' || !pageImage || pageImagePage !== currentPage || !pageSize.width || !containerSize.width) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const displayWidth = pageSize.width * stageScale;
+      // The base image is pageSize.width bitmap pixels wide (rendered at PDF_RENDER_SCALE).
+      if (!needsDetail(pageSize.width, displayWidth, dpr)) {
+        setDetail(null);
+        return;
+      }
+      const visible = intersectRect(
+        { x: 0, y: 0, width: containerSize.width, height: containerSize.height },
+        { x: stagePos.x, y: stagePos.y, width: displayWidth, height: pageSize.height * stageScale },
+      );
+      if (!visible) return;
+      // Snap in CONTAINER coordinates (screen pixels) so the tile's device-pixel grid lines up with the
+      // screen's, then move to page-relative CSS px (fractional once the stage is panned off-grid).
+      const snapped = snapOutward(visible, dpr);
+      const region = { x: snapped.x - stagePos.x, y: snapped.y - stagePos.y, width: snapped.width, height: snapped.height };
+      const page = pageImagePage;
+      let cancelled = false;
+      let job: PageRenderJob | null = null;
+      const t = setTimeout(() => {
+        pdfDoc
+          .getPage(page)
+          .then((pg) => {
+            if (cancelled) return;
+            const canvas = document.createElement('canvas');
+            job = renderPageRegion(pg, canvas, region, displayWidth, dpr);
+            return job.promise.then(() => {
+              if (cancelled) {
+                releaseCanvas(canvas);
+                return;
+              }
+              setDetail({
+                canvas,
+                page,
+                rect: { x: region.x / stageScale, y: region.y / stageScale, width: region.width / stageScale, height: region.height / stageScale },
+              });
+            });
+          })
+          .catch((err) => {
+            if (cancelled || isRenderCancelled(err)) return;
+            console.error('Failed to render PDF detail:', err);
+          });
+      }, DETAIL_SETTLE_MS);
+      return () => {
+        cancelled = true;
+        clearTimeout(t);
+        job?.cancel();
+      };
+    }, [pdfDoc, mode, pageImage, pageImagePage, pageSize, containerSize, stageScale, stagePos, currentPage]);
+
+    // Free a replaced or dropped detail canvas once the stage no longer draws it.
+    useEffect(() => {
+      const c = detail?.canvas ?? null;
+      return () => releaseCanvas(c);
+    }, [detail]);
+
     // Leaving single-page mode drops the rendered page, so coming back never flashes a stale sheet
     // and nothing sized from `pageSize` (insertImage, the fit) can use another page's dimensions.
     useEffect(() => {
       if (mode !== 'scroll') return;
       setPageImage(null);
+      setPageImagePage(0);
+      setDetail(null);
       setPageSize({ width: 0, height: 0 });
     }, [mode]);
 
@@ -431,7 +521,68 @@ function PDFKonvaViewer(
         x: (containerSize.width - pageSize.width * fitScale) / 2,
         y: (containerSize.height - pageSize.height * fitScale) / 2,
       });
+      setFitted({ pageSize, containerSize });
     }, [pageSize, containerSize]);
+
+    // Clicking a tagged comment (panel, pin or Brief citation) brings its page and pin into view.
+    // Once per activeCommentId: paging away afterwards is never undone. Waits — without marking
+    // the comment handled — for the document, the comments and the page layout to exist, which
+    // is how a Brief citation that switched files still lands. A markup/measure session locks the
+    // page, so a click during one is marked handled and ignored.
+    const jumpedForRef = useRef<string | null>(null);
+    useEffect(() => {
+      if (!activeCommentId) {
+        jumpedForRef.current = null;
+        return;
+      }
+      if (jumpedForRef.current === activeCommentId) return;
+      if (annotating) {
+        jumpedForRef.current = activeCommentId;
+        return;
+      }
+      const comment = comments.find((c) => c.id === activeCommentId);
+      if (!comment || !numPages) return; // not loaded yet: try again when it is
+      const target = commentJumpTarget(comment, numPages);
+      if (!target) {
+        jumpedForRef.current = activeCommentId;
+        return;
+      }
+      if (mode === 'scroll') {
+        if (!pageSizes) return; // the scroll view mounts once page sizes exist
+        scrollViewRef.current?.revealPoint(target.page, target.xPct, target.yPct);
+      } else if (target.page !== currentPage) {
+        // A page turn re-fits the whole sheet (the fit effect above), so the pin is on screen.
+        setCurrentPage(target.page);
+      } else {
+        // Page not laid out yet — or `pageSize` / the stage still describe another sheet, or were fitted
+        // by an effect that has not committed (`fitted`): try again when they have.
+        if (!pageSize.width || !containerSize.width) return;
+        if (pageImagePage !== currentPage) return;
+        if (fitted?.pageSize !== pageSize || fitted.containerSize !== containerSize) return;
+        const sx = stagePos.x + (target.xPct / 100) * pageSize.width * stageScale;
+        const sy = stagePos.y + (target.yPct / 100) * pageSize.height * stageScale;
+        // The whole sheet already on screen (e.g. at fit): every pin is visible, even one inside
+        // PIN_MARGIN of the edge — panning would only shove part of the page into the matte.
+        // Half a pixel of slack: the fit puts the page edge exactly on the container's, give or take float noise.
+        const pageFullyVisible =
+          stagePos.x >= -0.5 &&
+          stagePos.y >= -0.5 &&
+          stagePos.x + pageSize.width * stageScale <= containerSize.width + 0.5 &&
+          stagePos.y + pageSize.height * stageScale <= containerSize.height + 0.5;
+        if (!pageFullyVisible && isPointHidden(sx, sy, containerSize.width, containerSize.height, PIN_MARGIN)) {
+          setStagePos(stagePosCentring({
+            xPct: target.xPct,
+            yPct: target.yPct,
+            pageWidth: pageSize.width,
+            pageHeight: pageSize.height,
+            scale: stageScale,
+            containerWidth: containerSize.width,
+            containerHeight: containerSize.height,
+          }));
+        }
+      }
+      jumpedForRef.current = activeCommentId;
+    }, [activeCommentId, annotating, comments, numPages, mode, pageSizes, currentPage, pageImagePage, pageSize, containerSize, fitted, stagePos, stageScale]);
 
     // Container resize observer
     useEffect(() => {
@@ -865,6 +1016,14 @@ function PDFKonvaViewer(
               x={stagePos.x}
               y={stagePos.y}
               draggable={activeTool === 'pointer' && !annotating && !tagging}
+              // A pan moves the Stage itself; write the result back, or `stagePos` (which the zoom
+              // maths, the matte, the detail render and the pin centring all read) goes stale.
+              // Markup objects are draggable too and their dragend bubbles here — only the Stage's own counts.
+              onDragEnd={(e) => {
+                const s = e.target;
+                if (s !== s.getStage()) return;
+                setStagePos({ x: s.x(), y: s.y() });
+              }}
               onWheel={handleWheel}
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
@@ -876,6 +1035,9 @@ function PDFKonvaViewer(
                 <Rect x={matte.x} y={matte.y} width={matte.width} height={matte.height} fill={PDF_MATTE} listening={false} />
                 {pageImage && (
                   <KonvaImage image={pageImage} width={pageSize.width} height={pageSize.height} listening={false} />
+                )}
+                {pageImage && detail && detail.page === pageImagePage && pageImagePage === currentPage && (
+                  <KonvaImage image={detail.canvas} x={detail.rect.x} y={detail.rect.y} width={detail.rect.width} height={detail.rect.height} listening={false} />
                 )}
               </Layer>
 

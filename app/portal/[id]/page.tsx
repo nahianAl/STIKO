@@ -51,6 +51,7 @@ import type { AnnotationCanvasHandle } from '@/components/markup/AnnotationCanva
 import type { AnnotationObjectType, MarkupSelection, ToolType } from '@/components/markup/useAnnotationObjects';
 import { isMeasureTool } from '@/components/markup/useAnnotationObjects';
 import { useMeasurements } from '@/components/markup/useMeasurements';
+import { DEFAULT_MARKUP_COLOR, colorOnArmHighlight } from '@/lib/markup/highlight';
 import CalibrationPanel from '@/components/markup/CalibrationPanel';
 import { DEFAULT_LENGTH_UNIT, type LengthUnit } from '@/lib/measure/units';
 import { resolveScale, mmPerUnitFrom, UNPAGED } from '@/lib/measure/calibration';
@@ -81,7 +82,7 @@ interface Participant {
   createdAt: string;
 }
 
-const DRAW_TOOLS: ToolType[] = ['freehand', 'line', 'arrow', 'rect', 'ellipse', 'cloud', 'text'];
+const DRAW_TOOLS: ToolType[] = ['freehand', 'highlight', 'line', 'arrow', 'rect', 'ellipse', 'cloud', 'text'];
 
 // Synthetic id for the not-yet-posted tag, so it renders as a live preview pin
 const PENDING_TAG_ID = '__pending_tag__';
@@ -273,7 +274,7 @@ export default function PortalPage() {
 
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<ToolType>('pointer');
-  const [drawingColor, setDrawingColor] = useState('#FF6B6B'); // red-pastel accent; matches default toolbar swatch
+  const [drawingColor, setDrawingColor] = useState(DEFAULT_MARKUP_COLOR); // red-pastel accent; matches default toolbar swatch
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(4);
   const [selectionType, setSelectionType] = useState<AnnotationObjectType | null>(null);
 
@@ -762,6 +763,22 @@ export default function PortalPage() {
     if (!selectedFile) return false;
     return IMAGE_EXTENSIONS.includes(`.${extensionOf(selectedFile.filename)}`);
   }, [selectedFile]);
+
+  // Where the Highlighter is offered: a positive list, like measureAvailable. isPDFFile covers a
+  // converted DWG/DXF; an attachment session always draws on an image. Never 3D, never video.
+  const highlightAvailable = isImageFile || isPDFFile || annotatingFile !== null;
+
+  // The Highlighter can be armed and then the selection move to a 3D file or a video.
+  useEffect(() => {
+    if (activeTool === 'highlight' && !highlightAvailable) setActiveTool('pointer');
+  }, [activeTool, highlightAvailable]);
+
+  // Arming the Highlighter swaps the untouched default red for yellow; a chosen colour is kept.
+  // setDrawingColor, not handleColorChange: arming a tool must never restyle a selection.
+  const handleToolChange = useCallback((tool: ToolType) => {
+    if (tool === 'highlight') setDrawingColor((c) => colorOnArmHighlight(c));
+    setActiveTool(tool);
+  }, []);
 
   /** The unit readings are shown in on this file. Falls back until someone chooses one. */
   const measureUnit: LengthUnit = selectedFile?.measureUnit ?? DEFAULT_LENGTH_UNIT;
@@ -2594,7 +2611,7 @@ export default function PortalPage() {
             {!viewportBusy && !viewportImage && ((!selectedIsPendingDrawing && !selectedIsPendingCad) || annotatingFile !== null) && (
               <DrawingTools
                 activeTool={activeTool}
-                onToolChange={setActiveTool}
+                onToolChange={handleToolChange}
                 color={drawingColor}
                 onColorChange={handleColorChange}
                 strokeWidth={drawingStrokeWidth}
@@ -2632,6 +2649,7 @@ export default function PortalPage() {
                 // ever produce a reading. A positive list cannot make that mistake — a fourth
                 // file type is simply absent until someone deliberately adds it here.
                 measureAvailable={(isImageFile || isPDFFile || is3DFile) && annotatingFile === null}
+                highlightAvailable={highlightAvailable}
               />
             )}
 

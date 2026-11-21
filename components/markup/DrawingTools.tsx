@@ -42,6 +42,11 @@ interface DrawingToolsProps {
    * presentation is no button at all rather than a permanently disabled one.
    */
   measureAvailable: boolean;
+  /**
+   * False hides the Highlighter. A positive list in the host (image, PDF — which covers a
+   * converted DWG/DXF — or an attachment session): never on a 3D model or a video.
+   */
+  highlightAvailable: boolean;
 }
 
 /* Icons. currentColor throughout and one nominal box, but sized optically rather than
@@ -66,6 +71,13 @@ const PointerIcon = (
 const FreehandIcon = (
   <svg {...px(20)} viewBox="0 0 24 24" fill="currentColor">
     <path d="M23 14.25A3.88 3.88 0 0 0 19.25 10C16.314 10 15 12.763 15 15.5a6.493 6.493 0 0 0 .95 3.516 7.005 7.005 0 0 1-4.905-1.566A3.255 3.255 0 0 1 10 15a9.084 9.084 0 0 1 1.555-3.894A8.31 8.31 0 0 0 13 7.5 2.276 2.276 0 0 0 10.5 5c-.919 0-1.795 1.072-2.81 2.314C6.714 8.511 5.498 10 4.5 10 3.684 10 2 9.51 2 8c0-1.848 2.703-4.028 4.002-5.076l.266-.215-.632-.775-.262.212C3.845 3.379 1 5.675 1 8c0 2.07 2.047 3 3.5 3 1.473 0 2.797-1.622 3.965-3.053C9.174 7.08 10.055 6 10.5 6c1.038 0 1.5.463 1.5 1.5a7.868 7.868 0 0 1-1.313 3.11A9.681 9.681 0 0 0 9 15a4.275 4.275 0 0 0 1.357 3.176A8.438 8.438 0 0 0 16.5 20c.072 0 .144-.001.215-.003a11.08 11.08 0 0 0 6.326 2.871l.167-.986a11.16 11.16 0 0 1-5.178-2.024A5.937 5.937 0 0 0 23 14.25zm-7 1.25c0-2.24 1.005-4.5 3.25-4.5.951 0 2.75.68 2.75 3.25a5.033 5.033 0 0 1-4.857 4.722A5.396 5.396 0 0 1 16 15.5z" />
+  </svg>
+);
+
+const HighlighterIcon = (
+  <svg {...ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m9 11-6 6v3h9l3-3" />
+    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
   </svg>
 );
 
@@ -253,6 +265,7 @@ export default function DrawingTools({
   scaleSource,
   canCalibrate,
   measureAvailable,
+  highlightAvailable,
 }: DrawingToolsProps) {
   // Only ever one sub-bar open — two stacked panels under one short bar reads as a mess.
   const [menu, setMenu] = useState<'shapes' | 'stroke' | 'picker' | 'measure' | 'units' | null>(null);
@@ -324,6 +337,7 @@ export default function DrawingTools({
 
         {pickTool('pointer', 'Pointer', PointerIcon)}
         {pickTool('freehand', 'Freehand', FreehandIcon)}
+        {highlightAvailable && pickTool('highlight', 'Highlighter', HighlighterIcon)}
         {pickTool('arrow', 'Arrow', ArrowIcon)}
 
         {/* Shapes — folds line/rect/ellipse/cloud into one slot */}

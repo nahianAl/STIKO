@@ -11,13 +11,13 @@ import {
   type TextAlign,
   type TextStyle,
 } from '@/lib/markup/text';
-import { startGeometry, updateGeometry, isBoxTool, type DraftTool } from '@/lib/markup/draft';
+import { startGeometry, updateGeometry, isBoxTool, polylineExtent, type DraftTool } from '@/lib/markup/draft';
 import { pickId, mergeSelection } from '@/lib/markup/selection';
 import { useUndoHistory } from '@/components/undo/UndoHistory';
 import { useCheckpointedState } from '@/components/undo/useCheckpointedState';
 
-export type AnnotationObjectType = 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'image';
-export type AnnTool = 'pointer' | 'freehand' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'eraser';
+export type AnnotationObjectType = 'freehand' | 'highlight' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'image';
+export type AnnTool = 'pointer' | 'freehand' | 'highlight' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'cloud' | 'text' | 'eraser';
 
 /** The three measure-tool modes. Not AnnTools: they create no markup object and carry no style. */
 export type MeasureTool = 'measure' | 'angle' | 'calibrate';
@@ -43,7 +43,7 @@ export function isMeasureTool(tool: ToolType): tool is MeasureTool {
 export interface AnnotationObject {
   id: string;
   type: AnnotationObjectType;
-  points: number[];               // freehand/line/arrow (flat [x,y,...], in object space)
+  points: number[];               // freehand/highlight/line/arrow (flat [x,y,...], in object space)
   x: number; y: number;           // rect/text origin; drag offset for all types
   width: number; height: number;  // rect; on text, the box's OUTER width (ignored while autoWidth)
   text: string; fontSize: number; // text
@@ -65,7 +65,7 @@ export interface MarkupSelection {
   strokeWidth: number;
 }
 
-const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'line', 'arrow', 'rect', 'ellipse', 'cloud']);
+const GESTURE_TOOLS = new Set<AnnTool>(['freehand', 'highlight', 'line', 'arrow', 'rect', 'ellipse', 'cloud']);
 
 export function useAnnotationObjects() {
   // Checkpointed: every quiet moment (no pointer held, no text editor open) with a net change
@@ -136,6 +136,7 @@ export function useAnnotationObjects() {
     setDraft(null);
     if (!d) return null;
     const valid = d.type === 'freehand' ? d.points.length > 2
+      : d.type === 'highlight' ? polylineExtent(d.points) > 3
       : isBoxTool(d.type) ? Math.abs(d.width) > 3 && Math.abs(d.height) > 3
       : (d.type === 'line' || d.type === 'arrow') ? Math.hypot(d.points[2] - d.points[0], d.points[3] - d.points[1]) > 3
       : true;

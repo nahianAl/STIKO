@@ -185,3 +185,53 @@ export function cappedRenderScale(baseWidth: number, baseHeight: number, desired
   const bySide = MAX_CANVAS_SIDE / Math.max(baseWidth, baseHeight);
   return Math.min(desired, byArea, bySide);
 }
+
+/** How far inside the viewport edge a pin must be to count as on screen (CSS px). */
+export const PIN_MARGIN = 24;
+
+export interface JumpTarget {
+  page: number;
+  /** Pin position, percent of the page (the Comment's xPosition / yPosition). */
+  xPct: number;
+  yPct: number;
+}
+
+/**
+ * Where clicking a comment should take the viewer: its page and pin, or null for a comment with
+ * no page tag, no pin, a page outside the document, or a document not loaded yet (`numPages` 0).
+ */
+export function commentJumpTarget(
+  c: { pageNumber: number | null; xPosition: number | null; yPosition: number | null } | undefined,
+  numPages: number,
+): JumpTarget | null {
+  if (!c || numPages < 1) return null;
+  if (c.pageNumber === null || c.xPosition === null || c.yPosition === null) return null;
+  if (!Number.isInteger(c.pageNumber) || c.pageNumber < 1 || c.pageNumber > numPages) return null;
+  return { page: c.pageNumber, xPct: c.xPosition, yPct: c.yPosition };
+}
+
+/** True when (x, y) — viewport coords — is outside the viewport shrunk by `margin` on every side. */
+export function isPointHidden(x: number, y: number, viewWidth: number, viewHeight: number, margin: number): boolean {
+  return x < margin || y < margin || x > viewWidth - margin || y > viewHeight - margin;
+}
+
+/** Scroll offsets that put (x, y) — content coords — at the viewport centre. */
+export function scrollToCentre(x: number, y: number, viewWidth: number, viewHeight: number): { left: number; top: number } {
+  return { left: Math.max(0, x - viewWidth / 2), top: Math.max(0, y - viewHeight / 2) };
+}
+
+/** The single-page Stage position that puts a pin (percent of the page) at the container centre, zoom kept. */
+export function stagePosCentring(a: {
+  xPct: number;
+  yPct: number;
+  pageWidth: number;
+  pageHeight: number;
+  scale: number;
+  containerWidth: number;
+  containerHeight: number;
+}): { x: number; y: number } {
+  return {
+    x: a.containerWidth / 2 - (a.xPct / 100) * a.pageWidth * a.scale,
+    y: a.containerHeight / 2 - (a.yPct / 100) * a.pageHeight * a.scale,
+  };
+}
