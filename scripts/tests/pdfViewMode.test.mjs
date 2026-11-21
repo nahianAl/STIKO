@@ -17,6 +17,11 @@ import {
   anchoredScroll,
   scrollTopToReveal,
   cappedRenderScale,
+  PIN_MARGIN,
+  commentJumpTarget,
+  isPointHidden,
+  scrollToCentre,
+  stagePosCentring,
 } from '../../lib/pdf/viewMode.ts';
 
 const memStorage = (init = {}) => {
@@ -146,4 +151,44 @@ test('cappedRenderScale stays under the canvas area and side limits', () => {
   assert.ok(4000 * 3000 * s * s <= MAX_CANVAS_PIXELS + 1);
   assert.equal(cappedRenderScale(20000, 10, 5), MAX_CANVAS_SIDE / 20000);
   assert.equal(cappedRenderScale(0, 10, 3), 3);
+});
+
+test('commentJumpTarget: a tagged comment on a valid page', () => {
+  assert.deepEqual(commentJumpTarget({ pageNumber: 3, xPosition: 25, yPosition: 75 }, 5), { page: 3, xPct: 25, yPct: 75 });
+});
+
+test('commentJumpTarget: no target without a page, a position, or a loaded document', () => {
+  assert.equal(commentJumpTarget(undefined, 5), null);
+  assert.equal(commentJumpTarget({ pageNumber: null, xPosition: 1, yPosition: 1 }, 5), null);
+  assert.equal(commentJumpTarget({ pageNumber: 2, xPosition: null, yPosition: 1 }, 5), null);
+  assert.equal(commentJumpTarget({ pageNumber: 2, xPosition: 1, yPosition: null }, 5), null);
+  assert.equal(commentJumpTarget({ pageNumber: 2, xPosition: 1, yPosition: 1 }, 0), null);
+});
+
+test('commentJumpTarget: out-of-range or fractional page is no target', () => {
+  assert.equal(commentJumpTarget({ pageNumber: 0, xPosition: 1, yPosition: 1 }, 5), null);
+  assert.equal(commentJumpTarget({ pageNumber: 6, xPosition: 1, yPosition: 1 }, 5), null);
+  assert.equal(commentJumpTarget({ pageNumber: 2.5, xPosition: 1, yPosition: 1 }, 5), null);
+});
+
+test('isPointHidden: inside the margin-shrunk viewport is visible', () => {
+  assert.equal(isPointHidden(100, 100, 800, 600, PIN_MARGIN), false);
+});
+
+test('isPointHidden: outside, or within the margin of an edge, is hidden', () => {
+  assert.equal(isPointHidden(-5, 100, 800, 600, PIN_MARGIN), true);
+  assert.equal(isPointHidden(100, 900, 800, 600, PIN_MARGIN), true);
+  assert.equal(isPointHidden(10, 100, 800, 600, PIN_MARGIN), true);
+  assert.equal(isPointHidden(100, 590, 800, 600, PIN_MARGIN), true);
+});
+
+test('scrollToCentre: centres the point, clamped at zero', () => {
+  assert.deepEqual(scrollToCentre(1000, 2000, 800, 600), { left: 600, top: 1700 });
+  assert.deepEqual(scrollToCentre(100, 100, 800, 600), { left: 0, top: 0 });
+});
+
+test('stagePosCentring: puts the pin at the container centre', () => {
+  const pos = stagePosCentring({ xPct: 50, yPct: 25, pageWidth: 1000, pageHeight: 800, scale: 2, containerWidth: 600, containerHeight: 400 });
+  // pin in page px (500, 200) -> screen = pos + pin*scale must equal (300, 200)
+  assert.deepEqual(pos, { x: 300 - 1000, y: 200 - 400 });
 });
