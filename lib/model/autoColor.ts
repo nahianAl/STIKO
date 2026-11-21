@@ -19,7 +19,7 @@ import type { PartNode } from './partTree.ts';
 export const BASE_GREY = '#8899AA';
 
 /**
- * Muted on purpose — these sit against BASE_GREY under a headlight, and saturated hues read
+ * Muted on purpose — these sit against BASE_GREY under the viewer's lights, and saturated hues read
  * as a rendering fault rather than as a material. Brass, steel blue, copper, olive.
  */
 export const ACCENTS = ['#C8A05A', '#5B7FA6', '#A8563F', '#6E8A6B'] as const;

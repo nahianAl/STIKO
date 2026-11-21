@@ -16,11 +16,14 @@ import { Rhino3dmLoader } from 'three/examples/jsm/loaders/3DMLoader.js';
 import { ModelDisplayError, emptyModelMessage } from '@/lib/model/modelDisplayError';
 import { isZUpExtension, Z_UP_TO_Y_UP_X_ROTATION } from '@/lib/model/upAxis';
 import { STEPLoader } from '@/lib/STEPLoader';
-import { makeDoubleSided } from '@/lib/threeMaterials';
+import { makeDoubleSided, offsetFacesBehindEdges, setClippingPlanes } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
+import { applyCadFinish, CAD_FINISH_ROUGHNESS } from '@/lib/model/cadFinish';
 import { buildPartTree, cascadeToDescendants, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
 import { autoColors } from '@/lib/model/autoColor';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
+import { collectEdgeSources, collectEdgeSourcesForObject, type ModelEdges } from '@/lib/model/buildEdges';
+import { computeModelEdges } from '@/lib/model/runEdges';
 import { clipPlanesForView, framingForRadius } from '@/lib/cameraFraming';
 import { sceneScaleForRadius } from '@/lib/sceneScale';
 import { DEFAULT_FOCAL_LENGTH, fovForFocalLength } from '@/lib/focalLength';
@@ -212,16 +215,22 @@ export interface ModelViewerInnerProps {
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
   color: '#8899aa',
-  roughness: 0.6,
+  roughness: CAD_FINISH_ROUGHNESS,
   metalness: 0,
   side: THREE.DoubleSide,
+  polygonOffset: true,
+  polygonOffsetFactor: 1,
+  polygonOffsetUnits: 1,
 });
 
 const VERTEX_COLOR_MATERIAL = new THREE.MeshStandardMaterial({
   vertexColors: true,
-  roughness: 0.6,
+  roughness: CAD_FINISH_ROUGHNESS,
   metalness: 0,
   side: THREE.DoubleSide,
+  polygonOffset: true,
+  polygonOffsetFactor: 1,
+  polygonOffsetUnits: 1,
 });
 
 function getExtFromUrl(url: string): string {
@@ -291,6 +300,7 @@ function Model({
   highlightedPart,
   onPartsLoaded,
   onBatchesReady,
+  clipPlanesRef,
 }: {
   url: string;
   bytes: number;
@@ -300,6 +310,8 @@ function Model({
   onPartsLoaded?: (parts: PartNode[], authored: boolean, baseColors: Map<string, string>) => void;
   /** Hands the batches to SceneInteraction so a click can be mapped back to a part. */
   onBatchesReady?: (batches: PartBatches | null) => void;
+  /** The active cutting planes, written by ApplyCrossSection. Edge lines that arrive late are given them. */
+  clipPlanesRef: React.MutableRefObject<THREE.Plane[]>;
 }) {
   const ext = getExtFromUrl(url);
   const LoaderClass = getLoaderForExt(ext);
@@ -347,13 +359,17 @@ function Model({
   // Repair runs first and on the LOADED tree, before batching: it only ever touches materials
   // the exporter left at glTF's metal=1/rough=1 defaults, and buildBatches reads those same
   // materials to decide appearance groups and baked colours. Batching a pitch-black material
-  // would bake pitch black.
+  // would bake pitch black. The CAD finish runs after repair (a repaired material sits at 0.8 and
+  // never matches) and before batching (roughness is part of the batch appearance key).
   useMemo(() => {
     if (!root) return;
     // 3MF and Rhino are Z-up; stand them upright first. See lib/model/upAxis.ts.
     if (isZUpExtension(ext)) root.rotation.x = Z_UP_TO_Y_UP_X_ROTATION;
     repairExporterDefaults(root);
+    applyCadFinish(root);
     makeDoubleSided(root);
+    // Before batching: batchMaterialFrom clones these, and the clone keeps the offset.
+    offsetFacesBehindEdges(root);
   }, [root, ext]);
 
   // Whether the file's own import pipeline genuinely declared parts (a `stikoPart` marker
@@ -464,6 +480,59 @@ function Model({
 
   useEffect(() => () => batches?.dispose(), [batches]);
 
+  // Edge lines (lib/model/buildEdges.ts). Computed in a worker, so they arrive a moment after
+  // the model is already on screen: on a small part immediately, on a ~1.5 M-triangle model
+  // after a second or so. Until then, and for anything over the budget, the model renders
+  // exactly as it did before edges existed.
+  //
+  // An EFFECT, not a memo, unlike `batches`: the unbatched path's sources must be read after
+  // `root` is mounted, and collectEdgeSourcesForObject is written for that (it bakes in root's
+  // parent frame, so the ancestors React attached are never applied twice). The batched path
+  // never mounts root, so its matrices are root-relative either way.
+  const [edges, setEdges] = useState<ModelEdges | null>(null);
+  useEffect(() => {
+    const sources = batches
+      ? collectEdgeSources(parts)
+      : root
+        ? collectEdgeSourcesForObject(root)
+        : data instanceof THREE.BufferGeometry
+          ? collectEdgeSourcesForObject(new THREE.Mesh(data))
+          : [];
+    const job = computeModelEdges(sources);
+    let cancelled = false;
+    job.promise.then((result) => {
+      if (cancelled) {
+        result?.dispose(); // arrived after this effect stopped caring: never mounted, so free it here
+        return;
+      }
+      setEdges(result);
+    });
+    return () => {
+      cancelled = true;
+      job.cancel();
+      setEdges(null);
+    };
+  }, [batches, parts, root, data]);
+
+  // Disposal is its own effect, as for `batches` above: this cleanup runs only after the commit
+  // that detaches <primitive object={edges.lines} />. Disposing inside the compute effect's
+  // cleanup instead runs BEFORE that detach, so a frame rendered in between would re-upload the
+  // disposed geometry and leak it.
+  useEffect(() => () => edges?.dispose(), [edges]);
+
+  // Edges arrive from the worker after the model is on screen, so a section plane switched
+  // on in that window has already been applied (ApplyCrossSection only re-traverses when the
+  // plane SET changes) and the new lines would draw through the cut. Hand them the same
+  // array the faces hold: ApplyCrossSection mutates those planes in place every frame, so
+  // the lines follow drags from then on. A passive effect, not the .then: it runs after
+  // the lines are attached, so either ApplyCrossSection already ran (the ref is current) or
+  // it runs later and its traverse covers the attached lines.
+  useEffect(() => {
+    if (!edges) return;
+    const planes = clipPlanesRef.current;
+    setClippingPlanes(edges.lines, planes.length > 0 ? planes : null);
+  }, [edges, clipPlanesRef]);
+
   useEffect(() => {
     onPartsLoadedRef.current?.(parts, authored, partBaseColors);
   }, [parts, authored, partBaseColors]);
@@ -552,19 +621,37 @@ function Model({
     batches.instances.forEach((_instances, key) => {
       applyPartVisibility(batches, key, !cascadedHidden.get(key));
     });
-  }, [batches, parts, hiddenParts]);
+    // Same cascaded map, so hiding an assembly row hides its descendants' edges exactly as it
+    // hides their faces. Re-runs when `edges` arrives, since the worker usually finishes after
+    // the user's saved hidden set was first applied.
+    edges?.setHidden((key) => cascadedHidden.get(key) === true);
+  }, [batches, parts, hiddenParts, edges]);
+
+  const edgeLines = edges ? <primitive object={edges.lines} /> : null;
 
   if (ext === '.stl' || ext === '.ply') {
     const geometry = data as THREE.BufferGeometry;
     const material = geometry.hasAttribute('color')
       ? VERTEX_COLOR_MATERIAL
       : DEFAULT_MATERIAL;
-    return <mesh geometry={geometry} material={material} />;
+    return (
+      <>
+        <mesh geometry={geometry} material={material} />
+        {edgeLines}
+      </>
+    );
   }
 
   // No parts found — a legacy upload whose hierarchy was flattened at import, or a format
   // that never carried one. Render the tree as-is rather than pretending to segment it.
-  if (!batches || !root) return <primitive object={root ?? data} />;
+  if (!batches || !root) {
+    return (
+      <>
+        <primitive object={root ?? data} />
+        {edgeLines}
+      </>
+    );
+  }
 
   return (
     <>
@@ -576,6 +663,7 @@ function Model({
       {drawables.map((drawable, i) => (
         <primitive key={`drawable-${i}`} object={drawable} />
       ))}
+      {edgeLines}
     </>
   );
 }
@@ -1783,6 +1871,7 @@ export default function ModelViewerInner({
                   highlightedPart={highlightedPart}
                   onPartsLoaded={onPartsLoaded}
                   onBatchesReady={setBatches}
+                  clipPlanesRef={clipPlanesRef}
                 />
               </group>
             </Center>

@@ -4,59 +4,52 @@ import { useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Environment } from '@react-three/drei';
+import {
+  ENVIRONMENT_INTENSITY,
+  FILL_INTENSITY,
+  FILL_OFFSET,
+  HEMISPHERE_GROUND,
+  HEMISPHERE_INTENSITY,
+  HEMISPHERE_SKY,
+  KEY_INTENSITY,
+  KEY_OFFSET,
+  placeCameraRelativeLight,
+} from '@/lib/sceneLights';
 
 /**
- * How the viewer is lit: a headlight that always points where the camera points, the way
- * SketchUp lights a model.
- *
- * A headlight deliberately flattens form — there are no raking shadows to define curvature,
- * so a cylinder reads as an even band rather than a rounded surface. That is the point: it
- * keeps edges and geometry legible from every angle, which matters more in a review tool
- * than a photographic look.
+ * How the viewer is lit: a key light from above-left, a softer fill from the other side, a
+ * sky/ground tint, and studio reflections. The two directional lights follow the camera, so no
+ * side of the model ever goes dark; see lib/sceneLights.ts for why this replaced the
+ * SketchUp-style headlight (2026-11-20, docs/superpowers/specs/2026-11-20-model-shading-edges-design.md).
  */
 
-const HEADLIGHT_INTENSITY = 1.6;
+const ORIGIN = new THREE.Vector3();
 
-/** Enough that faces angled away from the camera stay readable instead of going pure black. */
-const AMBIENT_INTENSITY = 0.35;
-
-/**
- * Reflections only — the headlight does the lighting. This exists so that uploaded glTF
- * models carrying metallic materials have something to reflect; a metallic surface with no
- * environment renders black, and there is no way for it to recover.
- */
-const ENVIRONMENT_INTENSITY = 0.15;
-
-function Headlight() {
-  const light = useRef<THREE.DirectionalLight>(null);
+function CameraRig() {
+  const key = useRef<THREE.DirectionalLight>(null);
+  const fill = useRef<THREE.DirectionalLight>(null);
+  const scratch = useRef(new THREE.Vector3());
   const { camera, controls } = useThree();
 
   useFrame(() => {
-    const headlight = light.current;
-    if (!headlight) return;
-
-    // A directional light only cares about direction, not distance, so copying the camera's
-    // position and aiming at whatever it orbits points the light exactly where the user is
-    // looking. It also means this needs no scale derivation, unlike everything else in the
-    // scene — it behaves identically at model radius 1 and 10,000.
-    headlight.position.copy(camera.position);
-
-    const orbitTarget = (controls as unknown as { target?: THREE.Vector3 } | null)?.target;
-    if (orbitTarget) headlight.target.position.copy(orbitTarget);
-
-    // The target is a bare Object3D that is not part of the scene graph, so nothing else
-    // will refresh its world matrix — and the light reads its direction from that matrix.
-    headlight.target.updateMatrixWorld();
+    const target = (controls as unknown as { target?: THREE.Vector3 } | null)?.target ?? ORIGIN;
+    if (key.current) placeCameraRelativeLight(key.current, KEY_OFFSET, camera, target, scratch.current);
+    if (fill.current) placeCameraRelativeLight(fill.current, FILL_OFFSET, camera, target, scratch.current);
   });
 
-  return <directionalLight ref={light} intensity={HEADLIGHT_INTENSITY} />;
+  return (
+    <>
+      <directionalLight ref={key} intensity={KEY_INTENSITY} />
+      <directionalLight ref={fill} intensity={FILL_INTENSITY} />
+    </>
+  );
 }
 
 export default function SceneLighting() {
   return (
     <>
-      <Headlight />
-      <ambientLight intensity={AMBIENT_INTENSITY} />
+      <CameraRig />
+      <hemisphereLight args={[HEMISPHERE_SKY, HEMISPHERE_GROUND, HEMISPHERE_INTENSITY]} />
       <Environment preset="studio" environmentIntensity={ENVIRONMENT_INTENSITY} />
     </>
   );
