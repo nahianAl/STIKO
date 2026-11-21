@@ -26,9 +26,10 @@ viewport's size × dpr, so it never meets the canvas limits regardless of sheet 
 
 - pdf.js renders a sub-rectangle by rendering the page viewport at the target scale with a
   translate transform (`transform: [1,0,0,1,-x,-y]`) into a canvas the size of the visible rect.
-- A new zoom/pan cancels the in-flight detail render (`task.cancel()`), and the stale detail is
-  hidden immediately so a misaligned tile never shows; the stretched base shows until the new
-  detail lands. The view is never blank.
+- A new zoom/pan cancels the in-flight detail render (`task.cancel()`). The previous detail stays
+  up: it is positioned in page space (Konva page pixels / CSS percentages of the page), so it stays
+  aligned through zoom and pan and is merely stretched until the new one lands. The view is never
+  blank.
 - The detail is only drawn when it would add resolution: when the needed device-pixel density
   exceeds what the base already has. At fit-zoom nothing extra is rendered.
 - Pure geometry in `lib/pdf/detailTile.ts` (no React, no `@/` imports, node-testable):
@@ -62,8 +63,12 @@ Brief citation that switches files still lands once that PDF has loaded):
 
 1. Resolve the comment. Skip if it has no `pageNumber`, the page is out of range, or a markup /
    measure session is open (`annotating` — the page is locked then).
-2. **Single-page:** if `pageNumber !== currentPage`, `setCurrentPage(pageNumber)`. Once that page
-   is laid out, if the pin is outside the visible stage area, pan so it is centred, keeping zoom.
+2. **Single-page:** if `pageNumber !== currentPage`, `setCurrentPage(pageNumber)` — a page change
+   already re-fits the whole sheet, so the pin is on screen. On the same page, if the pin is outside
+   the visible stage area, pan so it is centred, keeping zoom.
+   Prerequisite fix: the draggable Stage never wrote its dragged position back to `stagePos`, so
+   every zoom after a pan jumped. `onDragEnd` on the Stage now syncs it; the detail render and the
+   pin centring both read `stagePos`.
 3. **Scroll mode:** if the pin is not in view, scroll so the pin is centred (new
    `scrollToPoint(page, xPct, yPct)` on the scroll view handle, built on the existing layout math).
 4. Fires once per change of `activeCommentId` — paging away afterwards is never undone. Clearing
@@ -80,16 +85,18 @@ A new markup tool, **Highlighter**, beside Freehand in `DrawingTools`.
 - New `AnnTool` / `AnnotationObjectType`: `'highlight'`. Same gesture as freehand (points array);
   holding **Shift** constrains it to a straight band, matching the other tools' shift behaviour.
 - Rendered as a Konva `Line`: `strokeWidth` = chosen width × `HIGHLIGHT_WIDTH_FACTOR` (≈6),
-  `lineCap="round"`, `lineJoin="round"`, `opacity` ≈0.35 and
-  `globalCompositeOperation="multiply"` so the drawing underneath stays dark and legible. Opacity is
-  on the node, so a stroke crossing itself does not darken.
+  `lineCap="round"`, `lineJoin="round"`, `opacity` 0.4, so dark linework underneath stays
+  legible. (A multiply blend cannot work: markup lives on its own Konva layer canvas, above the
+  page's layer, so there is nothing beneath it in that canvas to multiply with.) Opacity is on the
+  node, so a stroke crossing itself does not darken.
 - Colour: the current markup colour. Arming Highlighter while the picker is on the default markup
   colour switches the picker to highlighter yellow; any other colour is kept as chosen.
 - Selectable, movable, scalable, rotatable, erasable and undoable through the existing object model
   — no special cases beyond rendering.
 - **Availability:** shown for PDF, DWG, DXF and image files, including image attachment sessions.
-  **Hidden on 3D models** (`DrawingTools` gets a `highlightAvailable` prop; the portal passes
-  `!is3DFile || annotatingFile !== null` — an attachment session draws on an image). If the tool is
+  **Hidden on 3D models** and on video (`DrawingTools` gets a `highlightAvailable` prop; the portal
+  passes the positive list `isImageFile || isPDFFile || annotatingFile !== null` — `isPDFFile`
+  covers a converted DWG/DXF, and an attachment session draws on an image). If the tool is
   armed and the selection switches to a 3D file, it falls back to the pointer.
 - No persistence change: markup is flattened into a snapshot image. The legacy `markups` table
   CHECK is already documented as stale and is left alone.
