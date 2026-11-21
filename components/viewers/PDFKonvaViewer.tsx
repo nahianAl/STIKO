@@ -561,7 +561,15 @@ function PDFKonvaViewer(
         if (fitted?.pageSize !== pageSize || fitted.containerSize !== containerSize) return;
         const sx = stagePos.x + (target.xPct / 100) * pageSize.width * stageScale;
         const sy = stagePos.y + (target.yPct / 100) * pageSize.height * stageScale;
-        if (isPointHidden(sx, sy, containerSize.width, containerSize.height, PIN_MARGIN)) {
+        // The whole sheet already on screen (e.g. at fit): every pin is visible, even one inside
+        // PIN_MARGIN of the edge — panning would only shove part of the page into the matte.
+        // Half a pixel of slack: the fit puts the page edge exactly on the container's, give or take float noise.
+        const pageFullyVisible =
+          stagePos.x >= -0.5 &&
+          stagePos.y >= -0.5 &&
+          stagePos.x + pageSize.width * stageScale <= containerSize.width + 0.5 &&
+          stagePos.y + pageSize.height * stageScale <= containerSize.height + 0.5;
+        if (!pageFullyVisible && isPointHidden(sx, sy, containerSize.width, containerSize.height, PIN_MARGIN)) {
           setStagePos(stagePosCentring({
             xPct: target.xPct,
             yPct: target.yPct,
