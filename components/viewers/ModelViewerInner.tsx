@@ -18,6 +18,7 @@ import { isZUpExtension, Z_UP_TO_Y_UP_X_ROTATION } from '@/lib/model/upAxis';
 import { STEPLoader } from '@/lib/STEPLoader';
 import { makeDoubleSided } from '@/lib/threeMaterials';
 import { repairExporterDefaults } from '@/lib/model/repairMaterials';
+import { applyCadFinish, CAD_FINISH_ROUGHNESS } from '@/lib/model/cadFinish';
 import { buildPartTree, cascadeToDescendants, collectDrawables, hasAuthoredColors, hasMarkers, type PartNode } from '@/lib/model/partTree';
 import { autoColors } from '@/lib/model/autoColor';
 import { buildBatches, applyPartColor, applyPartVisibility, partKeyAt, type PartBatches } from '@/lib/model/buildBatches';
@@ -212,14 +213,14 @@ export interface ModelViewerInnerProps {
 
 const DEFAULT_MATERIAL = new THREE.MeshStandardMaterial({
   color: '#8899aa',
-  roughness: 0.6,
+  roughness: CAD_FINISH_ROUGHNESS,
   metalness: 0,
   side: THREE.DoubleSide,
 });
 
 const VERTEX_COLOR_MATERIAL = new THREE.MeshStandardMaterial({
   vertexColors: true,
-  roughness: 0.6,
+  roughness: CAD_FINISH_ROUGHNESS,
   metalness: 0,
   side: THREE.DoubleSide,
 });
@@ -347,12 +348,14 @@ function Model({
   // Repair runs first and on the LOADED tree, before batching: it only ever touches materials
   // the exporter left at glTF's metal=1/rough=1 defaults, and buildBatches reads those same
   // materials to decide appearance groups and baked colours. Batching a pitch-black material
-  // would bake pitch black.
+  // would bake pitch black. The CAD finish runs after repair (a repaired material sits at 0.8 and
+  // never matches) and before batching (roughness is part of the batch appearance key).
   useMemo(() => {
     if (!root) return;
     // 3MF and Rhino are Z-up; stand them upright first. See lib/model/upAxis.ts.
     if (isZUpExtension(ext)) root.rotation.x = Z_UP_TO_Y_UP_X_ROTATION;
     repairExporterDefaults(root);
+    applyCadFinish(root);
     makeDoubleSided(root);
   }, [root, ext]);
 
