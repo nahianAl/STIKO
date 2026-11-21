@@ -13,24 +13,26 @@ import * as THREE from 'three';
  * Offsets use camera axes: +x right, +y up, +z towards the viewer (the camera looks down -z).
  */
 
-/** About 35° above and 30° left of the view direction. */
+/** About 31° above and 30° left of the view direction. */
 export const KEY_OFFSET = new THREE.Vector3(-0.58, 0.7, 1).normalize();
-export const KEY_INTENSITY = 1.4;
+export const KEY_INTENSITY = 1.6;
 
 /** Opposite side and slightly low, so the key's shadow side is lifted, not flattened. */
 export const FILL_OFFSET = new THREE.Vector3(0.7, -0.15, 1).normalize();
-export const FILL_INTENSITY = 0.45;
+export const FILL_INTENSITY = 0.35;
 
 /** World-up sky/ground tint: tops of parts read a touch lighter than undersides. */
 export const HEMISPHERE_SKY = '#ffffff';
 export const HEMISPHERE_GROUND = '#b8bcc4';
-export const HEMISPHERE_INTENSITY = 0.5;
+export const HEMISPHERE_INTENSITY = 0.3;
 
 /**
  * Studio reflections. Raised from 0.15: the semi-gloss CAD finish (lib/model/cadFinish.ts)
- * needs something to reflect, or curved faces get no gradient. Too high washes pale parts out.
+ * needs something to reflect, or curved faces get no gradient. Too high washes pale parts out:
+ * at 0.7 a pale grey STEP part rendered near-white against the canvas (browser-checked).
+ * Fully metallic models lean on this term the most, so lowering it further darkens them.
  */
-export const ENVIRONMENT_INTENSITY = 0.7;
+export const ENVIRONMENT_INTENSITY = 0.35;
 
 /**
  * Places a directional light so it shines from `offset` (camera space) onto `target`.
