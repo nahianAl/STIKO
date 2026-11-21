@@ -320,7 +320,9 @@ export default function PdfScrollView({
     },
     revealPoint: (page, xPct, yPct) => {
       const el = scrollRef.current;
-      const s = scaleRef.current;
+      // The zoom the DOM is laid out at. scaleRef runs ahead of it while a zoom is pending, and a
+      // layout from that scale would aim at where the pin is about to be, not where it is.
+      const s = committedScaleRef.current;
       if (!el || s === null || !readyRef.current) {
         pendingRevealRef.current = { page, xPct, yPct };
         return;
