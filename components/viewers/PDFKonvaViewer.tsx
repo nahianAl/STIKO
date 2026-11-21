@@ -134,6 +134,10 @@ function PDFKonvaViewer(
     // PDF state
     const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
     const [pageImage, setPageImage] = useState<HTMLImageElement | null>(null);
+    // Which page `pageImage`/`pageSize` were rendered for. On a page turn `currentPage` moves at once
+    // but those (and the zoom/pan) still describe the previous sheet until the new base loads; the
+    // detail render must only run, and only be shown, once the two agree.
+    const [pageImagePage, setPageImagePage] = useState(0);
     const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
@@ -406,6 +410,7 @@ function PDFKonvaViewer(
           img.onload = () => {
             if (cancelled) return;
             setPageImage(img);
+            setPageImagePage(currentPage);
             setPageSize({ width: viewport.width, height: viewport.height });
             setLoading(false);
             announceReady();
@@ -425,7 +430,7 @@ function PDFKonvaViewer(
     // Detail render (single-page). Runs SETTLE_MS after the last zoom/pan/resize; a newer change
     // cancels it. Skipped when the base is already at screen density (fit zoom).
     useEffect(() => {
-      if (!pdfDoc || mode !== 'single' || !pageImage || !pageSize.width || !containerSize.width) return;
+      if (!pdfDoc || mode !== 'single' || !pageImage || pageImagePage !== currentPage || !pageSize.width || !containerSize.width) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const displayWidth = pageSize.width * stageScale;
       // The base image is pageSize.width bitmap pixels wide (rendered at PDF_RENDER_SCALE).
@@ -438,8 +443,11 @@ function PDFKonvaViewer(
         { x: stagePos.x, y: stagePos.y, width: displayWidth, height: pageSize.height * stageScale },
       );
       if (!visible) return;
-      const region = snapOutward({ x: visible.x - stagePos.x, y: visible.y - stagePos.y, width: visible.width, height: visible.height }, dpr);
-      const page = currentPage;
+      // Snap in CONTAINER coordinates (screen pixels) so the tile's device-pixel grid lines up with the
+      // screen's, then move to page-relative CSS px (fractional once the stage is panned off-grid).
+      const snapped = snapOutward(visible, dpr);
+      const region = { x: snapped.x - stagePos.x, y: snapped.y - stagePos.y, width: snapped.width, height: snapped.height };
+      const page = pageImagePage;
       let cancelled = false;
       let job: PageRenderJob | null = null;
       const t = setTimeout(() => {
@@ -471,7 +479,7 @@ function PDFKonvaViewer(
         clearTimeout(t);
         job?.cancel();
       };
-    }, [pdfDoc, mode, pageImage, pageSize, containerSize, stageScale, stagePos, currentPage]);
+    }, [pdfDoc, mode, pageImage, pageImagePage, pageSize, containerSize, stageScale, stagePos, currentPage]);
 
     // Free a replaced or dropped detail canvas once the stage no longer draws it.
     useEffect(() => {
@@ -484,6 +492,7 @@ function PDFKonvaViewer(
     useEffect(() => {
       if (mode !== 'scroll') return;
       setPageImage(null);
+      setPageImagePage(0);
       setDetail(null);
       setPageSize({ width: 0, height: 0 });
     }, [mode]);
@@ -953,7 +962,7 @@ function PDFKonvaViewer(
                 {pageImage && (
                   <KonvaImage image={pageImage} width={pageSize.width} height={pageSize.height} listening={false} />
                 )}
-                {pageImage && detail && detail.page === currentPage && (
+                {pageImage && detail && detail.page === pageImagePage && pageImagePage === currentPage && (
                   <KonvaImage image={detail.canvas} x={detail.rect.x} y={detail.rect.y} width={detail.rect.width} height={detail.rect.height} listening={false} />
                 )}
               </Layer>
