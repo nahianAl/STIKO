@@ -16,7 +16,8 @@ import {
   scrollTopForPage,
   type PageSize,
 } from '@/lib/pdf/viewMode';
-import { isRenderCancelled, releaseCanvas, renderPageToCanvas, type PageRenderJob } from '@/lib/pdf/pageRender';
+import { isRenderCancelled, releaseCanvas, renderPageRegion, renderPageToCanvas, type PageRenderJob } from '@/lib/pdf/pageRender';
+import { intersectRect, needsDetail, snapOutward, type Rect } from '@/lib/pdf/detailTile';
 
 const GAP = 16; // CSS px between pages
 const PADDING = 24; // CSS px around the column
@@ -217,6 +218,43 @@ export default function PdfScrollView({
     [layout, ready, scrollTop, viewport.height],
   );
 
+  const colWidth = layout ? Math.max(layout.contentWidth, viewport.width) : 0;
+
+  // The viewport, SETTLE_MS after the last scroll or zoom, stamped with the zoom it was measured at.
+  // Drives the per-page detail render; a stamp from another zoom is ignored until it re-settles.
+  const [settledView, setSettledView] = useState<{ rect: Rect; scale: number } | null>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !ready || scale === null) return;
+    const t = setTimeout(() => {
+      setSettledView({ rect: { x: el.scrollLeft, y: el.scrollTop, width: el.clientWidth, height: el.clientHeight }, scale });
+    }, SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [scrollPos, scale, viewport, ready]);
+
+  // Each page's on-screen part at the settled zoom, in page-local CSS px. Deliberately not tied to
+  // the render window: that Set is rebuilt on every scroll frame, which would hand every page a new
+  // Rect each frame (breaking ScrollPage's memo and restarting its detail render mid-scroll). Here the
+  // Rects keep their identity until the view re-settles; ScrollPage ignores its region when the page
+  // is outside the render window.
+  const visibleRegions = useMemo(() => {
+    const m = new Map<number, Rect>();
+    if (!layout || !settledView || settledView.scale !== scale) return m;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (const p of layout.pages) {
+      const left = (colWidth - p.width) / 2;
+      const pageRect = { x: left, y: p.top, width: p.width, height: p.height };
+      const vis = intersectRect(settledView.rect, pageRect);
+      if (!vis) continue;
+      // Snap in scroll-content coordinates (the screen's pixel grid — the page's own `left` can be
+      // fractional, so snapping page-locally would misalign it), clamp back onto the page so a snapped
+      // tile never paints past the page edge, and only then go page-local.
+      const snapped = intersectRect(snapOutward(vis, dpr), pageRect);
+      if (snapped) m.set(p.page, { x: snapped.x - left, y: snapped.y - p.top, width: snapped.width, height: snapped.height });
+    }
+    return m;
+  }, [layout, settledView, scale, colWidth]);
+
   const commentsByPage = useMemo(() => {
     const m = new Map<number, Comment[]>();
     for (const c of comments) {
@@ -252,7 +290,6 @@ export default function PdfScrollView({
   }), [pageSizes, applyScale]);
 
   const drawScale = renderScale ?? scale ?? 1;
-  const colWidth = layout ? Math.max(layout.contentWidth, viewport.width) : 0;
 
   return (
     <div ref={scrollRef} onScroll={onScroll} style={{ scrollbarGutter: 'stable' }} className="relative isolate min-w-0 flex-1 overflow-auto bg-gray-100">
@@ -273,6 +310,7 @@ export default function PdfScrollView({
               height={p.height}
               shouldRender={renderSet.has(p.page)}
               renderWidth={pageSizes[p.page - 1].width * drawScale}
+              visibleRegion={visibleRegions.get(p.page) ?? null}
               comments={commentsByPage.get(p.page) ?? NO_COMMENTS}
               tagNumbers={tagNumbers}
               activeCommentId={activeCommentId}
@@ -299,6 +337,8 @@ interface ScrollPageProps {
   shouldRender: boolean;
   /** CSS px width to draw the bitmap at (the settled zoom); `width` is the live on-screen width. */
   renderWidth: number;
+  /** This page's on-screen part, page-local CSS px at the current zoom; null when off screen or not settled. */
+  visibleRegion: Rect | null;
   comments: Comment[];
   tagNumbers: Map<string, number>;
   activeCommentId: string | null;
@@ -310,17 +350,25 @@ interface ScrollPageProps {
 }
 
 const ScrollPage = memo(function ScrollPage({
-  pdfDoc, page, top, left, width, height, shouldRender, renderWidth, comments, tagNumbers, activeCommentId,
-  pendingCommentId, tagging, onPinClick, onPlace, onDrawn,
+  pdfDoc, page, top, left, width, height, shouldRender, renderWidth, visibleRegion, comments, tagNumbers,
+  activeCommentId, pendingCommentId, tagging, onPinClick, onPlace, onDrawn,
 }: ScrollPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
+  const detailRef = useRef<HTMLCanvasElement>(null);
+  // The base bitmap last drawn: its width in device px (what needsDetail compares against the on-screen
+  // width) and the CSS width it was drawn for, so a bitmap from an earlier zoom is never mistaken for
+  // the current one.
+  const [baseWidth, setBaseWidth] = useState(0);
+  const [baseFor, setBaseFor] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     if (!shouldRender) {
       releaseCanvas(canvas);
+      setBaseWidth(0);
+      setBaseFor(0);
       return;
     }
     let cancelled = false;
@@ -333,6 +381,8 @@ const ScrollPage = memo(function ScrollPage({
         job = renderPageToCanvas(pg, canvas, renderWidth, Math.min(window.devicePixelRatio || 1, 2));
         return job.promise.then(() => {
           if (cancelled) return;
+          setBaseWidth(canvas.width);
+          setBaseFor(renderWidth);
           onDrawn();
         });
       })
@@ -348,9 +398,66 @@ const ScrollPage = memo(function ScrollPage({
     };
   }, [pdfDoc, page, shouldRender, renderWidth, onDrawn]);
 
+  // Detail render: only where the base is visibly stretched (it hit the canvas cap). Positioned in
+  // percentages of the page, written in the same tick the pixels land, so it stays aligned through
+  // later zooms and never shows new pixels in an old box.
+  useEffect(() => {
+    const canvas = detailRef.current;
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (!shouldRender) {
+      releaseCanvas(canvas);
+      canvas.style.display = 'none';
+      return;
+    }
+    // The base is still catching up with the zoom, so its bitmap says nothing about the current width
+    // yet: deciding now would start a detail render the base is about to make unnecessary (competing
+    // with it for the main thread). Keep whatever detail is showing; this re-runs when the base lands.
+    if (Math.abs(baseFor - width) > 0.5) return;
+    if (!needsDetail(baseWidth, width, dpr)) {
+      releaseCanvas(canvas);
+      canvas.style.display = 'none';
+      return;
+    }
+    // Off screen or not yet settled: an existing detail canvas stays — it is percentage-positioned, so
+    // it is still aligned if the page scrolls back in.
+    if (!visibleRegion) return;
+    const region = visibleRegion; // already snapped to the screen's pixel grid
+    let cancelled = false;
+    let job: PageRenderJob | null = null;
+    pdfDoc
+      .getPage(page)
+      .then((pg) => {
+        if (cancelled) return;
+        job = renderPageRegion(pg, canvas, region, width, dpr);
+        return job.promise.then(() => {
+          if (cancelled) return;
+          Object.assign(canvas.style, {
+            display: 'block',
+            left: `${(region.x / width) * 100}%`,
+            top: `${(region.y / height) * 100}%`,
+            width: `${(region.width / width) * 100}%`,
+            height: `${(region.height / height) * 100}%`,
+          });
+        });
+      })
+      .catch((err) => {
+        if (cancelled || isRenderCancelled(err)) return;
+        console.error(`Failed to render PDF page ${page} detail:`, err);
+      });
+    return () => {
+      cancelled = true;
+      job?.cancel();
+    };
+  }, [pdfDoc, page, shouldRender, visibleRegion, baseWidth, baseFor, width, height]);
+
   useEffect(() => {
     const c = canvasRef.current;
-    return () => releaseCanvas(c);
+    const d = detailRef.current;
+    return () => {
+      releaseCanvas(c);
+      releaseCanvas(d);
+    };
   }, []);
 
   // Free pdf.js's per-page operator lists/fonts/images when the page leaves the render window
@@ -379,6 +486,7 @@ const ScrollPage = memo(function ScrollPage({
       }
     >
       <canvas ref={canvasRef} className="block h-full w-full" />
+      <canvas ref={detailRef} className="pointer-events-none absolute" style={{ display: 'none' }} />
       {failed && (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-200 text-sm text-gray-500">
           Couldn&apos;t render page {page}
