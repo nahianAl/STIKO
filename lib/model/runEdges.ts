@@ -53,6 +53,13 @@ export function computeModelEdges(sources: EdgeSource[]): {
       worker = null;
       resolve(null);
     };
+    // The result could not be deserialised on this side. Without this the promise would hang.
+    live.onmessageerror = () => {
+      console.warn('[edges] worker message error');
+      live.terminate();
+      worker = null;
+      resolve(null);
+    };
     // Each source's arrays are already private copies (collectEdgeSources), so transferring
     // them cannot detach the live geometry. They are not read on this side again, because
     // assembleEdges only reads `matrix` and `key`.
@@ -62,7 +69,15 @@ export function computeModelEdges(sources: EdgeSource[]): {
       transfer.push(j.positions.buffer);
       if (j.index) transfer.push(j.index.buffer);
     });
-    live.postMessage({ jobs, thresholdDeg: CREASE_THRESHOLD_DEG }, transfer);
+    try {
+      live.postMessage({ jobs, thresholdDeg: CREASE_THRESHOLD_DEG }, transfer);
+    } catch (error) {
+      // A DataCloneError or a refused transfer throws synchronously, inside the promise executor.
+      console.warn('[edges] postMessage failed:', error);
+      live.terminate();
+      worker = null;
+      resolve(null);
+    }
   });
 
   return {

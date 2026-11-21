@@ -79,36 +79,65 @@ function copyPositions(attribute: THREE.BufferAttribute | THREE.InterleavedBuffe
   return out;
 }
 
-function sourceFor(key: string, mesh: THREE.Mesh, matrix: THREE.Matrix4): EdgeSource | null {
+/** A mesh that will become an EdgeSource, before any of its geometry has been copied. */
+interface Candidate {
+  key: string;
+  mesh: THREE.Mesh;
+  matrix: THREE.Matrix4;
+  triangles: number;
+}
+
+function candidateFor(key: string, mesh: THREE.Mesh, matrix: THREE.Matrix4): Candidate | null {
   const position = mesh.geometry?.getAttribute('position');
   if (!position || position.count === 0) return null;
   const indexAttribute = mesh.geometry.getIndex();
-  const index = indexAttribute ? Uint32Array.from(indexAttribute.array as ArrayLike<number>) : null;
-  return {
-    key,
-    positions: copyPositions(position),
-    index,
-    matrix,
-    triangles: (index ? index.length : position.count) / 3,
-  };
+  return { key, mesh, matrix, triangles: (indexAttribute ? indexAttribute.count : position.count) / 3 };
+}
+
+/**
+ * Two passes, so an oversized model costs nothing: the candidates (a reference and a matrix
+ * each) are counted first, and geometry is copied only once the total is known to be inside the
+ * budget. Copying first and checking afterwards would allocate a full second copy of exactly the
+ * models the budget exists to turn away.
+ */
+function copyWithinBudget(candidates: Candidate[], maxTriangles: number): EdgeSource[] {
+  let total = 0;
+  candidates.forEach((c) => (total += c.triangles));
+  if (total > maxTriangles) return [];
+  return candidates.map((c) => {
+    const indexAttribute = c.mesh.geometry.getIndex();
+    return {
+      key: c.key,
+      positions: copyPositions(c.mesh.geometry.getAttribute('position')),
+      index: indexAttribute ? Uint32Array.from(indexAttribute.array as ArrayLike<number>) : null,
+      matrix: c.matrix,
+      triangles: c.triangles,
+    };
+  });
 }
 
 /**
  * Batched path. The loaded root is never mounted there (only the batches are), so a mesh's
  * matrixWorld after updateWorldMatrix(true, false) is root-relative: the exact matrix
  * buildBatches puts on the instance, so the lines and the faces share one frame.
+ *
+ * `maxTriangles` is a parameter only so tests can reach the budget without a million-triangle
+ * fixture; production callers use the default. Over budget, returns `[]`.
  */
-export function collectEdgeSources(parts: PartNode[]): EdgeSource[] {
-  const sources: EdgeSource[] = [];
+export function collectEdgeSources(
+  parts: PartNode[],
+  maxTriangles: number = EDGE_MAX_TRIANGLES,
+): EdgeSource[] {
+  const candidates: Candidate[] = [];
   flattenParts(parts).forEach((part) => {
     part.meshes.forEach((mesh) => {
       if (!mesh.visible || !isPlainMesh(mesh)) return;
       mesh.updateWorldMatrix(true, false);
-      const source = sourceFor(part.key, mesh, mesh.matrixWorld.clone());
-      if (source) sources.push(source);
+      const candidate = candidateFor(part.key, mesh, mesh.matrixWorld.clone());
+      if (candidate) candidates.push(candidate);
     });
   });
-  return sources;
+  return copyWithinBudget(candidates, maxTriangles);
 }
 
 /**
@@ -116,17 +145,22 @@ export function collectEdgeSources(parts: PartNode[]): EdgeSource[] {
  * <Center>, by the time an effect runs, so a mesh's matrixWorld includes those ancestors.
  * The lines render as root's sibling, under the same parent, so they need root's own transform
  * and none of its ancestors': root.matrix x root.matrixWorld^-1 x mesh.matrixWorld.
+ *
+ * `maxTriangles` is a parameter only for tests, as in collectEdgeSources. Over budget, `[]`.
  */
-export function collectEdgeSourcesForObject(root: THREE.Object3D): EdgeSource[] {
+export function collectEdgeSourcesForObject(
+  root: THREE.Object3D,
+  maxTriangles: number = EDGE_MAX_TRIANGLES,
+): EdgeSource[] {
   root.updateWorldMatrix(true, true);
   const toParentFrame = root.matrix.clone().multiply(root.matrixWorld.clone().invert());
-  const sources: EdgeSource[] = [];
+  const candidates: Candidate[] = [];
   root.traverseVisible((object) => {
     if (!isPlainMesh(object)) return;
-    const source = sourceFor('', object, toParentFrame.clone().multiply(object.matrixWorld));
-    if (source) sources.push(source);
+    const candidate = candidateFor('', object, toParentFrame.clone().multiply(object.matrixWorld));
+    if (candidate) candidates.push(candidate);
   });
-  return sources;
+  return copyWithinBudget(candidates, maxTriangles);
 }
 
 export function assembleEdges(sources: EdgeSource[], segments: Float32Array[]): ModelEdges | null {

@@ -69,11 +69,14 @@ test('hiding a part removes only its segments; showing restores them', () => {
   assert.equal(drawnSegments(edges), 24);
 });
 
-test('setHidden reuses one index buffer (no GPU buffer per toggle)', () => {
+test('setHidden reuses one index buffer (no GPU buffer per toggle) and re-uploads it', () => {
   const edges = build(collectEdgeSources([part('a', boxMesh(0)), part('b', boxMesh(3))]));
   const before = edges.lines.geometry.index;
+  const versionBefore = before.version;
   edges.setHidden((key) => key === 'a');
   assert.equal(edges.lines.geometry.index, before);
+  // The rewritten indices only reach the GPU if the attribute is flagged for upload.
+  assert.ok(edges.lines.geometry.index.version > versionBefore, 'index flagged needsUpdate');
 });
 
 test('meshes the model ships hidden are skipped, as buildBatches does', () => {
@@ -130,4 +133,36 @@ test('quantised (normalised Int16) positions are read through the attribute', ()
   geometry.setAttribute('position', new THREE.BufferAttribute(ints, 3, true));
   const sources = collectEdgeSourcesForObject(new THREE.Mesh(geometry));
   assert.equal(drawnSegments(build(sources)), 12);
+});
+
+test('batched path: over the triangle budget returns no sources', () => {
+  const parts = [part('0', boxMesh())]; // 12 triangles
+  assert.equal(collectEdgeSources(parts, 11).length, 0);
+  assert.equal(collectEdgeSources(parts, 12).length, 1);
+});
+
+test('object path: over the triangle budget returns no sources', () => {
+  assert.equal(collectEdgeSourcesForObject(boxMesh(), 11).length, 0);
+  assert.equal(collectEdgeSourcesForObject(boxMesh(), 12).length, 1);
+});
+
+test('the budget counts across parts and meshes, not per mesh', () => {
+  const parts = [part('a', boxMesh(0)), part('b', boxMesh(3))]; // 24 triangles in total
+  assert.equal(collectEdgeSources(parts, 23).length, 0);
+  assert.equal(collectEdgeSources(parts, 24).length, 2);
+});
+
+test('over budget, no geometry is copied', () => {
+  const mesh = boxMesh();
+  const position = mesh.geometry.getAttribute('position');
+  let copies = 0;
+  const slice = position.array.slice.bind(position.array);
+  position.array.slice = (...args) => {
+    copies++;
+    return slice(...args);
+  };
+  assert.equal(collectEdgeSources([part('0', mesh)], 11).length, 0);
+  assert.equal(copies, 0);
+  assert.equal(collectEdgeSources([part('0', mesh)], 12).length, 1);
+  assert.equal(copies, 1);
 });
