@@ -13,6 +13,20 @@
  * that meet at a chamfer share positions but no indices. Without welding by position every face
  * boundary looks open and gets drawn, smooth seams included. Positions are quantised to 1e-4
  * (EdgesGeometry's own default precision) before comparison.
+ *
+ * THE SMOOTH-FACE RULE (`sharedIsSmooth`). CAD tessellation shares vertex INDICES within one
+ * B-rep face and duplicates them across face boundaries. So when the two triangles on an edge
+ * share both of that edge's ORIGINAL (unwelded) indices, the edge lies inside a single face and
+ * is smooth by construction, however sharp the angle between its facets: it is a tessellation
+ * artefact, not an edge, and is dropped. Without this, a STEP tessellated at angularDeflection
+ * 0.5 rad (28.6 degrees, right at CREASE_THRESHOLD_DEG) draws false lines across every coarse
+ * fillet and rack tooth: on the reference clamp, 5,669 of 9,817 segments (58%) were false.
+ *
+ * The rule is only VALID where shared indices mean "same surface". It is not for 3MFLoader
+ * geometry (indexed with shared vertices, flatShading: true) or glTF without normals
+ * (flatShading too): there a shared index says nothing about smoothness. buildEdges.ts decides
+ * per mesh and passes the answer in; the default is off, which is EdgesGeometry's behaviour.
+ * Non-indexed meshes (STL, OBJ, FBX) have no indices to share, so the flag changes nothing.
  */
 
 export const CREASE_THRESHOLD_DEG = 30;
@@ -23,6 +37,7 @@ export function extractCreaseEdges(
   positions: Float32Array,
   index: Uint32Array | null,
   thresholdDeg: number,
+  sharedIsSmooth = false,
 ): Float32Array {
   const vertexCount = positions.length / 3;
   const triangleCount = index ? index.length / 3 : vertexCount / 3;
@@ -112,6 +127,19 @@ export function extractCreaseEdges(
         continue;
       }
       if (other === -1) continue; // a third face on a non-manifold edge: already decided
+      // `corners` holds WELDED ids; the smooth-face rule needs the original indices, which are
+      // what say whether two triangles belong to the same B-rep face.
+      if (sharedIsSmooth && index) {
+        const op = index[t * 3 + k];
+        const or = index[t * 3 + (k + 1) % 3];
+        const o0 = index[other * 3];
+        const o1 = index[other * 3 + 1];
+        const o2 = index[other * 3 + 2];
+        if ((op === o0 || op === o1 || op === o2) && (or === o0 || or === o1 || or === o2)) {
+          firstFace.set(key, -1); // decided: smooth, so a later third face compares nothing
+          continue;
+        }
+      }
       const dot =
         normals[other * 3] * normals[t * 3] +
         normals[other * 3 + 1] * normals[t * 3 + 1] +

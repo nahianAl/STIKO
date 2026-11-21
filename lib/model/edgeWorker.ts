@@ -9,14 +9,16 @@ import { extractCreaseEdges } from './creaseEdges';
  */
 
 export interface EdgeJobRequest {
-  jobs: { positions: Float32Array; index: Uint32Array | null }[];
+  jobs: { positions: Float32Array; index: Uint32Array | null; sharedIsSmooth: boolean }[];
   thresholdDeg: number;
 }
 
 self.onmessage = (event: MessageEvent<EdgeJobRequest>) => {
   try {
     const { jobs, thresholdDeg } = event.data;
-    const segments = jobs.map((job) => extractCreaseEdges(job.positions, job.index, thresholdDeg));
+    const segments = jobs.map((job) =>
+      extractCreaseEdges(job.positions, job.index, thresholdDeg, job.sharedIsSmooth),
+    );
     (self as unknown as Worker).postMessage(
       { ok: true, segments },
       segments.map((s) => s.buffer),

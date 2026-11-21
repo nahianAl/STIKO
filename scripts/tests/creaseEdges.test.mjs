@@ -102,3 +102,66 @@ test('endpoints are real model positions', () => {
     arrays(new THREE.BoxGeometry(2, 2, 2)).index, 30);
   for (const value of out) assert.equal(Math.abs(value), 1);
 });
+
+// Two triangles on the edge A-B, folded 60 degrees about it (normals 60 degrees apart, past the
+// 30 degree threshold). Boundary edges: 2 per triangle, minus nothing, since the shared edge is
+// the 5th. A=(0,0,0) B=(1,0,0) C=(0,1,0); D=(0,-0.5,0.866) lies on the other side of the fold.
+const FOLD = {
+  A: [0, 0, 0],
+  B: [1, 0, 0],
+  C: [0, 1, 0],
+  D: [0, -0.5, Math.sqrt(3) / 2],
+};
+const flat = (...points) => new Float32Array(points.flat());
+
+test('sharedIsSmooth: a fold whose triangles SHARE both edge indices is smooth, not drawn', () => {
+  const positions = flat(FOLD.A, FOLD.B, FOLD.C, FOLD.D);
+  const index = Uint32Array.from([0, 1, 2, 1, 0, 3]);
+  // Only the 4 outer boundary edges remain.
+  assert.equal(extractCreaseEdges(positions, index, 30, true).length / 6, 4);
+});
+
+test('sharedIsSmooth off (the default): the same shared-index fold is a crease, as before', () => {
+  const positions = flat(FOLD.A, FOLD.B, FOLD.C, FOLD.D);
+  const index = Uint32Array.from([0, 1, 2, 1, 0, 3]);
+  assert.equal(extractCreaseEdges(positions, index, 30, false).length / 6, 5);
+  assert.equal(extractCreaseEdges(positions, index, 30).length / 6, 5);
+});
+
+test('sharedIsSmooth: a fold with DUPLICATED vertices (a B-rep face boundary) is still drawn', () => {
+  // Indexed, but the fold's two vertices are separate copies with identical positions: this is
+  // how CAD tessellation marks a boundary between faces. Welding finds the pair; the original
+  // indices do not match, so the edge is a face boundary and the dot product decides.
+  const positions = flat(FOLD.A, FOLD.B, FOLD.C, FOLD.B, FOLD.A, FOLD.D);
+  const index = Uint32Array.from([0, 1, 2, 3, 4, 5]);
+  assert.equal(extractCreaseEdges(positions, index, 30, true).length / 6, 5);
+});
+
+test('sharedIsSmooth: sharing only ONE index is not smooth', () => {
+  // The triangles touch at vertex A only through an index; edge A-B has duplicated B.
+  const positions = flat(FOLD.A, FOLD.B, FOLD.C, FOLD.B, FOLD.D);
+  const index = Uint32Array.from([0, 1, 2, 3, 0, 4]);
+  assert.equal(extractCreaseEdges(positions, index, 30, true).length / 6, 5);
+});
+
+test('sharedIsSmooth does not change a box: its faces own their vertices, so all 12 creases stay', () => {
+  const { positions, index } = arrays(new THREE.BoxGeometry(1, 1, 1));
+  assert.equal(extractCreaseEdges(positions, index, 30, true).length / 6, 12);
+});
+
+test('sharedIsSmooth skips shared-index facets of a curved surface but keeps rims and the UV seam', () => {
+  // A 6-sided cylinder has 60 degree side facets that SHARE side vertices. Smooth-by-construction
+  // drops those five joins. What stays: the two rim loops (the caps own their vertices, 12
+  // segments) and the UV seam, where three.js duplicates one column of side vertices (1 segment).
+  const { positions, index } = arrays(new THREE.CylinderGeometry(1, 1, 2, 6));
+  assert.equal(extractCreaseEdges(positions, index, 30, false).length / 6, 18);
+  assert.equal(extractCreaseEdges(positions, index, 30, true).length / 6, 13);
+});
+
+test('welding compares in Float64: points 429,497 units apart that wrap in Int32 stay distinct', () => {
+  // fround(1.0204) * 1e4 rounds to 10204, and 429497.75 * 1e4 = 4294977500 = 2^32 + 10204. A weld
+  // that stored Int32 (or compared after |0) would see A and B as one point and drop the
+  // triangle as degenerate (0 segments). Pinned so that regression cannot return unnoticed.
+  const positions = flat([Math.fround(1.0204), 0, 0], [429497.75, 0, 0], [0, 1, 0]);
+  assert.equal(extractCreaseEdges(positions, null, 30).length / 6, 3);
+});

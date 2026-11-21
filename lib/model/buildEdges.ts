@@ -41,6 +41,12 @@ export interface EdgeSource {
   /** Where these local positions render, in the frame the LineSegments is mounted in. */
   matrix: THREE.Matrix4;
   triangles: number;
+  /**
+   * True when two triangles that share both of an edge's indices are on one smooth surface, so
+   * that edge is not a crease (see the smooth-face rule in creaseEdges.ts). Only for indexed
+   * geometry that has normals and no flat-shaded material.
+   */
+  sharedIsSmooth: boolean;
 }
 
 export interface ModelEdges {
@@ -81,6 +87,18 @@ function copyPositions(attribute: THREE.BufferAttribute | THREE.InterleavedBuffe
   return out;
 }
 
+/**
+ * Whether shared indices mean "same smooth surface" for this mesh. 3MFLoader builds indexed,
+ * shared-vertex geometry with flatShading: true, and GLTFLoader sets flatShading when a file has
+ * no normals: in both, facets that share indices still meet at real angles, so the rule would
+ * erase true edges. A mesh with no index has nothing to share, so it reports false.
+ */
+function sharedIsSmoothFor(mesh: THREE.Mesh): boolean {
+  if (mesh.geometry.getIndex() === null || mesh.geometry.getAttribute('normal') === undefined) return false;
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return materials.every((material) => !(material as THREE.MeshStandardMaterial | undefined)?.flatShading);
+}
+
 /** A mesh that will become an EdgeSource, before any of its geometry has been copied. */
 interface Candidate {
   key: string;
@@ -114,6 +132,7 @@ function copyWithinBudget(candidates: Candidate[], maxTriangles: number): EdgeSo
       index: indexAttribute ? Uint32Array.from(indexAttribute.array as ArrayLike<number>) : null,
       matrix: c.matrix,
       triangles: c.triangles,
+      sharedIsSmooth: sharedIsSmoothFor(c.mesh),
     };
   });
 }

@@ -63,7 +63,11 @@ export function computeModelEdges(sources: EdgeSource[]): {
     // Each source's arrays are already private copies (collectEdgeSources), so transferring
     // them cannot detach the live geometry. They are not read on this side again, because
     // assembleEdges only reads `matrix` and `key`.
-    const jobs = sources.map((s) => ({ positions: s.positions, index: s.index }));
+    const jobs = sources.map((s) => ({
+      positions: s.positions,
+      index: s.index,
+      sharedIsSmooth: s.sharedIsSmooth,
+    }));
     const transfer: Transferable[] = [];
     jobs.forEach((j) => {
       transfer.push(j.positions.buffer);

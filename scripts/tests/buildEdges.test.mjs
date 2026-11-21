@@ -21,7 +21,8 @@ const part = (key, ...meshes) => {
 };
 /** What the worker does, run inline. */
 const extractAll = (sources) =>
-  sources.map((s) => extractCreaseEdges(s.positions, s.index, CREASE_THRESHOLD_DEG));
+  sources.map((s) =>
+    extractCreaseEdges(s.positions, s.index, CREASE_THRESHOLD_DEG, s.sharedIsSmooth));
 const build = (sources) => assembleEdges(sources, extractAll(sources));
 const drawnSegments = (edges) => edges.lines.geometry.drawRange.count / 2;
 const xs = (edges) => {
@@ -165,4 +166,44 @@ test('over budget, no geometry is copied', () => {
   assert.equal(copies, 0);
   assert.equal(collectEdgeSources([part('0', mesh)], 12).length, 1);
   assert.equal(copies, 1);
+});
+
+test('an indexed, normal-bearing, smooth-shaded mesh may treat shared indices as smooth', () => {
+  // BoxGeometry duplicates vertices per face, so every one of its 12 creases survives the rule.
+  const [source] = collectEdgeSourcesForObject(boxMesh());
+  assert.equal(source.sharedIsSmooth, true);
+  assert.equal(drawnSegments(build([source])), 12);
+});
+
+test('flatShading materials never get the smooth rule: shared indices are not smooth there', () => {
+  // 3MFLoader builds shared-vertex geometry with flatShading: true; so does GLTFLoader when a
+  // file has no normals. Facets there meet at real angles even though they share indices.
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ flatShading: true }));
+  assert.equal(collectEdgeSourcesForObject(mesh)[0].sharedIsSmooth, false);
+});
+
+test('one flatShading material among several turns the rule off for the mesh', () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [
+    new THREE.MeshStandardMaterial(),
+    new THREE.MeshStandardMaterial({ flatShading: true }),
+  ]);
+  assert.equal(collectEdgeSourcesForObject(mesh)[0].sharedIsSmooth, false);
+});
+
+test('a mesh with no normal attribute never gets the smooth rule', () => {
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  geometry.deleteAttribute('normal');
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());
+  assert.equal(collectEdgeSourcesForObject(mesh)[0].sharedIsSmooth, false);
+});
+
+test('a non-indexed mesh reports sharedIsSmooth false', () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), new THREE.MeshStandardMaterial());
+  assert.equal(collectEdgeSourcesForObject(mesh)[0].sharedIsSmooth, false);
+});
+
+test('the batched path computes sharedIsSmooth per mesh too', () => {
+  const flat = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ flatShading: true }));
+  const sources = collectEdgeSources([part('a', boxMesh(0), flat)]);
+  assert.deepEqual(sources.map((s) => s.sharedIsSmooth), [true, false]);
 });
