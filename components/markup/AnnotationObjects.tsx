@@ -10,6 +10,7 @@ import { TEXT_BOX_NAME, TEXT_GROUP_NAME, glyphLineRects, textOf } from './textNo
 import { cloudArcs } from '@/lib/markup/cloud';
 import { normalizedBox } from '@/lib/markup/draft';
 import { HIGHLIGHT_OPACITY, highlightStrokeWidth } from '@/lib/markup/highlight';
+import { BAKED_TYPES, normalizeBox, scalePoints } from '@/lib/markup/bakeScale';
 import useShiftKey from './useShiftKey';
 import { ROTATION_SNAPS_DEG, ROTATION_SNAP_TOLERANCE_DEG } from '@/lib/markup/rotationSnap';
 
@@ -23,6 +24,22 @@ const CORNER_ANCHORS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 const isSideAnchor = (a: string | null | undefined) => a === 'middle-left' || a === 'middle-right';
 const isCornerAnchor = (a: string | null | undefined): a is string => !!a && CORNER_ANCHORS.includes(a);
+
+/**
+ * Fold a node's Transformer scale into its own geometry and reset the scale to 1, so it is
+ * redrawn at the new size instead of stretched (see lib/markup/bakeScale.ts). A Line/Arrow's
+ * points are scaled; a Rect's or box Shape's signed width/height are. The visual box is
+ * unchanged, which is what lets the Transformer keep measuring incrementally mid-drag.
+ */
+function bakeNodeScale(n: Konva.Node) {
+  const sx = n.scaleX();
+  const sy = n.scaleY();
+  if (sx === 1 && sy === 1) return;
+  const points = n.getAttr('points') as number[] | undefined;
+  if (Array.isArray(points)) n.setAttr('points', scalePoints(points, sx, sy));
+  else n.setAttrs({ width: n.width() * sx, height: n.height() * sy });
+  n.setAttrs({ scaleX: 1, scaleY: 1 });
+}
 
 /**
  * A plain text is hit on its glyphs, line by line. Konva's default Text hit area is the whole
@@ -157,6 +174,9 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
           if (n) onChange(sid, { x: n.x(), y: n.y() });
         }
       },
+      // A stroked shape is redrawn at its new size on every frame rather than stretched to it
+      // (lib/markup/bakeScale.ts). Text sets its own onTransform below, which overrides this.
+      onTransform: isDraft || !BAKED_TYPES.has(obj.type) ? undefined : (e: Konva.KonvaEventObject<Event>) => bakeNodeScale(e.currentTarget),
       onTransformStart: isDraft ? undefined : () => {
         textBaseRef.current = obj.type === 'text' ? { id: obj.id, fontSize: obj.fontSize, width: obj.width } : null;
         onGestureChange?.(true);
@@ -164,6 +184,22 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
       onTransformEnd: isDraft ? undefined : (e: Konva.KonvaEventObject<Event>) => {
         onGestureChange?.(false);
         const n = e.currentTarget;
+        if (BAKED_TYPES.has(obj.type)) {
+          // The last frame may not have been folded in yet.
+          bakeNodeScale(n);
+          const points = n.getAttr('points') as number[] | undefined;
+          if (Array.isArray(points)) {
+            onChange(obj.id, { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: 1, scaleY: 1, points: [...points] });
+            return;
+          }
+          // A handle dragged through the opposite side leaves negative extents; store the same
+          // box the right way round. Written to the node too, so nothing moves before React's
+          // re-render lands.
+          const b = normalizeBox({ x: n.x(), y: n.y(), width: n.width(), height: n.height(), rotation: n.rotation() });
+          n.setAttrs(b);
+          onChange(obj.id, { ...b, rotation: n.rotation(), scaleX: 1, scaleY: 1 });
+          return;
+        }
         const t = { x: n.x(), y: n.y(), rotation: n.rotation(), scaleX: n.scaleX(), scaleY: n.scaleY() };
         if (obj.type !== 'text') { onChange(obj.id, t); return; }
         // Still set during transformend — Konva clears it only after firing.
@@ -221,25 +257,27 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
         return <Rect key={obj.id} {...common} width={obj.width} height={obj.height} stroke={obj.color} strokeWidth={obj.strokeWidth} />;
       case 'ellipse':
       case 'cloud': {
-        const box = normalizedBox(obj.width, obj.height);
         return (
           <Shape
             key={obj.id}
             {...common}
-            // The Transformer reads these to size its bounding box; the drawing below is
-            // independent of them.
-            width={box.width}
-            height={box.height}
+            // Signed extents, read back by the draw functions below from the NODE rather than
+            // from `obj`: a resize rewrites them on the node every frame (bakeNodeScale) and the
+            // outline must follow live. Negative while a draft is dragged up/left; the Transformer
+            // and getClientRect handle that the same way they do for a Rect.
+            width={obj.width}
+            height={obj.height}
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
             sceneFunc={(ctx, shape) => {
+              const box = normalizedBox(shape.width(), shape.height());
               ctx.beginPath();
               if (obj.type === 'ellipse') {
                 ctx.ellipse(box.left + box.width / 2, box.top + box.height / 2, box.width / 2, box.height / 2, 0, 0, Math.PI * 2);
               } else {
                 // Consecutive arcs share endpoints exactly (see lib/markup/cloud), so the
                 // implicit lineTo between them is a zero-length move, not a chord.
-                for (const a of cloudArcs(obj.width, obj.height)) {
+                for (const a of cloudArcs(shape.width(), shape.height())) {
                   ctx.arc(a.cx, a.cy, a.r, a.start, a.end, false);
                 }
               }
@@ -250,6 +288,7 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
             // only register on the line itself and clicks inside the shape would fall through
             // to whatever is beneath. A filled bounding box matches what Rect gives for free.
             hitFunc={(ctx, shape) => {
+              const box = normalizedBox(shape.width(), shape.height());
               ctx.beginPath();
               ctx.rect(box.left, box.top, box.width, box.height);
               ctx.closePath();
