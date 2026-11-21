@@ -226,6 +226,10 @@ export default function PdfScrollView({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !ready || scale === null) return;
+    // Any scroll, zoom or resize un-settles the view: the regions go null, so each page's detail effect
+    // cancels its in-flight render (a stale detail already on screen stays, see ScrollPage). No loop:
+    // `settledView` is not a dependency, and clearing an already-null view is a no-op.
+    setSettledView((s) => (s === null ? s : null));
     const t = setTimeout(() => {
       setSettledView({ rect: { x: el.scrollLeft, y: el.scrollTop, width: el.clientWidth, height: el.clientHeight }, scale });
     }, SETTLE_MS);
@@ -361,6 +365,13 @@ const ScrollPage = memo(function ScrollPage({
   // the current one.
   const [baseWidth, setBaseWidth] = useState(0);
   const [baseFor, setBaseFor] = useState(0);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // Whether the base bitmap can be judged against the current width. After a zoom it is stale until the
+  // base re-renders — except a base that was already capped: past the cap its re-render is pixel-identical,
+  // so waiting for it only delays the sharp detail. (Zooming out of the cap is still handled: the stale
+  // bitmap then fails needsDetail against the new width and the detail is released.)
+  const baseCapped = baseWidth > 0 && baseFor > 0 && needsDetail(baseWidth, baseFor, dpr);
+  const baseCurrent = baseCapped || Math.abs(baseFor - width) <= 0.5;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -404,7 +415,6 @@ const ScrollPage = memo(function ScrollPage({
   useEffect(() => {
     const canvas = detailRef.current;
     if (!canvas) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     if (!shouldRender) {
       releaseCanvas(canvas);
       canvas.style.display = 'none';
@@ -413,7 +423,7 @@ const ScrollPage = memo(function ScrollPage({
     // The base is still catching up with the zoom, so its bitmap says nothing about the current width
     // yet: deciding now would start a detail render the base is about to make unnecessary (competing
     // with it for the main thread). Keep whatever detail is showing; this re-runs when the base lands.
-    if (Math.abs(baseFor - width) > 0.5) return;
+    if (!baseCurrent) return;
     if (!needsDetail(baseWidth, width, dpr)) {
       releaseCanvas(canvas);
       canvas.style.display = 'none';
@@ -449,7 +459,7 @@ const ScrollPage = memo(function ScrollPage({
       cancelled = true;
       job?.cancel();
     };
-  }, [pdfDoc, page, shouldRender, visibleRegion, baseWidth, baseFor, width, height]);
+  }, [pdfDoc, page, shouldRender, visibleRegion, baseWidth, baseCurrent, width, height, dpr]);
 
   useEffect(() => {
     const c = canvasRef.current;
