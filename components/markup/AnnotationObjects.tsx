@@ -89,6 +89,10 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
   // Exactly one object selected, and it is a text: corner = font size, side = width.
   const singleText = selectedIds.length === 1 && objects.some((o) => o.id === selectedIds[0] && o.type === 'text');
 
+  // A highlight's 6× stroke IS the object: a box that ignored it would hug the centre line and put
+  // the middle anchors on the band, so grabbing the band would scale it instead of moving it.
+  const highlightSelected = selectedIds.some((id) => objects.find((o) => o.id === id)?.type === 'highlight');
+
   // Bind the Transformer to every selected node — except one open in the text editor, where
   // resize handles would fight the caret and sit over the textarea.
   useEffect(() => {
@@ -381,7 +385,7 @@ export default function AnnotationObjects({ objects, draft, selectedIds, activeT
         keepRatio={selectedIds.length > 1 || singleText}
         // Konva ignores keepRatio on the middle anchors, so a group would stretch on one axis.
         enabledAnchors={singleText ? TEXT_ANCHORS : selectedIds.length > 1 ? CORNER_ANCHORS : ALL_ANCHORS}
-        ignoreStroke
+        ignoreStroke={!highlightSelected}
         // Konva's rotationSnaps are ABSOLUTE angles, which is exactly the behaviour wanted:
         // Shift straightens a crooked object rather than stepping it 90 deg from wherever it
         // was. An empty array means no snapping at all.
