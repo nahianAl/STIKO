@@ -64,8 +64,13 @@ export function buildEdgesForObject(root: THREE.Object3D, opts?): ModelEdges | n
   cascades to edges exactly as it does to faces. It costs O(edges) per toggle and nothing per
   frame. Don't use `drawRange`, because hidden parts are not contiguous.
 - **Budget:** if the total triangle count exceeds **1.5 M** (`maxTriangles`), return `null` and
-  render no edges. Heavy files must never stall the main thread; see the 200 MB audit. Make it a
-  named constant.
+  render no edges. Make it a named constant.
+- **Off the main thread (added in planning, 2026-11-20).** A measurement showed
+  `THREE.EdgesGeometry` takes 5.5 s on 1.5 M triangles. The extraction therefore runs in a web
+  worker, using a three-free extractor (`lib/model/creaseEdges.ts`) with numeric hashing. It
+  takes ~1.25 s on the same input and gives the same edge counts as EdgesGeometry. The model
+  shows immediately and the edges appear when the worker finishes; on any failure there are
+  simply no edges. See the plan for the module split.
 - **Skip:** geometry that is already lines or points (curve-only STEP, glTF LINES). It already
   draws as lines.
 
