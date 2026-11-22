@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
+import { packageLimitRefusal, planLimitResponse, projectLimitRefusal } from '@/lib/planGate';
 import {
+  projectForPackageRestore,
   projectOwnerForRestore,
   restoreFromTrash,
   revivedProjectOwnerForPackageRestore,
@@ -43,6 +44,17 @@ export async function POST(request: NextRequest) {
     if (ownerId) {
       const refusal = await projectLimitRefusal(ownerId, session.user.id);
       if (refusal) return planLimitResponse(refusal);
+    }
+
+    // A restored package is a live package in its project again, so it meets
+    // the per-project package limit like a new one. Restoring a PROJECT is not
+    // gated on packages: it brings back only what that project already held.
+    if (kind === 'package') {
+      const projectId = await projectForPackageRestore(session.user.id, id);
+      if (projectId) {
+        const refusal = await packageLimitRefusal(projectId, session.user.id);
+        if (refusal) return planLimitResponse(refusal);
+      }
     }
 
     const outcome = await restoreFromTrash(session.user.id, kind, id);

@@ -49,7 +49,7 @@ export default function BillingActions({ status }: { status: BillingStatusPayloa
   return (
     <div className="border-t border-stiko-border px-4 py-3">
       <div className="text-[12.5px] font-bold text-stiko-ink">Upgrade to Standard</div>
-      <div className="mb-[10px] text-[11.5px] text-stiko-muted">{formatBytes(PLANS.standard.storageBytes)} storage, unlimited projects</div>
+      <div className="mb-[10px] text-[11.5px] text-stiko-muted">{formatBytes(PLANS.standard.storageBytes)} storage, unlimited projects and packages</div>
       <div className="grid grid-cols-2 gap-2">
         {(['month', 'year'] as const).map((interval) => (
           <button

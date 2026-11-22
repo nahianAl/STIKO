@@ -113,6 +113,7 @@ export function groupProjects(
       ownedByMe: false,
       createdByName: null,
       myRole: null,
+      packageLimit: null,
     };
 
     return {

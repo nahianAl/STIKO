@@ -10,7 +10,7 @@
  * The limits are ENFORCED server-side by lib/planGate.ts (rules in
  * lib/planLimits.ts), but only while billing is on: with the kill switch
  * thrown nobody could pay to lift one, so they are displayed, not applied.
- * Enforcement refuses new projects and new bytes; it never removes anything,
+ * Enforcement refuses new projects, new packages and new bytes; it never removes anything,
  * so an account can still legitimately sit over either limit (hand-granted
  * changes, usage from before enforcement, a downgrade).
  */
@@ -23,6 +23,11 @@ export interface Plan {
   storageBytes: number;
   /** null means unlimited — render a count, not a bar. */
   maxProjects: number | null;
+  /**
+   * Live packages one project may hold, counted per project (not per account).
+   * null means unlimited. Charged to the project OWNER's plan, like the rest.
+   */
+  maxPackagesPerProject: number | null;
 }
 
 const GIB = 1024 ** 3;
@@ -39,12 +44,14 @@ export const PLANS: Record<PlanId, Plan> = Object.freeze({
     label: 'Free',
     storageBytes: 2 * GIB,
     maxProjects: 2,
+    maxPackagesPerProject: 2,
   }),
   standard: Object.freeze({
     id: 'standard',
     label: 'Standard',
     storageBytes: 100 * GIB,
     maxProjects: null,
+    maxPackagesPerProject: null,
   }),
 });
 

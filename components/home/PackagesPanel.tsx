@@ -15,6 +15,7 @@ import {
   projectAttention,
   type ProjectGroup,
 } from '@/lib/home';
+import { openUpgradeDialog } from '@/lib/planLimitClient';
 // Type-only: lib/queries.ts imports lib/db, which throws at module load
 // without DATABASE_URL. A type-only import is erased.
 import type { PackageCard } from '@/lib/queries';
@@ -105,6 +106,27 @@ function PanelContents({
   // coordinator can only have come from a project_members row.
   const canManage = project.ownedByMe || project.myRole === 'coordinator';
 
+  // A manager sees every live package in the project, so this count is the
+  // one the server will check. At the cap, say so now rather than after the
+  // files are picked on /new; POST /api/portals still enforces it.
+  const limit = project.packageLimit;
+  const addPackage = () => {
+    if (limit && packages.length >= limit.max) {
+      openUpgradeDialog({
+        error: '',
+        code: 'plan_limit',
+        limit: 'packages',
+        plan: limit.plan,
+        isOwner: project.ownedByMe,
+        used: packages.length,
+        max: limit.max,
+        adding: 1,
+      });
+      return;
+    }
+    router.push(`/new?project=${project.id}`);
+  };
+
   return (
     <>
       <div className="flex shrink-0 items-start justify-between gap-[10px] border-b border-stiko-border px-4 py-[14px]">
@@ -180,7 +202,7 @@ function PanelContents({
           {canManage && (
             <button
               type="button"
-              onClick={() => router.push(`/new?project=${project.id}`)}
+              onClick={addPackage}
               className="flex w-full items-center justify-center gap-[6px] rounded-[10px] border-[1.5px] border-dashed border-stiko-border-strong bg-transparent p-[11px] text-[11.5px] font-bold text-stiko-muted transition-[border-color,color] duration-150 hover:border-stiko-primary hover:text-stiko-primary"
             >
               <svg

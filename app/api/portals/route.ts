@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { isProjectMember, visiblePackageIds } from '@/lib/access';
+import { packageLimitRefusal, planLimitResponse } from '@/lib/planGate';
 
 /**
  * GET — packages this user may see.
@@ -67,6 +68,11 @@ export async function POST(request: NextRequest) {
   if (!(await isProjectMember(session.user.id, projectId))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+
+  // Free: two live packages per project, charged to the project's owner.
+  // After the membership check, so a 402 never tells a stranger anything.
+  const refusal = await packageLimitRefusal(projectId, session.user.id);
+  if (refusal) return planLimitResponse(refusal);
 
   const rows = await sql`
     INSERT INTO portals (id, project_id, name)

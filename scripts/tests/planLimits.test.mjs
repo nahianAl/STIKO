@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   limitsEnforced,
   canCreateProject,
+  canAddPackage,
   canAddBytes,
   isPlanLimitPayload,
   isDeclaredFileSize,
@@ -10,8 +11,8 @@ import {
 import { billingEnabled } from '../../lib/billing.ts';
 
 const GIB = 1024 ** 3;
-const FREE = { maxProjects: 2, storageBytes: 2 * GIB };
-const STANDARD = { maxProjects: null, storageBytes: 100 * GIB };
+const FREE = { maxProjects: 2, maxPackagesPerProject: 2, storageBytes: 2 * GIB };
+const STANDARD = { maxProjects: null, maxPackagesPerProject: null, storageBytes: 100 * GIB };
 
 test('limits follow the billing kill switch', () => {
   assert.equal(limitsEnforced({}), false);
@@ -49,6 +50,19 @@ test('Standard never refuses a project', () => {
   assert.equal(canCreateProject(STANDARD, 10_000), true);
 });
 
+test('Free allows a 1st and 2nd package in a project, refuses the 3rd', () => {
+  assert.equal(canAddPackage(FREE, 0), true);
+  assert.equal(canAddPackage(FREE, 1), true);
+  assert.equal(canAddPackage(FREE, 2), false);
+  // Over the limit already (packages from before the limit existed): still refused.
+  assert.equal(canAddPackage(FREE, 7), false);
+});
+
+test('Standard never refuses a package', () => {
+  assert.equal(canAddPackage(STANDARD, 0), true);
+  assert.equal(canAddPackage(STANDARD, 10_000), true);
+});
+
 test('storage: exactly at the limit is allowed, one byte over is not', () => {
   assert.equal(canAddBytes(FREE, 0, 2 * GIB), true);
   assert.equal(canAddBytes(FREE, GIB, GIB), true);
@@ -70,6 +84,10 @@ test('recognises a 402 body and nothing else', () => {
   );
   assert.equal(
     isPlanLimitPayload({ code: 'plan_limit', limit: 'storage', plan: 'standard', isOwner: true, used: 1, max: 2, adding: 1, error: 'x' }),
+    true
+  );
+  assert.equal(
+    isPlanLimitPayload({ code: 'plan_limit', limit: 'packages', plan: 'free', isOwner: true, used: 2, max: 2, adding: 1, error: 'x' }),
     true
   );
   assert.equal(isPlanLimitPayload({ code: 'plan_limit', limit: 'seats' }), false);

@@ -2,8 +2,8 @@
  * The words on /pricing. Kept apart from the page so the copy can be read and
  * changed without wading through JSX.
  *
- * Accuracy rule: the ONLY things that differ between plans are the two limits
- * in lib/plans.ts (projects and storage). Every review feature is on every
+ * Accuracy rule: the ONLY things that differ between plans are the three limits
+ * in lib/plans.ts (projects, packages per project, and storage). Every review feature is on every
  * plan — nothing in the product checks the plan for anything else. If a
  * feature is ever gated, the comparison table below must say so.
  */
@@ -16,6 +16,9 @@ const standard = PLANS.standard;
 
 export const projectsLabel = (max: number | null) =>
   max === null ? 'Unlimited projects' : `${max} projects`;
+
+export const packagesLabel = (max: number | null) =>
+  max === null ? 'Unlimited packages in each' : `${max} packages per project`;
 
 export const STANDARD_STORAGE = formatBytes(standard.storageBytes);
 
@@ -34,7 +37,11 @@ const SHARED = ['Unlimited reviewers and collaborators', 'Every review tool, not
 
 export const FREE_COPY: PlanCopy = {
   tagline: 'For trying stiko on a real project.',
-  limits: [projectsLabel(free.maxProjects), `${formatBytes(free.storageBytes)} of storage`],
+  limits: [
+    projectsLabel(free.maxProjects),
+    packagesLabel(free.maxPackagesPerProject),
+    `${formatBytes(free.storageBytes)} of storage`,
+  ],
   shared: SHARED,
 };
 
@@ -42,6 +49,7 @@ export const STANDARD_COPY: PlanCopy = {
   tagline: 'For teams with reviews on the go every week.',
   limits: [
     projectsLabel(standard.maxProjects),
+    packagesLabel(standard.maxPackagesPerProject),
     `${formatBytes(standard.storageBytes)} of storage — ${storageMultiple} Free`,
   ],
   shared: [...SHARED, 'Invoices, card changes and cancelling, self-serve'],
@@ -57,6 +65,12 @@ export interface CompareRow {
 
 export const LIMIT_ROWS: CompareRow[] = [
   { label: 'Projects', free: String(free.maxProjects), standard: 'Unlimited' },
+  {
+    label: 'Packages per project',
+    detail: "Packages in the trash don't count.",
+    free: String(free.maxPackagesPerProject),
+    standard: 'Unlimited',
+  },
   {
     label: 'Storage',
     detail: `Files and comment attachments. Deleted packages and projects keep counting for ${TRASH_RETENTION_DAYS} days, while they can still be restored.`,
@@ -95,7 +109,7 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'What happens if I go over a Free limit?',
-    a: "Nothing is deleted. Everyone can still view, comment and download. You just can't add projects or upload until you're back under the limit or upgrade.",
+    a: "Nothing is deleted. Everyone can still view, comment and download. You just can't add projects or packages, or upload, until you're back under the limit or upgrade.",
   },
   {
     q: 'Can I switch between monthly and yearly, or cancel?',

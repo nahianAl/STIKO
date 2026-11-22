@@ -18,14 +18,21 @@ test('every tier has a label, a positive byte limit and a valid project limit', 
         (Number.isInteger(plan.maxProjects) && plan.maxProjects > 0),
       `${id} project limit is null or a positive integer`
     );
+    assert.ok(
+      plan.maxPackagesPerProject === null ||
+        (Number.isInteger(plan.maxPackagesPerProject) && plan.maxPackagesPerProject > 0),
+      `${id} package limit is null or a positive integer`
+    );
   }
 });
 
 test('the tiers carry the agreed limits', () => {
   assert.equal(PLANS.free.storageBytes, 2 * 1024 ** 3);
   assert.equal(PLANS.free.maxProjects, 2);
+  assert.equal(PLANS.free.maxPackagesPerProject, 2);
   assert.equal(PLANS.standard.storageBytes, 100 * 1024 ** 3);
   assert.equal(PLANS.standard.maxProjects, null);
+  assert.equal(PLANS.standard.maxPackagesPerProject, null);
 });
 
 test('an unrecognised plan resolves to the default rather than throwing', () => {

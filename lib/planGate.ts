@@ -1,8 +1,9 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { getAccountUsage } from '@/lib/queries';
+import { getAccountUsage, projectPackageUsage } from '@/lib/queries';
 import {
   canAddBytes,
+  canAddPackage,
   canCreateProject,
   limitsEnforced,
   type PlanLimitPayload,
@@ -32,6 +33,33 @@ export async function projectLimitRefusal(
     plan: usage.plan.id,
     isOwner: ownerId === callerId,
     used: usage.projects.count,
+    max,
+    adding: 1,
+  };
+}
+
+/**
+ * One more live package in `projectId`, against its OWNER's plan. Every path
+ * that makes a package live in a project must call this for THAT project:
+ * creating one, moving one in, and restoring one from the trash. A project that
+ * does not exist is not refused here; the caller's own lookup 404s it.
+ */
+export async function packageLimitRefusal(
+  projectId: string,
+  callerId: string
+): Promise<PlanLimitPayload | null> {
+  if (!limitsEnforced()) return null;
+  const usage = await projectPackageUsage(projectId);
+  if (!usage || canAddPackage(usage.plan, usage.livePackages)) return null;
+  const max = usage.plan.maxPackagesPerProject ?? 0;
+  const upsell = usage.plan.id === 'free' ? ' Upgrade to Standard for unlimited packages.' : '';
+  return {
+    error: `The ${usage.plan.label} plan includes ${max} packages per project.${upsell}`,
+    code: 'plan_limit',
+    limit: 'packages',
+    plan: usage.plan.id,
+    isOwner: usage.ownerId === callerId,
+    used: usage.livePackages,
     max,
     adding: 1,
   };

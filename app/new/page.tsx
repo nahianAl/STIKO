@@ -177,6 +177,14 @@ function NewPackage() {
           projectId: targetProject,
         }),
       });
+      const pkgLimit = await readPlanLimit(pkgRes);
+      if (pkgLimit) {
+        // Only an existing project can be at its package limit, so no project
+        // was created above and nothing exists yet: compose is right again.
+        openUpgradeDialog(pkgLimit);
+        setPhase('compose');
+        return;
+      }
       if (!pkgRes.ok) throw new Error('Could not create the package');
       const pkg = await pkgRes.json();
 

@@ -23,6 +23,19 @@ export function canCreateProject(plan: Pick<Plan, 'maxProjects'>, activeProjectC
   return activeProjectCount < plan.maxProjects;
 }
 
+/**
+ * One more live package in a project. Trashed packages are not counted; the
+ * caller passes the project's live count. Per project, so a Free owner's two
+ * projects can hold two packages each.
+ */
+export function canAddPackage(
+  plan: Pick<Plan, 'maxPackagesPerProject'>,
+  livePackageCount: number
+): boolean {
+  if (plan.maxPackagesPerProject === null) return true;
+  return livePackageCount < plan.maxPackagesPerProject;
+}
+
 /** Exactly at the limit is allowed. A nonsense claim is refused, not waved through. */
 export function canAddBytes(plan: Pick<Plan, 'storageBytes'>, usedBytes: number, addBytes: number): boolean {
   if (!Number.isFinite(addBytes) || addBytes < 0) return false;
@@ -38,7 +51,7 @@ export function isDeclaredFileSize(v: unknown): v is number {
   return Number.isSafeInteger(v) && (v as number) >= 0;
 }
 
-export type PlanLimitKind = 'projects' | 'storage';
+export type PlanLimitKind = 'projects' | 'packages' | 'storage';
 
 /** The body of every 402. The client turns it into the upgrade dialog. */
 export interface PlanLimitPayload {
@@ -54,10 +67,13 @@ export interface PlanLimitPayload {
   plan: PlanId;
   /** False when the caller is a collaborator on someone else's project. */
   isOwner: boolean;
-  /** Projects: active count. Storage: bytes used (trash included). */
+  /**
+   * Projects: active count. Packages: live packages in THAT project. Storage:
+   * bytes used (trash included).
+   */
   used: number;
   max: number;
-  /** Storage: bytes this request wanted to add. Projects: 1. */
+  /** Storage: bytes this request wanted to add. Projects and packages: 1. */
   adding: number;
 }
 
@@ -65,5 +81,8 @@ export interface PlanLimitPayload {
 export function isPlanLimitPayload(v: unknown): v is PlanLimitPayload {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
-  return o.code === 'plan_limit' && (o.limit === 'projects' || o.limit === 'storage');
+  return (
+    o.code === 'plan_limit' &&
+    (o.limit === 'projects' || o.limit === 'packages' || o.limit === 'storage')
+  );
 }

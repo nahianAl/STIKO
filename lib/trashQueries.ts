@@ -295,3 +295,33 @@ export async function revivedProjectOwnerForPackageRestore(
   `;
   return (rows[0]?.ownerId as string | undefined) ?? null;
 }
+
+/**
+ * The project a package restore would put the package back into, or null.
+ *
+ * Restoring makes the package live in that project, so it must meet the
+ * owner's per-project package limit like a new one. Same scope as
+ * restoreFromTrash's package branch (both inside the retention window, caller
+ * owner or coordinator), so the plan gate never answers for a package the
+ * restore itself would 404 on.
+ */
+export async function projectForPackageRestore(
+  userId: string,
+  packageId: string
+): Promise<string | null> {
+  const cutoff = `${TRASH_RETENTION_DAYS} days`;
+  const rows = await sql`
+    SELECT po.project_id AS "projectId"
+    FROM portals po
+    JOIN projects pr ON pr.id = po.project_id
+    LEFT JOIN project_members pm
+      ON pm.project_id = pr.id AND pm.user_id = ${userId}
+    WHERE po.id = ${packageId}
+      AND po.deleted_at IS NOT NULL
+      AND po.deleted_at > now() - ${cutoff}::interval
+      AND (pr.deleted_at IS NULL OR pr.deleted_at > now() - ${cutoff}::interval)
+      AND (pr.owner_id = ${userId}
+           OR (pm.user_id IS NOT NULL AND pm.role = 'coordinator'))
+  `;
+  return (rows[0]?.projectId as string | undefined) ?? null;
+}
