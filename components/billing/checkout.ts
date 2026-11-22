@@ -14,9 +14,32 @@ async function follow(endpoint: string, body?: object): Promise<void> {
   window.location.assign(data.url);
 }
 
-/** Stripe Checkout for Standard. If already paying, the server returns the portal instead. */
+/**
+ * Go to /billing/checkout, the first step of paying, which opens Stripe Checkout
+ * for Standard (or the portal, if already paying). Each step has its own URL so
+ * a payment can be traced; see app/api/billing/checkout/route.ts.
+ */
 export function startCheckout(interval: BillingInterval): Promise<void> {
-  return follow('/api/billing/checkout', { interval });
+  window.location.assign(checkoutPagePath(interval));
+  return Promise.resolve();
+}
+
+export function checkoutPagePath(interval: BillingInterval): string {
+  return `/billing/checkout?interval=${interval}`;
+}
+
+/** Used by /billing/checkout: asks the server for the Checkout URL and replaces this page with it. */
+export async function openCheckout(interval: BillingInterval): Promise<void> {
+  const res = await fetch('/api/billing/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ interval }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.url) throw new Error(data.error ?? 'Something went wrong.');
+  // replace, not assign: Back from Stripe returns to where the person chose a
+  // plan, not to this page, which would open Checkout all over again.
+  window.location.replace(data.url);
 }
 
 export function openPortal(): Promise<void> {
