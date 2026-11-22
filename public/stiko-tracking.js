@@ -54,7 +54,7 @@
    * and an app URL can be the referrer. None of it may reach the cookie, which
    * is later forwarded to analytics. So the cookie gets the same allowlist
    * scrub PostHog events get: token segments become "[token]", only UTM,
-   * click-id, billing and tab query keys survive, and the fragment and any
+   * click-id, billing, tab and billing-step (interval, flow, session_id, txn) query keys survive, and the fragment and any
    * user:password@ are dropped.
    *
    * KEEP IN SYNC with scrubUrl() in lib/analytics/scrub.ts (and the allowlist
@@ -63,7 +63,8 @@
    */
   var ALLOWED_QUERY_KEYS = {
     utm_source: 1, utm_medium: 1, utm_campaign: 1, utm_content: 1, utm_term: 1,
-    gclid: 1, fbclid: 1, ttclid: 1, billing: 1, tab: 1
+    gclid: 1, fbclid: 1, ttclid: 1, billing: 1, tab: 1,
+    interval: 1, flow: 1, session_id: 1, txn: 1
   };
   var TOKEN_SEGMENTS = { 'invite': 1, 'reset-password': 1 };
   var TOKEN_ROUTE = /((?:^|\/|%(?:25)*2F)(?:invite|reset-password)(?:\/|%(?:25)*2F))(?:(?!%(?:25)*2F)[^\/?#&\s])+/gi;

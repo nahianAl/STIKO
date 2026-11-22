@@ -534,3 +534,28 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_type TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_country TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_region TEXT;
+
+-- Payment records, mirrored in lib/migrations/021-payments.sql (see it for why).
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  stripe_customer_id TEXT NOT NULL,
+  stripe_invoice_id TEXT NOT NULL UNIQUE,
+  stripe_invoice_number TEXT,
+  stripe_subscription_id TEXT,
+  stripe_payment_intent_id TEXT,
+  stripe_checkout_session_id TEXT,
+  stripe_price_id TEXT,
+  plan TEXT NOT NULL,
+  billing_interval TEXT,
+  billing_reason TEXT,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  livemode BOOLEAN NOT NULL,
+  paid_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS payments_user_id_paid_at_idx ON payments (user_id, paid_at DESC);
+CREATE INDEX IF NOT EXISTS payments_stripe_customer_id_idx ON payments (stripe_customer_id);
+CREATE INDEX IF NOT EXISTS payments_checkout_session_idx
+  ON payments (stripe_checkout_session_id) WHERE stripe_checkout_session_id IS NOT NULL;

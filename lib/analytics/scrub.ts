@@ -22,6 +22,11 @@ export const ALLOWED_QUERY_KEYS: ReadonlySet<string> = new Set([
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
   'gclid', 'fbclid', 'ttclid',
   'billing', 'tab',
+  // The billing step pages (/billing/checkout, /success, /cancelled). These join
+  // a pageview to its payment: a Checkout Session ID and a Stiko transaction ID
+  // are references, not credentials (each is only readable by its owner's
+  // session), and carry no personal data.
+  'interval', 'flow', 'session_id', 'txn',
 ]);
 
 /** A path segment named like this is followed by a credential. */

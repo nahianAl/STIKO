@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 import { stripe, syncSubscription } from '@/lib/stripe';
+import { recordInvoicePayment } from '@/lib/paymentRecords';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,8 +9,14 @@ export const dynamic = 'force-dynamic';
  * Stripe → Stiko. Public (see lib/routeAccess.ts), so the signature check is
  * the only thing standing between the internet and users.plan.
  *
- * Every handled event re-fetches the subscription from Stripe and syncs from
- * that, so duplicate, late or out-of-order deliveries are harmless.
+ * Every handled event re-fetches the subscription (or invoice) from Stripe and
+ * acts on that, so duplicate, late or out-of-order deliveries are harmless.
+ *
+ * invoice.paid records the payment (lib/paymentRecords.ts): the first charge,
+ * every renewal, and the charge for switching to yearly. The endpoint must be
+ * subscribed to it in Stripe (scripts/stripe-setup.mjs WEBHOOK_EVENTS); without
+ * it renewals go unrecorded, though the return route still records the payments
+ * a person makes in the app.
  *
  * Deliberately NOT gated by BILLING_ENABLED: turning the buttons off must not
  * stop cancellations from downgrading people who already pay.
@@ -51,6 +58,9 @@ export async function POST(req: Request) {
       if (session.mode === 'subscription' && subscriptionId) {
         await syncSubscription(subscriptionId, session.client_reference_id);
       }
+    } else if (event.type === 'invoice.paid') {
+      const invoice = event.data.object as Stripe.Invoice;
+      if (invoice.id) await recordInvoicePayment(invoice.id);
     } else if (SUBSCRIPTION_EVENTS.has(event.type)) {
       const sub = event.data.object as Stripe.Subscription;
       await syncSubscription(sub.id);

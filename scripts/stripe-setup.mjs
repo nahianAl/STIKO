@@ -42,6 +42,8 @@ const WEBHOOK_EVENTS = [
   'customer.subscription.deleted',
   'customer.subscription.paused',
   'customer.subscription.resumed',
+  // Records each payment (app/api/billing/webhook, migration 021).
+  'invoice.paid',
 ];
 
 async function findOrCreateProduct() {
@@ -114,6 +116,13 @@ async function findOrCreateWebhook() {
   for await (const w of stripe.webhookEndpoints.list({ limit: 100 })) {
     if (w.url === WEBHOOK_URL) {
       console.log(`webhook   exists   ${w.id} ${w.url}`);
+      // An endpoint made by an older run of this script lacks the newer
+      // events. Adding them keeps the endpoint and its signing secret.
+      const missing = WEBHOOK_EVENTS.filter((e) => !w.enabled_events.includes(e) && !w.enabled_events.includes('*'));
+      if (missing.length) {
+        await stripe.webhookEndpoints.update(w.id, { enabled_events: [...w.enabled_events, ...missing] });
+        console.log(`          added events: ${missing.join(', ')}`);
+      }
       console.log('          (its signing secret was shown only when it was created —');
       console.log('           find it in the Stripe dashboard under Developers → Webhooks)');
       return;

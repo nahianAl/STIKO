@@ -71,7 +71,10 @@ export async function POST() {
           subscription: sub.id,
           items: [{ id: item.id, price: yearly, quantity: item.quantity ?? 1 }],
         },
-        after_completion: { type: 'redirect', redirect: { return_url: `${base}/pricing` } },
+        // Through the return route, which records the prorated charge and lands
+        // on the confirmation screen. Backing out of the confirm screen uses
+        // return_url above, back to /pricing.
+        after_completion: { type: 'redirect', redirect: { return_url: `${base}/api/billing/return?flow=switch` } },
       },
     });
     return NextResponse.json({ url: portal.url });
