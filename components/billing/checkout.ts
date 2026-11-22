@@ -23,6 +23,11 @@ export function openPortal(): Promise<void> {
   return follow('/api/billing/portal');
 }
 
+/** Stripe's confirm screen for moving a monthly subscription to yearly. Nothing changes until confirmed there. */
+export function startSwitchToYearly(): Promise<void> {
+  return follow('/api/billing/switch-to-yearly');
+}
+
 /**
  * Call `reset` when the browser restores this page from its back/forward cache.
  *

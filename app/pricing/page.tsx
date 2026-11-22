@@ -3,32 +3,38 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AvatarMenu from '@/components/shell/AvatarMenu';
-import { LogoMark, Wordmark } from '@/components/ui/Shell';
+import SiteNav from '@/components/marketing/SiteNav';
 import { useAuthSession } from '@/lib/authClient';
 import { PRICE_DISPLAY, type BillingInterval, type BillingStatusPayload } from '@/lib/billing';
-import { pricingView } from '@/lib/pricingView';
+import { offersSwitchToYearly, pricingView } from '@/lib/pricingView';
 import { loginRedirectPath } from '@/lib/routeAccess';
-import { openPortal, startCheckout, useResetOnPageShow } from '@/components/billing/checkout';
+import {
+  openPortal,
+  startCheckout,
+  startSwitchToYearly,
+  useResetOnPageShow,
+} from '@/components/billing/checkout';
 import {
   FAQ,
   FEATURE_ROWS,
+  SITE_FAQ,
   FREE_COPY,
   LIMIT_ROWS,
   STANDARD_COPY,
   STANDARD_STORAGE,
   type CompareRow,
+  type FaqItem,
   type PlanCopy,
 } from './content';
+import TermTip from './TermTip';
 import s from './pricing.module.css';
 
 const SIGNUP = `/signup?${new URLSearchParams({ callbackUrl: '/pricing' })}`;
-const MARKETING = 'https://www.stiko.design';
 
 // Button looks, matched to the marketing site's .stk-btn family. The `!text-*`
 // colours beat globals.css `a:hover { color }` when these are applied to links.
 const BTN =
   'inline-flex w-full items-center justify-center rounded-[12px] px-6 py-[14px] text-[15px] font-extrabold tracking-[-0.005em] transition duration-150 disabled:cursor-not-allowed disabled:opacity-60';
-const BTN_GRADIENT = `${BTN} bg-gradient-to-br from-[#8094F5] to-[#5B60FF] !text-white shadow-[0_14px_30px_-14px_rgba(91,96,255,0.8)] hover:brightness-[1.06]`;
 const BTN_GHOST = `${BTN} border-[1.5px] border-[#D3D8E6] bg-white !text-stiko-ink hover:border-[#8094F5]`;
 const BTN_WHITE = `${BTN} bg-white !text-[#4247D6] shadow-[0_14px_30px_-16px_rgba(0,0,0,0.6)] hover:bg-[#F1F3FF]`;
 const BTN_ON_DARK = `${BTN} border border-white/20 bg-white/[0.06] !text-white hover:bg-white/[0.12]`;
@@ -49,7 +55,10 @@ export default function PricingPage() {
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
-    fetch('/api/billing/status')
+    // Renewal facts carry the interval, which decides "Switch to yearly". They
+    // cost a live Stripe call (bounded at 3s server-side) and are only fetched
+    // for a signed-in visitor.
+    fetch('/api/billing/status?include=renewal')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (cancelled) return;
@@ -83,6 +92,7 @@ export default function PricingPage() {
   const price = PRICE_DISPLAY[billingInterval];
   const view = pricingView({ authStatus, billing, billingFailed });
   const upgrade = () => run(() => startCheckout(billingInterval));
+  const canSwitchToYearly = offersSwitchToYearly(billing);
 
   // ── Standard card button, by viewer state (lib/pricingView.ts) ──
   let standardCta: React.ReactNode = null;
@@ -102,7 +112,26 @@ export default function PricingPage() {
       );
       break;
     case 'manage':
-      standardCta = (
+      standardCta = canSwitchToYearly ? (
+        // Paying monthly: the upgrade on offer is the yearly price. Stripe shows
+        // the prorated amount and changes nothing until it is confirmed there.
+        <>
+          <button type="button" className={BTN_WHITE} disabled={busy} onClick={() => run(startSwitchToYearly)}>
+            {busy ? 'Opening…' : 'Switch to yearly, save 10%'}
+          </button>
+          <p className="mt-2 text-center text-[12px] text-white/60">
+            You&apos;re billed monthly.{' '}
+            <button
+              type="button"
+              className="font-semibold text-white/80 underline-offset-2 hover:text-white hover:underline disabled:opacity-60"
+              disabled={busy}
+              onClick={() => run(openPortal)}
+            >
+              Manage billing
+            </button>
+          </p>
+        </>
+      ) : (
         <button type="button" className={BTN_ON_DARK} disabled={busy} onClick={() => run(openPortal)}>
           {busy ? 'Opening…' : 'Manage billing'}
         </button>
@@ -130,7 +159,7 @@ export default function PricingPage() {
       freeCta = <button className={BTN_GHOST} disabled>Loading…</button>;
       break;
     case 'signup':
-      freeCta = <Link href={SIGNUP} className={BTN_GHOST}>Start free</Link>;
+      freeCta = <Link href={SIGNUP} className={BTN_GHOST}>Get started</Link>;
       break;
     case 'included':
       freeCta = <p className="text-center text-[13px] font-semibold text-stiko-muted">Included in Standard</p>;
@@ -148,7 +177,7 @@ export default function PricingPage() {
     closing = {
       title: 'Start your first review in minutes.',
       sub: 'Free to start, no card needed. Upgrade when your projects outgrow it.',
-      action: <Link href={SIGNUP} className={`${BTN_WHITE} !w-auto px-9 py-4 text-[16px]`}>Start free</Link>,
+      action: <Link href={SIGNUP} className={`${BTN_WHITE} !w-auto px-9 py-4 text-[16px]`}>Get started</Link>,
     };
   } else if (view.standard === 'upgrade') {
     closing = {
@@ -172,37 +201,17 @@ export default function PricingPage() {
     <div className={s.page}>
       <div className={s.atmosphere} aria-hidden="true" />
 
-      <div className="relative mx-auto max-w-[1080px] px-4 sm:px-6">
-        {/* ── Header ── */}
-        <header className="flex h-[72px] items-center justify-between">
-          <a href={signedIn ? '/' : MARKETING} className="flex items-center gap-[9px]" aria-label="stiko home">
-            <LogoMark />
-            <Wordmark />
-          </a>
-          <div className="flex items-center gap-3">
-            {signedIn ? (
-              <>
-                <Link href="/" className="hidden text-[13.5px] font-bold !text-stiko-secondary hover:!text-stiko-ink sm:inline">
-                  Your projects
-                </Link>
-                <AvatarMenu />
-              </>
-            ) : authStatus === 'loading' ? null : (
-              <>
-                <Link
-                  href={loginRedirectPath('/pricing')}
-                  className="text-[13.5px] font-bold !text-stiko-secondary hover:!text-stiko-ink"
-                >
-                  Sign in
-                </Link>
-                <Link href={SIGNUP} className={`${BTN_GRADIENT} !w-auto px-5 py-[10px] text-[13px]`}>
-                  Start free
-                </Link>
-              </>
-            )}
-          </div>
-        </header>
+      {/* The marketing site's own nav, so arriving from www.stiko.design keeps the menu. */}
+      <div className="relative z-20 pt-3">
+        <SiteNav
+          session={signedIn ? 'signed-in' : authStatus === 'loading' ? 'loading' : 'signed-out'}
+          loginHref={loginRedirectPath('/pricing')}
+          signupHref={SIGNUP}
+          account={<AvatarMenu />}
+        />
+      </div>
 
+      <div className="relative mx-auto max-w-[1080px] px-4 sm:px-6">
         {/* ── Hero ── */}
         <section className="pt-10 text-center sm:pt-16">
           <div className={`${s.rise} inline-flex items-center gap-2 rounded-[20px] bg-white px-3 py-[6px] text-[11.5px] font-extrabold uppercase tracking-[0.08em] text-stiko-secondary shadow-[0_1px_3px_rgba(28,32,48,0.06)]`}>
@@ -220,8 +229,8 @@ export default function PricingPage() {
             className={`${s.rise} mx-auto mt-5 max-w-[560px] text-[16px] font-medium leading-[1.6] text-stiko-secondary sm:text-[17px]`}
             style={{ '--d': '120ms' } as React.CSSProperties}
           >
-            Every review tool is on every plan, and reviewers are always free. Choose how many projects you run and
-            how much you store.
+            Every review tool is on every plan, and reviewers are always free. Choose how many projects and packages
+            you run, and how much you store.
           </p>
 
           <div className={`${s.rise} mt-8 flex justify-center`} style={{ '--d': '180ms' } as React.CSSProperties}>
@@ -272,11 +281,12 @@ export default function PricingPage() {
               Every feature, on every plan.
             </h2>
             <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-[1.6] text-stiko-secondary">
-              The only differences are how many projects you can run and how much you can store.
+              The only differences are how many projects and packages you can run, and how much you can store.
             </p>
           </div>
 
-          <div className="mt-10 overflow-hidden rounded-[18px] border border-[#EAEDF6] bg-white shadow-[0_24px_60px_-28px_rgba(28,32,48,0.28)]">
+          {/* No overflow-hidden: it would clip the "?" tooltips in the first rows. */}
+          <div className="mt-10 rounded-[18px] border border-[#EAEDF6] bg-white shadow-[0_24px_60px_-28px_rgba(28,32,48,0.28)]">
             <div className="grid grid-cols-[1fr_72px_88px] items-center border-b border-[#EAEDF6] px-4 py-4 sm:grid-cols-[1fr_140px_160px] sm:px-7">
               <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-stiko-muted">Plan</span>
               <span className="text-center text-[14px] font-extrabold text-stiko-ink">Free</span>
@@ -295,21 +305,9 @@ export default function PricingPage() {
               Before you choose.
             </h2>
           </div>
-          <div className="flex flex-col gap-[10px]">
-            {FAQ.map((f) => (
-              <details key={f.q} className={`${s.faq} group rounded-[14px] border border-[#EAEDF6] bg-white px-5 py-4`}>
-                <summary className="flex cursor-pointer items-center justify-between gap-4 text-[15px] font-bold text-stiko-ink">
-                  {f.q}
-                  <span
-                    className={`${s.faqIcon} grid h-7 w-7 shrink-0 place-items-center rounded-full bg-stiko-tint text-[18px] leading-none text-[#4247D6] transition-transform duration-200`}
-                    aria-hidden="true"
-                  >
-                    +
-                  </span>
-                </summary>
-                <p className="mt-3 text-[14px] leading-[1.65] text-stiko-secondary">{f.a}</p>
-              </details>
-            ))}
+          <div className="flex flex-col gap-8">
+            <FaqGroup title="Plans and billing" items={FAQ} />
+            <FaqGroup title="Using stiko" items={SITE_FAQ} />
           </div>
         </section>
 
@@ -328,7 +326,7 @@ export default function PricingPage() {
 
         <footer className="flex flex-col items-center justify-between gap-3 py-10 text-[13px] text-stiko-muted sm:flex-row">
           <span>© {new Date().getFullYear()} stiko</span>
-          <a href={MARKETING} className="font-semibold !text-stiko-secondary hover:!text-stiko-ink">
+          <a href="https://www.stiko.design" className="font-semibold !text-stiko-secondary hover:!text-stiko-ink">
             stiko.design
           </a>
         </footer>
@@ -439,9 +437,12 @@ function PlanCard({
 
       <ul className="flex flex-col gap-3">
         {copy.limits.map((f) => (
-          <li key={f} className="flex gap-3 text-[15px] font-bold">
+          <li key={f.text} className="flex gap-3 text-[15px] font-bold">
             <Check dark={dark} />
-            {f}
+            <span>
+              {f.text}
+              {f.term && <TermTip term={f.term} dark={dark} />}
+            </span>
           </li>
         ))}
         {copy.shared.map((f) => (
@@ -480,13 +481,40 @@ function CompareGroup({ title, rows }: { title: string; rows: CompareRow[] }) {
           className="grid grid-cols-[1fr_72px_88px] items-center border-t border-[#F1F1F4] px-4 py-4 sm:grid-cols-[1fr_140px_160px] sm:px-7"
         >
           <div className="pr-3">
-            <div className="text-[14.5px] font-bold text-stiko-ink">{r.label}</div>
+            <div className="text-[14.5px] font-bold text-stiko-ink">
+              {r.label}
+              {r.term && <TermTip term={r.term} />}
+            </div>
             {r.detail && <div className="mt-[2px] text-[13px] leading-[1.5] text-stiko-muted">{r.detail}</div>}
           </div>
           <CompareCell value={r.free} />
           <CompareCell value={r.standard} accent />
         </div>
       ))}
+    </div>
+  );
+}
+
+function FaqGroup({ title, items }: { title: string; items: FaqItem[] }) {
+  return (
+    <div>
+      <h3 className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.14em] text-stiko-muted">{title}</h3>
+      <div className="flex flex-col gap-[10px]">
+        {items.map((f) => (
+          <details key={f.q} className={`${s.faq} group rounded-[14px] border border-[#EAEDF6] bg-white px-5 py-4`}>
+            <summary className="flex cursor-pointer items-center justify-between gap-4 text-[15px] font-bold text-stiko-ink">
+              {f.q}
+              <span
+                className={`${s.faqIcon} grid h-7 w-7 shrink-0 place-items-center rounded-full bg-stiko-tint text-[18px] leading-none text-[#4247D6] transition-transform duration-200`}
+                aria-hidden="true"
+              >
+                +
+              </span>
+            </summary>
+            <p className="mt-3 text-[14px] leading-[1.65] text-stiko-secondary">{f.a}</p>
+          </details>
+        ))}
+      </div>
     </div>
   );
 }
