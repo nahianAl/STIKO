@@ -1,0 +1,285 @@
+/* The marketing site's .stk-nav, copied from the Webflow stylesheet
+   (stikos-sublime-site.webflow.shared.css). Values are the site's own; only the
+   class names changed. Class selectors here outrank globals.css `a:hover`. */
+
+.nav {
+  position: sticky;
+  top: 12px;
+  z-index: 20;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 20px;
+  font-family: Manrope, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+.bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  height: 60px;
+  padding: 0 10px 0 18px;
+  background-color: #fff;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(28, 32, 48, 0.05);
+}
+
+.brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.logo {
+  display: block;
+  flex-shrink: 0;
+  width: 67.92px;
+  height: 24px;
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.navLink {
+  color: #5a6076;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.navLink:hover,
+.navLink.current {
+  color: #1c2030;
+}
+
+.right {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  color: #fff;
+  background-image: linear-gradient(135deg, #8094f5, #5b60ff);
+  border-radius: 12px;
+  padding: 15px 30px;
+  font-size: 15px;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 6px 16px -5px rgba(91, 96, 255, 0.6);
+}
+.btn:hover {
+  color: #fff;
+}
+
+.btnSm {
+  border-radius: 11px;
+  padding: 11px 20px;
+  font-size: 13px;
+}
+
+/* ── Solutions dropdown ── */
+.dd {
+  display: flex;
+  align-items: center;
+  position: static;
+}
+
+.ddTrigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 8px;
+  color: #5a6076;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.ddTrigger:hover,
+.ddTrigger[aria-expanded='true'] {
+  color: #1c2030;
+}
+
+.ddMenu {
+  position: absolute;
+  top: 68px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 12px;
+  padding: 14px;
+  background-color: #fff;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px -16px rgba(28, 32, 48, 0.28);
+}
+
+.ddCard {
+  display: block;
+  padding: 22px;
+  background-color: #eceffa;
+  border-radius: 12px;
+  text-decoration: none;
+}
+.ddCard:hover {
+  background-color: #e2e7f8;
+}
+
+.ddCardH {
+  margin: 0;
+  color: #1c2030;
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: -0.012em;
+}
+
+.ddCardP {
+  margin: 5px 0 0;
+  color: #5c6278;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* ── Mobile menu ── */
+.mnav {
+  display: none;
+  position: relative;
+}
+
+.mnavBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 44px;
+  height: 44px;
+  background-color: #f6f8fe;
+  border: 0;
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.mnavLine {
+  width: 16px;
+  height: 2px;
+  background-color: #1c2030;
+  border-radius: 2px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.mnavOpen .mnavLine:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+.mnavOpen .mnavLine:nth-child(2) {
+  opacity: 0;
+}
+.mnavOpen .mnavLine:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+.mnavMenu {
+  position: absolute;
+  top: 52px;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 110px);
+  padding: 12px;
+  overflow-y: auto;
+  background-color: #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px -16px rgba(28, 32, 48, 0.3);
+}
+
+.mnavLink,
+.mnavSub {
+  display: block;
+  padding: 15px 16px;
+  color: #1c2030;
+  background-color: #eceffa;
+  border-radius: 12px;
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: -0.012em;
+  text-decoration: none;
+}
+.mnavSub {
+  font-size: 14px;
+  line-height: 1.35;
+}
+.mnavLink:hover,
+.mnavSub:hover {
+  color: #1c2030;
+  background-color: #e2e7f8;
+}
+
+.mnavHead {
+  padding: 14px 12px 6px;
+  color: #a2a7b8;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mnavRule {
+  height: 1px;
+  margin: 4px;
+  background-color: #f1f1f4;
+}
+
+.btn.mnavCta {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+  padding: 13px 20px;
+  font-size: 14.5px;
+}
+
+@media (max-width: 991px) {
+  .links,
+  .right > .navLink,
+  .right > .btnSm {
+    display: none;
+  }
+  .mnav {
+    display: flex;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mnavLine {
+    transition: none;
+  }
+}
+
+@media (max-width: 479px) {
+  .nav {
+    padding: 0 12px;
+  }
+  .bar {
+    gap: 10px;
+    padding: 0 8px 0 12px;
+  }
+  .right {
+    gap: 8px;
+  }
+}

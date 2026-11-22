@@ -9,7 +9,7 @@
  * "Upgrade", even for a moment.
  */
 
-import type { BillingStatusPayload } from './billing';
+import { planForSubscriptionStatus, type BillingStatusPayload } from './billing.ts';
 
 export type PricingAuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -49,4 +49,21 @@ export function pricingView(input: {
   if (billing.plan === 'standard') return { standard: 'current', free: 'included' };
   if (billing.action === 'none') return { standard: 'soon', free: 'current' };
   return { standard: 'upgrade', free: 'current' };
+}
+
+/**
+ * Whether the Standard card offers "Switch to yearly": only to someone paying
+ * MONTHLY (per the live renewal facts, ?include=renewal) whose subscription is
+ * still paid and not set to end. Unknown is no: a missing or slow Stripe
+ * answer shows only Manage billing, which can switch too.
+ */
+export function offersSwitchToYearly(billing: BillingStatusPayload | null): boolean {
+  if (!billing || billing.action !== 'manage') return false;
+  const sub = billing.subscription;
+  if (!sub) return false;
+  return (
+    sub.interval === 'month' &&
+    !sub.cancelAtPeriodEnd &&
+    planForSubscriptionStatus(sub.status) === 'standard'
+  );
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pricingView } from '../../lib/pricingView.ts';
+import { offersSwitchToYearly, pricingView } from '../../lib/pricingView.ts';
 
 // Who is looking at /pricing decides what each card's button says. The page
 // only maps these states to JSX, so every viewer state is pinned here.
@@ -21,5 +21,27 @@ const CASES = [
 for (const [name, input, expected] of CASES) {
   test(`pricingView: ${name}`, () => {
     assert.deepEqual(pricingView(input), expected);
+  });
+}
+
+// "Switch to yearly" is offered only to someone paying monthly whose
+// subscription is not already ending: a yearly payer has nothing to switch to,
+// and a cancelling one would be talked back into a year they chose to leave.
+const sub = (over) => ({ status: 'active', interval: 'month', renewsAt: null, cancelAtPeriodEnd: false, cancelAt: null, ...over });
+const SWITCH_CASES = [
+  ['no billing answer yet', null, false],
+  ['paying monthly', { action: 'manage', plan: 'standard', subscription: sub() }, true],
+  ['paying monthly, past_due (still Standard)', { action: 'manage', plan: 'standard', subscription: sub({ status: 'past_due' }) }, true],
+  ['paying yearly', { action: 'manage', plan: 'standard', subscription: sub({ interval: 'year' }) }, false],
+  ['monthly but cancelling', { action: 'manage', plan: 'standard', subscription: sub({ cancelAtPeriodEnd: true }) }, false],
+  ['interval unknown', { action: 'manage', plan: 'standard', subscription: sub({ interval: null }) }, false],
+  ['renewal facts missing (Stripe slow)', { action: 'manage', plan: 'standard' }, false],
+  ['Free, able to upgrade', { action: 'upgrade', plan: 'free' }, false],
+  ['Standard by hand', { action: 'none', plan: 'standard' }, false],
+  ['churned: manage with a canceled sub', { action: 'manage', plan: 'free', subscription: sub({ status: 'canceled' }) }, false],
+];
+for (const [name, billing, expected] of SWITCH_CASES) {
+  test(`offersSwitchToYearly: ${name}`, () => {
+    assert.equal(offersSwitchToYearly(billing), expected);
   });
 }
