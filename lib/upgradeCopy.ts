@@ -13,7 +13,9 @@ import type { AccountUsage } from './queries.ts';
 
 /** The Standard pitch, derived from the catalogue so it cannot drift from it. */
 export function standardPerks(): string {
-  return `Standard gives you ${formatBytes(PLANS.standard.storageBytes)} and unlimited projects.`;
+  return `Standard gives you ${formatBytes(
+    PLANS.standard.storageBytes
+  )}, unlimited projects and unlimited packages in each.`;
 }
 
 /** The owner's plan as the 402 named it, or null when it did not (or named nothing known). */
@@ -47,6 +49,14 @@ export function headline(p: PlanLimitPayload | null): { title: string; subtitle:
   if (!p.isOwner) {
     const title =
       p.limit === 'storage' ? 'This project is out of storage' : 'This project is at its limit';
+    if (p.limit === 'packages') {
+      return {
+        title,
+        subtitle: isFree
+          ? `This project's owner is on the Free plan, which allows ${p.max} packages per project. Ask them to upgrade to Standard.`
+          : 'This project has reached its package limit.',
+      };
+    }
     // The plan is named only when the payload says it; otherwise the owner's
     // plan is not something this copy knows.
     if (isFree) {
@@ -78,6 +88,14 @@ export function headline(p: PlanLimitPayload | null): { title: string; subtitle:
         subtitle: 'Move a project to the trash to make room for a new one.',
       };
     }
+    if (p.limit === 'packages') {
+      return {
+        title: plan
+          ? `This project has the ${plan.label} plan's ${p.max} packages`
+          : 'This project is at its package limit',
+        subtitle: 'Move a package to the trash to make room for a new one.',
+      };
+    }
     return {
       title: plan
         ? `You've reached the ${plan.label} plan's ${formatBytes(plan.storageBytes)}`
@@ -90,6 +108,14 @@ export function headline(p: PlanLimitPayload | null): { title: string; subtitle:
 
   if (p.limit === 'projects') {
     return { title: `You've used your ${p.max} Free projects`, subtitle: perks };
+  }
+  if (p.limit === 'packages') {
+    // Trashed packages do not count toward this limit (their bytes still count
+    // toward storage), so the trash is an honest second way out.
+    return {
+      title: `This project has its ${p.max} Free packages`,
+      subtitle: `${perks} Or move a package to the trash to make room.`,
+    };
   }
   return {
     title: 'Not enough storage',

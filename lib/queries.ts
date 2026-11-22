@@ -1,7 +1,8 @@
 import { sql } from '@/lib/db';
 import { deriveStatus, type VersionStatus, type Verdict } from '@/lib/status';
 import type { DisclosureState } from '@/lib/disclosure';
-import { planFor, type Plan } from '@/lib/plans';
+import { planFor, type Plan, type PlanId } from '@/lib/plans';
+import { limitsEnforced } from '@/lib/planLimits';
 import { deriveMyRole } from '@/lib/home';
 import type { ProjectRole } from '@/lib/roles';
 
@@ -57,6 +58,22 @@ export interface ProjectSummary {
    * or ownership, and are genuinely project-level.)
    */
   myRole: ProjectRole | null;
+  /**
+   * The OWNER's per-project package cap, or null when there is none to meet
+   * (an unlimited plan, or limits off with the billing kill switch). Lets the
+   * dashboard open the upgrade dialog on "Add a package" instead of after the
+   * files are picked. A hint only: POST /api/portals enforces it.
+   */
+  packageLimit: { plan: PlanId; max: number } | null;
+}
+
+/** A project's package cap as ProjectSummary carries it. */
+function packageLimitFor(ownerPlan: string | null): ProjectSummary['packageLimit'] {
+  if (!limitsEnforced()) return null;
+  const plan = planFor(ownerPlan);
+  return plan.maxPackagesPerProject === null
+    ? null
+    : { plan: plan.id, max: plan.maxPackagesPerProject };
 }
 
 /** Everything home (5a / 5b / 2f / 3m) needs, in one pass. */
@@ -116,6 +133,7 @@ export async function getHomeData(userId: string): Promise<{
            (visible.owner_id = ${userId}) AS "ownedByMe",
            visible.member_role AS "memberRole",
            owner.name AS "ownerName",
+           owner.plan AS "ownerPlan",
            latest.version_id AS "versionId",
            latest.version_number AS "versionNumber",
            latest.changelog,
@@ -201,6 +219,7 @@ export async function getHomeData(userId: string): Promise<{
     SELECT DISTINCT pr.id, pr.name, pr.created_at,
            (pr.owner_id = ${userId}) AS "ownedByMe",
            owner.name AS "ownerName",
+           owner.plan AS "ownerPlan",
            pm.role AS "memberRole"
     FROM projects pr
     LEFT JOIN users owner ON owner.id = pr.owner_id
@@ -288,6 +307,7 @@ export async function getHomeData(userId: string): Promise<{
       name: r.projectName as string,
       ownedByMe: Boolean(r.ownedByMe),
       createdByName: (r.ownerName as string) ?? null,
+      packageLimit: packageLimitFor((r.ownerPlan as string) ?? null),
       myRole: deriveMyRole({
         ownedByMe: Boolean(r.ownedByMe),
         memberRole: (r.memberRole as string) ?? null,
@@ -306,6 +326,7 @@ export async function getHomeData(userId: string): Promise<{
       name: r.name as string,
       ownedByMe: Boolean(r.ownedByMe),
       createdByName: (r.ownerName as string) ?? null,
+      packageLimit: packageLimitFor((r.ownerPlan as string) ?? null),
       // No visible package means no participant role to derive from.
       myRole: deriveMyRole({
         ownedByMe: Boolean(r.ownedByMe),
@@ -489,6 +510,33 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
       count: Number(row.projectCount ?? 0),
       max: plan.maxProjects,
     },
+  };
+}
+
+/**
+ * What the per-project package limit needs: the project's owner, the owner's
+ * plan, and how many LIVE packages the project holds. Trashed packages are not
+ * counted, matching how trashed projects are left out of the project count.
+ * Null when the project does not exist.
+ */
+export async function projectPackageUsage(
+  projectId: string
+): Promise<{ ownerId: string; plan: Plan; livePackages: number } | null> {
+  const rows = await sql`
+    SELECT pr.owner_id AS "ownerId",
+           u.plan AS "planId",
+           (SELECT COUNT(*) FROM portals po
+             WHERE po.project_id = pr.id AND po.deleted_at IS NULL) AS "livePackages"
+    FROM projects pr
+    LEFT JOIN users u ON u.id = pr.owner_id
+    WHERE pr.id = ${projectId}
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    ownerId: row.ownerId as string,
+    plan: planFor((row.planId as string | null) ?? null),
+    livePackages: Number(row.livePackages ?? 0),
   };
 }
 

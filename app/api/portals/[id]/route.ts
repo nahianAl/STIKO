@@ -3,7 +3,7 @@ import { sql } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { getPackageAccess, isProjectMember } from '@/lib/access';
 import { packageCountedBytes } from '@/lib/queries';
-import { planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
+import { packageLimitRefusal, planLimitResponse, storageLimitRefusal } from '@/lib/planGate';
 
 export async function GET(
   _request: NextRequest,
@@ -76,16 +76,28 @@ export async function PATCH(
     // own. Same owner: nothing changes hands. A move cannot change the
     // destination's project count (the destination is a live project, which
     // isProjectMember above requires, and no project is created or revived), so
-    // there is no project limit to check.
+    // there is no project limit to check. It DOES add a package to the
+    // destination, so the per-project package limit is checked below, same
+    // owner or not: otherwise create-in-A-then-move-to-B fills B past it.
     const owners = await sql`
-      SELECT src.owner_id AS "srcOwnerId", dest.owner_id AS "destOwnerId"
+      SELECT po.project_id AS "srcProjectId",
+             src.owner_id AS "srcOwnerId", dest.owner_id AS "destOwnerId"
       FROM portals po
       JOIN projects src ON src.id = po.project_id
       JOIN projects dest ON dest.id = ${projectId}
       WHERE po.id = ${params.id}
     `;
     if (!owners[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    const { srcOwnerId, destOwnerId } = owners[0] as { srcOwnerId: string; destOwnerId: string };
+    const { srcProjectId, srcOwnerId, destOwnerId } = owners[0] as {
+      srcProjectId: string;
+      srcOwnerId: string;
+      destOwnerId: string;
+    };
+    // Moving into the project it already sits in adds nothing.
+    if (srcProjectId !== projectId) {
+      const refusal = await packageLimitRefusal(projectId, session.user.id);
+      if (refusal) return planLimitResponse(refusal);
+    }
     if (destOwnerId !== srcOwnerId) {
       const packageBytes = await packageCountedBytes(params.id);
       const refusal = await storageLimitRefusal(destOwnerId, session.user.id, packageBytes);

@@ -20,13 +20,13 @@ const payload = (over) => ({
 test('no payload is the generic upgrade pitch, built from the Standard plan', () => {
   const h = headline(null);
   assert.equal(h.title, 'Upgrade to Standard');
-  assert.equal(h.subtitle, 'Standard gives you 100 GB and unlimited projects.');
+  assert.equal(h.subtitle, 'Standard gives you 100 GB, unlimited projects and unlimited packages in each.');
 });
 
 test('an owner at the project limit is told how many Free projects they used', () => {
   const h = headline(payload({ limit: 'projects', used: 2, max: 2 }));
   assert.equal(h.title, "You've used your 2 Free projects");
-  assert.match(h.subtitle, /100 GB and unlimited projects/);
+  assert.match(h.subtitle, /100 GB, unlimited projects and unlimited packages/);
 });
 
 test('an owner out of storage sees what the upload needs and what is left', () => {
@@ -36,7 +36,7 @@ test('an owner out of storage sees what the upload needs and what is left', () =
   assert.equal(h.title, 'Not enough storage');
   assert.match(h.subtitle, /needs 600 MB/);
   assert.match(h.subtitle, /512 MB left of 2 GB/);
-  assert.match(h.subtitle, /100 GB and unlimited projects/);
+  assert.match(h.subtitle, /100 GB, unlimited projects and unlimited packages/);
 });
 
 test('storage left never goes negative when the account is already over', () => {
@@ -63,6 +63,35 @@ test('a collaborator at the Free project limit is pointed at the owner', () => {
     h.subtitle,
     "This project's owner is on the Free plan and has used its projects. Ask them to upgrade to Standard."
   );
+});
+
+test('an owner at the Free package limit is told the project has its 2 packages', () => {
+  const h = headline(payload({ limit: 'packages', used: 2, max: 2 }));
+  assert.equal(h.title, 'This project has its 2 Free packages');
+  assert.match(h.subtitle, /unlimited packages/);
+  // Trashed packages do not count, so the trash is a real way out.
+  assert.match(h.subtitle, /move a package to the trash/);
+});
+
+test('a collaborator at the Free package limit is pointed at the owner', () => {
+  const h = headline(payload({ limit: 'packages', isOwner: false, max: 2 }));
+  assert.equal(h.title, 'This project is at its limit');
+  assert.equal(
+    h.subtitle,
+    "This project's owner is on the Free plan, which allows 2 packages per project. Ask them to upgrade to Standard."
+  );
+});
+
+test('a package limit on a plan this copy cannot sell to offers only the trash', () => {
+  const h = headline(payload({ limit: 'packages', plan: 'standard', max: 5 }));
+  assert.equal(h.title, "This project has the Standard plan's 5 packages");
+  assert.equal(h.subtitle, 'Move a package to the trash to make room for a new one.');
+  assert.equal(offersCheckout(payload({ limit: 'packages', plan: 'standard' })), false);
+});
+
+test('a Free owner at the package limit is offered a checkout', () => {
+  assert.equal(offersCheckout(payload({ limit: 'packages', plan: 'free', isOwner: true })), true);
+  assert.equal(offersCheckout(payload({ limit: 'packages', plan: 'free', isOwner: false })), false);
 });
 
 test('only a Free owner (or the generic pitch) is offered a checkout', () => {

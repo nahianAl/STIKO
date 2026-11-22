@@ -153,7 +153,7 @@ export default function PricingPage() {
   } else if (view.standard === 'upgrade') {
     closing = {
       title: 'Ready for more room?',
-      sub: `Unlimited projects and ${STANDARD_STORAGE} of storage, from ${price.perMonth} a month.`,
+      sub: `Unlimited projects and packages, and ${STANDARD_STORAGE} of storage, from ${price.perMonth} a month.`,
       action: (
         <button type="button" className={`${BTN_WHITE} !w-auto px-9 py-4 text-[16px]`} disabled={busy} onClick={upgrade}>
           {busy ? 'Opening…' : 'Upgrade to Standard'}
