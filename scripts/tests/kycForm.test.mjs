@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  EMPTY_FORM, withIndustry, withCompanySize, toRequestBody, firstInvalidField, FIELD_ERRORS, fieldDomId,
+  EMPTY_FORM, withIndustry, toRequestBody, firstInvalidField, FIELD_ERRORS, fieldDomId,
 } from '../../lib/kyc/form.ts';
 import { toggleValue, moveValue, visibleOptions, nextActive } from '../../lib/kyc/combo.ts';
 
@@ -21,11 +21,6 @@ test('changing industry clears role and reviewers, and a client model it does no
   assert.equal(keep.clientModel, 'CM-1');
   assert.equal(withIndustry(FILLED, 'MFG'), FILLED);
   assert.equal(withIndustry({ ...FILLED, industry: 'OTH', industryOtherText: 'x' }, 'PRD').industryOtherText, '');
-});
-
-test('changing company size clears a review-team band that no longer fits', () => {
-  assert.equal(withCompanySize(FILLED, 'CS-02').reviewTeamSize, '');
-  assert.equal(withCompanySize(FILLED, 'CS-08').reviewTeamSize, 'RT-03');
 });
 
 test('toRequestBody sends only what each kind needs', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ROLES, FILE_TYPES } from '../../lib/kyc/catalog.ts';
 import { SUPPORTED_EXTENSIONS } from '../../lib/fileFormats.ts';
 import {
-  rolesFor, reviewersFor, clientModelsFor, reviewTeamBandsFor, fileTypeGroupsFor, matchesSearch,
+  rolesFor, reviewersFor, clientModelsFor, fileTypeGroupsFor, matchesSearch,
   normaliseDomain, emailDomain, isBusinessEmail, trackForSize, fileTypeSupported,
   validateCompany, validateRole, deriveCompany, deriveRole, decideOnboarding, allowedSubmission,
 } from '../../lib/kyc/profile.ts';
@@ -53,14 +53,11 @@ test('clientModelsFor: CM-3 only for PRD, MFG, CST', () => {
   assert.equal(clientModelsFor('INT').length, 4);
 });
 
-test('reviewTeamBandsFor hides bands larger than the company', () => {
-  const codes = (s) => reviewTeamBandsFor(s).map((b) => b.code);
-  assert.deepEqual(codes('CS-01'), ['RT-01']);
-  assert.deepEqual(codes('CS-02'), ['RT-01', 'RT-02']);
-  assert.deepEqual(codes('CS-03'), ['RT-01', 'RT-02', 'RT-03']);
-  assert.equal(codes('CS-08').length, 6);
-  assert.equal(codes(null).length, 6);
-  assert.equal(codes('bogus').length, 6);
+test('a review team may be larger than the company (clients review too)', () => {
+  for (const reviewTeamSize of ['RT-01', 'RT-02', 'RT-03', 'RT-04', 'RT-05', 'RT-06']) {
+    const r = validateCompany({ ...VALID, companySize: 'CS-01', reviewTeamSize }, '');
+    assert.equal(r.ok, true, reviewTeamSize);
+  }
 });
 
 test('fileTypeGroupsFor orders groups by industry and ends with Other', () => {
@@ -178,7 +175,8 @@ test('validateCompany reports the first bad field', () => {
   bad({ markets: ['MK-99'] }, 'marketOtherText');
   bad({ industry: 'INT', clientModel: 'CM-3', reviewers: [] }, 'clientModel');
   bad({ companySize: 'CS-99' }, 'companySize');
-  bad({ companySize: 'CS-02', reviewTeamSize: 'RT-03' }, 'reviewTeamSize');
+  bad({ reviewTeamSize: 'RT-07' }, 'reviewTeamSize');
+  bad({ reviewTeamSize: '' }, 'reviewTeamSize');
   bad({ reviewers: ['rv-agencies'] }, 'reviewers');
   bad({ reviewers: ['rv-customers', 'rv-customers'] }, 'reviewers');
   bad({ fileTypes: ['FT-NOPE'] }, 'fileTypes');
