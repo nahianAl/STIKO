@@ -9,7 +9,7 @@ import {
   REVIEWER_LISTS, REVIEW_TEAM_BANDS, ROLES, ROLE_LISTS, SIZE_BANDS,
 } from './catalog.ts';
 import type {
-  Band, ClientModel, FileGroup, FileType, Industry, IndustryCode, ParentSegment, Reviewer, Role,
+  ClientModel, FileGroup, FileType, Industry, IndustryCode, ParentSegment, Reviewer, Role,
   RoleFamily, Seniority, Track,
 } from './catalog.ts';
 import { SUPPORTED_EXTENSIONS } from '../fileFormats.ts';
@@ -97,13 +97,6 @@ export function clientModelsFor(industry: string | null): ClientModel[] {
   return CLIENT_MODELS.filter(
     (c) => !c.industries || (industry !== null && (c.industries as readonly string[]).includes(industry))
   );
-}
-
-/** Hide review-team bands whose minimum is above the company's maximum. */
-export function reviewTeamBandsFor(companySize: string | null): Band[] {
-  const size = SIZE_BANDS.find((s) => s.code === companySize);
-  const cap = size?.max ?? Infinity;
-  return REVIEW_TEAM_BANDS.filter((b) => b.min <= cap);
 }
 
 export function fileTypeGroupsFor(industry: string | null): FileTypeGroup[] {
@@ -230,7 +223,9 @@ export function validateCompany(body: unknown, email: string): Validation<Compan
   if (!SIZE_BANDS.some((s) => s.code === companySize)) return fail('companySize');
 
   const reviewTeamSize = str(b.reviewTeamSize);
-  if (!reviewTeamBandsFor(companySize).some((r) => r.code === reviewTeamSize)) return fail('reviewTeamSize');
+  // Every band, whatever the company size: reviewers include clients and anyone
+  // else who comments or approves, so a 3-person studio can have 10 (user, 2026-11-23).
+  if (!REVIEW_TEAM_BANDS.some((r) => r.code === reviewTeamSize)) return fail('reviewTeamSize');
 
   const reviewerIds = stringList(b.reviewers);
   const allowed = reviewersFor(industry);

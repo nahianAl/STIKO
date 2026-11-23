@@ -3,7 +3,7 @@
  * server's own validators, so the button can never disagree with the API.
  */
 import { OTHER_FILE_TYPE, OTHER_INDUSTRY, OTHER_MARKET, OTHER_ROLE } from './catalog.ts';
-import { clientModelsFor, reviewTeamBandsFor, validateCompany, validateRole } from './profile.ts';
+import { clientModelsFor, validateCompany, validateRole } from './profile.ts';
 import type { CompanyField, RoleField, SubmitKind } from './profile.ts';
 
 export interface FormValues {
@@ -44,11 +44,6 @@ export function withIndustry(v: FormValues, code: string): FormValues {
     reviewers: [],
     clientModel: keepClient ? v.clientModel : '',
   };
-}
-
-export function withCompanySize(v: FormValues, code: string): FormValues {
-  const fits = reviewTeamBandsFor(code).some((b) => b.code === v.reviewTeamSize);
-  return { ...v, companySize: code, reviewTeamSize: fits ? v.reviewTeamSize : '' };
 }
 
 export function toRequestBody(v: FormValues, kind: SubmitKind): Record<string, unknown> {

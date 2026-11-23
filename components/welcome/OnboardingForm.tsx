@@ -6,13 +6,13 @@ import { ErrorBanner, Input } from '@/components/ui/Primitives';
 import ComboSelect, { type ComboOption } from '@/components/welcome/ComboSelect';
 import {
   INDUSTRIES, MARKETS, MAX_MARKETS, OTHER_FILE_TYPE, OTHER_INDUSTRY, OTHER_MARKET, OTHER_ROLE, OTHER_TEXT_MAX,
-  SIZE_BANDS,
+  REVIEW_TEAM_BANDS, SIZE_BANDS,
 } from '@/lib/kyc/catalog';
 import {
-  clientModelsFor, fileTypeGroupsFor, reviewTeamBandsFor, reviewersFor, rolesFor,
+  clientModelsFor, fileTypeGroupsFor, reviewersFor, rolesFor,
   type CompanyField, type RoleField, type SubmitKind,
 } from '@/lib/kyc/profile';
-import { FIELD_ERRORS, fieldDomId, firstInvalidField, withCompanySize, withIndustry, type FormValues } from '@/lib/kyc/form';
+import { FIELD_ERRORS, fieldDomId, firstInvalidField, withIndustry, type FormValues } from '@/lib/kyc/form';
 
 /** The error text under a question; the control that failed points at it with aria-describedby. */
 const errorDomId = (field: CompanyField | RoleField) => `${fieldDomId(field)}-error`;
@@ -88,7 +88,7 @@ export default function OnboardingForm({
   const marketOptions: ComboOption[] = MARKETS.map((m) => ({ id: m.code, label: m.label, group: m.group || undefined, synonyms: m.synonyms }));
   const clientOptions: ComboOption[] = clientModelsFor(v.industry || null).map((c) => ({ id: c.code, label: c.label, helper: c.helper }));
   const sizeOptions: ComboOption[] = SIZE_BANDS.map((b) => ({ id: b.code, label: b.label }));
-  const rtOptions: ComboOption[] = reviewTeamBandsFor(v.companySize || null).map((b) => ({ id: b.code, label: b.label }));
+  const rtOptions: ComboOption[] = REVIEW_TEAM_BANDS.map((b) => ({ id: b.code, label: b.label }));
   const roleIndustry = variant === 'role' ? null : v.industry || null;
   const roleOptions: ComboOption[] = useMemo(
     () => rolesFor(roleIndustry).map((r) => ({ id: r.code, label: r.label, synonyms: r.synonyms })),
@@ -173,7 +173,7 @@ export default function OnboardingForm({
           </Question>
 
           <Question field="companySize" label="How many people work at your company?" error={errorFor('companySize')}>
-            <ComboSelect {...ids('companySize')} options={sizeOptions} value={v.companySize} onChange={(c) => setV((cur) => withCompanySize(cur, c))} />
+            <ComboSelect {...ids('companySize')} options={sizeOptions} value={v.companySize} onChange={(c) => set({ companySize: c })} />
           </Question>
 
           <Question field="reviewTeamSize" label="How many people on your team review designs?" helper="Include anyone who uploads, comments or approves." error={errorFor('reviewTeamSize')}>
